@@ -1038,13 +1038,18 @@ async def api_admin_category_update(request):
     """POST /api/admin/category/{id} — Изменение параметров (комиссии, активности) подкатегории."""
     cat_id = int(request.match_info["id"])
     data = await request.json()
-    db.update_category(cat_id, **data)
+    # update_category_settings корректно раскладывает базовые поля в categories,
+    # а расширенные (bank_commission_*, cancellation_policy, premium_*,
+    # contact_reveal_after_booking) — в отдельную таблицу category_settings,
+    # которую создаёт при необходимости. Прямой update_category ронял запрос,
+    # т.к. этих колонок нет в таблице categories.
+    db.update_category_settings(cat_id, **data)
     return web.json_response({"ok": True})
 
 async def api_admin_master_category_create(request):
     """POST /api/admin/master_category — Создание новой родительской сферы."""
     data = await request.json()
-    new_id = db.create_master_category(data['name_ru'], data['name_am'], data['slug'])
+    new_id = db.create_master_category(data['name_ru'], data['name_am'], data['slug'], data.get('name_en', ''))
     return web.json_response({"ok": True, "id": new_id})
 
 async def api_admin_master_category_update(request):
@@ -1066,7 +1071,7 @@ async def api_admin_subcategory_create(request):
     new_id = db.create_subcategory(
         master_category_id=int(data['master_category_id']), name_ru=data['name_ru'],
         name_am=data['name_am'], slug=data['slug'], commission_type=data.get('commission_type', 'on_top'),
-        commission_value=float(data.get('commission_value', 10.0))
+        commission_value=float(data.get('commission_value', 10.0)), name_en=data.get('name_en', '')
     )
     return web.json_response({"ok": True, "id": new_id})
 

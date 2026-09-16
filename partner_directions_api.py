@@ -352,8 +352,8 @@ def register_partner_direction_routes(app, db=None, bot=None):
 
     async def admin_directions_tree(request):
         _auth_admin(request)
-        masters=_fetchall("SELECT id,name_am,name_ru,slug,is_active FROM master_categories ORDER BY id")
-        subs=_fetchall("SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.slug,c.is_active,c.commission_type,c.commission_value,COALESCE(cs.bank_commission_type,'none') bank_commission_type,COALESCE(cs.bank_commission_value,0) bank_commission_value,COALESCE(cs.cancellation_policy,'no_refund') cancellation_policy,COALESCE(cs.premium_contact_enabled,FALSE) premium_contact_enabled,COALESCE(cs.premium_contact_fee,0) premium_contact_fee,COALESCE(cs.premium_disclosure_scope,'none') premium_disclosure_scope,COALESCE(cs.contact_reveal_after_booking,TRUE) contact_reveal_after_booking FROM categories c LEFT JOIN category_settings cs ON cs.category_id=c.id ORDER BY c.master_category_id,c.id")
+        masters=_fetchall("SELECT id,name_am,name_ru,name_en,slug,is_active FROM master_categories ORDER BY id")
+        subs=_fetchall("SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,c.is_active,c.commission_type,c.commission_value,COALESCE(cs.bank_commission_type,'none') bank_commission_type,COALESCE(cs.bank_commission_value,0) bank_commission_value,COALESCE(cs.cancellation_policy,'no_refund') cancellation_policy,COALESCE(cs.premium_contact_enabled,FALSE) premium_contact_enabled,COALESCE(cs.premium_contact_fee,0) premium_contact_fee,COALESCE(cs.premium_disclosure_scope,'none') premium_disclosure_scope,COALESCE(cs.contact_reveal_after_booking,TRUE) contact_reveal_after_booking FROM categories c LEFT JOIN category_settings cs ON cs.category_id=c.id ORDER BY c.master_category_id,c.id")
         by={}
         for c in subs: by.setdefault(c['master_category_id'],[]).append(c)
         for m in masters: m['subcategories']=by.get(m['id'],[])
@@ -366,7 +366,7 @@ def register_partner_direction_routes(app, db=None, bot=None):
         if action=='freeze': _exec("UPDATE master_categories SET is_active=FALSE WHERE id=%s",(mid,))
         elif action=='activate': _exec("UPDATE master_categories SET is_active=TRUE WHERE id=%s",(mid,))
         elif action=='edit':
-            fields={k:data[k] for k in ('name_am','name_ru','slug') if k in data and str(data[k]).strip()}
+            fields={k:data[k] for k in ('name_am','name_ru','name_en','slug') if k in data and str(data[k]).strip()}
             if not fields:return web.json_response({'ok':False,'error':'no_fields'},status=400)
             sets=', '.join(f'{k}=%s' for k in fields); _exec(f'UPDATE master_categories SET {sets} WHERE id=%s',(*fields.values(),mid))
         elif action=='delete':

@@ -149,7 +149,7 @@ class DatabaseManager:
         """Возвращает список всех главных родительских категорий (сфер)."""
         with _connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id, name_am, name_ru, slug FROM master_categories ORDER BY id")
+                cur.execute("SELECT id, name_am, name_ru, name_en, slug FROM master_categories ORDER BY id")
                 return cur.fetchall()
 
     def get_subcategories_by_master(self, master_category_id: int) -> list[dict]:
@@ -157,7 +157,7 @@ class DatabaseManager:
         with _connect() as conn:
             with conn.cursor() as cur:
                 cur.execute('''
-                    SELECT id, master_category_id, name_am, name_ru, slug, commission_type, commission_value 
+                    SELECT id, master_category_id, name_am, name_ru, name_en, slug, commission_type, commission_value 
                     FROM categories 
                     WHERE master_category_id = %s AND is_active = TRUE 
                     ORDER BY id
@@ -174,12 +174,14 @@ class DatabaseManager:
                         c.master_category_id, 
                         c.name_am as name_hy, 
                         c.name_ru, 
+                        c.name_en, 
                         c.slug, 
                         c.commission_type, 
                         c.commission_value,
                         c.is_active,
                         m.name_ru as master_name_ru,
-                        m.name_am as master_name_am
+                        m.name_am as master_name_am,
+                        m.name_en as master_name_en
                     FROM categories c
                     JOIN master_categories m ON c.master_category_id = m.id
                     ORDER BY m.id, c.id
@@ -196,12 +198,14 @@ class DatabaseManager:
                         c.master_category_id, 
                         c.name_am as name_hy, 
                         c.name_ru, 
+                        c.name_en, 
                         c.slug, 
                         c.commission_type, 
                         c.commission_value,
                         c.is_active,
                         m.name_ru as master_name_ru,
-                        m.name_am as master_name_am
+                        m.name_am as master_name_am,
+                        m.name_en as master_name_en
                     FROM categories c
                     JOIN master_categories m ON c.master_category_id = m.id
                     WHERE c.is_active = TRUE 
@@ -214,10 +218,10 @@ class DatabaseManager:
         with _connect() as conn:
             with conn.cursor() as cur:
                 cur.execute('''
-                    SELECT id, master_category_id, name_am as name_hy, name_ru, slug, commission_type, commission_value 
+                    SELECT id, master_category_id, name_am as name_hy, name_ru, name_en, slug, commission_type, commission_value 
                     FROM categories 
-                    WHERE name_am = %s OR name_ru = %s OR slug = %s
-                ''', (name_to_find, name_to_find, name_to_find))
+                    WHERE name_am = %s OR name_ru = %s OR name_en = %s OR slug = %s
+                ''', (name_to_find, name_to_find, name_to_find, name_to_find))
                 return cur.fetchone()
 
     def update_category(self, cat_id: int, **kwargs):
@@ -290,14 +294,14 @@ class DatabaseManager:
     # ------------------------------------------------------------------
     # АДМИНИСТРАТИВНЫЙ CRUD УПРАВЛЕНИЯ КАТАЛОГОМ
     # ------------------------------------------------------------------
-    def create_master_category(self, name_ru: str, name_am: str, slug: str) -> int:
+    def create_master_category(self, name_ru: str, name_am: str, slug: str, name_en: str = "") -> int:
         """Создать новую главную родительскую сферу."""
         with _connect() as conn:
             with conn.cursor() as cur:
                 cur.execute('''
-                    INSERT INTO master_categories (name_ru, name_am, slug)
-                    VALUES (%s, %s, %s) RETURNING id
-                ''', (name_ru, name_am, slug))
+                    INSERT INTO master_categories (name_ru, name_am, name_en, slug)
+                    VALUES (%s, %s, %s, %s) RETURNING id
+                ''', (name_ru, name_am, name_en or "", slug))
                 row = cur.fetchone()
                 conn.commit()
                 return row["id"] if row else None
@@ -324,14 +328,15 @@ class DatabaseManager:
                 conn.commit()
 
     def create_subcategory(self, master_category_id: int, name_ru: str, name_am: str, slug: str, 
-                           commission_type: str = 'on_top', commission_value: float = 10.0) -> int:
+                           commission_type: str = 'on_top', commission_value: float = 10.0,
+                           name_en: str = "") -> int:
         """Создать новую дочернюю услугу внутри выбранной сферы."""
         with _connect() as conn:
             with conn.cursor() as cur:
                 cur.execute('''
-                    INSERT INTO categories (master_category_id, name_ru, name_am, slug, commission_type, commission_value, is_active)
-                    VALUES (%s, %s, %s, %s, %s, %s, TRUE) RETURNING id
-                ''', (master_category_id, name_ru, name_am, slug, commission_type, commission_value))
+                    INSERT INTO categories (master_category_id, name_ru, name_am, name_en, slug, commission_type, commission_value, is_active)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE) RETURNING id
+                ''', (master_category_id, name_ru, name_am, name_en or "", slug, commission_type, commission_value))
                 row = cur.fetchone()
                 conn.commit()
                 return row["id"] if row else None
