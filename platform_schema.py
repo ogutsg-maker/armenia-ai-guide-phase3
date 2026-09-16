@@ -1,4 +1,9 @@
-"""Non-destructive PostgreSQL schema for the new Armenia AI Guide architecture."""
+"""Current PostgreSQL schema bootstrap for Armenia AI Guide.
+
+The schema is intentionally idempotent: it can run on every application start.
+It creates dependencies in the correct order so a clean Supabase database can
+bootstrap without relying on another module being imported first.
+"""
 from __future__ import annotations
 
 import os
@@ -13,14 +18,14 @@ def db_url() -> str:
 
 
 def _connect():
-    # Render/Supabase may use PgBouncer transaction pooling. Disable Psycopg
-    # automatic prepared statements for schema/bootstrap work.
     return psycopg.connect(db_url(), prepare_threshold=None)
 
 
 def ensure_platform_schema() -> None:
-    """Create only new architecture tables; never delete legacy marketplace data."""
     sql = r'''
+    -- ---------------------------------------------------------------------
+    -- Core partner tables
+    -- ---------------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS partners (
         id BIGSERIAL PRIMARY KEY,
         user_id BIGINT NOT NULL UNIQUE REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -142,6 +147,63 @@ def ensure_platform_schema() -> None:
         UNIQUE(service_id, weekday)
     );
 
+    -- ---------------------------------------------------------------------
+    -- Verification documents MUST exist before partner_directions_api adds
+    -- partner_direction_id to it.
+    -- ---------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS partner_verification_documents (
+        id BIGSERIAL PRIMARY KEY,
+        partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+        document_type TEXT NOT NULL DEFAULT 'business_document',
+        original_filename TEXT,
+        storage_path TEXT UNIQUE,
+        file_data BYTEA,
+        mime_type TEXT,
+        file_size BIGINT NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        rejection_reason TEXT,
+        reviewed_by BIGINT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reviewed_at TIMESTAMPTZ,
+        partner_direction_id BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS idx_partner_verification_documents_partner
+        ON partner_verification_documents(partner_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_partner_verification_documents_status
+        ON partner_verification_documents(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS admin_audit_log (
+        id BIGSERIAL PRIMARY KEY,
+        admin_telegram_id BIGINT NOT NULL,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id BIGINT,
+        details_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- ---------------------------------------------------------------------
+    -- Direction tariff/settings table. Admin Directions depends on this.
+    -- ---------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS category_settings (
+        id BIGSERIAL PRIMARY KEY,
+        category_id INT NOT NULL UNIQUE REFERENCES categories(id) ON DELETE CASCADE,
+        bank_commission_type TEXT NOT NULL DEFAULT 'none'
+            CHECK (bank_commission_type IN ('none','percent','fixed')),
+        bank_commission_value NUMERIC NOT NULL DEFAULT 0,
+        cancellation_policy TEXT NOT NULL DEFAULT 'no_refund'
+            CHECK (cancellation_policy IN ('full_refund','half_refund','no_refund')),
+        premium_contact_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        premium_contact_fee NUMERIC NOT NULL DEFAULT 0,
+        premium_disclosure_scope TEXT NOT NULL DEFAULT 'none',
+        contact_reveal_after_booking BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- ---------------------------------------------------------------------
+    -- AI / catalog research
+    -- ---------------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS ai_sessions (
         id BIGSERIAL PRIMARY KEY,
         user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -245,6 +307,9 @@ def ensure_platform_schema() -> None:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- ---------------------------------------------------------------------
+    -- Marketplace / negotiation
+    -- ---------------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS service_requests (
         id BIGSERIAL PRIMARY KEY,
         client_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -259,6 +324,11 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS services_catalog_dummy_guard (
+        id BIGSERIAL PRIMARY KEY
+    );
+    DROP TABLE IF EXISTS services_catalog_dummy_guard;
 
     CREATE TABLE IF NOT EXISTS request_candidates (
         id BIGSERIAL PRIMARY KEY,
@@ -355,11 +425,13 @@ def ensure_platform_schema() -> None:
     CREATE INDEX IF NOT EXISTS idx_service_requests_client ON service_requests(client_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_negotiations_request ON negotiations(request_id, status);
 
-    -- Phase 3: reviews & ratings -------------------------------------------
+    -- ---------------------------------------------------------------------
+    -- Phase 3: reviews / support
+    -- ---------------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS reviews (
         id BIGSERIAL PRIMARY KEY,
         booking_id BIGINT,
-        client_id  BIGINT NOT NULL,
+        client_id BIGINT NOT NULL,
         partner_id BIGINT NOT NULL,
         service_id BIGINT,
         rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
@@ -375,7 +447,6 @@ def ensure_platform_schema() -> None:
     CREATE INDEX IF NOT EXISTS idx_reviews_partner ON reviews(partner_id, status);
     CREATE INDEX IF NOT EXISTS idx_reviews_client ON reviews(client_id, created_at DESC);
 
-    -- Phase 3: support tickets ---------------------------------------------
     CREATE TABLE IF NOT EXISTS support_tickets (
         id BIGSERIAL PRIMARY KEY,
         user_id BIGINT NOT NULL,
@@ -403,6 +474,7 @@ def ensure_platform_schema() -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_support_ticket_messages ON support_ticket_messages(ticket_id, created_at);
     '''
+
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
