@@ -121,7 +121,12 @@ def _validate_admin_request(request):
 
 @web.middleware
 async def _admin_auth_middleware(request,handler):
-    if request.path.startswith("/api/admin/"):
+    path=request.path
+    # /viewer, /proxy, /open-file authenticate themselves via a signed ?access=
+    # token (opened by direct navigation, which carries no init-data header) or
+    # fall back to the header when present. Do not gate them here or the blanket
+    # check rejects the navigation before the handler can verify the token.
+    if path.startswith("/api/admin/") and not (path.endswith("/viewer") or path.endswith("/proxy") or path.endswith("/open-file")):
         _validate_admin_request(request)
     return await handler(request)
 
