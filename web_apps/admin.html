@@ -10,7 +10,7 @@
 </style>
 </head>
 <body>
-<div id="auth" class="auth"><div class="box"><h2>👑 Armenia AI Guide</h2><p id="auth-text">Ստուգում ենք ադմինիստրատորի մուտքը…</p><button id="auth-button" style="display:none" onclick="returnToTelegram()">Բացել Telegram-ում</button><div id="auth-error" class="error" style="display:none"></div><div id="auth-debug" class="debug"></div></div></div>
+<div id="auth" class="auth"><div class="box"><h2>👑 Armenia AI Guide</h2><p id="auth-text">Ստուգում ենք ադմինիստրատորի մուտքը… / Проверяем административный вход…</p><button id="auth-button" style="display:none">Բացել Telegram-ում / Открыть в Telegram</button><button id="auth-retry" style="display:none;margin-left:8px">🔄 Повторить</button><div id="auth-error" class="error" style="display:none"></div><div id="auth-debug" class="debug"></div></div></div>
 <div id="app" style="display:none">
 <header><b>👑 Armenia AI Guide — Ադմինիստրացիա</b><small>Գործընկերներ · օգտվողներ · ուղղություններ · պատվերներ · AI · ֆինանսներ</small><button class="btn soft" style="margin-top:8px" onclick="refreshAll()">↻ Թարմացնել</button></header>
 <nav><button class="active" data-p="overview">📊 Ընդհանուր</button><button data-p="partners">🤝 Գործընկերներ</button><button data-p="users">👥 Օգտվողներ</button><button data-p="cats">📂 Ուղղություններ</button><button data-p="orders">📦 Պատվերներ</button><button data-p="disputes">⚖️ Արբիտրաժ</button><button data-p="ai">🤖 AI</button><button data-p="potential">🔎 Հնարավոր գործընկերներ</button><button data-p="proposals">🧠 AI առաջարկներ</button></nav>
@@ -44,36 +44,58 @@ async function api(url,opt={}){
     const r=await fetch(url,{...opt,headers,cache:'no-store',signal:controller.signal});
     const text=await r.text();
     let d={};try{d=text?JSON.parse(text):{}}catch(_){d={error:text||('HTTP '+r.status)}}
-    if(!r.ok)throw Error(d.error||d.message||('HTTP '+r.status));
+    if(!r.ok)throw Object.assign(Error(d.error||d.message||('HTTP '+r.status)),{data:d});
     return d;
   }catch(e){if(e.name==='AbortError')throw Error('admin_auth_timeout');throw e}
   finally{clearTimeout(timer)}
 }
 const post=(u,d)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
 
+// На мобильных Telegram initData появляется с небольшой задержкой — ждём до 3 сек.
+async function waitInitData(ms=3000){
+  const t0=Date.now();
+  let d=(tg?.initData||'').trim();
+  while(!d&&Date.now()-t0<ms){await new Promise(r=>setTimeout(r,150));try{tg?.ready()}catch(_){}d=(tg?.initData||'').trim()}
+  return d;
+}
 async function authenticateAdmin(){
-  tg?.ready();
-  initData=(tg?.initData||'').trim();
-  $('auth-debug').textContent='Telegram WebApp: '+(tg?'yes':'no')+'\ninitData: '+(initData?'received':'missing');
+  try{tg?.ready()}catch(_){}
+  $('auth-error').style.display='none';
+  $('auth-retry').style.display='none';
+  $('auth-button').style.display='none';
+  $('auth-text').textContent='Проверяем административный вход… / Ստուգում ենք…';
+  initData=await waitInitData();
+  const uid=tg?.initDataUnsafe?.user?.id;
+  $('auth-debug').textContent='Telegram WebApp: '+(tg?'да':'нет')+'\ninitData: '+(initData?'получен':'отсутствует')+(uid?('\nВаш Telegram ID: '+uid):'');
   if(!initData){
-    $('auth-text').textContent='Ադմինիստրատորի վահանակը պետք է բացվի Telegram Web App-ի ներսում։';
+    $('auth-text').textContent='Панель нужно открывать ВНУТРИ Telegram — командой /admin_panel или кнопкой бота, а не по обычной ссылке в браузере.';
     $('auth-button').style.display='inline-block';
+    $('auth-retry').style.display='inline-block';
     return false;
   }
-  $('auth-text').textContent='Ստուգում ենք ադմինիստրատորի մուտքը…';
   try{
     const d=await api('/api/admin/auth');
-    if(!d.ok)throw Error('admin_access_required');
+    if(!d.ok)throw Object.assign(Error(d.error||'admin_access_required'),{data:d});
     $('auth').style.display='none';
     $('app').style.display='block';
     return true;
   }catch(e){
-    $('auth-text').textContent='Չհաջողվեց ավարտել ադմինիստրատորի մուտքը։';
-    $('auth-error').textContent=e.message;
+    const code=e.message||'error';const info=e.data||{};
+    let msg='Не удалось войти в админ-панель.';
+    if(code==='admin_access_required')msg='Доступ запрещён: ваш Telegram ID не совпадает с ADMIN_TELEGRAM_ID на сервере.';
+    else if(code==='admin_id_not_configured')msg='На сервере не задан ADMIN_TELEGRAM_ID. Укажите его в .env и перезапустите бота.';
+    else if(/hash|init|signature|invalid/i.test(code))msg='Проверка подписи Telegram не прошла. Обычно причина — TELEGRAM_BOT_TOKEN на сервере не от этого бота.';
+    else if(code==='admin_auth_timeout')msg='Сервер не ответил вовремя. Проверьте, что бэкенд запущен и доступен по HTTPS.';
+    if(info.your_telegram_id)msg+=' Ваш Telegram ID: '+info.your_telegram_id+' — впишите его в ADMIN_TELEGRAM_ID.';
+    $('auth-text').textContent=msg;
+    $('auth-error').textContent='Код ошибки: '+code;
     $('auth-error').style.display='block';
+    $('auth-retry').style.display='inline-block';
     return false;
   }
 }
+$('auth-button').addEventListener('click',returnToTelegram);
+$('auth-retry').addEventListener('click',()=>{authenticateAdmin().then(ok=>{if(ok)loadPage('overview').catch(e=>{$('auth-error').textContent=e.message;$('auth-error').style.display='block'})})});
 
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.p).classList.add('active');loadPage(b.dataset.p)});
 let partnerRows=[],partnerFilter='all';
@@ -89,7 +111,7 @@ async function openDoc(pid,did){const d=await api(`/api/admin/partner-applicatio
 async function decision(id,a){const reason=a==='reject'?prompt('Պատճառը','Փաստաթղթերը չեն համապատասխանում'):'';await post(`/api/admin/partner-applications/${id}/${a}`,reason?{reason}:{});await loadPartners()}
 async function loadUsers(){const rows=await api('/api/admin/users');$('users-list').innerHTML=(rows||[]).map(x=>`<div class="user"><div class="row"><div><b>${esc(x.full_name||x.username||x.telegram_id)}</b><div class="muted">${x.telegram_id} · @${esc(x.username||'—')} · ${esc(x.role||'—')} · ${esc(x.city||'—')} · ${esc(x.lang||'—')}</div></div><span class="badge">${x.is_verified?'✓':'—'}</span></div><div class="actions"><button class="btn soft" onclick="userAction(${x.telegram_id},'freeze')">${x.is_frozen?'Ապասառեցնել':'Սառեցնել'}</button></div></div>`).join('')||'<div class="empty">Օգտվողներ չկան</div>'}
 async function userAction(id,a){await post(`/api/admin/user/${id}/${a}`,{});await loadUsers();await loadStats()}
-async function loadCats(){const d=await api('/api/admin/directions-tree'),rows=d.directions||[];$('cats-list').innerHTML=rows.map(m=>`<div class="cat"><div class="row"><div><b>📁 ${esc(m.name_am||m.name_ru)}</b><div class="muted">ID ${m.id} · ${esc(m.name_ru||'')}</div></div><span class="badge ${m.is_active?'green':'red'}">${m.is_active?'Ակտիվ':'Սառեցված'}</span></div><div class="actions"><button class="btn soft" onclick="editMasterDirection(${m.id},${JSON.stringify(m.name_am||'')},${JSON.stringify(m.name_ru||'')})">✏ Խմբագրել</button>${m.is_active?`<button class="btn warn" onclick="masterDirectionAction(${m.id},'freeze')">❄ Սառեցնել</button>`:`<button class="btn ok" onclick="masterDirectionAction(${m.id},'activate')">▶ Ակտիվացնել</button>`}<button class="btn danger" onclick="masterDirectionAction(${m.id},'delete')">🗑 Ջնջել</button><button class="btn soft" onclick="addSubcategory(${m.id})">+ Ենթակատեգորիա</button></div><div class="detail">${(m.subcategories||[]).map(x=>`<div class="cat"><div class="row"><b>${esc(x.name_am||x.name_ru)}</b><span class="badge ${x.is_active?'green':'red'}">${x.is_active?'Ակտիվ':'Սառեցված'}</span></div><div class="settings" style="margin-top:8px"><div class="field"><label>Հանձնաժողով % / AMD</label><input id="cv${x.id}" type="number" min="0" value="${x.commission_value??0}"></div><div class="field"><label>Հանձնաժողովի տեսակ</label><select id="ct${x.id}"><option value="inside" ${x.commission_type==='inside'?'selected':''}>Գնի մեջ</option><option value="on_top" ${x.commission_type==='on_top'?'selected':''}>Գնից վերև</option><option value="fixed" ${x.commission_type==='fixed'?'selected':''}>Ֆիքսված</option></select></div><div class="field"><label>Բանկային վճար</label><select id="bt${x.id}"><option value="none">Չկա</option><option value="percent" ${x.bank_commission_type==='percent'?'selected':''}>%</option><option value="fixed" ${x.bank_commission_type==='fixed'?'selected':''}>Ֆիքսված</option></select></div><div class="field"><label>Բանկային արժեք</label><input id="bv${x.id}" type="number" min="0" value="${x.bank_commission_value??0}"></div><div class="field"><label>Չեղարկում</label><select id="ca${x.id}"><option value="full_refund">100% վերադարձ</option><option value="half_refund" ${x.cancellation_policy==='half_refund'?'selected':''}>50% վերադարձ</option><option value="no_refund" ${x.cancellation_policy==='no_refund'?'selected':''}>Առանց վերադարձի</option></select></div><div class="field"><label>Premium կապ</label><select id="pr${x.id}"><option value="false">Անջատված</option><option value="true" ${x.premium_contact_enabled?'selected':''}>Միացված</option></select></div><div class="field"><label>Premium վճար, ֏</label><input id="pf${x.id}" type="number" min="0" value="${x.premium_contact_fee??0}"></div><div class="field"><label>Բացահայտման ծավալ</label><select id="sc${x.id}"><option value="none">Չբացել</option><option value="basic" ${x.premium_disclosure_scope==='basic'?'selected':''}>Սահմանափակ</option><option value="full" ${x.premium_disclosure_scope==='full'?'selected':''}>Ամբողջական</option></select></div></div><div class="actions"><button class="btn ok" onclick="saveCat(${x.id})">💾 Պահպանել</button><button class="btn danger" onclick="deleteSubcategory(${x.id})">🗑 Ջնջել</button></div></div>`).join('')||'<div class="empty">Ենթակատեգորիաներ չկան</div></div></div>`).join('')||'<div class="empty">Ուղղություններ չկան</div>'}
+async function loadCats(){const d=await api('/api/admin/directions-tree'),rows=d.directions||[];$('cats-list').innerHTML=rows.map(m=>`<div class="cat"><div class="row"><div><b>📁 ${esc(m.name_am||m.name_ru)}</b><div class="muted">ID ${m.id} · ${esc(m.name_ru||'')}</div></div><span class="badge ${m.is_active?'green':'red'}">${m.is_active?'Ակտիվ':'Սառեցված'}</span></div><div class="actions"><button class="btn soft" onclick="editMasterDirection(${m.id},${JSON.stringify(m.name_am||'')},${JSON.stringify(m.name_ru||'')})">✏ Խմբագրել</button>${m.is_active?`<button class="btn warn" onclick="masterDirectionAction(${m.id},'freeze')">❄ Սառեցնել</button>`:`<button class="btn ok" onclick="masterDirectionAction(${m.id},'activate')">▶ Ակտիվացնել</button>`}<button class="btn danger" onclick="masterDirectionAction(${m.id},'delete')">🗑 Ջնջել</button><button class="btn soft" onclick="addSubcategory(${m.id})">+ Ենթակատեգորիա</button></div><div class="detail">${(m.subcategories||[]).map(x=>`<div class="cat"><div class="row"><b>${esc(x.name_am||x.name_ru)}</b><span class="badge ${x.is_active?'green':'red'}">${x.is_active?'Ակտիվ':'Սառեցված'}</span></div><div class="settings" style="margin-top:8px"><div class="field"><label>Հանձնաժողով % / AMD</label><input id="cv${x.id}" type="number" min="0" value="${x.commission_value??0}"></div><div class="field"><label>Հանձնաժողովի տեսակ</label><select id="ct${x.id}"><option value="inside" ${x.commission_type==='inside'?'selected':''}>Գնի մեջ</option><option value="on_top" ${x.commission_type==='on_top'?'selected':''}>Գնից վերև</option><option value="fixed" ${x.commission_type==='fixed'?'selected':''}>Ֆիքսված</option></select></div><div class="field"><label>Բանկային վճար</label><select id="bt${x.id}"><option value="none">Չկա</option><option value="percent" ${x.bank_commission_type==='percent'?'selected':''}>%</option><option value="fixed" ${x.bank_commission_type==='fixed'?'selected':''}>Ֆիքսված</option></select></div><div class="field"><label>Բանկային արժեք</label><input id="bv${x.id}" type="number" min="0" value="${x.bank_commission_value??0}"></div><div class="field"><label>Չեղարկում</label><select id="ca${x.id}"><option value="full_refund">100% վերադարձ</option><option value="half_refund" ${x.cancellation_policy==='half_refund'?'selected':''}>50% վերադարձ</option><option value="no_refund" ${x.cancellation_policy==='no_refund'?'selected':''}>Առանց վերադարձի</option></select></div><div class="field"><label>Premium կապ</label><select id="pr${x.id}"><option value="false">Անջատված</option><option value="true" ${x.premium_contact_enabled?'selected':''}>Միացված</option></select></div><div class="field"><label>Premium վճար, ֏</label><input id="pf${x.id}" type="number" min="0" value="${x.premium_contact_fee??0}"></div><div class="field"><label>Բացահայտման ծավալ</label><select id="sc${x.id}"><option value="none">Չբացել</option><option value="basic" ${x.premium_disclosure_scope==='basic'?'selected':''}>Սահմանափակ</option><option value="full" ${x.premium_disclosure_scope==='full'?'selected':''}>Ամբողջական</option></select></div></div><div class="actions"><button class="btn ok" onclick="saveCat(${x.id})">💾 Պահպանել</button><button class="btn danger" onclick="deleteSubcategory(${x.id})">🗑 Ջնջել</button></div></div>`).join('')||'<div class="empty">Ենթակատեգորիաներ չկան</div>'}</div></div>`).join('')||'<div class="empty">Ուղղություններ չկան</div>'}
 async function addMasterDirection(){const am=prompt('Հայերեն հիմնական ուղղություն');if(!am)return;const ru=prompt('Русское название');if(!ru)return;const slug=prompt('Slug',am.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''));if(!slug)return;await post('/api/admin/master_category',{name_am:am,name_ru:ru,slug});await loadCats()}
 async function masterDirectionAction(id,action){await post(`/api/admin/master-directions/${id}/action`,{action});await loadCats()}
 async function editMasterDirection(id,am,ru){const a=prompt('Հայերեն անվանում',am);if(a===null)return;const r=prompt('Русское название',ru);if(r===null)return;await post(`/api/admin/master-directions/${id}/action`,{action:'edit',name_am:a,name_ru:r});await loadCats()}

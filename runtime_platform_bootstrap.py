@@ -112,8 +112,10 @@ def _validate_admin_request(request):
     except (TelegramWebAppAuthError,KeyError,TypeError,ValueError) as exc:
         raise web.HTTPUnauthorized(text=json.dumps({"ok":False,"error":str(exc) or "invalid_telegram_init_data"}),content_type="application/json")
     admin_id=_admin_configured_id()
-    if not admin_id or uid!=admin_id:
-        raise web.HTTPForbidden(text='{"ok":false,"error":"admin_access_required"}',content_type="application/json")
+    if not admin_id:
+        raise web.HTTPForbidden(text=json.dumps({"ok":False,"error":"admin_id_not_configured","your_telegram_id":uid}),content_type="application/json")
+    if uid!=admin_id:
+        raise web.HTTPForbidden(text=json.dumps({"ok":False,"error":"admin_access_required","your_telegram_id":uid}),content_type="application/json")
     request["admin_telegram_id"]=uid
     return uid
 
