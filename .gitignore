@@ -1,0 +1,28 @@
+# Секреты и конфигурация (КРИТИЧЕСКИ ВАЖНО)
+.env
+*.env
+config.json
+secrets.toml
+
+# Виртуальное окружение Python
+venv/
+.venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Кэш Python и системные файлы
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.vscode/
+.idea/
+*.log
+
+# Файлы ОС
+.DS_Store
+Thumbs.db

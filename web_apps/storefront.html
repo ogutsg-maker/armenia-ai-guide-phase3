@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Витрина — Armenia AI Guide</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f4f6fa;color:#172033;font:15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:960px;margin:auto;padding:12px}
+.hero,.panel{background:#fff;border:1px solid #e3e7ee;border-radius:20px;padding:18px;margin-bottom:14px;box-shadow:0 8px 30px #00000008}
+.hero{position:relative;overflow:hidden}
+.brandline{font-size:12px;letter-spacing:.14em;color:#9aa4b6;font-weight:800;text-transform:uppercase}
+.bizname{font-size:26px;font-weight:900;margin:6px 0 2px}
+.tagline{color:#3d4a63;font-weight:600;margin-bottom:8px}
+.desc{color:#4a5468;white-space:pre-wrap;line-height:1.5}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.chip{background:#eef2f7;border:1px solid #e0e5ec;border-radius:999px;padding:5px 12px;font-size:13px;color:#3d4a63}
+.chip.badge{background:#eaf1ff;border-color:#cfe0ff;color:#1c4bd6;font-weight:700}
+.section-title{font-size:18px;font-weight:800;margin:4px 2px 10px}
+.muted{color:#687386;font-size:13px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{border:1px solid #e0e5ec;border-radius:16px;padding:15px;display:flex;flex-direction:column;background:#fff;transition:box-shadow .15s,transform .15s}
+.card:hover{box-shadow:0 10px 26px #00000012;transform:translateY(-2px)}
+.cat{font-size:11px;font-weight:800;letter-spacing:.05em;color:#1c4bd6;text-transform:uppercase;margin-bottom:6px}
+.card h3{margin:0 0 6px;font-size:17px}
+.card .cdesc{color:#5a6478;font-size:13.5px;line-height:1.45;flex:1;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.meta{display:flex;align-items:baseline;justify-content:space-between;margin-top:12px;gap:8px}
+.price{font-size:19px;font-weight:900}
+.price small{font-size:12px;font-weight:700;color:#687386}
+.dur{font-size:12px;color:#687386}
+.extras{margin-top:8px;font-size:12px;color:#8a93a5}
+.btn{border:0;border-radius:12px;padding:11px 14px;background:#111827;color:#fff;font-weight:800;cursor:pointer;font-size:14px}
+.btn.block{width:100%;margin-top:12px}
+.btn.secondary{background:#e9edf2;color:#172033}
+.state{padding:40px 16px;text-align:center;color:#687386}
+.spinner{width:34px;height:34px;border:3px solid #dce2ec;border-top-color:#111827;border-radius:50%;margin:0 auto 14px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* modal */
+.overlay{position:fixed;inset:0;background:#0b1120a8;display:flex;align-items:flex-end;justify-content:center;padding:0;z-index:50}
+.overlay.hidden{display:none}
+.sheet{background:#fff;width:100%;max-width:560px;border-radius:22px 22px 0 0;padding:20px;max-height:88vh;overflow:auto;box-shadow:0 -10px 40px #00000030}
+.sheet .close{float:right;border:0;background:#eef2f7;border-radius:50%;width:34px;height:34px;font-size:18px;cursor:pointer;color:#3d4a63}
+.sheet h2{margin:2px 0 4px;font-size:22px;padding-right:40px}
+.block-title{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#9aa4b6;margin:18px 0 8px}
+.pkg,.opt{border:1px solid #e6eaf1;border-radius:12px;padding:11px 13px;margin-bottom:8px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.pkg .pname,.opt .oname{font-weight:700}
+.pkg .pdesc{color:#687386;font-size:12.5px;margin-top:3px}
+.pkg .pprice,.opt .oprice{font-weight:800;white-space:nowrap}
+.note{background:#f7f9fc;border:1px solid #e0e5ec;border-radius:12px;padding:12px;color:#5a6478;font-size:13px;margin-top:16px;line-height:1.5}
+.pkg.sel,.opt.sel{border-color:#1c4bd6;box-shadow:0 0 0 2px #cfe0ff inset}
+.pkg,.opt{cursor:pointer}
+.pkg .pick,.opt .pick{margin-right:2px}
+.totalbar{position:sticky;bottom:0;background:#fff;border-top:1px solid #e6eaf1;margin:16px -20px -20px;padding:14px 20px 18px}
+.totalrow{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.totalrow .tlabel{color:#687386;font-weight:700}
+.totalrow .tval{font-size:22px;font-weight:900}
+.voucher{border:2px dashed #1c4bd6;border-radius:16px;padding:18px;text-align:center;margin-top:8px}
+.voucher img{width:190px;height:190px;margin:12px auto;display:block}
+.voucher .vt{font-size:13px;color:#687386;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.voucher .vp{font-size:22px;font-weight:900;margin:6px 0}
+.err{color:#c0392b;font-weight:700;margin-top:10px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+@media(max-width:600px){.wrap{padding:8px}.bizname{font-size:22px}.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="hero" class="hero">
+    <div class="state"><div class="spinner"></div>Загрузка витрины…</div>
+  </div>
+  <div id="servicesPanel" class="panel" style="display:none">
+    <div class="section-title">Услуги</div>
+    <div id="cards" class="cards"></div>
+  </div>
+</div>
+
+<div id="overlay" class="overlay hidden">
+  <div class="sheet">
+    <button class="close" id="sheetClose" aria-label="Закрыть">×</button>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); }
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function partnerId(){
+  const url = new URL(location.href);
+  let id = url.searchParams.get('partner') || url.searchParams.get('id') || url.searchParams.get('p');
+  // Telegram deep-link start param, e.g. ?startapp=partner_12 or plain "12"
+  const sp = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '';
+  if (!id && sp){ const m = String(sp).match(/(\d+)/); if (m) id = m[1]; }
+  if (!id && location.hash){ const m = location.hash.match(/(\d+)/); if (m) id = m[1]; }
+  return id ? String(id).replace(/\D/g,'') : '';
+}
+
+function money(v, cur){
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  const s = isNaN(n) ? String(v) : n.toLocaleString('ru-RU');
+  return s + ' ' + esc(cur || 'AMD');
+}
+function duration(min){
+  if (!min) return '';
+  min = Number(min);
+  if (min < 60) return min + ' мин';
+  const h = Math.floor(min/60), m = min%60;
+  return h + ' ч' + (m ? ' ' + m + ' мин' : '');
+}
+function policyLabel(p){
+  return ({
+    after_booking:'Контакты после бронирования',
+    premium:'Контакты по Premium',
+    never:'Связь через платформу'
+  })[p] || '';
+}
+function locText(l){
+  return [l.marz, l.city, l.village, l.address].filter(Boolean).join(', ');
+}
+
+let STATE = { services: [], partner: null };
+
+async function load(){
+  const id = partnerId();
+  if (!id){ renderError('Не указан партнёр. Откройте страницу с параметром ?partner=<id>.'); return; }
+  try{
+    const r = await fetch('/api/storefront/' + encodeURIComponent(id));
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    STATE.partner = d.partner; STATE.services = d.services || [];
+    renderHero(d);
+    renderServices(d.services || []);
+  }catch(e){
+    renderError(e.message === 'storefront_not_found'
+      ? 'Витрина не найдена или партнёр ещё не одобрен.'
+      : ('Ошибка загрузки: ' + esc(e.message)));
+  }
+}
+
+function renderError(msg){
+  document.getElementById('hero').innerHTML =
+    '<div class="state">' + esc(msg) + '</div>';
+  document.getElementById('servicesPanel').style.display = 'none';
+}
+
+function renderHero(d){
+  const p = d.partner, prof = p.profile || {};
+  const chips = [];
+  (d.locations || []).forEach(l => { const t = locText(l); if (t) chips.push('📍 ' + esc(t)); });
+  if (prof.working_hours) chips.push('🕒 ' + esc(prof.working_hours));
+  if (prof.languages) chips.push('🗣 ' + esc(Array.isArray(prof.languages)?prof.languages.join(', '):prof.languages));
+  const pol = policyLabel(p.contact_share_policy);
+  let html = '<div class="brandline">Armenia AI Guide · Витрина</div>';
+  html += '<div class="bizname">' + esc(p.business_name || 'Партнёр') + '</div>';
+  if (prof.tagline) html += '<div class="tagline">' + esc(prof.tagline) + '</div>';
+  const about = prof.about || p.business_description;
+  if (about) html += '<div class="desc">' + esc(about) + '</div>';
+  html += '<div class="chips">';
+  chips.forEach(c => html += '<span class="chip">' + c + '</span>');
+  html += '<span class="chip">🛠 ' + d.service_count + ' услуг</span>';
+  if (pol) html += '<span class="chip badge">' + esc(pol) + '</span>';
+  html += '</div>';
+  document.getElementById('hero').innerHTML = html;
+}
+
+function renderServices(services){
+  const panel = document.getElementById('servicesPanel');
+  const cards = document.getElementById('cards');
+  panel.style.display = '';
+  cards.innerHTML = '';
+  if (!services.length){
+    cards.innerHTML = '<div class="muted">У этого партнёра пока нет опубликованных услуг.</div>';
+    return;
+  }
+  services.forEach((s, idx) => {
+    const cat = s.category_name_ru || s.category_name_am || '';
+    const extras = [];
+    if (s.packages && s.packages.length) extras.push(s.packages.length + ' пакетов');
+    if (s.options && s.options.length) extras.push(s.options.length + ' опций');
+    const card = document.createElement('div');
+    card.className = 'card';
+    let h = '';
+    if (cat) h += '<div class="cat">' + esc(cat) + '</div>';
+    h += '<h3>' + esc(s.name) + '</h3>';
+    if (s.description) h += '<div class="cdesc">' + esc(s.description) + '</div>';
+    h += '<div class="meta"><span class="price">' +
+         (s.price==null ? '<small>Цена по запросу</small>' : money(s.price, s.currency)) +
+         '</span>' + (duration(s.duration_minutes) ? '<span class="dur">⏱ ' + esc(duration(s.duration_minutes)) + '</span>' : '') +
+         '</div>';
+    if (extras.length) h += '<div class="extras">' + esc(extras.join(' · ')) + '</div>';
+    h += '<button class="btn block" data-idx="' + idx + '">Подробнее</button>';
+    card.innerHTML = h;
+    card.querySelector('button').addEventListener('click', () => openSheet(idx));
+    cards.appendChild(card);
+  });
+}
+
+function openSheet(idx){
+  const s = STATE.services[idx];
+  if (!s) return;
+  const cat = s.category_name_ru || s.category_name_am || '';
+  let h = '';
+  if (cat) h += '<div class="cat">' + esc(cat) + '</div>';
+  h += '<h2>' + esc(s.name) + '</h2>';
+  h += '<div class="meta"><span class="price">' +
+       (s.price==null ? '<small>Цена по запросу</small>' : money(s.price, s.currency)) +
+       '</span>' + (duration(s.duration_minutes) ? '<span class="dur">⏱ ' + esc(duration(s.duration_minutes)) + '</span>' : '') +
+       '</div>';
+  if (s.description) h += '<div class="desc" style="margin-top:12px">' + esc(s.description) + '</div>';
+
+  const packages = (s.packages || []);
+  const options = (s.options || []);
+  const baseAvailable = s.price != null;
+  // A service is directly bookable when it has a fixed base price OR at least one package.
+  const bookable = baseAvailable || packages.length > 0;
+
+  if (packages.length){
+    h += '<div class="block-title">Пакеты' + (bookable ? ' (выберите один)' : '') + '</div>';
+    if (baseAvailable){
+      h += '<label class="pkg" data-pkg="" data-price="' + Number(s.price) + '" data-cur="' + esc(s.currency||"AMD") + '">' +
+           '<input class="pick" type="radio" name="pkg" value="" checked>' +
+           '<div style="flex:1"><div class="pname">Базовая услуга</div></div>' +
+           '<div class="pprice">' + money(s.price, s.currency) + '</div></label>';
+    }
+    packages.forEach((p, i) => {
+      const checked = (!baseAvailable && i === 0) ? ' checked' : '';
+      h += '<label class="pkg" data-pkg="' + p.id + '" data-price="' + Number(p.price||0) + '" data-cur="' + esc(p.currency||"AMD") + '">' +
+           '<input class="pick" type="radio" name="pkg" value="' + p.id + '"' + checked + '>' +
+           '<div style="flex:1"><div class="pname">' + esc(p.name) + '</div>' +
+           (p.description ? '<div class="pdesc">' + esc(p.description) + '</div>' : '') +
+           '</div><div class="pprice">' + money(p.price, p.currency) + '</div></label>';
+    });
+  }
+  if (options.length){
+    h += '<div class="block-title">Дополнительные опции</div>';
+    options.forEach(o => {
+      const d = Number(o.price_delta || 0);
+      const sign = d > 0 ? '+' : '';
+      h += '<label class="opt" data-opt="' + o.id + '" data-delta="' + d + '">' +
+           '<input class="pick" type="checkbox" name="opt" value="' + o.id + '">' +
+           '<div class="oname" style="flex:1">' + esc(o.name) + '</div>' +
+           '<div class="oprice">' + sign + money(o.price_delta, o.currency) + '</div></label>';
+    });
+  }
+
+  if (bookable){
+    h += '<div class="totalbar">' +
+         '<div class="totalrow"><span class="tlabel">Итого</span><span class="tval" id="total">—</span></div>' +
+         '<button class="btn block" id="bookBtn">🛒 Забронировать</button>' +
+         '<div class="err" id="bookErr" style="display:none"></div>' +
+         '<div class="muted" style="margin-top:8px;text-align:center">Тестовая оплата Idram · QR для check-in выдаётся сразу</div>' +
+         '</div>';
+  } else {
+    h += '<div class="note">У этой услуги цена по запросу. Откройте AI-консьержа — он поможет согласовать условия и оформить заказ.</div>' +
+         '<button class="btn block" id="gotoConcierge">💬 К AI-консьержу</button>';
+  }
+
+  const body = document.getElementById('sheetBody');
+  body.innerHTML = h;
+
+  if (bookable){
+    // Highlight selected rows + recompute total on any change.
+    const recompute = () => {
+      let cur = s.currency || 'AMD';
+      let base = baseAvailable ? Number(s.price) : 0;
+      const selPkg = body.querySelector('input[name="pkg"]:checked');
+      body.querySelectorAll('.pkg').forEach(el => el.classList.remove('sel'));
+      if (selPkg){
+        const lbl = selPkg.closest('.pkg');
+        lbl.classList.add('sel');
+        base = Number(lbl.getAttribute('data-price')) || 0;
+        cur = lbl.getAttribute('data-cur') || cur;
+      }
+      let total = base;
+      body.querySelectorAll('input[name="opt"]').forEach(cb => {
+        const lbl = cb.closest('.opt');
+        if (cb.checked){ lbl.classList.add('sel'); total += Number(lbl.getAttribute('data-delta')) || 0; }
+        else lbl.classList.remove('sel');
+      });
+      document.getElementById('total').textContent = money(Math.round(total*100)/100, cur);
+    };
+    body.querySelectorAll('input[name="pkg"],input[name="opt"]').forEach(el =>
+      el.addEventListener('change', recompute));
+    recompute();
+    const btn = document.getElementById('bookBtn');
+    btn.addEventListener('click', () => submitBooking(s, body, btn));
+  } else {
+    const cta = document.getElementById('gotoConcierge');
+    if (cta) cta.addEventListener('click', () => { location.href = 'client.html'; });
+  }
+  document.getElementById('overlay').classList.remove('hidden');
+}
+
+async function submitBooking(s, body, btn){
+  const errEl = document.getElementById('bookErr');
+  errEl.style.display = 'none';
+  const initData = (tg && tg.initData) || '';
+  if (!initData){
+    errEl.textContent = 'Бронирование доступно только внутри приложения Telegram. Откройте витрину через бота.';
+    errEl.style.display = '';
+    return;
+  }
+  const selPkg = body.querySelector('input[name="pkg"]:checked');
+  const packageId = selPkg && selPkg.value ? Number(selPkg.value) : null;
+  const optionIds = Array.from(body.querySelectorAll('input[name="opt"]:checked')).map(c => Number(c.value));
+  btn.disabled = true; btn.textContent = 'Оформляем…';
+  try{
+    const r = await fetch('/api/market/client/service/' + encodeURIComponent(s.id) + '/book', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+      body: JSON.stringify({ package_id: packageId, option_ids: optionIds })
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    renderVoucher(d);
+  }catch(e){
+    const map = {
+      telegram_init_data_required: 'Нужен вход через Telegram.',
+      service_not_available: 'Услуга сейчас недоступна.',
+      package_not_available: 'Выбранный пакет недоступен.',
+      option_not_available: 'Выбранная опция недоступна.',
+      price_on_request: 'У услуги цена по запросу — воспользуйтесь AI-консьержем.',
+      invalid_total_price: 'Некорректная сумма заказа.'
+    };
+    errEl.textContent = map[e.message] || ('Не удалось забронировать: ' + esc(e.message));
+    errEl.style.display = '';
+    btn.disabled = false; btn.textContent = '🛒 Забронировать';
+  }
+}
+
+function renderVoucher(d){
+  const b = d.booking || {};
+  const p = d.partner || {};
+  let h = '<h2>✅ Бронирование оформлено</h2>';
+  h += '<div class="voucher">';
+  h += '<div class="vt">' + esc(p.business_name || 'Партнёр') + '</div>';
+  h += '<div class="vp">' + esc(b.service_name || d.partner && p.service || '') + '</div>';
+  h += '<div class="price">' + money(b.agreed_price, b.currency) + '</div>';
+  if (d.qr) h += '<img alt="QR для check-in" src="' + esc(d.qr) + '">';
+  h += '<div class="muted">Заказ №' + esc(b.id) + ' · покажите QR партнёру при визите</div>';
+  h += '</div>';
+  const locs = (p.locations || []).map(locText).filter(Boolean);
+  if (locs.length) h += '<div class="note">📍 ' + locs.map(esc).join('<br>📍 ') + '</div>';
+  const c = p.contact || {};
+  const cbits = [];
+  if (c.phone) cbits.push('📞 ' + esc(c.phone));
+  if (c.telegram) cbits.push('✈️ ' + esc(c.telegram));
+  if (c.website) cbits.push('🌐 ' + esc(c.website));
+  if (cbits.length) h += '<div class="note">' + cbits.join('<br>') + '</div>';
+  h += '<button class="btn block" id="vClose">Готово</button>';
+  document.getElementById('sheetBody').innerHTML = h;
+  document.getElementById('vClose').addEventListener('click', closeSheet);
+}
+
+function closeSheet(){ document.getElementById('overlay').classList.add('hidden'); }
+document.getElementById('sheetClose').addEventListener('click', closeSheet);
+document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeSheet(); });
+
+load();
+</script>
+</body>
+</html>

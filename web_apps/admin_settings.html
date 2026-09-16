@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Armenia AI Guide — Настройки</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{--bg:#f4f6f8;--card:#fff;--line:#e5e7eb;--muted:#64748b;--accent:#2563eb;--ok:#16a34a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font:14px system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a}
+  header{padding:18px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header h1{margin:0;font-size:17px}
+  header p{margin:4px 0 0;color:var(--muted);font-size:12px}
+  main{padding:16px;max-width:640px;margin:0 auto}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:14px}
+  .card h2{margin:0 0 10px;font-size:14px;color:#334155}
+  .row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9}
+  .row:last-child{border-bottom:none}
+  .row .lbl{font-weight:600}
+  .row .desc{color:var(--muted);font-size:12px;margin-top:2px}
+  .switch{position:relative;width:46px;height:26px;flex:0 0 auto}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:#cbd5e1;border-radius:999px;transition:.2s;cursor:pointer}
+  .slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  input:checked + .slider{background:var(--ok)}
+  input:checked + .slider:before{transform:translateX(20px)}
+  .num{width:110px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font:14px inherit;text-align:right}
+  .btn{display:inline-block;width:100%;padding:12px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+  .btn[disabled]{opacity:.5;cursor:default}
+  .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1}
+  .stat{display:flex;justify-content:space-between;padding:6px 0;font-size:13px}
+  .stat b{font-variant-numeric:tabular-nums}
+  .err{color:#dc2626;font-size:13px;padding:10px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚙️ Настройки платформы</h1>
+  <p>Фаза 3 — вкл/выкл модулей и параметры (без редеплоя)</p>
+</header>
+<main>
+  <div id="err" class="err" style="display:none"></div>
+
+  <div class="card">
+    <h2>Модули</h2>
+    <div id="flags"></div>
+  </div>
+
+  <div class="card">
+    <h2>Параметры</h2>
+    <div class="row">
+      <div><div class="lbl">Макс. комиссия за премиум-контакт, AMD</div>
+        <div class="desc">Потолок платы за разблокировку контакта</div></div>
+      <input id="premium_contact_max_fee" class="num" type="number" min="0" step="500">
+    </div>
+    <div class="row">
+      <div><div class="lbl">Мин. оценка отзыва</div></div>
+      <input id="review_min_rating" class="num" type="number" min="1" max="5">
+    </div>
+    <div class="row">
+      <div><div class="lbl">Макс. оценка отзыва</div></div>
+      <input id="review_max_rating" class="num" type="number" min="1" max="5">
+    </div>
+  </div>
+
+  <button id="save" class="btn">Сохранить</button>
+
+  <div class="card" style="margin-top:16px">
+    <h2>📊 Сводка</h2>
+    <div id="stats"><div class="desc" style="color:var(--muted)">Загрузка…</div></div>
+  </div>
+</main>
+<div id="toast" class="toast"></div>
+
+<script>
+(function(){
+  var tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { try{ tg.ready(); tg.expand(); }catch(e){} }
+  var initData = (tg && tg.initData) || '';
+  var H = {'Content-Type':'application/json','X-Telegram-Init-Data':initData};
+
+  var FLAG_LABELS = {
+    premium_contact: ['Премиум-контакт', 'Платная выдача контактов партнёра'],
+    cancellations: ['Отмены', 'Отмена броней с возвратом'],
+    reviews: ['Отзывы', 'Оценки и комментарии после брони'],
+    review_ai_moderation: ['AI-модерация отзывов', 'Авто-флаг токсичных комментариев'],
+    support: ['Поддержка', 'Тикеты поддержки'],
+    support_ai: ['AI в поддержке', 'Первая линия отвечает автоматически']
+  };
+  var FLAGS = Object.keys(FLAG_LABELS);
+  var NUMS = ['premium_contact_max_fee','review_min_rating','review_max_rating'];
+
+  function toast(t){ var el=document.getElementById('toast'); el.textContent=t; el.classList.add('show'); setTimeout(function(){el.classList.remove('show');},1800); }
+  function showErr(t){ var el=document.getElementById('err'); el.style.display='block'; el.textContent=t; }
+
+  function renderFlags(s){
+    var box=document.getElementById('flags'); box.innerHTML='';
+    FLAGS.forEach(function(k){
+      var meta=FLAG_LABELS[k];
+      var row=document.createElement('div'); row.className='row';
+      var left=document.createElement('div');
+      var lbl=document.createElement('div'); lbl.className='lbl'; lbl.textContent=meta[0];
+      var desc=document.createElement('div'); desc.className='desc'; desc.textContent=meta[1];
+      left.appendChild(lbl); left.appendChild(desc);
+      var sw=document.createElement('label'); sw.className='switch';
+      var inp=document.createElement('input'); inp.type='checkbox'; inp.id='flag_'+k; inp.checked=!!s[k];
+      var sl=document.createElement('span'); sl.className='slider';
+      sw.appendChild(inp); sw.appendChild(sl);
+      row.appendChild(left); row.appendChild(sw);
+      box.appendChild(row);
+    });
+  }
+
+  function fillNums(s){
+    NUMS.forEach(function(k){ var el=document.getElementById(k); if(el && s[k]!=null) el.value=s[k]; });
+  }
+
+  function load(){
+    fetch('/api/admin/settings',{headers:H}).then(function(r){return r.json();}).then(function(j){
+      if(!j.ok){ showErr('Нет доступа или ошибка: '+(j.error||'')); return; }
+      renderFlags(j.settings); fillNums(j.settings);
+    }).catch(function(e){ showErr('Сеть: '+e.message); });
+
+    fetch('/api/admin/stats/overview',{headers:H}).then(function(r){return r.json();}).then(function(j){
+      if(!j.ok) return; var s=j.stats, box=document.getElementById('stats'); box.innerHTML='';
+      var lines=[
+        ['Заявок всего', s.requests.total],
+        ['Сделок', s.negotiations.total],
+        ['Броней', s.bookings.total],
+        ['GMV', Math.round(s.bookings.gmv)],
+        ['Комиссия', Math.round(s.revenue.commission)],
+        ['Выручка премиум-контактов', Math.round(s.revenue.premium_contact)],
+        ['Ср. рейтинг', s.reviews.avg_rating+' (★'+s.reviews.count+')'],
+        ['Отзывов на модерации', s.reviews.flagged],
+        ['Возвратов', s.refunds.count+' ('+Math.round(s.refunds.amount)+')']
+      ];
+      lines.forEach(function(p){ var d=document.createElement('div'); d.className='stat'; var a=document.createElement('span'); a.textContent=p[0]; var b=document.createElement('b'); b.textContent=p[1]; d.appendChild(a); d.appendChild(b); box.appendChild(d); });
+    }).catch(function(){});
+  }
+
+  function save(){
+    var btn=document.getElementById('save'); btn.disabled=true;
+    var payload={};
+    FLAGS.forEach(function(k){ var el=document.getElementById('flag_'+k); if(el) payload[k]=el.checked; });
+    NUMS.forEach(function(k){ var el=document.getElementById(k); if(el && el.value!=='') payload[k]=Number(el.value); });
+    fetch('/api/admin/settings',{method:'POST',headers:H,body:JSON.stringify({settings:payload})})
+      .then(function(r){return r.json();}).then(function(j){
+        btn.disabled=false;
+        if(j.ok){ toast('Сохранено ✓'); renderFlags(j.settings); fillNums(j.settings); }
+        else { toast('Ошибка: '+(j.error||'')); }
+      }).catch(function(e){ btn.disabled=false; toast('Сеть: '+e.message); });
+  }
+
+  document.getElementById('save').addEventListener('click', save);
+  load();
+})();
+</script>
+</body>
+</html>
