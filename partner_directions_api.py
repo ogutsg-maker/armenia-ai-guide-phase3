@@ -64,6 +64,8 @@ def ensure_partner_direction_schema():
     """Non-destructive migration. Existing partner/data rows are preserved."""
     _exec("""
     ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS name_en TEXT;
+    ALTER TABLE categories ADD COLUMN IF NOT EXISTS name_en TEXT;
     CREATE TABLE IF NOT EXISTS partner_directions (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
