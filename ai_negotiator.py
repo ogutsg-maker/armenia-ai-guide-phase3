@@ -1,122 +1,186 @@
+"""AI negotiation engine for the current PostgreSQL marketplace flow.
+
+This module intentionally has no legacy Supabase client dependency.  The
+marketplace API owns its transaction helpers and passes small DB hooks to
+handle(), so the negotiator remains independent from the HTTP layer.
+"""
+from __future__ import annotations
+
 import json
+import re
+from typing import Any, Callable
+
 from ai_service import AIService
-from database import get_supabase_client
-# Подтягиваем готовую схему бронирования из вашего проекта
-from booking_schema import BookingContext 
+
 
 class AINegotiator:
-    def __init__(self):
-        self.ai_service = AIService()
-        self.db = get_supabase_client()
+    def __init__(self, ai_service: AIService | None = None):
+        self.ai_service = ai_service or AIService()
 
-    def _get_available_masters(self, service_type: str, district: str) -> list:
-        """Внутренний метод: ищет подходящих мастеров в базе данных без раскрытия их имен"""
-        try:
-            # Ищем мастеров в Supabase по совпадению услуги и района Еревана
-            res = self.db.table("partners")\
-                .select("id, min_price, rating")\
-                .contains("services", [service_type])\
-                .eq("district", district)\
-                .eq("status", "active")\
-                .execute()
-            return res.data if res.data else []
-        except Exception:
-            return []
+    @staticmethod
+    def _state(negotiation: dict) -> dict:
+        value = negotiation.get("state_json") or {}
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                value = {}
+        return value if isinstance(value, dict) else {}
 
-    def generate_system_prompt(self, context: BookingContext) -> str:
-        """Генерирует жесткую инструкцию для ведения торгов и обеспечения анонимности"""
-        prompt = (
-            "Ты — интеллектуальный ИИ-переговорщик маркетплейса компьютерных услуг в Армении. "
-            "Твоя цель — вежливо и профессионально довести клиента до успешного бронирования и оплаты.\n\n"
-            "ЖЕСТКИЕ ПРАВИЛА БЕЗОПАСНОСТИ (АНТИ-ОБХОД ПЛАТФОРМЫ):\n"
-            "1. ТЫ ОБЯЗАН СКРЫВАТЬ любые идентификационные данные. Никогда не называй клиенту имя мастера, "
-            "его точный телефон или адрес. Вместо этого говори: 'Мастер #45' или 'Наш сертифицированный специалист'.\n"
-            "2. Если клиент пытается написать свой телефон или просит телефон мастера до оплаты, вежливо ответь: "
-            "'По правилам нашей платформы контакты открываются автоматически сразу после подтверждения и оплаты бронирования через Idram'.\n\n"
-            "ПРАВИЛА ТОРГОВ И СОГЛАСОВАНИЯ:\n"
-            "- Выясни проблему (например: переустановить Windows 11, почистить ноутбук, поставить антивирус).\n"
-            "- Уточни район Еревана (Арабкир, Кентрон, Ачапняк и др.) и удобное время.\n"
-            "- Предложи цену, отталкиваясь от минимальной цены подходящих мастеров. Ты имеешь право сделать скидку не более 10% "
-            "или немного поднять цену ради выгоды платформы, если клиент согласен.\n"
-            "- Как только клиент четко согласился на условия (услуга, район, время, цена), ты обязан выдать финальный ответ "
-            "в формате специальной команды подтверждения, которую считает наша система."
+    @staticmethod
+    def _extract_price(text: str) -> float | None:
+        # Accept common AMD price forms: 5000, 5 000, 5,000, 5000 AMD.
+        for match in re.findall(r"(?<!\d)(\d{1,3}(?:[ ,]\d{3})+|\d{3,7})(?:\s*(?:AMD|դրամ|դր))?", text, re.I):
+            try:
+                value = float(match.replace(" ", "").replace(",", ""))
+                if 100 <= value <= 10_000_000:
+                    return value
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _contains_agreement(text: str) -> bool:
+        low = text.lower()
+        words = (
+            "согласен", "согласна", "подходит", "готов", "готова", "заказываю",
+            "договорились", "беру", "ок", "да", "համաձայն եմ", "լավ", "կհամաձայնեմ",
         )
-        return prompt
+        return any(word in low for word in words)
+
+    @staticmethod
+    def _contains_refusal(text: str) -> bool:
+        low = text.lower()
+        return any(x in low for x in ("отказываюсь", "не подходит", "отмена", "отменяю", "չեմ ուզում"))
+
+    def generate_system_prompt(self, context: dict) -> str:
+        service = context.get("service_name") or context.get("service_type") or "услуга"
+        price = context.get("price") or context.get("agreed_price")
+        city = context.get("city") or context.get("district") or "Армения"
+        price_line = f"Текущая цена: {price} AMD." if price else "Цена пока не зафиксирована."
+        return (
+            "Ты — AI-переговорщик маркетплейса Armenia AI Guide. "
+            "Помогай клиенту и партнёру согласовать услугу, цену, место и время.\n\n"
+            "ПРАВИЛА:\n"
+            "1. Не раскрывай телефон, точный адрес или другие прямые контакты до выполнения правил платформы.\n"
+            "2. Не выдумывай наличие партнёров, цены, расписание или факты. Используй только данные контекста.\n"
+            "3. Если клиент предлагает другую цену, зафиксируй её как предложение и попроси сторону подтвердить.\n"
+            "4. Не создавай бронь только из-за слова 'да', если существенные условия ещё неизвестны.\n"
+            "5. Когда обе стороны явно согласовали услугу, итоговую цену, место/город и время (если время требуется), сообщи, что условия согласованы.\n\n"
+            f"Услуга: {service}.\n"
+            f"Место: {city}.\n"
+            f"{price_line}"
+        )
+
+    async def handle(
+        self,
+        negotiation: dict,
+        actor: str,
+        sender_id: int,
+        text: str,
+        *,
+        insert_msg: Callable | None = None,
+        update_neg: Callable | None = None,
+        update_request: Callable | None = None,
+        insert_ai_msg: Callable | None = None,
+    ) -> dict:
+        """Process one negotiation message and persist through supplied hooks."""
+        text = str(text or "").strip()
+        if not text:
+            return {"ok": False, "error": "message_required"}
+
+        state = self._state(negotiation)
+        state.setdefault("client_agreed", False)
+        state.setdefault("partner_agreed", False)
+
+        # Persist the original message first so the conversation is durable.
+        if insert_msg:
+            insert_msg(negotiation["id"], actor, sender_id, text)
+
+        price = self._extract_price(text)
+        if price is not None:
+            state["proposed_price"] = price
+            # A new price is a new proposal and requires confirmation by both sides.
+            state["client_agreed"] = False
+            state["partner_agreed"] = False
+            if actor == "client":
+                state["client_price"] = price
+            else:
+                state["partner_price"] = price
+
+        if self._contains_refusal(text):
+            state["last_action"] = "refused"
+            if update_neg:
+                update_neg(negotiation["id"], state, "cancelled")
+            if update_request and negotiation.get("request_id"):
+                update_request(negotiation["request_id"], "cancelled")
+            reply = "Понял. Переговоры отменены."
+            if insert_ai_msg:
+                insert_ai_msg(negotiation["id"], "ai", reply, {"action": "cancelled"})
+            return {"ok": True, "reply_text": reply, "status": "cancelled", "state": state}
+
+        if self._contains_agreement(text):
+            if actor == "client":
+                state["client_agreed"] = True
+            elif actor == "partner":
+                state["partner_agreed"] = True
+
+        # Use the final proposed/agreed price, never an old catalogue price.
+        final_price = state.get("proposed_price") or state.get("agreed_price") or state.get("price")
+        if final_price is not None:
+            try:
+                state["agreed_price"] = float(final_price)
+            except (TypeError, ValueError):
+                pass
+
+        both_agreed = bool(state.get("client_agreed") and state.get("partner_agreed"))
+        if both_agreed:
+            state["last_action"] = "agreed"
+            if update_neg:
+                update_neg(negotiation["id"], state, "agreed")
+            if update_request and negotiation.get("request_id"):
+                update_request(negotiation["request_id"], "confirmed")
+            reply = "Условия согласованы обеими сторонами. Можно переходить к оплате и оформлению бронирования."
+            if insert_ai_msg:
+                insert_ai_msg(negotiation["id"], "ai", reply, {"action": "agreed", "price": state.get("agreed_price")})
+            return {"ok": True, "reply_text": reply, "status": "agreed", "state": state}
+
+        prompt = self.generate_system_prompt(state)
+        try:
+            reply = self.ai_service.process_text_request(
+                user_text=text,
+                role="client" if actor == "client" else "partner",
+                system_prompt=prompt,
+            )
+            reply = str(reply).strip()
+        except Exception:
+            if actor == "client":
+                reply = "Принял ваше сообщение. Уточните, пожалуйста, желаемую цену и удобное время."
+            else:
+                reply = "Принял предложение. Подтвердите, пожалуйста, итоговую цену и условия."
+
+        if insert_ai_msg:
+            insert_ai_msg(negotiation["id"], "ai", reply, {"action": "continue"})
+        if update_neg:
+            update_neg(negotiation["id"], state, "active")
+
+        return {"ok": True, "reply_text": reply, "status": "active", "state": state}
+
+    # Compatibility method retained for older callers that only need a client reply.
     def reply_to_client(self, client_id: int, user_message: str, current_context: dict) -> dict:
-        """
-        Основной метод ведения диалога с клиентом.
-        Принимает сообщение клиента, текущий контекст сделки (что уже выяснили),
-        обращается к ИИ и возвращает текстовый ответ + обновленный контекст.
-        """
-        # Преобразуем сырой контекст в объект схемы для удобства работы
-        context = BookingContext(**current_context)
-        
-        # 1. Анализируем сообщение клиента, чтобы обновить контекст (поиск триггеров)
-        # Если клиент упомянул район, услугу или цену — фиксируем это
-        for district in ["арабкир", "кентрон", "малатия", "норк", "ачапняк", "давидашен", "эйребуни"]:
-            if district in user_message.lower():
-                context.district = district.capitalize()
-                
-        if any(w in user_message.lower() for w in ["windows", "винду", "винда", "оformat", "формат"]):
-            context.service_type = "Установка Windows / Настройка ПО"
-        elif any(w in user_message.lower() for w in ["чистка", "греется", "пыли", "термопаст"]):
-            context.service_type = "Чистка ПК и замена термопасты"
-
-        # 2. Если район и услуга уже известны, делаем скрытый запрос в Supabase,
-        # чтобы ИИ знал реальные цены и возможности мастеров в этом районе Еревана
-        available_masters = []
-        if context.service_type and context.district:
-            available_masters = self._get_available_masters(context.service_type, context.district)
-            
-        # Формируем подсказку для ИИ о доступных мастерах (без имен и телефонов!)
-        masters_info = ""
-        if available_masters:
-            masters_info = f"\nДоступно мастеров в районе {context.district}: {len(available_masters)}. " \
-                           f"Их минимальные цены начинаются от {min([m['min_price'] for m in available_masters])} AMD."
-        else:
-            masters_info = "\nВнимание: Прямых мастеров в этом районе сейчас нет. Предложи стандартную цену от 5000-8000 AMD, мы подберем мастера вручную."
-
-        # 3. Собираем системный промпт (инструкцию)
-        system_prompt = self.generate_system_prompt(context) + masters_info
-        
-        # Если клиент соглашается на цену, просим ИИ добавить в конец маркер [CREATE_BOOKING_JSON]
-        if any(w in user_message.lower() for w in ["согласен", "хорошо", "подходит", "դե լավ", "готовы", "заказываю"]):
-            system_prompt += "\nКЛИЕНТ СОГЛАСЕН. Завершай сделку! Выдай текстовое подтверждение, а в самом конце сообщения добавь строго: [CREATE_BOOKING_JSON]"
-
-        # 4. Отправляем запрос в наш универсальный ИИ-сервис (роль 'client')
-        ai_text_response = self.ai_service.process_text_request(
+        """Synchronous compatibility wrapper; does not access a legacy Supabase API."""
+        state = dict(current_context or {})
+        price = self._extract_price(user_message)
+        if price is not None:
+            state["agreed_price"] = price
+        response = self.ai_service.process_text_request(
             user_text=user_message,
             role="client",
-            system_prompt=system_prompt
+            system_prompt=self.generate_system_prompt(state),
         )
-
-        # 5. Проверяем, зафиксировал ли ИИ финальное согласие на сделку
-        action_required = False
-        booking_data = None
-        
-        if "[CREATE_BOOKING_JSON]" in ai_text_response:
-            # Очищаем текст от технического маркера, чтобы клиент его не видел
-            ai_text_response = ai_text_response.replace("[CREATE_BOOKING_JSON]", "").strip()
-            action_required = True
-            
-            # Если у нас нашлись реальные мастера, выбираем лучшего по рейтингу для этой брони
-            selected_master_id = available_masters[0]['id'] if available_masters else None
-            final_price = context.agreed_price if context.agreed_price else 5000
-            
-            # Формируем объект для создания реальной записи в таблице броней Supabase
-            booking_data = {
-                "client_id": client_id,
-                "partner_id": selected_master_id,
-                "service_type": context.service_type or "Компьютерная помощь",
-                "district": context.district or "Ереван",
-                "price": final_price,
-                "status": "pending_payment"  # Ждет оплаты комиссии через Idram
-            }
-
-        # Возвращаем результат боту, чтобы он знал, что ответить клиенту и нужно ли генерировать ссылку Idram
         return {
-            "reply_text": ai_text_response,
-            "updated_context": context.__dict__,
-            "action_required": action_required,
-            "booking_data": booking_data
+            "reply_text": str(response).strip(),
+            "updated_context": state,
+            "action_required": False,
+            "booking_data": None,
         }
