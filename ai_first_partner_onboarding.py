@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Any
 
-from psycopg import sql
+from database import _connect
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def _direction_match(db, profile: dict[str, Any]) -> tuple[int | None, list[int]
 
 
 def _exec(db, query: str, params=(), returning=False):
-    with db._connect() as conn:
+    with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
             row = cur.fetchone() if returning else None
@@ -42,13 +42,22 @@ def _exec(db, query: str, params=(), returning=False):
 
 
 def _fetchone(db, query: str, params=()):
-    with db._connect() as conn:
+    with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
             row = cur.fetchone()
             if not row:
                 return None
             return dict(zip([d.name for d in cur.description], row))
+
+
+def _fetchall(db, query: str, params=()):
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cols = [d.name for d in cur.description]
+            return [dict(zip(cols, row)) for row in rows]
 
 
 def _ensure_partner(db, uid: int, profile: dict[str, Any]):
@@ -89,7 +98,6 @@ def _save_location(db, partner_id: int, profile: dict[str, Any]):
     district = str(profile.get("district") or "").strip()[:200] or None
     if not city:
         return
-    # One current AI-discovered location per city/district pair.
     _exec(
         db,
         """
@@ -104,15 +112,13 @@ def _save_location(db, partner_id: int, profile: dict[str, Any]):
         INSERT INTO partner_locations(partner_id,country,city,data_json)
         VALUES(%s,'Armenia',%s,%s::jsonb)
         """,
-        (partner_id, city, json.dumps({"district": district})),
+        (partner_id, city, json.dumps({"district": district}, ensure_ascii=False)),
     )
 
 
 def _save_direction(db, partner_id: int, profile: dict[str, Any]) -> tuple[int | None, bool, str | None]:
     master_id, category_ids = _direction_match(db, profile)
     if not master_id:
-        # The catalogue does not contain this direction yet. Keep it as an
-        # explicit admin proposal; do not tell the partner that it is invalid.
         _exec(
             db,
             """
@@ -146,8 +152,6 @@ def _save_direction(db, partner_id: int, profile: dict[str, Any]) -> tuple[int |
     )
     direction_id = int(pd["id"])
 
-    # Replace the AI-selected subcategory set for this direction. These are
-    # proposals awaiting the document + admin direction approval.
     _exec(db, "DELETE FROM partner_direction_categories WHERE partner_direction_id=%s", (direction_id,))
     for category_id in category_ids:
         _exec(
@@ -161,8 +165,14 @@ def _save_direction(db, partner_id: int, profile: dict[str, Any]) -> tuple[int |
 def _save_services(db, partner_id: int, direction_id: int | None, profile: dict[str, Any]):
     if not direction_id:
         return 0
-    master = _fetchone(db, "SELECT master_category_id FROM partner_directions WHERE id=%s", (direction_id,))
-    category_ids = [r["category_id"] for r in _fetchall(db, "SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s", (direction_id,))]
+    category_ids = [
+        r["category_id"]
+        for r in _fetchall(
+            db,
+            "SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s",
+            (direction_id,),
+        )
+    ]
     default_category = category_ids[0] if category_ids else None
     count = 0
     for item in profile.get("services") or []:
@@ -176,41 +186,47 @@ def _save_services(db, partner_id: int, direction_id: int | None, profile: dict[
             price = float(price) if price not in (None, "") else None
         except (TypeError, ValueError):
             price = None
+
+        # The current catalogue uses the services table.  Do not put a
+        # categories.id into catalog_subcategories.id; when a dedicated
+        # catalog_subcategories row exists, it can be linked later by admin.
         existing = _fetchone(
             db,
             "SELECT id FROM services WHERE partner_id=%s AND name=%s AND status<>'deleted' ORDER BY id DESC LIMIT 1",
             (partner_id, name),
         )
+        payload = json.dumps(
+            {
+                "ai_source": True,
+                "price_type": item.get("price_type") or "unknown",
+                "direction_id": direction_id,
+            },
+            ensure_ascii=False,
+        )
         if existing:
-            _exec(db, "UPDATE services SET category_id=%s,price=%s,status='pending',updated_at=NOW() WHERE id=%s", (default_category, price, existing["id"]))
+            _exec(
+                db,
+                "UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,status='pending',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",
+                (default_category, price, payload, existing["id"]),
+            )
         else:
             _exec(
                 db,
                 """
                 INSERT INTO services(partner_id,category_id,subcategory_id,name,description,price,status,data_json)
-                VALUES(%s,%s,%s,%s,%s,%s,'pending',%s::jsonb)
+                VALUES(%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb)
                 """,
                 (
                     partner_id,
                     default_category,
-                    default_category,
                     name,
                     str(profile.get("description") or "")[:1000],
                     price,
-                    json.dumps({"ai_source": True, "price_type": item.get("price_type") or "unknown", "direction_id": direction_id}, ensure_ascii=False),
+                    payload,
                 ),
             )
         count += 1
     return count
-
-
-def _fetchall(db, query: str, params=()):
-    with db._connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            rows = cur.fetchall()
-            cols = [d.name for d in cur.description]
-            return [dict(zip(cols, row)) for row in rows]
 
 
 def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str, Any]:
