@@ -86,6 +86,45 @@ async def potential_research(request):
             created.append(item)
     return web.json_response({'ok':True,'results':created,'source_count':len(results)})
 
+
+# =====================================================================
+# НОВЫЙ БЛОК: ИИ-РУБИЛЬНИКИ И НАСТРОЙКИ ДЛЯ ПАНЕЛИ УПРАВЛЕНИЯ АДМИНА
+# =====================================================================
+
+async def get_ai_settings(request):
+    """Возвращает текущие настройки ИИ и каналов связи из Supabase в админку"""
+    _admin(request)
+    from database import get_supabase_client
+    db = get_supabase_client()
+    try:
+        # Получаем все рубильники из таблицы system_settings
+        res = db.table("system_settings").select("*").execute()
+        settings_dict = {item['key']: item['value'] for item in res.data}
+        return web.json_response({'ok': True, 'settings': settings_dict})
+    except Exception as e:
+        return web.json_response({'ok': False, 'error': str(e)}, status=500)
+
+async def update_ai_settings(request):
+    """Обновляет измененные тумблеры и сохраняет их в Supabase"""
+    _admin(request)
+    data = await request.json()
+    from database import get_supabase_client
+    db = get_supabase_client()
+    
+    updated_keys = []
+    try:
+        for key, value in data.items():
+            # Защита: обновляем только разрешенные системные рубильники
+            if key in ('client_ai_model', 'partner_ai_model', 'admin_ai_model', 
+                       'allow_voice_input', 'allow_image_input', 
+                       'active_notification_channel', 'hide_contacts_before_payment'):
+                db.table("system_settings").update({"value": str(value)}).eq("key", key).execute()
+                updated_keys.append(key)
+        return web.json_response({'ok': True, 'updated': updated_keys})
+    except Exception as e:
+        return web.json_response({'ok': False, 'error': str(e)}, status=500)
+
+
 def register_admin_ai_routes(app, ai, bot=None):
     app['ai']=ai
     app['bot']=bot
@@ -95,3 +134,7 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_post('/api/admin/potential-partners/structure',potential_structure)
     app.router.add_post('/api/admin/potential-partners/research',potential_research)
     app.router.add_post('/api/admin/potential-partners/{id}/status',potential_status)
+    
+    # Регистрация новых маршрутов для тумблеров админки
+    app.router.add_get('/api/admin/ai/settings', get_ai_settings)
+    app.router.add_post('/api/admin/ai/settings/update', update_ai_settings)

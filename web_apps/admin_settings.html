@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Armenia AI Guide — Настройки</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://telegram.org"></script>
 <style>
   :root{--bg:#f4f6f8;--card:#fff;--line:#e5e7eb;--muted:#64748b;--accent:#2563eb;--ok:#16a34a}
   *{box-sizing:border-box}
@@ -26,6 +26,7 @@
   input:checked + .slider{background:var(--ok)}
   input:checked + .slider:before{transform:translateX(20px)}
   .num{width:110px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font:14px inherit;text-align:right}
+  .sel{width:150px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font:14px inherit;background:#fff;cursor:pointer}
   .btn{display:inline-block;width:100%;padding:12px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;font-size:15px;cursor:pointer}
   .btn[disabled]{opacity:.5;cursor:default}
   .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;pointer-events:none}
@@ -43,13 +44,126 @@
 <main>
   <div id="err" class="err" style="display:none"></div>
 
+  <!-- Блок ИИ-Рубильников и Безопасности -->
   <div class="card">
-    <h2>Модули</h2>
+    <h2>🤖 Настройки ИИ и Безопасность</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">🔒 Анонимность до оплаты комиссии</div>
+        <div class="desc">Жестко вырезать телефоны и ссылки из чатов с ИИ до оплаты сделки</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="flag_hide_contacts_before_payment">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">🗣️ Голосовой ввод ИИ</div>
+        <div class="desc">Разрешить клиентам и партнерам наговаривать сообщения голосом</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="flag_allow_voice_input">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">📸 Анализ картинок и прайсов</div>
+        <div class="desc">Разрешить мастерам загружать фото бумажных прайс-листов для распознавания</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="flag_allow_image_input">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Блок переключения ИИ-моделей и Каналов связи -->
+  <div class="card">
+    <h2>⚙️ Выбор ИИ Моделей и Роутинг рассылок</h2>
+    <div class="row">
+      <div>
+        <div class="lbl">Модель для Клиентов</div>
+        <div class="desc">ИИ-ассистент в чате и бронировании</div>
+      </div>
+      <select id="sel_client_ai_model" class="sel">
+        <option value="groq-llama3">Groq (Llama 3)</option>
+        <option value="openai-gpt4o">OpenAI (GPT-4o)</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Модель для Партнеров</div>
+        <div class="desc">ИИ при разборе прайсов и в кабинете</div>
+      </div>
+      <select id="sel_partner_ai_model" class="sel">
+        <option value="openai-gpt4o">OpenAI (GPT-4o)</option>
+        <option value="groq-llama3">Groq (Llama 3)</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Модель для Админки</div>
+        <div class="desc">Анализ лидов и сбор статистики</div>
+      </div>
+      <select id="sel_admin_ai_model" class="sel">
+        <option value="groq-llama3">Groq (Llama 3)</option>
+        <option value="openai-gpt4o">OpenAI (GPT-4o)</option>
+      </select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">Основной канал инвайтов</div>
+        <div class="desc">Куда ИИ шлет приглашения лидам из интернета</div>
+      </div>
+      <select id="sel_active_notification_channel" class="sel">
+        <option value="telegram">Telegram-бот</option>
+        <option value="whatsapp">WhatsApp API</option>
+        <option value="sms">Обычные СМС</option>
+      </select>
+    </div>
+
+    <!-- Новые тумблеры активности шлюзов мессенджеров -->
+    <div class="row" style="margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 14px;">
+      <div>
+        <div class="lbl">🟢 Статус шлюза Telegram</div>
+        <div class="desc">Разрешить автоматическую отправку инвайтов через TG-бота</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="flag_enable_telegram_channel">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">🟢 Статус шлюза WhatsApp</div>
+        <div class="desc">Разрешить авто-рассылку предложений в WhatsApp</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="flag_enable_whatsapp_channel">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <div>
+        <div class="lbl">🟢 Статус шлюза SMS</div>
+        <div class="desc">Разрешить отправку платных СМС-приглашений мастерам</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="flag_enable_sms_channel">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Стандартные модули платформы</h2>
     <div id="flags"></div>
   </div>
 
   <div class="card">
-    <h2>Параметры</h2>
+    <h2>Параметры лимитов</h2>
     <div class="row">
       <div><div class="lbl">Макс. комиссия за премиум-контакт, AMD</div>
         <div class="desc">Потолок платы за разблокировку контакта</div></div>
@@ -65,15 +179,14 @@
     </div>
   </div>
 
-  <button id="save" class="btn">Сохранить</button>
+  <button id="save" class="btn">Сохранить настройки</button>
 
   <div class="card" style="margin-top:16px">
-    <h2>📊 Сводка</h2>
+    <h2>📊 Сводка платформы</h2>
     <div id="stats"><div class="desc" style="color:var(--muted)">Загрузка…</div></div>
   </div>
 </main>
 <div id="toast" class="toast"></div>
-
 <script>
 (function(){
   var tg = window.Telegram && window.Telegram.WebApp;
@@ -91,6 +204,16 @@
   };
   var FLAGS = Object.keys(FLAG_LABELS);
   var NUMS = ['premium_contact_max_fee','review_min_rating','review_max_rating'];
+  
+  var AI_FLAGS = [
+    'hide_contacts_before_payment', 
+    'allow_voice_input', 
+    'allow_image_input',
+    'enable_telegram_channel',
+    'enable_whatsapp_channel',
+    'enable_sms_channel'
+  ];
+  var AI_SELECTS = ['client_ai_model', 'partner_ai_model', 'admin_ai_model', 'active_notification_channel'];
 
   function toast(t){ var el=document.getElementById('toast'); el.textContent=t; el.classList.add('show'); setTimeout(function(){el.classList.remove('show');},1800); }
   function showErr(t){ var el=document.getElementById('err'); el.style.display='block'; el.textContent=t; }
@@ -110,6 +233,20 @@
       sw.appendChild(inp); sw.appendChild(sl);
       row.appendChild(left); row.appendChild(sw);
       box.appendChild(row);
+    });
+
+    AI_FLAGS.forEach(function(k){
+      var el = document.getElementById('flag_' + k);
+      if (el && s[k] !== undefined) {
+        el.checked = (s[k] === 'true' || s[k] === true);
+      }
+    });
+
+    AI_SELECTS.forEach(function(k){
+      var el = document.getElementById('sel_' + k);
+      if (el && s[k] !== undefined) {
+        el.value = s[k];
+      }
     });
   }
 
@@ -136,19 +273,28 @@
         ['Отзывов на модерации', s.reviews.flagged],
         ['Возвратов', s.refunds.count+' ('+Math.round(s.refunds.amount)+')']
       ];
-      lines.forEach(function(p){ var d=document.createElement('div'); d.className='stat'; var a=document.createElement('span'); a.textContent=p[0]; var b=document.createElement('b'); b.textContent=p[1]; d.appendChild(a); d.appendChild(b); box.appendChild(d); });
+      lines.forEach(function(p){ 
+        var d=document.createElement('div'); d.className='stat'; 
+        var a=document.createElement('span'); a.textContent=p[0]; 
+        var b=document.createElement('b'); b.textContent=p[1]; 
+        d.appendChild(a); d.appendChild(b); box.appendChild(d); 
+      });
     }).catch(function(){});
   }
 
   function save(){
     var btn=document.getElementById('save'); btn.disabled=true;
     var payload={};
+    
     FLAGS.forEach(function(k){ var el=document.getElementById('flag_'+k); if(el) payload[k]=el.checked; });
+    AI_FLAGS.forEach(function(k){ var el=document.getElementById('flag_'+k); if(el) payload[k]=el.checked ? 'true' : 'false'; });
+    AI_SELECTS.forEach(function(k){ var el=document.getElementById('sel_'+k); if(el) payload[k]=el.value; });
     NUMS.forEach(function(k){ var el=document.getElementById(k); if(el && el.value!=='') payload[k]=Number(el.value); });
+    
     fetch('/api/admin/settings',{method:'POST',headers:H,body:JSON.stringify({settings:payload})})
       .then(function(r){return r.json();}).then(function(j){
         btn.disabled=false;
-        if(j.ok){ toast('Сохранено ✓'); renderFlags(j.settings); fillNums(j.settings); }
+        if(j.ok){ toast('Настройки сохранены ✓'); renderFlags(j.settings); fillNums(j.settings); }
         else { toast('Ошибка: '+(j.error||'')); }
       }).catch(function(e){ btn.disabled=false; toast('Сеть: '+e.message); });
   }

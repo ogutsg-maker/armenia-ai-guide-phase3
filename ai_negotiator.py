@@ -1,167 +1,122 @@
-"""AINegotiator — Phase 2 structured negotiation module.
-
-Handles client/partner messages inside a negotiation, mirrors them into the
-shared AI memory (ai_sessions/ai_messages), uses GroqAI.negotiate() for
-structured intent+price extraction, and updates state_json based on intent
-rather than keyword matching.
-"""
-from __future__ import annotations
-
 import json
-import logging
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-
-def _state(negotiation: dict) -> dict:
-    """Parse state_json from a negotiation row."""
-    s = negotiation.get("state_json") or {}
-    if isinstance(s, str):
-        try:
-            s = json.loads(s)
-        except Exception:
-            s = {}
-    return s
-
-
-def _safe_float(v, default=0.0):
-    try:
-        return float(v) if v is not None else default
-    except (TypeError, ValueError):
-        return default
-
+from ai_service import AIService
+from database import get_supabase_client
+# Подтягиваем готовую схему бронирования из вашего проекта
+from booking_schema import BookingContext 
 
 class AINegotiator:
-    """Structured AI mediator for client<->partner negotiation."""
+    def __init__(self):
+        self.ai_service = AIService()
+        self.db = get_supabase_client()
 
-    def __init__(self, ai):
-        self.ai = ai
+    def _get_available_masters(self, service_type: str, district: str) -> list:
+        """Внутренний метод: ищет подходящих мастеров в базе данных без раскрытия их имен"""
+        try:
+            # Ищем мастеров в Supabase по совпадению услуги и района Еревана
+            res = self.db.table("partners")\
+                .select("id, min_price, rating")\
+                .contains("services", [service_type])\
+                .eq("district", district)\
+                .eq("status", "active")\
+                .execute()
+            return res.data if res.data else []
+        except Exception:
+            return []
 
-    async def handle(
-        self,
-        negotiation: dict,
-        sender_role: str,
-        sender_id: int,
-        text: str,
-        *,
-        insert_msg=None,
-        update_neg=None,
-        update_request=None,
-        insert_ai_msg=None,
-        get_recent=None,
-    ) -> dict:
-        """Process one message in a negotiation.
-
-        Parameters
-        ----------
-        negotiation : dict
-            Full row from the ``negotiations`` table.
-        sender_role : str
-            ``'client'`` or ``'partner'``.
-        sender_id : int
-            Telegram user id of the sender.
-        text : str
-            Raw message text.
-        insert_msg, update_neg, update_request, insert_ai_msg, get_recent :
-            DB hooks (callables) so we stay decoupled from the raw SQL layer.
-
-        Returns
-        -------
-        dict  ``{reply, state, status, ai_result}``
+    def generate_system_prompt(self, context: BookingContext) -> str:
+        """Генерирует жесткую инструкцию для ведения торгов и обеспечения анонимности"""
+        prompt = (
+            "Ты — интеллектуальный ИИ-переговорщик маркетплейса компьютерных услуг в Армении. "
+            "Твоя цель — вежливо и профессионально довести клиента до успешного бронирования и оплаты.\n\n"
+            "ЖЕСТКИЕ ПРАВИЛА БЕЗОПАСНОСТИ (АНТИ-ОБХОД ПЛАТФОРМЫ):\n"
+            "1. ТЫ ОБЯЗАН СКРЫВАТЬ любые идентификационные данные. Никогда не называй клиенту имя мастера, "
+            "его точный телефон или адрес. Вместо этого говори: 'Мастер #45' или 'Наш сертифицированный специалист'.\n"
+            "2. Если клиент пытается написать свой телефон или просит телефон мастера до оплаты, вежливо ответь: "
+            "'По правилам нашей платформы контакты открываются автоматически сразу после подтверждения и оплаты бронирования через Idram'.\n\n"
+            "ПРАВИЛА ТОРГОВ И СОГЛАСОВАНИЯ:\n"
+            "- Выясни проблему (например: переустановить Windows 11, почистить ноутбук, поставить антивирус).\n"
+            "- Уточни район Еревана (Арабкир, Кентрон, Ачапняк и др.) и удобное время.\n"
+            "- Предложи цену, отталкиваясь от минимальной цены подходящих мастеров. Ты имеешь право сделать скидку не более 10% "
+            "или немного поднять цену ради выгоды платформы, если клиент согласен.\n"
+            "- Как только клиент четко согласился на условия (услуга, район, время, цена), ты обязан выдать финальный ответ "
+            "в формате специальной команды подтверждения, которую считает наша система."
+        )
+        return prompt
+    def reply_to_client(self, client_id: int, user_message: str, current_context: dict) -> dict:
         """
-        nid = negotiation["id"]
-        st = _state(negotiation)
+        Основной метод ведения диалога с клиентом.
+        Принимает сообщение клиента, текущий контекст сделки (что уже выяснили),
+        обращается к ИИ и возвращает текстовый ответ + обновленный контекст.
+        """
+        # Преобразуем сырой контекст в объект схемы для удобства работы
+        context = BookingContext(**current_context)
+        
+        # 1. Анализируем сообщение клиента, чтобы обновить контекст (поиск триггеров)
+        # Если клиент упомянул район, услугу или цену — фиксируем это
+        for district in ["арабкир", "кентрон", "малатия", "норк", "ачапняк", "давидашен", "эйребуни"]:
+            if district in user_message.lower():
+                context.district = district.capitalize()
+                
+        if any(w in user_message.lower() for w in ["windows", "винду", "винда", "оformat", "формат"]):
+            context.service_type = "Установка Windows / Настройка ПО"
+        elif any(w in user_message.lower() for w in ["чистка", "греется", "пыли", "термопаст"]):
+            context.service_type = "Чистка ПК и замена термопасты"
 
-        # 1) Persist user message in negotiation_messages
-        if insert_msg:
-            insert_msg(nid, sender_role, sender_id, text)
+        # 2. Если район и услуга уже известны, делаем скрытый запрос в Supabase,
+        # чтобы ИИ знал реальные цены и возможности мастеров в этом районе Еревана
+        available_masters = []
+        if context.service_type and context.district:
+            available_masters = self._get_available_masters(context.service_type, context.district)
+            
+        # Формируем подсказку для ИИ о доступных мастерах (без имен и телефонов!)
+        masters_info = ""
+        if available_masters:
+            masters_info = f"\nДоступно мастеров в районе {context.district}: {len(available_masters)}. " \
+                           f"Их минимальные цены начинаются от {min([m['min_price'] for m in available_masters])} AMD."
+        else:
+            masters_info = "\nВнимание: Прямых мастеров в этом районе сейчас нет. Предложи стандартную цену от 5000-8000 AMD, мы подберем мастера вручную."
 
-        # 2) Mirror into shared AI memory
-        from platform_db import (
-            active_session, create_session, add_ai_message,
-            update_session, recent_ai_messages,
+        # 3. Собираем системный промпт (инструкцию)
+        system_prompt = self.generate_system_prompt(context) + masters_info
+        
+        # Если клиент соглашается на цену, просим ИИ добавить в конец маркер [CREATE_BOOKING_JSON]
+        if any(w in user_message.lower() for w in ["согласен", "хорошо", "подходит", "դե լավ", "готовы", "заказываю"]):
+            system_prompt += "\nКЛИЕНТ СОГЛАСЕН. Завершай сделку! Выдай текстовое подтверждение, а в самом конце сообщения добавь строго: [CREATE_BOOKING_JSON]"
+
+        # 4. Отправляем запрос в наш универсальный ИИ-сервис (роль 'client')
+        ai_text_response = self.ai_service.process_text_request(
+            user_text=user_message,
+            role="client",
+            system_prompt=system_prompt
         )
-        user_id = negotiation.get("client_id") if sender_role == "client" else negotiation.get("partner_id")
-        # Use client_id as the session user for simplicity
-        session_owner = negotiation.get("client_id", sender_id)
-        session = active_session(session_owner, "client", "negotiation") or create_session(
-            session_owner, "client", "negotiation",
-            {"negotiation_id": nid},
-        )
-        add_ai_message(session["id"], sender_role, text)
-        history = recent_ai_messages(session["id"], 16) if get_recent is None else get_recent(session["id"], 16)
 
-        # 3) Call structured negotiate()
-        payload = {
-            "service_name": st.get("service_name", ""),
-            "current_price": _safe_float(st.get("price")),
-            "currency": st.get("currency", "AMD"),
-            "sender_role": sender_role,
-            "message": text,
-            "history": [f"{m.get('sender_role','?')}: {m.get('message_text','')}" for m in (history or [])],
-        }
-        ai_result = await self.ai.negotiate(payload)
-        intent = ai_result.get("intent", "chitchat")
-        proposed_price = ai_result.get("proposed_price")
-        agreed = ai_result.get("agreed", False)
-        reply = ai_result.get("reply", "")
-        summary = ai_result.get("summary", "")
+        # 5. Проверяем, зафиксировал ли ИИ финальное согласие на сделку
+        action_required = False
+        booking_data = None
+        
+        if "[CREATE_BOOKING_JSON]" in ai_text_response:
+            # Очищаем текст от технического маркера, чтобы клиент его не видел
+            ai_text_response = ai_text_response.replace("[CREATE_BOOKING_JSON]", "").strip()
+            action_required = True
+            
+            # Если у нас нашлись реальные мастера, выбираем лучшего по рейтингу для этой брони
+            selected_master_id = available_masters[0]['id'] if available_masters else None
+            final_price = context.agreed_price if context.agreed_price else 5000
+            
+            # Формируем объект для создания реальной записи в таблице броней Supabase
+            booking_data = {
+                "client_id": client_id,
+                "partner_id": selected_master_id,
+                "service_type": context.service_type or "Компьютерная помощь",
+                "district": context.district or "Ереван",
+                "price": final_price,
+                "status": "pending_payment"  # Ждет оплаты комиссии через Idram
+            }
 
-        # 4) Update state_json based on structured intent
-        if proposed_price is not None and proposed_price > 0:
-            st["last_proposed_price"] = proposed_price
-            st["proposed_by"] = sender_role
-        if intent == "agree" and agreed:
-            st[f"{sender_role}_agreed"] = True
-        elif intent == "counter" and proposed_price is not None:
-            st["price"] = proposed_price
-            st[f"{sender_role}_agreed"] = False  # counter means not yet agreed
-        elif intent == "reject":
-            st[f"{sender_role}_agreed"] = False
-
-        both_agreed = bool(st.get("client_agreed")) and bool(st.get("partner_agreed"))
-        neg_status = "active"
-        req_status = None
-        if both_agreed:
-            neg_status = "agreed"
-            req_status = "confirmed"
-
-        if update_neg:
-            update_neg(nid, st, neg_status)
-        if both_agreed and update_request and negotiation.get("request_id"):
-            update_request(negotiation["request_id"], req_status)
-
-        # 5) Persist AI reply
-        ai_text = reply or self._default_reply(intent, st, sender_role)
-        add_ai_message(session["id"], "ai", ai_text, {"intent": intent, "negotiation_id": nid})
-        if insert_ai_msg:
-            insert_ai_msg(nid, "ai", ai_text, {"intent": intent})
-
-        update_session(session["id"], {"negotiation_id": nid, "last_intent": intent})
-
+        # Возвращаем результат боту, чтобы он знал, что ответить клиенту и нужно ли генерировать ссылку Idram
         return {
-            "reply": ai_text,
-            "state": st,
-            "status": neg_status,
-            "ai_result": ai_result,
+            "reply_text": ai_text_response,
+            "updated_context": context.__dict__,
+            "action_required": action_required,
+            "booking_data": booking_data
         }
-
-    @staticmethod
-    def _default_reply(intent: str, st: dict, sender_role: str) -> str:
-        """Fallback neutral reply when AI returned empty text."""
-        price = st.get("price", "?")
-        ccy = st.get("currency", "AMD")
-        svc = st.get("service_name", "услуга")
-        if intent == "agree":
-            if st.get("client_agreed") and st.get("partner_agreed"):
-                return f"Обе стороны согласны на {price} {ccy}. Переходим к оплате."
-            other = "клиент" if sender_role == "partner" else "партнёр"
-            return f"Ваше согласие принято. Ждём подтверждения от {other}."
-        if intent == "counter":
-            return f"Встречное предложение по «{svc}» передано."
-        if intent == "reject":
-            return "Отказ принят. Переговоры можно продолжить, предложив другие условия."
-        if intent == "question":
-            return "Ваш вопрос передан. Постараюсь уточнить."
-        return "Я здесь, чтобы помочь с переговорами. Напишите цену или условие."

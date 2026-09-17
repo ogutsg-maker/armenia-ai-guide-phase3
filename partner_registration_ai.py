@@ -1,160 +1,135 @@
-"""AI-assisted partner onboarding for Armenia AI Guide.
-
-Collects a partner's business information in natural language, extracts a
-structured profile with Groq, asks only for missing information, and saves a
-pending partner profile using the existing DatabaseManager API.
-"""
-from __future__ import annotations
-
 import json
-import os
-import re
-from typing import Any
+from ai_service import AIService
+from database import get_supabase_client
 
-try:
-    from groq import AsyncGroq
-except Exception:  # pragma: no cover
-    AsyncGroq = None
+class PartnerRegistrationAI:
+    def __init__(self):
+        # Подключаем наше универсальное ИИ-сердце и базу данных Supabase
+        self.ai_service = AIService()
+        self.db = get_supabase_client()
 
+    def _is_document_required(self, category: str) -> bool:
+        """
+        Проверяет по базе данных или правилам, требуется ли официальный документ/лицензия 
+        для выбранной мастером категории услуг (например, для ремонта сложной электроники или юр. услуг)
+        """
+        if not category:
+            return False
+        # Для базового ремонта ПК и установки Windows документы обычно не обязательны,
+        # но если это сложный ремонт плат/пайка или B2B услуги, мы можем включить требование документа.
+        strict_categories = ["ремонт плат", "пайка", "серверное оборудование", "b2b сети"]
+        return any(sc in category.lower() for sc in strict_categories)
 
-def _norm(s: Any) -> str:
-    return re.sub(r"\s+", " ", str(s or "")).strip()
-
-
-def _catalog(db) -> list[dict]:
-    result = []
-    try:
-        for master in db.get_all_master_categories() or []:
-            mid = master.get("id")
-            master_name = master.get("name_am") or master.get("name_hy") or master.get("name_ru") or ""
-            subs = db.get_subcategories_by_master(mid) or []
-            for sub in subs:
-                result.append({
-                    "master_id": mid,
-                    "master": master_name,
-                    "id": sub.get("id"),
-                    "name": sub.get("name_am") or sub.get("name_hy") or sub.get("name_ru") or "",
-                    "name_ru": sub.get("name_ru") or "",
-                })
-    except Exception:
-        return []
-    return result
-
-
-def _heuristic(text: str) -> dict:
-    low = text.lower()
-    direction = None
-    aliases = {
-        "Красота и уход": ["салон", "парикмах", "маникюр", "педикюр", "барбер", "космет", "beauty", "hair"],
-        "Рестораны и питание": ["ресторан", "кафе", "пицц", "бар", "еда", "кухн", "food"],
-        "Проживание": ["отель", "гостиниц", "хостел", "гостевой дом", "апартамент", "hotel"],
-        "Транспорт": ["такси", "трансфер", "перевоз", "авто", "transport"],
-        "Экскурсии": ["экскурс", "гид", "sightseeing"],
-        "Туры": ["тур", "поездк", "travel", "tour"],
-        "SPA и wellness": ["spa", "массаж", "сауна", "хамам", "wellness"],
-        "Развлечения и активности": ["развлеч", "квест", "спорт", "активност", "activity"],
-    }
-    for name, words in aliases.items():
-        if any(w in low for w in words):
-            direction = name
-            break
-    prices = []
-    for m in re.finditer(r"([\d][\d\s.,]{2,})\s*(?:֏|դրամ|dram|amd)", text, re.I):
-        try:
-            prices.append(int(re.sub(r"[\s.,]", "", m.group(1))))
-        except ValueError:
-            pass
-    return {"business_name": None, "city": None, "district": None, "direction": direction,
-            "subcategory_names": [], "description": _norm(text), "services": [], "prices": prices,
-            "missing": ["business_name", "city", "services"]}
-
-
-async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
-    catalog = _catalog(db)
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
-    if not api_key or AsyncGroq is None:
-        return _heuristic(text)
-
-    client = AsyncGroq(api_key=api_key)
-    catalog_text = json.dumps(catalog[:250], ensure_ascii=False)
-    previous_profile = previous_profile or {}
-    pending_instruction = (
-        f"The previous assistant asked specifically for {pending_field}. Treat the new message as the answer to that field unless the message clearly contains broader business information."
-        if pending_field else ""
-    )
-    messages = [
-        {"role": "system", "content": """You are the partner-onboarding AI for Armenia AI Guide.\nExtract a business profile from natural Armenian, Russian or English. Do not invent facts. Merge the new message with the conversation history. Determine the best existing master direction and subcategories from the supplied catalog. Extract every service and price explicitly mentioned. A price can be a number in AMD; preserve 'from' semantics in description if present.\nReturn ONLY valid JSON with this schema:\n{\"business_name\":null,\"city\":null,\"district\":null,\"direction\":null,\"subcategory_names\":[],\"description\":\"\",\"services\":[{\"name\":\"\",\"price\":null,\"price_type\":\"fixed|from|range|unknown\"}],\"missing\":[],\"ready\":false}\nready=true only when business_name, city, direction and at least one service are known. missing should contain only the still-required fields. Ask for the smallest missing piece next. Preserve previously extracted fields even when the new message contains only a short answer. """},
-        {"role": "user", "content": "CATALOG:\n" + catalog_text + "\n\nPREVIOUS PROFILE:\n" + json.dumps(previous_profile, ensure_ascii=False) + "\n\nPENDING FIELD:\n" + pending_instruction + "\n\nCONVERSATION:\n" + json.dumps(history[-8:], ensure_ascii=False) + "\n\nNEW MESSAGE:\n" + text},
-    ]
-    try:
-        r = await client.chat.completions.create(
-            model=os.getenv("PARTNER_ONBOARDING_MODEL", "llama-3.1-8b-instant"),
-            messages=messages,
-            temperature=0.1,
-            response_format={"type": "json_object"},
-            max_tokens=1800,
+    def generate_interview_prompt(self, current_profile: dict) -> str:
+        """Формирует для ИИ жесткую инструкцию по проведению интервью с мастером"""
+        # Превращаем текущую анкету в понятную для ИИ сводку
+        services = ", ".join(current_profile.get("services", [])) or "Не указаны"
+        
+        prompt = (
+            "Ты — умный и приветливый b2b-менеджер маркетплейса услуг в Армении. "
+            "Твоя задача — помочь потенциальному партнеру (мастеру) пройти регистрацию на сайте через живой диалог.\n"
+            "Общайся вежливо, используй армяно-русский контекст. Твоя цель — собрать полноценный бизнес-профиль.\n\n"
+            f"ТЕКУЩИЙ ПРОФИЛЬ МАСТЕРА В БАЗЕ:\n"
+            f"- Имя: {current_profile.get('name', 'Не указано')}\n"
+            f"- Город/Район: {current_profile.get('district', 'Не указано')} (работает в Ереване)\n"
+            f"- Услуги: {services}\n"
+            f"- Цены: {current_profile.get('min_price', 'Не указаны')}\n"
+            f"- График и выходные: {current_profile.get('working_hours', 'Не указаны')}\n"
+            f"- Выезд к клиенту: {current_profile.get('on_site', 'Не указано')}\n"
+            f"- Документ загружен: {current_profile.get('document_uploaded', 'Нет')}\n\n"
+            "ЧТО ТЕБЕ НУЖНО СДЕЛАТЬ:\n"
+            "1. Проанализируй текущий профиль и новое сообщение мастера.\n"
+            "2. Найди, чего не хватает. Будь гибким, подсказывай мастеру, что он мог упустить! "
+            "Например, если он написал 'ставлю Windows', спроси: 'А выезжаете ли вы к клиенту на дом?', "
+            "'В каких районах Еревана вам удобнее работать?', 'Есть ли у вас выходные или вы работаете 24/7?', "
+            "'Какая минимальная цена за выезд?'.\n"
+            "3. Если направление сложное (например, пайка чипов) и поле document_uploaded равно False, "
+            "напомни мастеру, что для активации профиля админу потребуется фото его сертификата или паспорта.\n"
+            "4. Задавай за один раз не более 1-2 коротких вопросов, чтобы не перегружать человека.\n"
+            "5. Если ВСЕ данные полностью собраны, профиль идеален и документ (если нужен) загружен, "
+            "напиши финальное поздравление и в самом конце добавь скрытый маркер: [REGISTRATION_COMPLETE_JSON]"
         )
-        data = json.loads(r.choices[0].message.content or "{}")
-        if not isinstance(data, dict):
-            raise ValueError("AI returned non-object")
-        # Deterministically honor the field we explicitly asked for. This prevents
-        # short answers such as "Beauty Studio" from triggering the same question again.
-        if pending_field in {"business_name", "city", "district", "direction"} and text:
-            if not data.get(pending_field):
-                data[pending_field] = _norm(text)
-        if pending_field == "services" and text and not data.get("services"):
-            data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
-        return data
-    except Exception:
-        fallback = _heuristic(text)
-        if pending_field in {"business_name", "city", "district", "direction"}:
-            fallback[pending_field] = _norm(text)
-        elif pending_field == "services":
-            fallback["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
-        return fallback
+        return prompt
+    def handle_partner_message(self, partner_id: int, user_message: str, current_profile: dict) -> dict:
+        """
+        Основной метод ведения диалога регистрации с партнером.
+        Анализирует текст сообщения, извлекает новые данные, сохраняет их,
+        генерирует уточняющие вопросы и сигнализирует админке о готовности профиля.
+        """
+        # Шаг 1: Извлекаем новые данные из сообщения пользователя с помощью ИИ
+        # Делаем быстрый скрытый запрос, чтобы понять, добавил ли мастер новые параметры
+        data_extraction_prompt = (
+            "Проанализируй сообщение мастера и извлеки новые данные для профиля. "
+            "Верни СТРОГО JSON с полями (если данных в сообщении нет, пиши null):\n"
+            "- name (имя мастера)\n"
+            "- district (район Еревана, например: Арабкир, Кентрон)\n"
+            "- min_price (минимальная цена числом в AMD)\n"
+            "- working_hours (график, например: 10:00-20:00, без выходных)\n"
+            "- on_site (выезд к клиенту: true/false)\n"
+            "- services (массив строк с новыми услугами, если упомянуты)\n"
+            "Не пиши никаких объяснений, только чистый JSON."
+        )
 
+        extracted_data_raw = self.ai_service.process_text_request(
+            user_text=user_message,
+            role="partner",
+            system_prompt=data_extraction_prompt
+        )
 
-def match_subcategories(db, names: list[str]) -> list[int]:
-    if not names:
-        return []
-    catalog = _catalog(db)
-    ids = []
-    for wanted in names:
-        w = _norm(wanted).lower()
-        if not w:
-            continue
-        best = None
-        for item in catalog:
-            hay = f"{item['name']} {item['name_ru']}".lower()
-            if w == hay or w in hay or hay in w:
-                best = item["id"]
-                break
-        if best is not None and best not in ids:
-            ids.append(best)
-    return ids
+        try:
+            clean_json = extracted_data_raw.replace("```json", "").replace("```", "").strip()
+            new_data = json.loads(clean_json)
+            
+            # Обновляем наш текущий профиль новыми данными, если они были найдены
+            for key, val in new_data.items():
+                if val is not None:
+                    if key == "services" and isinstance(val, list):
+                        # Смерживаем существующие услуги с новыми
+                        current_profile["services"] = list(set(current_profile.get("services", []) + val))
+                    else:
+                        current_profile[key] = val
+        except Exception:
+            pass # Если ИИ выдал неидеальный формат, просто двигаемся дальше по тексту
 
+        # Проверяем, нужна ли лицензия/документ для услуг мастера
+        categories_str = " ".join(current_profile.get("services", []))
+        if self._is_document_required(categories_str):
+            current_profile["document_required"] = True
+        else:
+            current_profile["document_required"] = False
 
-def missing_question(data: dict, lang: str) -> str:
-    missing = data.get("missing") or []
-    field = missing[0] if missing else ""
-    questions = {
-        "hy": {
-            "business_name": "Ինչպե՞ս է կոչվում ձեր բիզնեսը։",
-            "city": "Ո՞ր քաղաքում է գտնվում բիզնեսը։",
-            "direction": "Ի՞նչ հիմնական ուղղությամբ եք աշխատում։",
-            "services": "Ի՞նչ ծառայություններ եք առաջարկում և ինչ գներով։",
-        },
-        "ru": {
-            "business_name": "Как называется ваш бизнес?",
-            "city": "В каком городе находится ваш бизнес?",
-            "direction": "Какое основное направление вашего бизнеса?",
-            "services": "Какие услуги вы предлагаете и сколько они стоят?",
-        },
-        "en": {
-            "business_name": "What is the name of your business?",
-            "city": "Which city is the business located in?",
-            "direction": "What is the main direction of your business?",
-            "services": "What services do you offer and what are their prices?",
-        },
-    }
-    return questions.get(lang, questions["ru"]).get(field, questions.get(lang, questions["ru"])["services"])
+        # Шаг 2: Генерируем живой ответ мастера с наводящими вопросами
+        interview_prompt = self.generate_interview_prompt(current_profile)
+        
+        ai_reply = self.ai_service.process_text_request(
+            user_text=user_message,
+            role="partner",
+            system_prompt=interview_prompt
+        )
+
+        registration_complete = False
+        # Шаг 3: Проверяем, завершен ли сбор данных
+        if "[REGISTRATION_COMPLETE_JSON]" in ai_reply:
+            ai_reply = ai_reply.replace("[REGISTRATION_COMPLETE_JSON]", "").strip()
+            registration_complete = True
+            
+            # Переводим статус партнера в Supabase в состояние "ready_for_review" (на рассмотрении админа)
+            try:
+                self.db.table("partners").update({
+                    "status": "ready_for_review",
+                    "profile_data": current_profile
+                }).eq("id", partner_id).execute()
+                
+                # Также обновляем лог в таблице потенциальных партнеров, если он там был
+                self.db.table("potential_partners").update({
+                    "status": "ready_for_review"
+                }).eq("id", partner_id).execute()
+            except Exception:
+                pass
+
+        # Возвращаем боту текст ответа, обновленный профиль и флаг готовности для админки
+        return {
+            "reply_text": ai_reply,
+            "updated_profile": current_profile,
+            "registration_complete": registration_complete
+        }
