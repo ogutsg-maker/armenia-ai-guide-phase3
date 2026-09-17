@@ -33,7 +33,7 @@ async def _storage_direct_download(path):
     if not base or not key: raise RuntimeError("Supabase Storage configuration is missing")
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as s:
         async with s.get(f"{base}/storage/v1/object/{bucket}/{path}",headers={"Authorization":f"Bearer {key}","apikey":key}) as r:
-            data=await r.read();
+            data=await r.read()
             if r.status!=200: raise RuntimeError(f"Storage download failed ({r.status})")
             return data
 
@@ -111,7 +111,7 @@ def _install_ai_first_partner_flow(main,db):
         return {"message":message,"completed":True,"profile":merged,**result}
     main._process_partner_onboarding_text=_new_process; main._armenia_ai_first_partner_flow=True
 
-def _bootstrap(app):
+async def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
     if db is None or ai is None:return
     from platform_schema import ensure_platform_schema; ensure_platform_schema()
