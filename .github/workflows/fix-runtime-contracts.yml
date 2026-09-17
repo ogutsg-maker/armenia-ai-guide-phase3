@@ -1,0 +1,50 @@
+name: One-time runtime contract fix
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('partner_directions_api.py')
+          s = p.read_text(encoding='utf-8')
+          marker = 'def _exec(sql, params=(), returning=False):\n'
+          if marker in s and '_exec_params_normalized' not in s:
+              old = marker
+              new = marker + '    # _exec_params_normalized\n    if params is None:\n        params = ()\n    elif not isinstance(params, (tuple, list, dict)):\n        params = (params,)\n'
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('master_cabinet_api.py')
+          s = p.read_text(encoding='utf-8')
+          if 'async def api_notifications_read_compat(' not in s:
+              marker = '\n\nasync def api_notifications_read_all(request: web.Request):'
+              fn = '''\n\nasync def api_notifications_read_compat(request: web.Request):\n    """Compatibility endpoint used by the current WebApp notification inbox.\n\n    POST /notifications/read accepts either {"ids":[...]} or {}.\n    Empty ids means mark all notifications for the authenticated partner read.\n    """\n    uid = _auth_partner(request)\n    try:\n        data = await request.json()\n    except Exception:\n        data = {}\n    ids = data.get("ids") if isinstance(data, dict) else None\n    with _connect() as conn:\n        with conn.cursor() as cur:\n            if ids:\n                clean_ids = []\n                for value in ids:\n                    try:\n                        clean_ids.append(int(value))\n                    except (TypeError, ValueError):\n                        continue\n                if clean_ids:\n                    cur.execute(\n                        "UPDATE notifications SET is_read=TRUE WHERE user_id=%s AND id=ANY(%s)",\n                        (uid, clean_ids),\n                    )\n            else:\n                cur.execute("UPDATE notifications SET is_read=TRUE WHERE user_id=%s", (uid,))\n            cur.execute("SELECT COUNT(*) AS n FROM notifications WHERE user_id=%s AND is_read=FALSE", (uid,))\n            unread = int(cur.fetchone()["n"] or 0)\n        conn.commit()\n    return web.json_response({"ok": True, "unread_count": unread})\n'''
+              if marker not in s:
+                  raise SystemExit('notification insertion marker not found')
+              s = s.replace(marker, fn + marker, 1)
+          route = '    app.router.add_post("/api/master/{id}/notifications/read", api_notifications_read_compat)\n'
+          if route not in s:
+              anchor = '    app.router.add_post("/api/master/{id}/notifications/{notification_id}/read", api_notifications_read)\n'
+              if anchor not in s:
+                  raise SystemExit('notification route anchor not found')
+              s = s.replace(anchor, anchor + route, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit fixes and remove one-time workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/fix-runtime-contracts.yml
+          git add partner_directions_api.py master_cabinet_api.py
+          git commit -m "fix: repair runtime API contracts"
+          git push
