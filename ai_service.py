@@ -12,6 +12,7 @@ class AIService:
         self.openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.groq_key = os.getenv("GROQ_API_KEY", "").strip()
         self.groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
+        self.groq_fallback_model = "openai/gpt-oss-20b"
         self.openai_client = OpenAI(api_key=self.openai_key) if self.openai_key else None
         self.groq_client = Groq(api_key=self.groq_key) if self.groq_key else None
 
@@ -20,7 +21,6 @@ class AIService:
         try:
             with _connect() as conn:
                 with conn.cursor(row_factory=dict_row) as cur:
-                    # Current architecture stores admin settings in admin_settings.
                     cur.execute("SELECT value_json FROM admin_settings WHERE key=%s", (key,))
                     row = cur.fetchone()
                     if row and row.get("value_json") is not None:
@@ -42,10 +42,30 @@ class AIService:
         text = re.sub(contact_pattern, "[🔒 ԿՈՆՏԱԿՏԸ ԹԱՔՑՎԱԾ Է]", text)
         return text
 
+    def _groq_completion(self, messages, model: str):
+        """Call Groq and recover automatically from a stale/removed model name."""
+        if not self.groq_client:
+            raise RuntimeError("GROQ_API_KEY is not configured")
+        try:
+            return self.groq_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.2,
+            )
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status == 404 and model != self.groq_fallback_model:
+                return self.groq_client.chat.completions.create(
+                    model=self.groq_fallback_model,
+                    messages=messages,
+                    temperature=0.2,
+                )
+            raise
+
     def process_text_request(self, user_text: str, role: str, system_prompt: str) -> str:
         clean_user_text = self.clean_sensitive_data(user_text)
         setting_key = f"{role}_ai_model"
-        chosen_model = self._get_setting(setting_key, self.groq_model)
+        chosen_model = self._get_setting(setting_key, self.groq_model).strip()
         full_system_instruction = (
             f"{system_prompt}\n\n"
             "ВАЖНЫЙ КОНТЕКСТ ДЛЯ ТЕБЯ:\n"
@@ -53,29 +73,21 @@ class AIService:
             "Понимай такой смешанный язык. Все цены считай в армянских драмах (AMD). "
             "Учитывай города и районы Армении."
         )
+        messages = [
+            {"role": "system", "content": full_system_instruction},
+            {"role": "user", "content": clean_user_text},
+        ]
 
         if "groq" in chosen_model.lower() or not self.openai_client:
-            if not self.groq_client:
-                raise RuntimeError("GROQ_API_KEY is not configured")
-            model = self.groq_model
-            # Do not use the retired llama3-70b-8192 model. Current Groq
-            # production model is configurable through GROQ_MODEL.
-            response = self.groq_client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": full_system_instruction},
-                    {"role": "user", "content": clean_user_text},
-                ],
-                temperature=0.2,
-            )
+            # The model is controlled by GROQ_MODEL/admin settings. A 404 from
+            # Groq means the configured model is unavailable; _groq_completion
+            # retries once with the current production fallback.
+            response = self._groq_completion(messages, chosen_model)
             return response.choices[0].message.content or ""
 
         response = self.openai_client.chat.completions.create(
             model=chosen_model,
-            messages=[
-                {"role": "system", "content": full_system_instruction},
-                {"role": "user", "content": clean_user_text},
-            ],
+            messages=messages,
             temperature=0.2,
         )
         return response.choices[0].message.content or ""
@@ -120,13 +132,6 @@ class AIService:
             return response.choices[0].message.content or ""
         except Exception as e:
             return f"Ошибка анализа изображения: {str(e)}"
-
-
-def register_master_cabinet_routes(app, ai):
-    from master_cabinet_api import update_profile_by_image, update_profile_by_voice
-    app["ai"] = ai
-    app.router.add_post("/api/partner/cabinet/update-by-image", update_profile_by_image)
-    app.router.add_post("/api/partner/cabinet/update-by-voice", update_profile_by_voice)
 
 
 GroqAI = AIService
