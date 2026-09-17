@@ -1,57 +1,63 @@
 import os
 import re
+import psycopg
 from openai import OpenAI
 from groq import Groq
-# Используем ваш готовый файл database.py для подключения к базе
-from database import get_supabase_client 
+from psycopg.rows import dict_row
+
+# Импортируем вашу родную функцию подключения напрямую из database.py
+from database import _connect 
 
 class AIService:
     def __init__(self):
-        # Инициализируем оба клиента. Ключи автоматически подтянутся из вашего /.env
+        # Инициализируем клиентов ИИ. Ключи подтягиваются из вашего файла .env
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
         self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
-        self.db = get_supabase_client()
 
     def _get_setting(self, key: str, default: str) -> str:
-        """Внутренний метод: вытягивает значение рубильника из Supabase"""
+        """
+        Вытягивает значение переключателя напрямую из таблицы system_settings 
+        через ваш родной асинхронно-безопасный драйвер psycopg3.
+        """
         try:
-            res = self.db.table("system_settings").select("value").eq("key", key).execute()
-            if res.data and len(res.data) > 0:
-                return str(res.data[0]["value"])
+            with _connect() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+                    row = cur.fetchone()
+                    if row:
+                        return str(row["value"])
         except Exception:
             pass
         return default
 
     def clean_sensitive_data(self, text: str) -> str:
         """
-        ЗАЩИТА ОТ ОБХОДА ПЛАТФОРМЫ:
-        Если рубильник в админке включен, этот метод жестко вырезает из текста
-        любые телефонные номера (армянские, русские), юзернеймы мессенджеров и ссылки,
-        чтобы клиент и мастер не договорились напрямую до оплаты комиссии.
+        🔒 ЗАЩИТА ПЛАТФОРМЫ ОТ ОБХОДА:
+        Если в админке включен режим анонимности, метод жестко вырезает любые 
+        телефонные номера, ссылки и логины мессенджеров из чатов до оплаты сделки.
         """
         if self._get_setting("hide_contacts_before_payment", "true") == "false":
             return text
 
-        # Паттерн для любых телефонов (+374..., 093..., 098..., +7..., 89... и локальных форматов Армении)
+        # Паттерн для телефонов (+374..., 093..., 098..., +7..., 89... и локальных форматов Армении)
         phone_pattern = r'(\+?\d{1,3}\s?\(?\d{2,3}\)?\s?\d{3,4}\s?\d{2,3}\s?\d{2,3}|\b0\d{2}\s?\d{3}\s?\d{3}\b|\b\d{2,3}[-\s]?\d{2,3}[-\s]?\d{2,3}\b)'
         
-        # Паттерн для ссылок, email и юзернеймов Telegram (@username)
+        # Паттерн для email-адресов, веб-ссылок и юзернеймов Telegram (@username)
         contact_pattern = r'(@[A-Za-z0-9_]{4,})|([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})|(https?://[^\s]+)'
         
-        # Заменяем конфиденциальные данные на безопасные заглушки
         text = re.sub(phone_pattern, "[🔒 КОНТАКТЫ СКРЫТЫ ДО ОПЛАТЫ КОМИССИИ]", text)
         text = re.sub(contact_pattern, "[🔒 ССЫЛКА СКРЫТА]", text)
         return text
     def process_text_request(self, user_text: str, role: str, system_prompt: str) -> str:
         """
-        Универсальный обработчик текста. Сам заглядывает в базу настроек,
-        выбирает нужного провайдера (Groq или OpenAI) для конкретной роли
-        и предварительно очищает текст от скрытых контактов.
+        Универсальный обработчик текста. Сам заглядывает в базу настроек через psycopg,
+        выбирает нужного провайдера (Groq или OpenAI) для конкретной роли (client, partner, admin)
+        и предварительно очищает текст от скрытых контактных данных.
         """
         # Безопасность: автоматически вырезаем телефоны, если сделка еще не оплачена
         clean_user_text = self.clean_sensitive_data(user_text)
 
-        # Вытаскиваем из Supabase, какую модель админ выбрал для этой роли (client, partner, admin)
+        # Вытаскиваем из Supabase, какую модель админ выбрал для этой роли
         setting_key = f"{role}_ai_model"
         chosen_model = self._get_setting(setting_key, "groq-llama3")
 
@@ -70,7 +76,7 @@ class AIService:
         # Сценарий 1: Админ включил для этой роли Groq (Llama 3)
         if "groq" in chosen_model.lower():
             response = self.groq_client.chat.completions.create(
-                model="llama3-70b-8192",  # Мощная открытая модель
+                model="llama3-70b-8192",  # Быстрая открытая модель на мощностях Groq
                 messages=[
                     {"role": "system", "content": full_system_instruction},
                     {"role": "user", "content": clean_user_text}
@@ -82,7 +88,7 @@ class AIService:
         # Сценарий 2: Админ включил для этой роли OpenAI (GPT-4o)
         else:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Быстрая, точная и экономичная модель
+                model="gpt-4o-mini",  # Быстрая, точная и экономичная модель от OpenAI
                 messages=[
                     {"role": "system", "content": full_system_instruction},
                     {"role": "user", "content": clean_user_text}
