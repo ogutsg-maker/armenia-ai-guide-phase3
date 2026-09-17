@@ -5,6 +5,11 @@ from database import _connect
 
 
 def ensure_partner_lifecycle_schema() -> None:
+    # partner_directions is owned by the directions module. Ensure it exists
+    # before installing the lifecycle trigger; this keeps startup order safe.
+    from partner_directions_api import ensure_partner_direction_schema
+    ensure_partner_direction_schema()
+
     sql = r'''
     CREATE OR REPLACE FUNCTION sync_partner_after_direction_change()
     RETURNS TRIGGER AS $$
@@ -16,19 +21,12 @@ def ensure_partner_lifecycle_schema() -> None:
         ELSIF NEW.status = 'rejected' THEN
             UPDATE partners
                SET verification_status=CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM partner_directions
-                        WHERE partner_id=NEW.partner_id AND status='approved'
-                    ) THEN 'approved' ELSE 'rejected' END,
+                    WHEN EXISTS (SELECT 1 FROM partner_directions WHERE partner_id=NEW.partner_id AND status='approved') THEN 'approved'
+                    ELSE 'rejected' END,
                    status=CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM partner_directions
-                        WHERE partner_id=NEW.partner_id AND status='approved'
-                    ) THEN 'approved' ELSE 'pending' END,
-                   rejection_reason=CASE WHEN EXISTS (
-                        SELECT 1 FROM partner_directions
-                        WHERE partner_id=NEW.partner_id AND status='approved'
-                    ) THEN NULL ELSE NEW.rejection_reason END,
+                    WHEN EXISTS (SELECT 1 FROM partner_directions WHERE partner_id=NEW.partner_id AND status='approved') THEN 'approved'
+                    ELSE 'pending' END,
+                   rejection_reason=CASE WHEN EXISTS (SELECT 1 FROM partner_directions WHERE partner_id=NEW.partner_id AND status='approved') THEN NULL ELSE NEW.rejection_reason END,
                    updated_at=NOW()
              WHERE id=NEW.partner_id;
         END IF;
