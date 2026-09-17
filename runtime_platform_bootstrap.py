@@ -76,7 +76,6 @@ async def _admin_document_proxy(request):
         return web.json_response({"ok":False,"error":"document_open_failed","details":str(exc)[:500]},status=502)
 
 async def _admin_document_viewer(request):
-    """Direct document response: avoids iframe/window.open limitations in Telegram Android WebView."""
     pid,doc_id=int(request.match_info["id"]),int(request.match_info["doc_id"])
     token=request.query.get("access","").strip()
     if not _verify_document_access_token(token,pid,doc_id):
@@ -133,43 +132,32 @@ def _legacy_document_open(request):
     return web.json_response({"ok":True,"admin_id":admin_id,"url":viewer,"viewer_url":viewer,"source":"database"})
 
 def _install_ai_first_partner_flow(main, db):
-    """Replace the old persistence callback without leaving a second active flow."""
     from ai_first_partner_onboarding import persist_ready_application
     async def _new_process(uid: int, text: str, state):
-        user=db.get_user(uid) or {}; lang=user.get("lang","hy"); data=await state.get_data()
-        history=list(data.get("partner_onboarding_history") or [])
-        pending=data.get("partner_onboarding_pending_field")
-        previous=data.get("partner_profile") or {}
-        history.append({"role":"user","content":text})
+        user=db.get_user(uid) or {}; lang=user.get("lang","hy"); data=await state.get_data(); history=list(data.get("partner_onboarding_history") or []); pending=data.get("partner_onboarding_pending_field"); previous=data.get("partner_profile") or {}; history.append({"role":"user","content":text})
         from partner_registration_ai import extract, missing_question
         profile=await extract(text,history,db,previous_profile=previous,pending_field=pending)
         merged=dict(previous)
         for k,v in (profile or {}).items():
             if v not in (None,"",[],{}): merged[k]=v
-        profile=merged
-        required=[k for k in ("business_name","city","direction","services") if not profile.get(k)]
-        profile["missing"]=required; profile["ready"]=not required
+        profile=merged; required=[k for k in ("business_name","city","direction","services") if not profile.get(k)]; profile["missing"]=required; profile["ready"]=not required
         await state.update_data(partner_onboarding_history=history,partner_profile=profile)
         if required:
-            question=missing_question(profile,lang); next_field=required[0]
-            history.append({"role":"assistant","content":question})
-            await state.update_data(partner_onboarding_pending_field=next_field,partner_onboarding_history=history)
+            question=missing_question(profile,lang); next_field=required[0]; history.append({"role":"assistant","content":question}); await state.update_data(partner_onboarding_pending_field=next_field,partner_onboarding_history=history)
             return {"message":({"hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ","ru":"🤖 Я уже собрал данные. ","en":"🤖 I have collected the information. "}.get(lang,"🤖 ")+question),"completed":False,"profile":profile}
-        result=persist_ready_application(db,uid,profile)
-        await state.update_data(partner_onboarding_pending_field=None,partner_profile=profile)
+        result=persist_ready_application(db,uid,profile); await state.update_data(partner_onboarding_pending_field=None,partner_profile=profile)
         if result["proposal_created"]:
             message={"hy":"✅ Տվյալները պահպանված են։ Ձեր ուղղությունը նոր է կամ դեռ չկա կատալոգում։ Ես այն ուղարկել եմ ադմինիստրատորի հաստատմանը։","ru":"✅ Данные сохранены. Ваше направление новое или пока отсутствует в каталоге. Я отправил его администратору на рассмотрение.","en":"✅ Your data is saved. The direction is new or not yet in the catalogue, so I sent it to the administrator for review."}.get(lang,"Данные сохранены и отправлены администратору.")
         else:
             message={"hy":"✅ Բիզնեսի տվյալները ճանաչեցի և պահպանեցի։ Ուղղությունը ստեղծված է որպես սպասող հայտ։ Հաջորդ քայլը՝ հաստատող փաստաթուղթը բեռնել։","ru":"✅ Данные бизнеса распознаны и сохранены. Направление создано как заявка на проверку. Следующий шаг — загрузить подтверждающий документ.","en":"✅ I recognized and saved the business. The direction is pending review. Next step: upload the verification document."}.get(lang,"Данные сохранены. Загрузите подтверждающий документ.")
         return {"message":message,"completed":True,"profile":profile,**result}
-    main._process_partner_onboarding_text=_new_process
-    main._armenia_ai_first_partner_flow=True
+    main._process_partner_onboarding_text=_new_process; main._armenia_ai_first_partner_flow=True
 
 def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
     if db is None or ai is None: return
     from platform_schema import ensure_platform_schema; ensure_platform_schema()
-    # Active partner onboarding is AI-first. Do not use the old city/category persistence path.
+    from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()
     if not getattr(main,"_armenia_ai_first_partner_flow",False): _install_ai_first_partner_flow(main,db)
     if not getattr(db,"_armenia_direction_bridge",False):
         original_set=db.set_master_categories
@@ -198,8 +186,7 @@ def _bootstrap(app):
     if not getattr(app,"_armenia_admin_auth_registered",False):
         app.middlewares.append(_admin_auth_middleware); app.router.add_get("/api/admin/auth",_admin_auth_probe); app._armenia_admin_auth_registered=True
     if not getattr(app,"_armenia_document_proxy_registered",False):
-        app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/proxy",_admin_document_proxy)
-        app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/viewer",_admin_document_viewer); app._armenia_document_proxy_registered=True
+        app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/proxy",_admin_document_proxy); app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/viewer",_admin_document_viewer); app._armenia_document_proxy_registered=True
     app["platform_bootstrap_ready"]=True
 
 def _application_init(self,*args,**kwargs): _original_application_init(self,*args,**kwargs); _bootstrap(self)
