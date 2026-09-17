@@ -47,6 +47,11 @@ def _fetchone(sql, params=()):
 
 
 def _exec(sql, params=(), returning=False):
+    # _exec_params_normalized
+    if params is None:
+        params = ()
+    elif not isinstance(params, (tuple, list, dict)):
+        params = (params,)
     with psycopg.connect(_db_url(), prepare_threshold=None) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)

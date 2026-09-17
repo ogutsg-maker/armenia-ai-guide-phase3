@@ -309,6 +309,40 @@ async def api_notifications_read(request: web.Request):
     return web.json_response({"ok": True})
 
 
+async def api_notifications_read_compat(request: web.Request):
+    """Compatibility endpoint used by the current WebApp notification inbox.
+
+    POST /notifications/read accepts either {"ids":[...]} or {}.
+    Empty ids means mark all notifications for the authenticated partner read.
+    """
+    uid = _auth_partner(request)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    ids = data.get("ids") if isinstance(data, dict) else None
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            if ids:
+                clean_ids = []
+                for value in ids:
+                    try:
+                        clean_ids.append(int(value))
+                    except (TypeError, ValueError):
+                        continue
+                if clean_ids:
+                    cur.execute(
+                        "UPDATE notifications SET is_read=TRUE WHERE user_id=%s AND id=ANY(%s)",
+                        (uid, clean_ids),
+                    )
+            else:
+                cur.execute("UPDATE notifications SET is_read=TRUE WHERE user_id=%s", (uid,))
+            cur.execute("SELECT COUNT(*) AS n FROM notifications WHERE user_id=%s AND is_read=FALSE", (uid,))
+            unread = int(cur.fetchone()["n"] or 0)
+        conn.commit()
+    return web.json_response({"ok": True, "unread_count": unread})
+
+
 async def api_notifications_read_all(request: web.Request):
     uid = _auth_partner(request)
     with _connect() as conn:
@@ -388,6 +422,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_delete("/api/master/{id}/services/{service_id}", api_service_delete)
     app.router.add_get("/api/master/{id}/notifications", api_notifications)
     app.router.add_post("/api/master/{id}/notifications/{notification_id}/read", api_notifications_read)
+    app.router.add_post("/api/master/{id}/notifications/read", api_notifications_read_compat)
     app.router.add_post("/api/master/{id}/notifications/read-all", api_notifications_read_all)
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
     app.router.add_get("/api/master/{id}/locations", api_locations)
