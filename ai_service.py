@@ -147,3 +147,18 @@ class AIService:
             return response.choices.message.content
         except Exception as e:
             return f"Ошибка анализа изображения: {str(e)}"
+
+
+def register_master_cabinet_routes(app, ai):
+    """Регистрация ИИ-маршрутов личного кабинета мастера в общем приложении"""
+    # Ленивый импорт функций обработчиков, чтобы избежать круговых зависимостей
+    from master_cabinet_api import update_profile_by_image, update_profile_by_voice
+    app['ai'] = ai
+    app.router.add_post('/api/partner/cabinet/update-by-image', update_profile_by_image)
+    app.router.add_post('/api/partner/cabinet/update-by-voice', update_profile_by_voice)
+
+
+# =====================================================================
+# ОБРАТНАЯ СОВМЕСТИМОСТЬ ДЛЯ ГԼԱВНОГО ФАЙЛА main.py (ЗАЩИТА ОТ СБОЯ RENDER)
+# =====================================================================
+GroqAI = AIService
