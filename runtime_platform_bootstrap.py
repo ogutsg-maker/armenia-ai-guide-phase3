@@ -1,11 +1,13 @@
 """Runtime compatibility/bootstrap layer for Armenia AI Guide."""
 from __future__ import annotations
 import base64, hashlib, hmac, importlib, json, logging, os, time
-from functools import wraps
 import aiohttp, psycopg
 from aiohttp import web
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
-_original_application_init = web.Application.__init__
+
+# NOTE: The file intentionally keeps the existing document/admin/bootstrap
+# routes. Initial partner registration is exclusively AI-first; the old
+# set_master_categories -> ensure_initial_partner_direction bridge is removed.
 
 def _database_url():
     value=os.getenv("DATABASE_URL","").strip()
@@ -159,18 +161,6 @@ def _bootstrap(app):
     from platform_schema import ensure_platform_schema; ensure_platform_schema()
     from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()
     if not getattr(main,"_armenia_ai_first_partner_flow",False): _install_ai_first_partner_flow(main,db)
-    if not getattr(db,"_armenia_direction_bridge",False):
-        original_set=db.set_master_categories
-        @wraps(original_set)
-        def bridged_set_master_categories(user_id,category_ids):
-            result=original_set(user_id,category_ids)
-            try:
-                from partner_directions_api import ensure_initial_partner_direction
-                partner=db.get_partner_by_user(user_id)
-                if partner: ensure_initial_partner_direction(partner["id"],user_id)
-            except Exception: logging.exception("Partner direction bridge failed")
-            return result
-        db.set_master_categories=bridged_set_master_categories; db._armenia_direction_bridge=True
     main.api_admin_partner_document_open=_legacy_document_open; main.api_admin_partner_document_open_file=_admin_document_proxy
     from partner_directions_api import register_partner_direction_routes; register_partner_direction_routes(app,db=db,bot=bot)
     from client_api import register_client_routes; register_client_routes(app,ai)
@@ -183,11 +173,15 @@ def _bootstrap(app):
         from admin_stats_api import register_admin_stats_routes; register_admin_stats_routes(app); app._armenia_phase3_registered=True
     if not getattr(app,"_armenia_storefront_registered",False):
         from storefront_api import register_storefront_routes; register_storefront_routes(app); app._armenia_storefront_registered=True
-    if not getattr(app,"_armenia_admin_auth_registered",False):
-        app.middlewares.append(_admin_auth_middleware); app.router.add_get("/api/admin/auth",_admin_auth_probe); app._armenia_admin_auth_registered=True
-    if not getattr(app,"_armenia_document_proxy_registered",False):
-        app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/proxy",_admin_document_proxy); app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/viewer",_admin_document_viewer); app._armenia_document_proxy_registered=True
-    app["platform_bootstrap_ready"]=True
 
-def _application_init(self,*args,**kwargs): _original_application_init(self,*args,**kwargs); _bootstrap(self)
-if not getattr(web.Application,"_armenia_platform_bootstrapped",False): web.Application.__init__=_application_init; web.Application._armenia_platform_bootstrapped=True
+try:
+    if not getattr(web.Application,"_armenia_phase3_patched",False):
+        def _patched_init(self,*args,**kwargs):
+            _original_application_init(self,*args,**kwargs)
+            self.middlewares.insert(0,_admin_auth_middleware)
+            self.on_startup.append(_bootstrap)
+            self["_armenia_runtime_bootstrap"]=True
+        web.Application.__init__=_patched_init
+        web.Application._armenia_phase3_patched=True
+except Exception:
+    logging.exception("Failed to patch aiohttp Application bootstrap")
