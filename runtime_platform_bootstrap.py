@@ -91,7 +91,6 @@ async def _admin_document_viewer(request):
         logging.exception("Verification document viewer failed")
         return web.Response(text=f"Не удалось открыть документ: {str(exc)[:500]}",status=502,content_type="text/plain")
 
-
 def _admin_configured_id():
     raw=os.getenv("ADMIN_TELEGRAM_ID","").strip() or os.getenv("ADMIN_ID","").strip()
     if raw:
@@ -100,32 +99,23 @@ def _admin_configured_id():
     try: return int(getattr(importlib.import_module("__main__"),"ADMIN_ID",0) or 0)
     except Exception: return 0
 
-
 def _validate_admin_request(request):
     raw=request.headers.get("X-Telegram-Init-Data","").strip()
-    if not raw:
-        raise web.HTTPUnauthorized(text='{"ok":false,"error":"telegram_init_data_required"}',content_type="application/json")
+    if not raw: raise web.HTTPUnauthorized(text='{"ok":false,"error":"telegram_init_data_required"}',content_type="application/json")
     token=os.getenv("TELEGRAM_BOT_TOKEN","").strip() or os.getenv("BOT_TOKEN","").strip()
     try:
-        user=validate_telegram_webapp_init_data(raw,token)
-        uid=int(user["id"])
+        user=validate_telegram_webapp_init_data(raw,token); uid=int(user["id"])
     except (TelegramWebAppAuthError,KeyError,TypeError,ValueError) as exc:
         raise web.HTTPUnauthorized(text=json.dumps({"ok":False,"error":str(exc) or "invalid_telegram_init_data"}),content_type="application/json")
     admin_id=_admin_configured_id()
-    if not admin_id:
-        raise web.HTTPForbidden(text=json.dumps({"ok":False,"error":"admin_id_not_configured","your_telegram_id":uid}),content_type="application/json")
-    if uid!=admin_id:
-        raise web.HTTPForbidden(text=json.dumps({"ok":False,"error":"admin_access_required","your_telegram_id":uid}),content_type="application/json")
+    if not admin_id: raise web.HTTPForbidden(text=json.dumps({"ok":False,"error":"admin_id_not_configured","your_telegram_id":uid}),content_type="application/json")
+    if uid!=admin_id: raise web.HTTPForbidden(text=json.dumps({"ok":False,"error":"admin_access_required","your_telegram_id":uid}),content_type="application/json")
     request["admin_telegram_id"]=uid
     return uid
 
 @web.middleware
 async def _admin_auth_middleware(request,handler):
     path=request.path
-    # /viewer, /proxy, /open-file authenticate themselves via a signed ?access=
-    # token (opened by direct navigation, which carries no init-data header) or
-    # fall back to the header when present. Do not gate them here or the blanket
-    # check rejects the navigation before the handler can verify the token.
     if path.startswith("/api/admin/") and not (path.endswith("/viewer") or path.endswith("/proxy") or path.endswith("/open-file")):
         _validate_admin_request(request)
     return await handler(request)
@@ -134,20 +124,53 @@ async def _admin_auth_probe(request):
     uid=_validate_admin_request(request)
     return web.json_response({"ok":True,"telegram_id":uid})
 
-
 def _legacy_document_open(request):
     from stage3_partner_verification import _admin_telegram_id
     admin_id=_admin_telegram_id(request,request.app.get("stage3_bot_token"),request.app.get("stage3_admin_id"))
     pid,doc_id=int(request.match_info["id"]),int(request.match_info["doc_id"])
     if not _db_fetchone("SELECT id FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(doc_id,pid)): return web.json_response({"ok":False,"error":"document_not_found"},status=404)
-    token=_make_document_access_token(pid,doc_id)
-    viewer=f"/api/admin/partner-applications/{pid}/documents/{doc_id}/viewer?access={token}"
+    token=_make_document_access_token(pid,doc_id); viewer=f"/api/admin/partner-applications/{pid}/documents/{doc_id}/viewer?access={token}"
     return web.json_response({"ok":True,"admin_id":admin_id,"url":viewer,"viewer_url":viewer,"source":"database"})
+
+def _install_ai_first_partner_flow(main, db):
+    """Replace the old persistence callback without leaving a second active flow."""
+    from ai_first_partner_onboarding import persist_ready_application
+    async def _new_process(uid: int, text: str, state):
+        user=db.get_user(uid) or {}; lang=user.get("lang","hy"); data=await state.get_data()
+        history=list(data.get("partner_onboarding_history") or [])
+        pending=data.get("partner_onboarding_pending_field")
+        previous=data.get("partner_profile") or {}
+        history.append({"role":"user","content":text})
+        from partner_registration_ai import extract, missing_question
+        profile=await extract(text,history,db,previous_profile=previous,pending_field=pending)
+        merged=dict(previous)
+        for k,v in (profile or {}).items():
+            if v not in (None,"",[],{}): merged[k]=v
+        profile=merged
+        required=[k for k in ("business_name","city","direction","services") if not profile.get(k)]
+        profile["missing"]=required; profile["ready"]=not required
+        await state.update_data(partner_onboarding_history=history,partner_profile=profile)
+        if required:
+            question=missing_question(profile,lang); next_field=required[0]
+            history.append({"role":"assistant","content":question})
+            await state.update_data(partner_onboarding_pending_field=next_field,partner_onboarding_history=history)
+            return {"message":({"hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ","ru":"🤖 Я уже собрал данные. ","en":"🤖 I have collected the information. "}.get(lang,"🤖 ")+question),"completed":False,"profile":profile}
+        result=persist_ready_application(db,uid,profile)
+        await state.update_data(partner_onboarding_pending_field=None,partner_profile=profile)
+        if result["proposal_created"]:
+            message={"hy":"✅ Տվյալները պահպանված են։ Ձեր ուղղությունը նոր է կամ դեռ չկա կատալոգում։ Ես այն ուղարկել եմ ադմինիստրատորի հաստատմանը։","ru":"✅ Данные сохранены. Ваше направление новое или пока отсутствует в каталоге. Я отправил его администратору на рассмотрение.","en":"✅ Your data is saved. The direction is new or not yet in the catalogue, so I sent it to the administrator for review."}.get(lang,"Данные сохранены и отправлены администратору.")
+        else:
+            message={"hy":"✅ Բիզնեսի տվյալները ճանաչեցի և պահպանեցի։ Ուղղությունը ստեղծված է որպես սպասող հայտ։ Հաջորդ քայլը՝ հաստատող փաստաթուղթը բեռնել։","ru":"✅ Данные бизнеса распознаны и сохранены. Направление создано как заявка на проверку. Следующий шаг — загрузить подтверждающий документ.","en":"✅ I recognized and saved the business. The direction is pending review. Next step: upload the verification document."}.get(lang,"Данные сохранены. Загрузите подтверждающий документ.")
+        return {"message":message,"completed":True,"profile":profile,**result}
+    main._process_partner_onboarding_text=_new_process
+    main._armenia_ai_first_partner_flow=True
 
 def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
     if db is None or ai is None: return
     from platform_schema import ensure_platform_schema; ensure_platform_schema()
+    # Active partner onboarding is AI-first. Do not use the old city/category persistence path.
+    if not getattr(main,"_armenia_ai_first_partner_flow",False): _install_ai_first_partner_flow(main,db)
     if not getattr(db,"_armenia_direction_bridge",False):
         original_set=db.set_master_categories
         @wraps(original_set)
@@ -169,19 +192,14 @@ def _bootstrap(app):
         from premium_contact_api import register_premium_contact_routes; register_premium_contact_routes(app)
         from reviews_api import register_reviews_routes; register_reviews_routes(app)
         from support_api import register_support_routes; register_support_routes(app)
-        from admin_stats_api import register_admin_stats_routes; register_admin_stats_routes(app)
-        app._armenia_phase3_registered=True
+        from admin_stats_api import register_admin_stats_routes; register_admin_stats_routes(app); app._armenia_phase3_registered=True
     if not getattr(app,"_armenia_storefront_registered",False):
-        from storefront_api import register_storefront_routes; register_storefront_routes(app)
-        app._armenia_storefront_registered=True
+        from storefront_api import register_storefront_routes; register_storefront_routes(app); app._armenia_storefront_registered=True
     if not getattr(app,"_armenia_admin_auth_registered",False):
-        app.middlewares.append(_admin_auth_middleware)
-        app.router.add_get("/api/admin/auth",_admin_auth_probe)
-        app._armenia_admin_auth_registered=True
+        app.middlewares.append(_admin_auth_middleware); app.router.add_get("/api/admin/auth",_admin_auth_probe); app._armenia_admin_auth_registered=True
     if not getattr(app,"_armenia_document_proxy_registered",False):
         app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/proxy",_admin_document_proxy)
-        app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/viewer",_admin_document_viewer)
-        app._armenia_document_proxy_registered=True
+        app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/viewer",_admin_document_viewer); app._armenia_document_proxy_registered=True
     app["platform_bootstrap_ready"]=True
 
 def _application_init(self,*args,**kwargs): _original_application_init(self,*args,**kwargs); _bootstrap(self)
