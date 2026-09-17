@@ -120,27 +120,39 @@ async def _start_partner_ai_state(uid: int) -> FSMContext:
 
 
 async def api_webapp_partner_start(request: web.Request):
-    uid, user = await _partner_auth(request)
-    await _start_partner_ai_state(uid)
-    lang = user.get("lang") or "hy"
-    return web.json_response({"ok": True, "started": True, "telegram_id": uid, "message": t(lang,
-        "🏢 <b>Գրանցենք ձեր բիզնեսը</b>\n\nՊատմեք ազատ ձևով՝ ինչպես է կոչվում բիզնեսը, որտեղ է գտնվում, ինչ ծառայություններ եք մատուցում և ինչ գներով։ Կարող եք ավելացնել նաև օբյեկտների, տարածքի և աշխատանքի ժամերի մասին տեղեկություններ։ Ես ինքնուրույն կկառուցեմ հայտը։",
-        "🏢 <b>Зарегистрируем ваш бизнес</b>\n\nРасскажите свободно: как называется бизнес, где находится, какие услуги вы оказываете и по каким ценам. Можно добавить объекты, зону работы и график. Я сам соберу заявку.",
-        "🏢 <b>Let’s register your business</b>\n\nTell me naturally what your business is called, where it is located, what services you offer and their prices. You can also describe objects, coverage and schedule. I will build the application for you.")})
+    try:
+        uid, user = await _partner_auth(request)
+        await _start_partner_ai_state(uid)
+        lang = user.get("lang") or "hy"
+        return web.json_response({"ok": True, "started": True, "telegram_id": uid, "message": t(lang,
+            "🏢 <b>Գրանցենք ձեր բիզնեսը</b>\n\nՊատմեք ազատ ձևով՝ ինչպես է կոչվում բիզնեսը, որտեղ է գտնվում, ինչ ծառայություններ եք մատուցում և ինչ գներով։ Կարող եք ավելացնել նաև օբյեկտների, տարածքի և աշխատանքի ժամերի մասին տեղեկություններ։ Ես ինքնուրույն կկառուցեմ հայտը։",
+            "🏢 <b>Зарегистрируем ваш бизнес</b>\n\nРасскажите свободно: как называется бизнес, где находится, какие услуги вы оказываете и по каким ценам. Можно добавить объекты, зону работы и график. Я сам соберу заявку.",
+            "🏢 <b>Let’s register your business</b>\n\nTell me naturally what your business is called, where it is located, what services you offer and their prices. You can also describe objects, coverage and schedule. I will build the application for you.")})
+    except web.HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Partner AI start failed for Telegram user")
+        return web.json_response({"ok": False, "error": "partner_start_failed", "detail": str(exc)[:500]}, status=500)
 
 
 async def api_webapp_partner_message(request: web.Request):
-    uid, _ = await _partner_auth(request)
     try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
-    text = str(payload.get("text") or "").strip()
-    if len(text) < 2:
-        return web.json_response({"ok": False, "error": "message_too_short"}, status=400)
-    state = await _start_partner_ai_state(uid)
-    result = await _process_partner_onboarding_text(uid, text, state)
-    return web.json_response({"ok": True, **result})
+        uid, _ = await _partner_auth(request)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        text = str(payload.get("text") or "").strip()
+        if len(text) < 2:
+            return web.json_response({"ok": False, "error": "message_too_short"}, status=400)
+        state = await _start_partner_ai_state(uid)
+        result = await _process_partner_onboarding_text(uid, text, state)
+        return web.json_response({"ok": True, **result})
+    except web.HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Partner AI message failed for Telegram user")
+        return web.json_response({"ok": False, "error": "partner_message_failed", "detail": str(exc)[:500]}, status=500)
 
 
 async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContext) -> dict:
@@ -183,16 +195,7 @@ async def api_partner_registration_status(request: web.Request):
     partner = db.get_partner_by_user(uid)
     if not partner:
         return web.json_response({"ok": True, "registered": False, "status": "not_registered"})
-    return web.json_response({
-        "ok": True,
-        "registered": True,
-        "partner_id": partner["id"],
-        "status": partner.get("status"),
-        "verification_status": partner.get("verification_status"),
-        "business_name": partner.get("business_name") or "",
-        "business_description": partner.get("business_description") or "",
-        "rejection_reason": partner.get("rejection_reason") or "",
-    })
+    return web.json_response({"ok": True, "registered": True, "partner_id": partner["id"], "status": partner.get("status"), "verification_status": partner.get("verification_status"), "business_name": partner.get("business_name") or "", "business_description": partner.get("business_description") or "", "rejection_reason": partner.get("rejection_reason") or ""})
 
 
 @router.message(CommandStart())
@@ -231,8 +234,12 @@ async def telegram_partner_ai_message(message: types.Message, state: FSMContext)
     if not text:
         await message.answer("🤖 Գրեք ձեր բիզնեսի մասին տեքստով։ / Опишите бизнес текстом.")
         return
-    result = await _process_partner_onboarding_text(message.from_user.id, text, state)
-    await message.answer(result["message"], parse_mode=ParseMode.HTML)
+    try:
+        result = await _process_partner_onboarding_text(message.from_user.id, text, state)
+        await message.answer(result["message"], parse_mode=ParseMode.HTML)
+    except Exception:
+        logger.exception("Telegram partner AI message failed")
+        await message.answer("⚠️ Произошла техническая ошибка. Попробуйте ещё раз.")
 
 
 @web.middleware
