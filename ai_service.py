@@ -1,6 +1,6 @@
 """Unified AI service for Armenia AI Guide.
 
-Groq is the primary provider. OpenAI is an optional fallback.  This module
+Groq is the primary provider. OpenAI is an optional fallback. This module
 also owns the structured contracts used by the router, client search and
 partner onboarding so the individual AI modules do not invent their own
 provider APIs.
@@ -55,7 +55,20 @@ class AIService:
         self.groq_fallback_model = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
         self.provider = os.getenv("AI_PROVIDER", "groq").strip().lower() or "groq"
-        self.openai_client = OpenAI(api_key=self.openai_key) if self.openai_key else None
+
+        # OpenAI is optional. The current local environment may contain an
+        # older openai package together with httpx 0.28+, which can make the
+        # OpenAI constructor fail before the application even starts. Groq is
+        # the active provider, so a broken optional OpenAI client must never
+        # prevent the bot from starting.
+        self.openai_client = None
+        if self.openai_key:
+            try:
+                self.openai_client = OpenAI(api_key=self.openai_key)
+            except Exception as exc:
+                self.openai_client = None
+                print(f"WARNING: OpenAI client disabled: {exc}")
+
         self.groq_client = Groq(api_key=self.groq_key) if self.groq_key else None
 
     def _get_setting(self, key: str, default: str) -> str:
@@ -120,11 +133,10 @@ class AIService:
 
     def _openai_completion(self, messages, model: str | None = None):
         if not self.openai_client:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
+            raise RuntimeError("OPENAI_API_KEY is not configured or OpenAI client is unavailable")
         return self.openai_client.chat.completions.create(model=model or self.openai_model, messages=messages, temperature=0.2)
 
     async def _call_groq(self, system_prompt: str, user_text: str, json_mode: bool = False, model: str | None = None) -> str:
-        """Async provider call used by PartnerAI and the structured AI layer."""
         clean = self.clean_sensitive_data(user_text)
         messages = [
             {"role": "system", "content": system_prompt},
@@ -146,7 +158,6 @@ class AIService:
         raise RuntimeError("No AI provider is configured")
 
     async def route_message(self, text: str, role: str, context: dict | None = None) -> dict:
-        """Classify a message into a stable application module."""
         context = context or {}
         system = """You are the routing layer of Armenia AI Guide.
 Classify the user's message. Return ONLY JSON:
@@ -182,12 +193,13 @@ Never invent a module outside the list."""
         return {"module": module, "confidence": confidence, "language": lang}
 
     def _detect_language(self, text: str) -> str:
-        if re.search(r"[А-Яа-яЁё]", text): return "ru"
-        if re.search(r"[Ա-Ֆա-ֆևօՕև]", text): return "hy"
+        if re.search(r"[А-Яа-яЁё]", text):
+            return "ru"
+        if re.search(r"[Ա-Ֆա-ֆևօՕև]", text):
+            return "hy"
         return "en"
 
     async def analyze_request(self, user_text: str, categories: list[dict] | None = None) -> RequestAnalysis:
-        """Turn a free-form client request into searchable structured fields."""
         catalog = categories or []
         compact_catalog = [
             {"id": c.get("id"), "master_category_id": c.get("master_category_id"), "name_am": c.get("name_am") or c.get("name_hy"), "name_ru": c.get("name_ru"), "name_en": c.get("name_en"), "slug": c.get("slug")}
@@ -206,11 +218,15 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
         except Exception:
             data = {}
         def _int(v):
-            try: return int(v) if v is not None else None
-            except Exception: return None
+            try:
+                return int(v) if v is not None else None
+            except Exception:
+                return None
         def _float(v):
-            try: return float(v) if v is not None else None
-            except Exception: return None
+            try:
+                return float(v) if v is not None else None
+            except Exception:
+                return None
         language = data.get("language") if data.get("language") in {"hy", "ru", "en"} else self._detect_language(user_text)
         return RequestAnalysis(
             language=language,
@@ -235,27 +251,44 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
         errors=[]
         for provider in ([self.provider, "openai" if self.provider == "groq" else "groq"]):
             try:
-                if provider == "groq" and self.groq_client: return self._text(self._groq_completion(messages, role_model or self.groq_model))
-                if provider == "openai" and self.openai_client: return self._text(self._openai_completion(messages, self.openai_model))
-            except Exception as exc: errors.append(f"{provider}: {exc}")
-        if errors: raise RuntimeError("AI providers failed: " + " | ".join(errors)[-1200:])
+                if provider == "groq" and self.groq_client:
+                    return self._text(self._groq_completion(messages, role_model or self.groq_model))
+                if provider == "openai" and self.openai_client:
+                    return self._text(self._openai_completion(messages, self.openai_model))
+            except Exception as exc:
+                errors.append(f"{provider}: {exc}")
+        if errors:
+            raise RuntimeError("AI providers failed: " + " | ".join(errors)[-1200:])
         raise RuntimeError("No AI provider is configured")
 
     def process_voice(self, audio_file_path: str) -> str:
-        if self._get_setting("allow_voice_input", "true").lower() == "false": return "🔒 Голосовой ввод временно отключен администратором."
-        if not self.openai_client: return "Голосовой ввод требует OPENAI_API_KEY."
+        if self._get_setting("allow_voice_input", "true").lower() == "false":
+            return "🔒 Голосовой ввод временно отключен администратором."
+        if not self.openai_client:
+            return "Голосовой ввод требует доступного OPENAI_API_KEY."
         try:
             with open(audio_file_path, "rb") as audio:
                 return self.openai_client.audio.transcriptions.create(model="whisper-1", file=audio).text or ""
-        except Exception as exc: return f"Ошибка распознавания аудио: {exc}"
+        except Exception as exc:
+            return f"Ошибка распознавания аудио: {exc}"
 
     def process_image_price(self, image_url: str) -> str:
-        if self._get_setting("allow_image_input", "true").lower() == "false": return "🔒 Загрузка изображений для ИИ отключена администратором."
-        if not self.openai_client: return "Анализ изображений требует OPENAI_API_KEY."
+        if self._get_setting("allow_image_input", "true").lower() == "false":
+            return "🔒 Загрузка изображений для ИИ отключена администратором."
+        if not self.openai_client:
+            return "Анализ изображений требует доступного OPENAI_API_KEY."
         try:
-            response = self.openai_client.chat.completions.create(model=self.openai_model, messages=[{"role":"user","content":[{"type":"text","text":"Прочитай прайс-лист. Верни услуги, цены и валюту. Не придумывай отсутствующие данные."},{"type":"image_url","image_url":{"url":image_url}}]}], max_tokens=1500)
+            response = self.openai_client.chat.completions.create(
+                model=self.openai_model,
+                messages=[{"role":"user","content":[
+                    {"type":"text","text":"Прочитай прайс-лист. Верни услуги, цены и валюту. Не придумывай отсутствующие данные."},
+                    {"type":"image_url","image_url":{"url":image_url}},
+                ]}],
+                max_tokens=1500,
+            )
             return self._text(response)
-        except Exception as exc: return f"Ошибка анализа изображения: {exc}"
+        except Exception as exc:
+            return f"Ошибка анализа изображения: {exc}"
 
 
 GroqAI = AIService
