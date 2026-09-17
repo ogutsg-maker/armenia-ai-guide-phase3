@@ -5,9 +5,8 @@ import aiohttp, psycopg
 from aiohttp import web
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
 
-# NOTE: The file intentionally keeps the existing document/admin/bootstrap
-# routes. Initial partner registration is exclusively AI-first; the old
-# set_master_categories -> ensure_initial_partner_direction bridge is removed.
+# The active partner registration path is AI-first. No legacy category-selection
+# bridge is installed here.
 
 def _database_url():
     value=os.getenv("DATABASE_URL","").strip()
@@ -77,21 +76,6 @@ async def _admin_document_proxy(request):
         logging.exception("Verification document proxy failed")
         return web.json_response({"ok":False,"error":"document_open_failed","details":str(exc)[:500]},status=502)
 
-async def _admin_document_viewer(request):
-    pid,doc_id=int(request.match_info["id"]),int(request.match_info["doc_id"])
-    token=request.query.get("access","").strip()
-    if not _verify_document_access_token(token,pid,doc_id):
-        from stage3_partner_verification import _admin_telegram_id
-        _admin_telegram_id(request,request.app.get("stage3_bot_token"),request.app.get("stage3_admin_id"))
-    row=_db_fetchone("SELECT original_filename,mime_type,storage_path,file_data FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(doc_id,pid))
-    if not row: return web.Response(text="Документ не найден",status=404)
-    try:
-        data=await _document_bytes(row); mime=str(row.get("mime_type") or "application/octet-stream"); filename=str(row.get("original_filename") or "document").replace('"','')
-        return web.Response(body=data,content_type=mime,headers={"Content-Disposition":f'inline; filename="{filename}"',"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"})
-    except Exception as exc:
-        logging.exception("Verification document viewer failed")
-        return web.Response(text=f"Не удалось открыть документ: {str(exc)[:500]}",status=502,content_type="text/plain")
-
 def _admin_configured_id():
     raw=os.getenv("ADMIN_TELEGRAM_ID","").strip() or os.getenv("ADMIN_ID","").strip()
     if raw:
@@ -116,8 +100,7 @@ def _validate_admin_request(request):
 
 @web.middleware
 async def _admin_auth_middleware(request,handler):
-    path=request.path
-    if path.startswith("/api/admin/") and not (path.endswith("/viewer") or path.endswith("/proxy") or path.endswith("/open-file")):
+    if request.path.startswith("/api/admin/") and not (request.path.endswith("/viewer") or request.path.endswith("/proxy") or request.path.endswith("/open-file")):
         _validate_admin_request(request)
     return await handler(request)
 
@@ -134,7 +117,6 @@ def _legacy_document_open(request):
     return web.json_response({"ok":True,"admin_id":admin_id,"url":viewer,"viewer_url":viewer,"source":"database"})
 
 def _install_ai_first_partner_flow(main, db):
-    from ai_first_partner_onboarding import persist_ready_application
     async def _new_process(uid: int, text: str, state):
         user=db.get_user(uid) or {}; lang=user.get("lang","hy"); data=await state.get_data(); history=list(data.get("partner_onboarding_history") or []); pending=data.get("partner_onboarding_pending_field"); previous=data.get("partner_profile") or {}; history.append({"role":"user","content":text})
         from partner_registration_ai import extract, missing_question
@@ -142,17 +124,19 @@ def _install_ai_first_partner_flow(main, db):
         merged=dict(previous)
         for k,v in (profile or {}).items():
             if v not in (None,"",[],{}): merged[k]=v
-        profile=merged; required=[k for k in ("business_name","city","direction","services") if not profile.get(k)]; profile["missing"]=required; profile["ready"]=not required
-        await state.update_data(partner_onboarding_history=history,partner_profile=profile)
+        required=[k for k in ("business_name","city","direction","services") if not merged.get(k)]
+        merged["missing"]=required; merged["ready"]=not required
+        await state.update_data(partner_onboarding_history=history,partner_profile=merged)
         if required:
-            question=missing_question(profile,lang); next_field=required[0]; history.append({"role":"assistant","content":question}); await state.update_data(partner_onboarding_pending_field=next_field,partner_onboarding_history=history)
-            return {"message":({"hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ","ru":"🤖 Я уже собрал данные. ","en":"🤖 I have collected the information. "}.get(lang,"🤖 ")+question),"completed":False,"profile":profile}
-        result=persist_ready_application(db,uid,profile); await state.update_data(partner_onboarding_pending_field=None,partner_profile=profile)
-        if result["proposal_created"]:
-            message={"hy":"✅ Տվյալները պահպանված են։ Ձեր ուղղությունը նոր է կամ դեռ չկա կատալոգում։ Ես այն ուղարկել եմ ադմինիստրատորի հաստատմանը։","ru":"✅ Данные сохранены. Ваше направление новое или пока отсутствует в каталоге. Я отправил его администратору на рассмотрение.","en":"✅ Your data is saved. The direction is new or not yet in the catalogue, so I sent it to the administrator for review."}.get(lang,"Данные сохранены и отправлены администратору.")
-        else:
-            message={"hy":"✅ Բիզնեսի տվյալները ճանաչեցի և պահպանեցի։ Ուղղությունը ստեղծված է որպես սպասող հայտ։ Հաջորդ քայլը՝ հաստատող փաստաթուղթը բեռնել։","ru":"✅ Данные бизнеса распознаны и сохранены. Направление создано как заявка на проверку. Следующий шаг — загрузить подтверждающий документ.","en":"✅ I recognized and saved the business. The direction is pending review. Next step: upload the verification document."}.get(lang,"Данные сохранены. Загрузите подтверждающий документ.")
-        return {"message":message,"completed":True,"profile":profile,**result}
+            question=missing_question(merged,lang); history.append({"role":"assistant","content":question})
+            await state.update_data(partner_onboarding_pending_field=required[0],partner_onboarding_history=history)
+            return {"message":{"hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ","ru":"🤖 Я уже собрал данные. ","en":"🤖 I have collected the information. "}.get(lang,"🤖 ")+question,"completed":False,"profile":merged}
+        from ai_first_partner_onboarding import persist_ready_application
+        result=persist_ready_application(db,uid,merged)
+        await state.clear()
+        message={"hy":"✅ Բիզնեսի տվյալները պահպանված են։ Ուղղությունը ուղարկված է ստուգման։ Հաջորդ քայլը՝ բեռնեք հաստատող փաստաթուղթը։","ru":"✅ Данные бизнеса сохранены. Направление отправлено на проверку. Следующий шаг — загрузите подтверждающий документ.","en":"✅ Business data saved. The direction was submitted for review. Next step: upload the verification document."}.get(lang,"Данные сохранены и отправлены на проверку.")
+        if result.get("proposal_created"): message={"hy":"✅ Տվյալները պահպանված են։ Նոր ուղղության առաջարկը ուղարկվել է ադմինիստրատորին։","ru":"✅ Данные сохранены. Предложение нового направления отправлено администратору.","en":"✅ Data saved. The new-direction proposal was sent to the administrator."}.get(lang,"Предложение нового направления отправлено администратору.")
+        return {"message":message,"completed":True,"profile":merged,**result}
     main._process_partner_onboarding_text=_new_process; main._armenia_ai_first_partner_flow=True
 
 def _bootstrap(app):
@@ -176,6 +160,7 @@ def _bootstrap(app):
 
 try:
     if not getattr(web.Application,"_armenia_phase3_patched",False):
+        _original_application_init = web.Application.__init__
         def _patched_init(self,*args,**kwargs):
             _original_application_init(self,*args,**kwargs)
             self.middlewares.insert(0,_admin_auth_middleware)
