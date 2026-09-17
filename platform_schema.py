@@ -45,6 +45,25 @@ def ensure_platform_schema() -> None:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- WebApp authentication can reach partner registration before the legacy
+    -- bot registration path has inserted the user. Keep the FK strict, but
+    -- automatically create the minimal users row first.
+    CREATE OR REPLACE FUNCTION ensure_partner_user_exists()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        INSERT INTO users (telegram_id)
+        VALUES (NEW.user_id)
+        ON CONFLICT (telegram_id) DO NOTHING;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trg_ensure_partner_user_exists ON partners;
+    CREATE TRIGGER trg_ensure_partner_user_exists
+    BEFORE INSERT ON partners
+    FOR EACH ROW
+    EXECUTE FUNCTION ensure_partner_user_exists();
+
     CREATE TABLE IF NOT EXISTS partner_locations (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
