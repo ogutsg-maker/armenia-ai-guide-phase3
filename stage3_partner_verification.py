@@ -1,4 +1,4 @@
-"""Stage 3: partner verification documents + admin approval workflow.
+﻿"""Stage 3: partner verification documents + admin approval workflow.
 Uses the existing PostgreSQL database and Supabase Storage without replacing database.py.
 """
 import os
@@ -251,6 +251,14 @@ async def _storage_signed_url(path, expires=900):
             return signed if signed.startswith("http") else base + signed
 
 
+
+async def api_admin_auth(request):
+    admin_id = _admin_telegram_id(
+        request,
+        request.app.get("stage3_bot_token"),
+        request.app.get("stage3_admin_id"),
+    )
+    return web.json_response({"ok": True, "admin_telegram_id": admin_id})
 def _partner_for_user(uid):
     return _db_fetchone("SELECT * FROM partners WHERE user_id = %s LIMIT 1", (uid,))
 
@@ -523,6 +531,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app["stage3_admin_id"] = admin_id
     app.router.add_get("/api/master/{id}/documents", api_partner_documents)
     app.router.add_post("/api/master/{id}/documents/upload", api_partner_document_upload)
+    app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/url", api_admin_partner_document_url)
@@ -531,3 +540,4 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/admin/partner-applications/{id}/reject", api_admin_partner_reject)
     app.router.add_post("/api/admin/partner-applications/{id}/suspend", api_admin_partner_suspend)
     app.router.add_post("/api/admin/partner-applications/{id}/block", api_admin_partner_block)
+
