@@ -32,7 +32,7 @@ def ensure_partner_lifecycle_schema() -> None:
         END IF;
         RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql;
+    $$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
     DROP TRIGGER IF EXISTS trg_sync_partner_after_direction_change ON partner_directions;
     CREATE TRIGGER trg_sync_partner_after_direction_change

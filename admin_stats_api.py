@@ -46,18 +46,12 @@ async def stats_timeseries(request):
     rows=_rows(f"SELECT DATE(created_at) d,COUNT(*) c FROM {table} WHERE created_at>=NOW()-INTERVAL '{days} days' GROUP BY DATE(created_at) ORDER BY d")
     return web.json_response({"ok":True,"metric":metric,"days":days,"series":rows})
 
-async def get_settings(request):
-    _admin(request); return web.json_response({"ok":True,"settings":features.all_settings(),"defaults":features.DEFAULTS})
-async def update_settings(request):
-    _admin(request); data=await request.json(); overrides=data.get("settings") if isinstance(data.get("settings"),dict) else data
-    if not isinstance(overrides,dict): return web.json_response({"ok":False,"error":"invalid_payload"},status=400)
-    clean={k:v for k,v in overrides.items() if k in features.DEFAULTS}
-    if not clean:return web.json_response({"ok":False,"error":"no_known_keys"},status=400)
-    return web.json_response({"ok":True,"settings":features.save(clean)})
+# NOTE: /api/admin/settings is owned by runtime_platform_bootstrap
+# (_admin_settings_get/_admin_settings_save), which has the fuller validation.
+# Registering it here as well raised aiohttp RuntimeError
+# ("Added route will never be executed") on startup, so it was removed.
 
 def register_admin_stats_routes(app):
     app.router.add_get("/api/admin/stats/overview",stats_overview)
     app.router.add_get("/api/admin/stats/top-partners",stats_top_partners)
     app.router.add_get("/api/admin/stats/timeseries",stats_timeseries)
-    app.router.add_get("/api/admin/settings",get_settings)
-    app.router.add_post("/api/admin/settings",update_settings)

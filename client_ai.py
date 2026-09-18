@@ -44,7 +44,8 @@ class ClientAI:
             params += [location,location,location]
         sql=f'''SELECT DISTINCT s.id service_id,s.partner_id,s.name service_name,s.price,s.duration_minutes,c.id category_id,p.business_name
                 FROM services s JOIN categories c ON c.id=s.category_id JOIN partners p ON p.id=s.partner_id
-                JOIN partner_directions pd ON pd.partner_id=p.id AND pd.status='approved'
+                JOIN partner_direction_categories pdc ON pdc.category_id=c.id
+                JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id AND pd.status='approved'
                 WHERE {' AND '.join(clauses)} ORDER BY CASE WHEN s.price IS NULL THEN 1 ELSE 0 END,s.created_at DESC LIMIT 3'''
         try: return rows(sql,tuple(params))
         except Exception: return []

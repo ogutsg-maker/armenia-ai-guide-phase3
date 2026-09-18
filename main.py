@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 from aiohttp import web
@@ -92,12 +93,12 @@ async def api_webapp_role(request: web.Request):
         payload = {}
     role = str(payload.get("role") or "").strip().lower()
     lang = str(payload.get("lang") or "").strip().lower()
-    if role not in {"client", "master"}:
+    if role not in {"client", "partner", "master"}:
         return web.json_response({"ok": False, "error": "invalid_role"}, status=400)
     if lang not in {"hy", "ru", "en"}:
         lang = "hy"
     db.register_user(uid, tg_user.get("username") or f"user_{uid}", tg_user.get("first_name") or tg_user.get("last_name") or "")
-    db.update_user_field(uid, "role", role)
+    db.update_user_field(uid, "role", "partner" if role == "master" else role)
     db.update_user_field(uid, "lang", lang)
     return web.json_response({"ok": True, "telegram_id": uid, "role": role, "lang": lang})
 
@@ -105,7 +106,7 @@ async def api_webapp_role(request: web.Request):
 async def _partner_auth(request: web.Request):
     uid, tg_user = _telegram_user_from_request(request)
     db.register_user(uid, tg_user.get("username") or f"user_{uid}", tg_user.get("first_name") or tg_user.get("last_name") or "")
-    db.update_user_field(uid, "role", "master")
+    db.update_user_field(uid, "role", "partner")
     return uid, db.get_user(uid) or {}
 
 
@@ -167,9 +168,42 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     from ai_first_partner_onboarding import persist_ready_application
     profile = await extract(text, history, db, previous_profile=previous, pending_field=pending)
     merged = dict(previous)
+
     for key, value in (profile or {}).items():
+        if key in ("services", "missing", "ready"):
+            continue
         if value not in (None, "", [], {}):
             merged[key] = value
+
+    previous_services = [dict(x) for x in (previous.get("services") or []) if isinstance(x, dict)]
+    new_services = [dict(x) for x in (profile.get("services") or []) if isinstance(x, dict)] if isinstance(profile, dict) else []
+    numeric_answer = pending == "services" and bool(re.fullmatch(r"[0-9][0-9\\s.,]*", text.strip()))
+
+    if numeric_answer and previous_services:
+        digits = re.sub(r"[^0-9]", "", text)
+        if digits:
+            previous_services[-1]["price"] = float(digits)
+        merged["services"] = previous_services
+    else:
+        combined = [dict(x) for x in previous_services]
+        by_name = {str(x.get("name") or "").strip().lower(): x for x in combined}
+        for item in new_services:
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            key_name = name.lower()
+            if key_name in by_name:
+                old_item = by_name[key_name]
+                if item.get("price") not in (None, ""):
+                    old_item["price"] = item.get("price")
+                if item.get("price_type") not in (None, "", "unknown"):
+                    old_item["price_type"] = item.get("price_type")
+            else:
+                combined.append(item)
+                by_name[key_name] = item
+        if combined:
+            merged["services"] = combined
+
     missing = [key for key in ("business_name", "city", "direction", "services") if not merged.get(key)]
     merged["missing"] = missing
     merged["ready"] = not missing
@@ -180,6 +214,24 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         await state.update_data(partner_onboarding_pending_field=missing[0], partner_onboarding_history=history)
         return {"message": t(lang, "🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ " + question, "🤖 Я уже собрал данные. " + question, "🤖 I have collected the information. " + question), "completed": False, "profile": merged}
     result = persist_ready_application(db, uid, merged)
+    if not result.get("proposal_created") and int(result.get("service_count") or 0) < 1:
+        # A malformed AI response must never produce a "completed" application
+        # with zero persisted services.
+        await state.update_data(
+            partner_onboarding_pending_field="services",
+            partner_onboarding_history=history,
+            partner_profile=merged,
+        )
+        return {
+            "message": t(
+                lang,
+                "🤖 Ծառայությունը չկարողացա պահպանել։ Գրեք ծառայության անունը և գինը։",
+                "🤖 Я не смог сохранить услугу. Напишите название услуги и цену.",
+                "🤖 I could not save the service. Please provide the service name and price.",
+            ),
+            "completed": False,
+            "profile": merged,
+        }
     await state.clear()
     message = t(lang,
         "✅ Բիզնեսի տվյալները ճանաչեցի և պահպանեցի։ Ուղղությունը ստեղծված է որպես սպասող հայտ։ Հաջորդ քայլը՝ բեռնեք հաստատող փաստաթուղթը։",
@@ -202,16 +254,12 @@ async def api_partner_registration_status(request: web.Request):
 async def cmd_start(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     db.register_user(uid, message.from_user.username or f"user_{uid}", message.from_user.full_name or "")
-    user = db.get_user(uid) or {}
-    role = user.get("role")
-    if role == "master":
-        await message.answer("🏢 Armenia AI Guide\n\nԲացեք գործընկերոջ AI բաժինը՝ ձեր բիզնեսը կառավարելու կամ շարունակելու գրանցումը։", reply_markup=_partner_keyboard())
-        return
-    if role == "client":
-        await message.answer("👤 Armenia AI Guide\n\nԲացեք AI օգնականը՝ ծառայություն գտնելու, ընտրելու և ամրագրելու համար։", reply_markup=_client_keyboard())
-        return
     await state.clear()
-    await message.answer("✦ <b>Armenia AI Guide</b>\n<i>ARMENIA · AI CONCIERGE</i>\n\nՁեր AI օգնականը ծառայություններ գտնելու, ընտրելու, բանակցելու և ամրագրման համար։", reply_markup=_welcome_keyboard(), parse_mode=ParseMode.HTML)
+    await message.answer(
+        "✦ <b>Armenia AI Guide</b>\n<i>ARMENIA · AI CONCIERGE</i>\n\nՁեր AI օգնականը ծառայություններ գտնելու, ընտրելու, բանակցելու և ամրագրման համար։",
+        reply_markup=_welcome_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @router.message(Command("admin"))
@@ -266,16 +314,28 @@ async def health(request: web.Request):
 
 
 async def serve_index(request: web.Request):
-    path = WEB_APPS_DIR / "index.html"
+    path = WEB_APPS_DIR / "welcome.html"
     if not path.is_file():
-        return web.json_response({"ok": False, "error": "index.html_not_found"}, status=500)
+        return web.json_response({"ok": False, "error": "welcome.html_not_found"}, status=500)
     return web.FileResponse(path)
+
+
+async def telegram_webhook(request: web.Request):
+    try:
+        payload = await request.json()
+        update = types.Update.model_validate(payload)
+        await dp.feed_update(bot, update)
+        return web.json_response({"ok": True})
+    except Exception:
+        logger.exception("Telegram webhook update failed")
+        return web.json_response({"ok": False}, status=500)
 
 
 async def main():
     logger.info("🚀 Запуск Armenia AI Guide — AI-first runtime")
     app = web.Application(middlewares=[telegram_partner_auth_middleware])
     app.router.add_get("/health", health)
+    app.router.add_post("/telegram/webhook", telegram_webhook)
     app.router.add_get("/", serve_index)
     app.router.add_post("/api/webapp/role", api_webapp_role)
     app.router.add_post("/api/webapp/partner/start", api_webapp_partner_start)
@@ -297,7 +357,22 @@ async def main():
         logger.info("✅ Telegram bottom menu button configured")
     except Exception:
         logger.exception("Could not configure Telegram menu button")
-    await dp.start_polling(bot)
+
+    webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+        if render_url:
+            webhook_url = f"{render_url}/telegram/webhook"
+    if webhook_url:
+        try:
+            await bot.set_webhook(url=webhook_url, drop_pending_updates=False)
+            logger.info("✅ Telegram webhook configured: %s", webhook_url)
+        except Exception:
+            logger.exception("Could not configure Telegram webhook")
+            raise
+    else:
+        logger.info("ℹ️ TELEGRAM_WEBHOOK_URL/RENDER_EXTERNAL_URL not set; using polling")
+        await dp.start_polling(bot)
 
 
 if __name__ == "__main__":

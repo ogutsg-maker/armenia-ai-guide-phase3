@@ -171,7 +171,22 @@ Rules:
 Never invent a module outside the list."""
         prompt = f"role={role}\ncontext={json.dumps(context, ensure_ascii=False)}\nmessage={text}"
         try:
-            data = self._json(await self._call_groq(system, prompt, True))
+            selected = self._get_setting("client_ai_model", "groq-llama3").strip()
+            model = self.groq_model
+            if selected == "openai-gpt4o":
+                # analyze_request is client-facing; OpenAI is used only when
+                # explicitly selected and configured.
+                if self.openai_client:
+                    clean = self.clean_sensitive_data(prompt)
+                    response = await asyncio.to_thread(self._openai_completion, [
+                        {"role":"system","content":system},
+                        {"role":"user","content":clean},
+                    ], self.openai_model)
+                    data = self._json(self._text(response))
+                else:
+                    data = self._json(await self._call_groq(system, prompt, True, model))
+            else:
+                data = self._json(await self._call_groq(system, prompt, True, model))
         except Exception:
             data = {}
         module = data.get("module") if data.get("module") in {"client_search", "partner_onboarding", "negotiation", "support", "smalltalk"} else None
@@ -214,7 +229,16 @@ missing_fields should contain only genuinely useful information needed for a bet
 Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
         prompt = f"CATALOG={json.dumps(compact_catalog, ensure_ascii=False)}\nREQUEST={user_text}"
         try:
-            data = self._json(await self._call_groq(system, prompt, True))
+            selected = self._get_setting("client_ai_model", "groq-llama3").strip()
+            if selected == "openai-gpt4o" and self.openai_client:
+                clean = self.clean_sensitive_data(prompt)
+                response = await asyncio.to_thread(self._openai_completion, [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": clean},
+                ], self.openai_model)
+                data = self._json(self._text(response))
+            else:
+                data = self._json(await self._call_groq(system, prompt, True, self.groq_model))
         except Exception:
             data = {}
         def _int(v):
@@ -247,6 +271,12 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
     def process_text_request(self, user_text: str, role: str, system_prompt: str) -> str:
         clean_user_text = self.clean_sensitive_data(user_text)
         role_model = self._get_setting(f"{role}_ai_model", "").strip()
+        # Admin UI stores stable model aliases; resolve them to the real
+        # deployment model from environment instead of sending fake model IDs.
+        if role_model == "groq-llama3":
+            role_model = self.groq_model
+        elif role_model == "openai-gpt4o":
+            role_model = self.openai_model
         messages = [{"role": "system", "content": system_prompt + "\nUnderstand Armenian, Russian and English. Never invent marketplace facts."}, {"role": "user", "content": clean_user_text}]
         errors=[]
         for provider in ([self.provider, "openai" if self.provider == "groq" else "groq"]):

@@ -87,6 +87,50 @@ async def _admin_auth_middleware(request,handler):
     if request.path.startswith("/api/admin/") and not (request.path.endswith("/viewer") or request.path.endswith("/proxy") or request.path.endswith("/open-file")): _validate_admin_request(request)
     return await handler(request)
 
+async def _admin_settings_get(request):
+    from features import all_settings
+    return web.json_response({"ok":True,"settings":all_settings()})
+
+async def _admin_settings_save(request):
+    from features import save
+    try: payload=await request.json()
+    except Exception: payload={}
+    incoming=payload.get("settings") if isinstance(payload,dict) else {}
+    if not isinstance(incoming,dict):
+        return web.json_response({"ok":False,"error":"settings_object_required"},status=400)
+    # Keep only known feature keys. Validate numeric limits and AI/channel values.
+    allowed_flags={"premium_contact","cancellations","reviews","support","support_ai","review_ai_moderation",
+                   "hide_contacts_before_payment","allow_voice_input","allow_image_input",
+                   "enable_telegram_channel","enable_whatsapp_channel","enable_sms_channel"}
+    allowed_select={"client_ai_model","partner_ai_model","admin_ai_model"}
+    allowed_channels={"active_notification_channel"}
+    out={}
+    for k,v in incoming.items():
+        if k in allowed_flags:
+            out[k]=bool(v) if not isinstance(v,str) else v.lower()=="true"
+        elif k in allowed_select:
+            if v not in {"groq-llama3","openai-gpt4o"}:
+                return web.json_response({"ok":False,"error":f"invalid_{k}"},status=400)
+            out[k]=v
+        elif k in allowed_channels:
+            if v not in {"telegram","whatsapp","sms"}:
+                return web.json_response({"ok":False,"error":"invalid_active_notification_channel"},status=400)
+            out[k]=v
+        elif k in {"premium_contact_max_fee","review_min_rating","review_max_rating"}:
+            try: out[k]=float(v)
+            except Exception:return web.json_response({"ok":False,"error":f"invalid_{k}"},status=400)
+    if "premium_contact_max_fee" in out and not (0<=out["premium_contact_max_fee"]<=100000):
+        return web.json_response({"ok":False,"error":"premium_fee_out_of_range"},status=400)
+    if "review_min_rating" in out and not 1<=out["review_min_rating"]<=5:
+        return web.json_response({"ok":False,"error":"review_min_rating_out_of_range"},status=400)
+    if "review_max_rating" in out and not 1<=out["review_max_rating"]<=5:
+        return web.json_response({"ok":False,"error":"review_max_rating_out_of_range"},status=400)
+    current=all_settings()
+    merged=dict(current); merged.update(out)
+    if float(merged.get("review_min_rating",1))>float(merged.get("review_max_rating",5)):
+        return web.json_response({"ok":False,"error":"review_rating_range_invalid"},status=400)
+    return web.json_response({"ok":True,"settings":save(out)})
+
 def _legacy_document_open(request):
     from stage3_partner_verification import _admin_telegram_id
     admin_id=_admin_telegram_id(request,request.app.get("stage3_bot_token"),request.app.get("stage3_admin_id")); pid,doc_id=int(request.match_info["id"]),int(request.match_info["doc_id"])
@@ -120,9 +164,12 @@ async def _bootstrap(app):
     from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()
     if not getattr(main,"_armenia_ai_first_partner_flow",False):_install_ai_first_partner_flow(main,db)
     main.api_admin_partner_document_open=_legacy_document_open; main.api_admin_partner_document_open_file=_admin_document_proxy
+    app.router.add_get('/api/admin/settings', _admin_settings_get)
+    app.router.add_post('/api/admin/settings', _admin_settings_save)
     register_partner_direction_routes(app,db=db,bot=bot)
     from client_api import register_client_routes; register_client_routes(app,ai)
     from admin_ai_api import register_admin_ai_routes; register_admin_ai_routes(app,ai,bot=bot)
+    from admin_tariff_api import register_admin_tariff_routes; register_admin_tariff_routes(app)
     from marketplace_flow_api import register_marketplace_flow_routes; register_marketplace_flow_routes(app)
     if not getattr(app,"_armenia_phase3_registered",False):
         from premium_contact_api import register_premium_contact_routes; register_premium_contact_routes(app)

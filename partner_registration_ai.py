@@ -16,12 +16,29 @@ def _norm(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _safe_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        raw = str(value).strip()
+        if not raw.isdigit():
+            return None
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _catalog(db) -> list[dict]:
     rows = []
     try:
         for master in db.get_all_master_categories() or []:
-            mid = master.get("id")
+            mid = _safe_int(master.get("id"))
+            if mid is None:
+                continue
             for sub in db.get_subcategories_by_master(mid) or []:
+                cid = _safe_int(sub.get("id"))
+                if cid is None:
+                    continue
                 rows.append({
                     "master_id": mid,
                     "master_am": master.get("name_am") or master.get("name_hy") or "",
@@ -114,8 +131,7 @@ def match_catalog(db, profile: dict) -> tuple[int | None, list[int]]:
     catalog = _catalog(db)
     wanted_master = _norm(profile.get("direction")).lower()
     requested = [_norm(x).lower() for x in (profile.get("subcategory_names") or []) if _norm(x)]
-    try: master_id = int(profile.get("master_category_id")) if profile.get("master_category_id") else None
-    except (TypeError, ValueError): master_id = None
+    master_id = _safe_int(profile.get("master_category_id"))
     if not master_id and wanted_master:
         for row in catalog:
             names = " ".join([row["master_am"], row["master_ru"], row["master_en"], row["master_slug"]]).lower()
@@ -127,8 +143,14 @@ def match_catalog(db, profile: dict) -> tuple[int | None, list[int]]:
             if master_id and row["master_id"] != master_id: continue
             names = " ".join([row["category_am"], row["category_ru"], row["category_en"], row["category_slug"]]).lower()
             if wanted == names or wanted in names or names in wanted:
-                cid = int(row["category_id"])
-                if cid not in category_ids: category_ids.append(cid)
+                raw_cid = row.get("category_id")
+                if raw_cid is None:
+                    continue
+                cid = _safe_int(raw_cid)
+                if cid is None:
+                    continue
+                if cid not in category_ids:
+                    category_ids.append(cid)
                 if not master_id: master_id = row["master_id"]
                 break
     return master_id, category_ids

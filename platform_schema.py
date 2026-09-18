@@ -56,7 +56,7 @@ def ensure_platform_schema() -> None:
         ON CONFLICT (telegram_id) DO NOTHING;
         RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql;
+    $$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
     DROP TRIGGER IF EXISTS trg_ensure_partner_user_exists ON partners;
     CREATE TRIGGER trg_ensure_partner_user_exists
@@ -78,18 +78,6 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS catalog_subcategories (
-        id BIGSERIAL PRIMARY KEY,
-        category_id INT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-        name_am TEXT NOT NULL,
-        name_ru TEXT NOT NULL,
-        name_en TEXT NOT NULL DEFAULT '',
-        slug TEXT NOT NULL UNIQUE,
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(category_id, name_ru)
-    );
-
     CREATE TABLE IF NOT EXISTS partner_objects (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
@@ -101,33 +89,22 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS partner_services (
-        id BIGSERIAL PRIMARY KEY,
-        partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
-        category_id INT REFERENCES categories(id) ON DELETE SET NULL,
-        object_id BIGINT REFERENCES partner_objects(id) ON DELETE SET NULL,
-        service_name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        base_price NUMERIC,
-        min_price NUMERIC,
-        max_price NUMERIC,
-        duration_minutes INT,
-        price_type TEXT NOT NULL DEFAULT 'fixed',
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
     CREATE TABLE IF NOT EXISTS services (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
         category_id INT REFERENCES categories(id) ON DELETE SET NULL,
-        subcategory_id BIGINT REFERENCES catalog_subcategories(id) ON DELETE SET NULL,
+        subcategory_id BIGINT REFERENCES categories(id) ON DELETE SET NULL,
         name TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
         price NUMERIC,
         currency TEXT NOT NULL DEFAULT 'AMD',
         duration_minutes INT,
+        -- Per-service tariff OVERRIDE set by admin. NULL = inherit
+        -- (subcategory override -> direction default). When admin sets e.g.
+        -- 'fixed' here, it wins over the direction's initial 'inside'/'on_top'.
+        commission_type TEXT DEFAULT NULL
+            CHECK (commission_type IS NULL OR commission_type IN ('inside','on_top','fixed')),
+        commission_value NUMERIC DEFAULT NULL,
         status TEXT NOT NULL DEFAULT 'draft'
             CHECK (status IN ('draft','pending','approved','rejected','frozen','deleted')),
         data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -219,6 +196,12 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Ensure every catalog category has an explicit settings row so admin
+    -- configuration is never silently missing.
+    INSERT INTO category_settings(category_id)
+    SELECT id FROM categories
+    ON CONFLICT(category_id) DO NOTHING;
 
     -- ---------------------------------------------------------------------
     -- AI / catalog research
@@ -333,7 +316,7 @@ def ensure_platform_schema() -> None:
         id BIGSERIAL PRIMARY KEY,
         client_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
         category_id INT REFERENCES categories(id) ON DELETE SET NULL,
-        subcategory_id BIGINT REFERENCES catalog_subcategories(id) ON DELETE SET NULL,
+        subcategory_id BIGINT REFERENCES categories(id) ON DELETE SET NULL,
         status TEXT NOT NULL DEFAULT 'discovery'
             CHECK (status IN ('discovery','searching','options_found','selected','waiting_partner','negotiating','confirmed','payment','booked','completed','cancelled','dispute')),
         language TEXT DEFAULT 'hy',
@@ -438,6 +421,13 @@ def ensure_platform_schema() -> None:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_ai_research_tasks_status ON ai_research_tasks(status, created_at DESC);
+
+    -- Backfill tariff-override columns on pre-existing services tables.
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS commission_type TEXT;
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS commission_value NUMERIC;
+    -- Backfill direction-level default tariff on pre-existing installs.
+    ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS commission_type TEXT NOT NULL DEFAULT 'on_top';
+    ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS commission_value NUMERIC NOT NULL DEFAULT 10;
 
     CREATE INDEX IF NOT EXISTS idx_services_partner_status ON services(partner_id, status);
     CREATE INDEX IF NOT EXISTS idx_partner_locations_partner ON partner_locations(partner_id);

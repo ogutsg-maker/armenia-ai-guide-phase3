@@ -94,6 +94,9 @@ async def storefront(request):
                c.name_ru AS category_name_ru
         FROM services s
         LEFT JOIN categories c ON c.id = s.category_id
+        JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id
+        JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
+             AND pd.partner_id=s.partner_id AND pd.status='approved'
         WHERE s.partner_id = %s AND s.status = 'approved'
         ORDER BY s.created_at DESC
         """,

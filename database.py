@@ -47,9 +47,8 @@ class DatabaseManager:
                             telegram_id  BIGINT PRIMARY KEY,
                             username     TEXT,
                             full_name    TEXT,
-                            role         TEXT DEFAULT NULL CHECK (role IN ('client','master',NULL)),
+                            role         TEXT DEFAULT NULL CHECK (role IN ('client','partner',NULL)),
                             lang         TEXT DEFAULT 'hy',
-                            city         TEXT DEFAULT NULL,
                             phone        TEXT DEFAULT NULL,
                             passport_photo TEXT DEFAULT NULL,
                             is_verified BOOLEAN DEFAULT FALSE,
@@ -66,7 +65,15 @@ class DatabaseManager:
                             id           SERIAL PRIMARY KEY,
                             name_am      TEXT NOT NULL,
                             name_ru      TEXT NOT NULL,
+                            name_en      TEXT DEFAULT '',
                             slug         TEXT NOT NULL UNIQUE,
+                            is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+                            -- Direction-level DEFAULT tariff ("initial settings").
+                            -- Applies to every service under this direction
+                            -- unless overridden at subcategory or service level.
+                            commission_type  TEXT NOT NULL DEFAULT 'on_top'
+                                CHECK (commission_type IN ('inside','on_top','fixed')),
+                            commission_value NUMERIC NOT NULL DEFAULT 10,
                             created_at   TIMESTAMPTZ DEFAULT NOW()
                         )
                     ''')
@@ -79,9 +86,11 @@ class DatabaseManager:
                             name_ru      TEXT NOT NULL,
                             slug         TEXT NOT NULL UNIQUE,
                             is_active    BOOLEAN DEFAULT TRUE,
-                            commission_type  TEXT NOT NULL DEFAULT 'on_top'
-                                CHECK (commission_type IN ('inside','on_top','fixed')),
-                            commission_value NUMERIC NOT NULL DEFAULT 10,
+                            -- Subcategory tariff is an OPTIONAL override.
+                            -- NULL means "inherit the direction default".
+                            commission_type  TEXT DEFAULT NULL
+                                CHECK (commission_type IS NULL OR commission_type IN ('inside','on_top','fixed')),
+                            commission_value NUMERIC DEFAULT NULL,
                             created_at   TIMESTAMPTZ DEFAULT NOW()
                         )
                     ''')
@@ -390,29 +399,11 @@ class DatabaseManager:
     # ------------------------------------------------------------------
     # ЗАКАЗЫ И ПОИСК ИСПОЛНИТЕЛЕЙ
     # ------------------------------------------------------------------
-
-
-
-
-    def find_matching_masters(self, category_name_or_slug: str, city: str) -> list[dict]:
-        """Ищет верифицированных мастеров по категории и городу."""
-        with _connect() as conn:
-            with conn.cursor() as cur:
-                city_lower = city.strip().lower()
-                allowed = CITY_SYNONYMS.get(city_lower, [city_lower])
-                cur.execute('''
-                    SELECT u.telegram_id, u.username, u.city, u.rating_avg
-                    FROM users u
-                    JOIN master_skills ms ON u.telegram_id = ms.user_id
-                    JOIN categories c ON ms.category_id = c.id
-                    WHERE (c.name_am = %s OR c.name_ru = %s OR c.slug = %s)
-                      AND u.role = 'master'
-                      AND u.is_verified = TRUE
-                      AND u.is_frozen = FALSE
-                      AND ms.is_active = TRUE
-                      AND TRIM(LOWER(u.city)) = ANY(%s)
-                ''', (category_name_or_slug, category_name_or_slug, category_name_or_slug, allowed))
-                return cur.fetchall()
+    # find_matching_masters() удалён: он опирался на несуществующую роль
+    # users.role='master' (CHECK допускает только 'client'/'partner'/NULL)
+    # и legacy-поиск по master_skills. Поиск исполнителей в чистой
+    # архитектуре выполняет marketplace_flow_api через services +
+    # partner_direction_categories.
     # ------------------------------------------------------------------
     # СТАВКИ / ТОРГИ (БИДЫ МАСТЕРОВ)
     # ------------------------------------------------------------------

@@ -427,6 +427,11 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
     app.router.add_get("/api/master/{id}/locations", api_locations)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
-    app.router.add_get("/api/master/{id}/documents", api_documents)
+    # NOTE: GET /api/master/{id}/documents is already registered by
+    # register_stage3_routes (api_partner_documents), which is called earlier
+    # in main.py on the same app. Registering it here too raised aiohttp
+    # RuntimeError ("Added route will never be executed") on startup, so this
+    # duplicate was removed. The stage3 handler returns a superset
+    # ({ok, partner, documents}); clients reading `.documents` are unaffected.
     app.router.add_post("/api/partner/cabinet/update-by-image", update_profile_by_image)
     app.router.add_post("/api/partner/cabinet/update-by-voice", update_profile_by_voice)

@@ -478,15 +478,25 @@ async def _set_partner_decision(request, decision):
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
 
     if decision == "approve":
-        pending_doc = _db_fetchone(
-            "SELECT id FROM partner_verification_documents WHERE partner_id=%s AND status='pending' ORDER BY created_at DESC LIMIT 1",
+        approved_direction = _db_fetchone(
+            "SELECT id FROM partner_directions WHERE partner_id=%s AND status='approved' ORDER BY updated_at DESC LIMIT 1",
             (pid,),
         )
-        if not pending_doc:
+        if not approved_direction:
+            return web.json_response({
+                "ok": False,
+                "error": "partner_direction_approval_required",
+                "message": "Сначала одобрите направление партнёра и его документ.",
+            }, status=400)
+        approved_doc = _db_fetchone(
+            "SELECT id FROM partner_verification_documents WHERE partner_id=%s AND status='approved' ORDER BY reviewed_at DESC NULLS LAST, created_at DESC LIMIT 1",
+            (pid,),
+        )
+        if not approved_doc:
             return web.json_response({
                 "ok": False,
                 "error": "verification_document_required",
-                "message": "Партнёра нельзя одобрить без загруженного документа на проверке.",
+                "message": "Сначала проверьте и одобрите документ направления партнёра.",
             }, status=400)
         _db_execute("UPDATE partners SET status='approved', verification_status='approved', rejection_reason=NULL WHERE id=%s", (pid,))
         _db_execute("UPDATE partner_verification_documents SET status='approved', rejection_reason=NULL, reviewed_by=%s, reviewed_at=NOW() WHERE partner_id=%s AND status='pending'", (admin_id, pid))

@@ -54,13 +54,51 @@ def _uid(request):
 def _json(value): return json.dumps(value or {},ensure_ascii=False)
 
 def _commission(service):
+    """Resolve the tariff with a 3-level cascade:
+       1) per-service override (admin set it on the service),
+       2) subcategory override (categories.commission_*),
+       3) direction default (master_categories.commission_* = "initial settings").
+    NULL at a level means "inherit the level below it".
+    """
+    # 1) per-service override
+    stype=service.get('commission_type')
+    if stype:
+        try:sval=float(service.get('commission_value') or 0)
+        except Exception:sval=0.0
+        return str(stype),max(0.0,sval)
+    # 2)+3) subcategory override, else direction default
+    cat_id=service.get('category_id')
+    if cat_id:
+        row=_one("""
+            SELECT COALESCE(c.commission_type, m.commission_type, 'on_top') AS ctype,
+                   COALESCE(c.commission_value, m.commission_value, 10)      AS cvalue
+            FROM categories c
+            LEFT JOIN master_categories m ON m.id=c.master_category_id
+            WHERE c.id=%s
+        """,(cat_id,))
+        if row:
+            ctype=str(row.get('ctype') or 'on_top')
+            try:value=float(row.get('cvalue') or 0)
+            except Exception:value=0.0
+            return ctype,max(0.0,value)
     data=service.get('data_json') or {}
     if isinstance(data,str):
         try:data=json.loads(data)
         except Exception:data={}
     try:rate=float(data.get('commission_percent',10))
     except Exception:rate=10.0
-    return max(0.0,min(100.0,rate))
+    return 'on_top',max(0.0,min(100.0,rate))
+
+def _price_and_commission(final_price,service):
+    ctype,value=_commission(service)
+    if ctype=='fixed':
+        commission=round(value,2)
+        return commission,round(final_price,2),round(final_price-commission,2)
+    if ctype=='inside':
+        commission=round(final_price*value/100,2)
+        return commission,round(final_price,2),round(final_price-commission,2)
+    commission=round(final_price*value/100,2)
+    return commission,round(final_price+commission,2),round(final_price,2)
 
 async def client_search(request):
     uid=_uid(request); data=await request.json(); q=str(data.get('query') or data.get('text') or '').strip(); city=str(data.get('city') or '').strip(); category_id=int(data.get('category_id') or 0)
@@ -164,48 +202,71 @@ async def partner_agree(request):
     return web.json_response({'ok':True,'status':'agreed' if st.get('client_agreed') else 'waiting_client'})
 
 async def test_payment(request):
-    uid=_uid(request); nid=int(request.match_info['negotiation_id']); data=await request.json(); n=_one("SELECT * FROM negotiations WHERE id=%s AND client_id=%s AND status='agreed'",(nid,uid))
-    if not n:return web.json_response({'ok':False,'error':'negotiation_not_agreed'},status=400)
-    st=_state(n); service_id=int(st.get('service_id') or 0); service=_one("SELECT * FROM services WHERE id=%s AND partner_id=%s AND status='approved'",(service_id,n['partner_id']))
-    if not service:return web.json_response({'ok':False,'error':'service_not_available'},status=404)
-    price=float(data.get('amount') or service.get('price') or 0); rate=_commission(service); commission=round(price*rate/100,2); partner_amount=round(price-commission,2)
-    # Route the (currently fictitious) payment through the Idram provider layer.
-    # In test mode this returns a settled TEST-IDRAM-* transaction with no
-    # network; when real credentials are configured it becomes a live Idram
-    # charge without changing anything here.
+    # Test payment is strictly based on the final mutually agreed negotiation price.
+    uid=_uid(request); nid=int(request.match_info['negotiation_id'])
+    n=_one("SELECT * FROM negotiations WHERE id=%s AND client_id=%s AND status='agreed'",(nid,uid))
+    if not n:
+        return web.json_response({'ok':False,'error':'negotiation_not_agreed'},status=400)
+
+    # Idempotency: repeated taps return the existing booking/payment/QR.
+    existing=_one("SELECT * FROM bookings WHERE negotiation_id=%s ORDER BY id DESC LIMIT 1",(nid,))
+    if existing:
+        payment=_one("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(existing['id'],))
+        check=_one("SELECT * FROM booking_checkins WHERE booking_id=%s",(existing['id'],))
+        partner=_one("SELECT id,business_name,business_description,contact_share_policy,contact_sharing_enabled,profile_json FROM partners WHERE id=%s",(existing['partner_id'],))
+        locations=_rows("SELECT marz,city,village,address,location_type FROM partner_locations WHERE partner_id=%s ORDER BY id LIMIT 5",(existing['partner_id'],))
+        return web.json_response({'ok':True,'payment':payment,'booking':existing,'checkin':check,'qr':qr_util.qr_data_uri(check['token']) if check else None,'partner':{'business_name':partner['business_name'],'locations':locations,'contact':{}}})
+
+    st=_state(n); service_id=int(st.get('service_id') or 0)
+    service=_one("SELECT * FROM services WHERE id=%s AND partner_id=%s AND status='approved'",(service_id,n['partner_id']))
+    if not service:
+        return web.json_response({'ok':False,'error':'service_not_available'},status=404)
+    raw_price=st.get('final_price',st.get('agreed_price',st.get('price',service.get('price'))))
+    try:
+        price=float(raw_price)
+    except (TypeError,ValueError):
+        price=0.0
+    if price<=0:
+        return web.json_response({'ok':False,'error':'agreed_price_invalid'},status=400)
+
+    commission, customer_total, partner_amount=_price_and_commission(price,service)
     idram=IdramProvider()
-    intent=idram.create_invoice(amount=commission,currency=service['currency'],description=f"Platform commission: {service['name']}",order_id=nid,metadata={'service_id':service_id,'negotiation_id':nid})
+    intent=idram.create_invoice(
+        amount=commission,currency=service['currency'],
+        description=f"Platform commission: {service['name']}",
+        order_id=nid,metadata={'service_id':service_id,'negotiation_id':nid},
+    )
     txn=intent.transaction_id
-    # In live Idram mode the charge is only 'pending' until the async result
-    # callback (/api/idram/result) confirms it; in test mode it is already 'paid'.
     booking_status='paid' if intent.status=='paid' else 'pending_payment'
-    booking=_exec("INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,status,service_name,agreed_price,currency,commission_amount,partner_amount,data_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",(n['request_id'],nid,uid,n['partner_id'],service_id,booking_status,service['name'],price,service['currency'],commission,partner_amount,_json({'payment_mode':intent.provider,'payment_status':intent.status,'test_transaction':txn,'service_price':price,'commission_percent':rate})),True)
-    payment=_exec("INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,provider,provider_payment_id,data_json) VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",(booking['id'],uid,n['partner_id'],intent.status,commission,service['currency'],intent.provider,txn,_json({'mode':intent.mode,'bill_no':intent.bill_no,'payment_url':intent.payment_url})),True)
+    booking=_exec(
+        "INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,status,service_name,agreed_price,currency,commission_amount,partner_amount,data_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",
+        (n['request_id'],nid,uid,n['partner_id'],service_id,booking_status,service['name'],price,service['currency'],commission,partner_amount,
+         _json({'payment_mode':intent.provider,'payment_status':intent.status,'test_transaction':txn,'service_price':price,'commission_tariff':{'type':_commission(service)[0],'value':_commission(service)[1]}}),),True)
+    payment=_exec(
+        "INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,provider,provider_payment_id,data_json) VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",
+        (booking['id'],uid,n['partner_id'],intent.status,commission,service['currency'],intent.provider,txn,
+         _json({'mode':intent.mode,'bill_no':intent.bill_no,'payment_url':intent.payment_url})),True)
     _exec("UPDATE service_requests SET status='booked',updated_at=NOW() WHERE id=%s",(n['request_id'],))
     _exec("INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) VALUES(%s,%s,'commission',%s,%s,%s)",(n['partner_id'],booking['id'],commission,service['currency'],'Test Idram platform commission'))
     _exec("INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) VALUES(%s,%s,'partner_due',%s,%s,%s)",(n['partner_id'],booking['id'],partner_amount,service['currency'],'Partner amount after platform commission'))
     check=_exec("INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",(booking['id'],secrets.token_urlsafe(24)),True)
-    partner=_one("SELECT id,business_name,business_description,contact_share_policy,contact_sharing_enabled,profile_json FROM partners WHERE id=%s",(n['partner_id'],)); locations=_rows("SELECT marz,city,village,address,location_type FROM partner_locations WHERE partner_id=%s ORDER BY id LIMIT 5",(n['partner_id'],))
+
+    partner=_one("SELECT id,business_name,business_description,contact_share_policy,contact_sharing_enabled,profile_json FROM partners WHERE id=%s",(n['partner_id'],))
+    locations=_rows("SELECT marz,city,village,address,location_type FROM partner_locations WHERE partner_id=%s ORDER BY id LIMIT 5",(n['partner_id'],))
     profile=partner.get('profile_json') or {}
     if isinstance(profile,str):
-        try:profile=json.loads(profile)
-        except Exception:profile={}
+        try: profile=json.loads(profile)
+        except Exception: profile={}
     contact={}
-    if partner.get('contact_sharing_enabled'): contact={k:profile.get(k) for k in ('phone','website','telegram') if profile.get(k)}
+    if partner.get('contact_sharing_enabled'):
+        contact={k:profile.get(k) for k in ('phone','website','telegram') if profile.get(k)}
     details={'business_name':partner['business_name'],'locations':locations,'contact':contact,'service':service['name'],'price':price,'currency':service['currency'],'booking_id':booking['id']}
-    # Notify the partner about the new (negotiated) booking — mirrors the
-    # direct-booking path so both flows behave identically. Best-effort.
+
     try:
         from notify import notify
         owner=_one("SELECT user_id FROM partners WHERE id=%s",(n['partner_id'],))
         if owner and owner.get('user_id'):
-            await notify(
-                request.app, int(owner['user_id']),
-                title='🛒 Новая бронь',
-                body=f"«{service['name']}» — {price:.0f} {service['currency']} (№{booking['id']}).",
-                kind='booking_new', audience='partner',
-                data={'booking_id':booking['id'],'service_id':service_id},
-            )
+            await notify(request.app,int(owner['user_id']),title='🛒 Новая бронь',body=f"«{service['name']}» — {price:.0f} {service['currency']} (№{booking['id']}).",kind='booking_new',audience='partner',data={'booking_id':booking['id'],'service_id':service_id})
     except Exception:
         pass
     try:
@@ -241,7 +302,9 @@ async def direct_booking(request):
         """
         SELECT s.* FROM services s
         JOIN partners p ON p.id=s.partner_id
-        WHERE s.id=%s AND s.status='approved' AND p.status='approved'
+        JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id
+        JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id
+        WHERE s.id=%s AND s.status='approved' AND p.status='approved' AND pd.status='approved'
         """,
         (service_id,),
     )
@@ -288,9 +351,7 @@ async def direct_booking(request):
     if price <= 0:
         return web.json_response({'ok': False, 'error': 'invalid_total_price'}, status=400)
 
-    rate = _commission(service)
-    commission = round(price * rate / 100, 2)
-    partner_amount = round(price - commission, 2)
+    commission, customer_total, partner_amount = _price_and_commission(price, service)
     scheduled_at = _parse_scheduled_at(data.get('scheduled_at'))
     client_note = str(data.get('client_note') or data.get('note') or '').strip()[:1000]
 
@@ -330,7 +391,7 @@ async def direct_booking(request):
                 'payment_status': intent.status,
                 'test_transaction': txn,
                 'service_price': price,
-                'commission_percent': rate,
+                'commission_tariff': {'type': _commission(service)[0], 'value': _commission(service)[1]},
                 'package': ({'id': package['id'], 'name': package['name'],
                              'price': float(package['price'] or 0)} if package else None),
                 'options': [{'id': o['id'], 'name': o['name'],
@@ -384,7 +445,7 @@ async def direct_booking(request):
         contact = {k: profile.get(k) for k in ('phone', 'website', 'telegram') if profile.get(k)}
     details = {
         'business_name': partner['business_name'], 'locations': locations, 'contact': contact,
-        'service': service['name'], 'price': price, 'currency': currency, 'booking_id': booking['id'],
+        'service': service['name'], 'price': customer_total, 'base_price': price, 'currency': currency, 'booking_id': booking['id'],
     }
 
     # Best-effort partner notification (never fail the booking on notify errors).
@@ -499,6 +560,25 @@ async def _cancel_booking(request, actor):
         pass
     return web.json_response({'ok':True,'booking_id':booking_id,'status':new_status,'refund_percent':pct,'refund_amount':refund_amount,'currency':currency})
 
+async def partner_checkin(request):
+    uid=_uid(request)
+    data=await request.json()
+    token=str(data.get('token') or '').strip()
+    if not token:return web.json_response({'ok':False,'error':'token_required'},status=400)
+    row=_one("""SELECT bc.*,b.status booking_status,b.partner_id,b.client_id,b.service_name,b.agreed_price,b.currency,p.business_name
+              FROM booking_checkins bc JOIN bookings b ON b.id=bc.booking_id
+              JOIN partners p ON p.id=b.partner_id
+              WHERE bc.token=%s AND p.user_id=%s""",(token,uid))
+    if not row:return web.json_response({'ok':False,'error':'checkin_token_invalid'},status=404)
+    if row.get('status')=='checked_in':return web.json_response({'ok':True,'already_checked_in':True,'checkin':row})
+    if row.get('booking_status') not in ('paid','confirmed'):return web.json_response({'ok':False,'error':'booking_not_paid','booking_status':row.get('booking_status')},status=409)
+    check=_exec("UPDATE booking_checkins SET status='checked_in',checked_in_at=NOW(),checked_in_by=%s WHERE id=%s AND status='active' RETURNING *",(uid,row['id']),True)
+    if not check:
+        current=_one("SELECT * FROM booking_checkins WHERE id=%s",(row['id'],))
+        return web.json_response({'ok':True,'already_checked_in':True,'checkin':current})
+    _exec("UPDATE bookings SET status='completed',updated_at=NOW() WHERE id=%s",(row['booking_id'],))
+    return web.json_response({'ok':True,'already_checked_in':False,'checkin':check,'booking':_one("SELECT * FROM bookings WHERE id=%s",(row['booking_id'],)),'service_name':row['service_name'],'agreed_price':row['agreed_price'],'currency':row['currency'],'business_name':row['business_name']})
+
 async def cancel_booking_client(request):
     return await _cancel_booking(request,'client')
 
@@ -587,6 +667,7 @@ def register_marketplace_flow_routes(app):
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/agree',partner_agree)
     app.router.add_post('/api/market/client/booking/{booking_id}/cancel',cancel_booking_client)
     app.router.add_post('/api/market/partner/booking/{booking_id}/cancel',cancel_booking_partner)
+    app.router.add_post('/api/market/partner/checkin',partner_checkin)
     # Idram live payment callback (server-to-server) + browser return pages.
     app.router.add_post('/api/idram/result',idram_result)
     app.router.add_get('/api/idram/result',idram_result)

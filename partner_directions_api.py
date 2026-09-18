@@ -334,6 +334,12 @@ def register_partner_direction_routes(app, db=None, bot=None):
             if not pending: return web.json_response({"ok":False,"error":"direction_document_required"},status=400)
             _exec("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(did))
             _exec("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE partner_direction_id=%s AND status='pending'",(admin_id,did))
+            # Services created by the AI onboarding stay pending until their direction and document are approved.
+            # Once the direction is approved, publish only services belonging to this approved direction.
+            _exec("""UPDATE services SET status='approved',updated_at=NOW()
+                     WHERE partner_id=%s AND category_id IN
+                       (SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s)
+                       AND status='pending'""",(pd["partner_id"],did))
         elif action=="reject":
             reason=str(data.get("reason") or "Մերժվել է ադմինիստրատորի կողմից")[:1000]
             _exec("UPDATE partner_directions SET status='rejected',rejection_reason=%s,updated_at=NOW() WHERE id=%s",(reason,did))
@@ -359,7 +365,7 @@ def register_partner_direction_routes(app, db=None, bot=None):
 
     async def admin_directions_tree(request):
         _auth_admin(request)
-        masters=_fetchall("SELECT id,name_am,name_ru,name_en,slug,is_active FROM master_categories ORDER BY id")
+        masters=_fetchall("SELECT id,name_am,name_ru,name_en,slug,is_active,commission_type,commission_value FROM master_categories ORDER BY id")
         subs=_fetchall("SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,c.is_active,c.commission_type,c.commission_value,COALESCE(cs.bank_commission_type,'none') bank_commission_type,COALESCE(cs.bank_commission_value,0) bank_commission_value,COALESCE(cs.cancellation_policy,'no_refund') cancellation_policy,COALESCE(cs.premium_contact_enabled,FALSE) premium_contact_enabled,COALESCE(cs.premium_contact_fee,0) premium_contact_fee,COALESCE(cs.premium_disclosure_scope,'none') premium_disclosure_scope,COALESCE(cs.contact_reveal_after_booking,TRUE) contact_reveal_after_booking FROM categories c LEFT JOIN category_settings cs ON cs.category_id=c.id ORDER BY c.master_category_id,c.id")
         by={}
         for c in subs: by.setdefault(c['master_category_id'],[]).append(c)
@@ -374,6 +380,13 @@ def register_partner_direction_routes(app, db=None, bot=None):
         elif action=='activate': _exec("UPDATE master_categories SET is_active=TRUE WHERE id=%s",(mid,))
         elif action=='edit':
             fields={k:data[k] for k in ('name_am','name_ru','name_en','slug') if k in data and str(data[k]).strip()}
+            # Direction-level DEFAULT tariff ("initial settings"). Applied to
+            # every service under this direction unless overridden lower down.
+            if str(data.get('commission_type') or '').strip() in ('inside','on_top','fixed'):
+                fields['commission_type']=str(data['commission_type']).strip()
+            if 'commission_value' in data:
+                try:fields['commission_value']=max(0.0,float(data['commission_value']))
+                except (TypeError,ValueError):pass
             if not fields:return web.json_response({'ok':False,'error':'no_fields'},status=400)
             sets=', '.join(f'{k}=%s' for k in fields); _exec(f'UPDATE master_categories SET {sets} WHERE id=%s',(*fields.values(),mid))
         elif action=='delete':
@@ -406,6 +419,18 @@ def register_partner_direction_routes(app, db=None, bot=None):
             if "description" in data: allowed["description"]=data.get("description")
             if "price" in data or "base_price" in data: allowed["price"]=data.get("price",data.get("base_price"))
             if "duration_minutes" in data: allowed["duration_minutes"]=data.get("duration_minutes")
+            # Per-service tariff OVERRIDE. Send commission_type='' (or null) to
+            # clear the override and fall back to subcategory/direction default.
+            if "commission_type" in data:
+                ct=str(data.get("commission_type") or "").strip()
+                allowed["commission_type"]=ct if ct in ("inside","on_top","fixed") else None
+            if "commission_value" in data:
+                cv=data.get("commission_value")
+                if cv in (None,""):
+                    allowed["commission_value"]=None
+                else:
+                    try:allowed["commission_value"]=max(0.0,float(cv))
+                    except (TypeError,ValueError):pass
             if not allowed:return web.json_response({"ok":False,"error":"no_fields"},status=400)
             sets=', '.join(f"{k}=%s" for k in allowed); _exec(f"UPDATE services SET {sets},updated_at=NOW() WHERE id=%s",(*allowed.values(),sid))
         else:return web.json_response({"ok":False,"error":"unknown_action"},status=400)
