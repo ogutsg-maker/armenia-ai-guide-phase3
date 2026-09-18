@@ -164,6 +164,13 @@ async def _bootstrap(app):
     from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()
     if not getattr(main,"_armenia_ai_first_partner_flow",False):_install_ai_first_partner_flow(main,db)
     main.api_admin_partner_document_open=_legacy_document_open; main.api_admin_partner_document_open_file=_admin_document_proxy
+    if not getattr(app,"_armenia_docproxy_registered",False):
+        # Route the document proxy so the /open-file URL handed out by
+        # api_admin_partner_document_url actually resolves. This path is exempt
+        # from the admin header middleware and authorises via the signed
+        # ?access= token instead (browser tabs cannot send custom headers).
+        app.router.add_get('/api/admin/partner-applications/{id}/documents/{doc_id}/open-file', _admin_document_proxy)
+        app._armenia_docproxy_registered=True
     app.router.add_get('/api/admin/settings', _admin_settings_get)
     app.router.add_post('/api/admin/settings', _admin_settings_save)
     register_partner_direction_routes(app,db=db,bot=bot)

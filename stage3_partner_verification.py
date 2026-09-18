@@ -459,22 +459,23 @@ async def api_admin_partner_document_url(request):
     admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     pid = int(request.match_info["id"])
     doc_id = int(request.match_info["doc_id"])
-    row = _db_fetchone("SELECT id, partner_id, storage_path, file_data FROM partner_verification_documents WHERE id=%s AND partner_id=%s", (doc_id, pid))
+    row = _db_fetchone("SELECT id FROM partner_verification_documents WHERE id=%s AND partner_id=%s", (doc_id, pid))
     if not row:
         return web.json_response({"ok": False, "error": "document_not_found"}, status=404)
-    if row.get("storage_path"):
-        try:
-            url = await _storage_signed_url(row["storage_path"], 900)
-            return web.json_response({"ok": True, "admin_id": admin_id, "url": url, "expires_in": 900, "source": "storage"})
-        except Exception as exc:
-            print(f"[partner-verification] signed URL failed, database fallback available: doc={doc_id} error={exc!r}", flush=True)
-    # DB fallback: served by our own /download endpoint. A browser tab opened
-    # via tg.openLink()/window.open cannot send the X-Telegram-Init-Data header,
-    # so we mint a short-lived HMAC token (signed with the bot token) that the
-    # download endpoint verifies on its own — no Telegram init-data in the URL.
-    token = _mint_doc_token(pid, doc_id, admin_id, request.app.get("stage3_bot_token"))
-    download_url = f"/api/admin/partner-applications/{pid}/documents/{doc_id}/download?t={token}"
-    return web.json_response({"ok": True, "admin_id": admin_id, "url": download_url, "expires_in": 900, "source": "database"})
+    # The document is opened in a plain browser tab (tg.openLink / window.open),
+    # which cannot attach the admin X-Telegram-Init-Data header. A platform-wide
+    # middleware guards every /api/admin/ path and demands that header — EXCEPT
+    # paths ending in /open-file (and /viewer, /proxy). So we hand back a
+    # self-authorising proxy URL that ends in /open-file and carries a
+    # short-lived signed `access` token, which the proxy handler verifies on its
+    # own. The proxy serves both Storage-backed and DB-backed (BYTEA) documents.
+    try:
+        from runtime_platform_bootstrap import _make_document_access_token
+        token = _make_document_access_token(pid, doc_id, 900)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": "document_url_unavailable", "details": str(exc)[:300]}, status=500)
+    url = f"/api/admin/partner-applications/{pid}/documents/{doc_id}/open-file?access={token}"
+    return web.json_response({"ok": True, "admin_id": admin_id, "url": url, "expires_in": 900, "source": "proxy"})
 
 
 async def api_admin_partner_document_download(request):
