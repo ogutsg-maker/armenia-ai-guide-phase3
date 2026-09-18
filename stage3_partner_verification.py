@@ -221,7 +221,11 @@ def ensure_stage3_schema():
 
 
 def _admin_telegram_id(request, bot_token=None, admin_id=None):
-    raw = request.headers.get("X-Telegram-Init-Data", "").strip()
+    # Prefer the header (used by fetch()), but also accept the init-data as a
+    # query param `tgwad`. Direct navigation / window.open cannot attach custom
+    # headers, so document links carry the (signed, time-limited) init-data in
+    # the query string instead. Validation below is identical either way.
+    raw = request.headers.get("X-Telegram-Init-Data", "").strip() or request.query.get("tgwad", "").strip()
     if not raw:
         raise web.HTTPUnauthorized(text='{"ok":false,"error":"telegram_init_data_required"}', content_type="application/json")
     try:
@@ -425,7 +429,15 @@ async def api_admin_partner_document_url(request):
             return web.json_response({"ok": True, "admin_id": admin_id, "url": url, "expires_in": 900, "source": "storage"})
         except Exception as exc:
             print(f"[partner-verification] signed URL failed, database fallback available: doc={doc_id} error={exc!r}", flush=True)
-    return web.json_response({"ok": True, "admin_id": admin_id, "url": f"/api/admin/partner-applications/{pid}/documents/{doc_id}/download", "source": "database"})
+    # DB fallback: the file is served by our own /download endpoint, which needs
+    # admin auth. Since the browser opens this URL directly (no custom header),
+    # embed the admin init-data as a query param so auth still succeeds.
+    from urllib.parse import quote
+    raw = request.headers.get("X-Telegram-Init-Data", "").strip()
+    download_url = f"/api/admin/partner-applications/{pid}/documents/{doc_id}/download"
+    if raw:
+        download_url += "?tgwad=" + quote(raw, safe="")
+    return web.json_response({"ok": True, "admin_id": admin_id, "url": download_url, "source": "database"})
 
 
 async def api_admin_partner_document_download(request):
