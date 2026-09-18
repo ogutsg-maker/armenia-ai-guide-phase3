@@ -128,31 +128,88 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
 
 
 def match_catalog(db, profile: dict) -> tuple[int | None, list[int]]:
+    """Map an AI-extracted profile onto the existing 3-language catalogue.
+
+    Матчинг намеренно "жадный", чтобы НЕ плодить ложные предложения нового
+    направления, когда направление на самом деле уже есть в каталоге. Порядок:
+      1) явный master_category_id, либо совпадение названия направления с
+         названием мастер-категории (am/ru/en/slug);
+      2) если направление не совпало — вычисляем мастер-категорию по названиям
+         ПОДкатегорий, найденным в свободном тексте партнёра (названия услуг,
+         описание, перечисленные подкатегории). Напр. услуга «Մазери неркум»
+         однозначно указывает на «Гегецкутьюн ев кхнамк / Красота и уход».
+      3) собираем id подкатегорий внутри выбранной мастер-категории.
+    """
     catalog = _catalog(db)
-    wanted_master = _norm(profile.get("direction")).lower()
-    requested = [_norm(x).lower() for x in (profile.get("subcategory_names") or []) if _norm(x)]
+    if not catalog:
+        return _safe_int(profile.get("master_category_id")), []
+
+    def norm(value: Any) -> str:
+        return _norm(value).lower()
+
+    wanted_master = norm(profile.get("direction"))
+    requested = [norm(x) for x in (profile.get("subcategory_names") or []) if norm(x)]
+
+    # Свободный текст партнёра: направление + описание + названия услуг + подкатегории.
+    text_parts: list[str] = [str(profile.get("direction") or ""), str(profile.get("description") or "")]
+    for item in (profile.get("services") or []):
+        if isinstance(item, dict):
+            text_parts.append(str(item.get("name") or ""))
+        else:
+            text_parts.append(str(item))
+    text_parts.extend(str(x) for x in (profile.get("subcategory_names") or []))
+    haystack = norm(" ".join(p for p in text_parts if p))
+
     master_id = _safe_int(profile.get("master_category_id"))
+
+    # 1) Совпадение по названию мастер-категории (в названиях есть эмодзи-префикс,
+    #    поэтому проверяем вхождение в обе стороны).
     if not master_id and wanted_master:
         for row in catalog:
-            names = " ".join([row["master_am"], row["master_ru"], row["master_en"], row["master_slug"]]).lower()
-            if wanted_master == names or wanted_master in names or names in wanted_master:
-                master_id = row["master_id"]; break
-    category_ids = []
-    for wanted in requested:
-        for row in catalog:
-            if master_id and row["master_id"] != master_id: continue
-            names = " ".join([row["category_am"], row["category_ru"], row["category_en"], row["category_slug"]]).lower()
-            if wanted == names or wanted in names or names in wanted:
-                raw_cid = row.get("category_id")
-                if raw_cid is None:
-                    continue
-                cid = _safe_int(raw_cid)
-                if cid is None:
-                    continue
-                if cid not in category_ids:
-                    category_ids.append(cid)
-                if not master_id: master_id = row["master_id"]
+            names = norm(" ".join([row["master_am"], row["master_ru"], row["master_en"], row["master_slug"]]))
+            if names and (wanted_master == names or wanted_master in names or names in wanted_master):
+                master_id = row["master_id"]
                 break
+
+    # 2) Не нашли — определяем мастер-категорию по названиям подкатегорий,
+    #    встречающимся в тексте партнёра. Берём мастер с наибольшим числом
+    #    попаданий (устойчивее к пересечениям вроде «Массаж»).
+    if not master_id and haystack:
+        score: dict[int, int] = {}
+        for row in catalog:
+            for cname in (row["category_am"], row["category_ru"], row["category_en"]):
+                c = norm(cname)
+                if len(c) >= 4 and c in haystack:
+                    score[row["master_id"]] = score.get(row["master_id"], 0) + 1
+                    break
+        if score:
+            master_id = max(score, key=lambda k: score[k])
+
+    # 3) Собираем id подкатегорий выбранной мастер-категории: по явно указанным
+    #    подкатегориям И по названиям подкатегорий, найденным в тексте.
+    category_ids: list[int] = []
+    for row in catalog:
+        if master_id and row["master_id"] != master_id:
+            continue
+        cnames = [norm(row["category_am"]), norm(row["category_ru"]), norm(row["category_en"])]
+        hit = False
+        for wanted in requested:
+            if any(cn and (wanted == cn or wanted in cn or cn in wanted) for cn in cnames):
+                hit = True
+                break
+        if not hit:
+            for cn in cnames:
+                if len(cn) >= 4 and cn in haystack:
+                    hit = True
+                    break
+        if not hit:
+            continue
+        cid = _safe_int(row.get("category_id"))
+        if cid is None or cid in category_ids:
+            continue
+        category_ids.append(cid)
+        if not master_id:
+            master_id = row["master_id"]
     return master_id, category_ids
 
 
