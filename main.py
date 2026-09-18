@@ -365,11 +365,19 @@ async def main():
             webhook_url = f"{render_url}/telegram/webhook"
     if webhook_url:
         try:
-            await bot.set_webhook(url=webhook_url, drop_pending_updates=False)
+            # drop_pending_updates=True + delete_webhook first clears any stale
+            # getUpdates session so a previous poller stops conflicting.
+            await bot.delete_webhook(drop_pending_updates=True)
+            await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
             logger.info("✅ Telegram webhook configured: %s", webhook_url)
         except Exception:
             logger.exception("Could not configure Telegram webhook")
             raise
+        # In webhook mode nothing blocks the event loop, so we must keep the
+        # process (and the aiohttp server) alive explicitly. Without this the
+        # coroutine returns, asyncio.run() exits and the server dies.
+        logger.info("📡 Webhook mode active; serving updates via /telegram/webhook")
+        await asyncio.Event().wait()
     else:
         logger.info("ℹ️ TELEGRAM_WEBHOOK_URL/RENDER_EXTERNAL_URL not set; using polling")
         await dp.start_polling(bot)
