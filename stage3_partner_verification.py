@@ -1,7 +1,11 @@
 ﻿"""Stage 3: partner verification documents + admin approval workflow.
 Uses the existing PostgreSQL database and Supabase Storage without replacing database.py.
 """
+import base64
+import hashlib
+import hmac
 import os
+import time
 import uuid
 from datetime import datetime, date, timezone
 from decimal import Decimal
@@ -220,6 +224,41 @@ def ensure_stage3_schema():
         conn.commit()
 
 
+def _doc_token_secret(bot_token=None):
+    return (bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or os.getenv("BOT_TOKEN", "").strip()).encode()
+
+
+def _mint_doc_token(pid, doc_id, admin_id, bot_token=None, ttl=900):
+    """Short-lived HMAC token (signed with the bot token) authorising ONE admin
+    to fetch ONE document. Embedded in the /download URL so a plain browser tab
+    opened via tg.openLink()/window.open (which cannot send the
+    X-Telegram-Init-Data header) can still be authorised."""
+    exp = int(time.time()) + int(ttl)
+    msg = f"{int(pid)}.{int(doc_id)}.{int(admin_id)}.{exp}"
+    sig = hmac.new(_doc_token_secret(bot_token), msg.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{msg}.{sig}".encode()).decode().rstrip("=")
+
+
+def _verify_doc_token(token, pid, doc_id, bot_token=None):
+    """Return the admin_id if the token is valid for (pid, doc_id) and unexpired,
+    otherwise None."""
+    try:
+        pad = "=" * (-len(token) % 4)
+        decoded = base64.urlsafe_b64decode(token + pad).decode()
+        p_s, d_s, a_s, e_s, sig = decoded.split(".")
+        msg = f"{p_s}.{d_s}.{a_s}.{e_s}"
+        expected = hmac.new(_doc_token_secret(bot_token), msg.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return None
+        if int(p_s) != int(pid) or int(d_s) != int(doc_id):
+            return None
+        if int(e_s) < int(time.time()):
+            return None
+        return int(a_s)
+    except Exception:
+        return None
+
+
 def _admin_telegram_id(request, bot_token=None, admin_id=None):
     # Prefer the header (used by fetch()), but also accept the init-data as a
     # query param `tgwad`. Direct navigation / window.open cannot attach custom
@@ -429,21 +468,24 @@ async def api_admin_partner_document_url(request):
             return web.json_response({"ok": True, "admin_id": admin_id, "url": url, "expires_in": 900, "source": "storage"})
         except Exception as exc:
             print(f"[partner-verification] signed URL failed, database fallback available: doc={doc_id} error={exc!r}", flush=True)
-    # DB fallback: the file is served by our own /download endpoint, which needs
-    # admin auth. Since the browser opens this URL directly (no custom header),
-    # embed the admin init-data as a query param so auth still succeeds.
-    from urllib.parse import quote
-    raw = request.headers.get("X-Telegram-Init-Data", "").strip()
-    download_url = f"/api/admin/partner-applications/{pid}/documents/{doc_id}/download"
-    if raw:
-        download_url += "?tgwad=" + quote(raw, safe="")
-    return web.json_response({"ok": True, "admin_id": admin_id, "url": download_url, "source": "database"})
+    # DB fallback: served by our own /download endpoint. A browser tab opened
+    # via tg.openLink()/window.open cannot send the X-Telegram-Init-Data header,
+    # so we mint a short-lived HMAC token (signed with the bot token) that the
+    # download endpoint verifies on its own — no Telegram init-data in the URL.
+    token = _mint_doc_token(pid, doc_id, admin_id, request.app.get("stage3_bot_token"))
+    download_url = f"/api/admin/partner-applications/{pid}/documents/{doc_id}/download?t={token}"
+    return web.json_response({"ok": True, "admin_id": admin_id, "url": download_url, "expires_in": 900, "source": "database"})
 
 
 async def api_admin_partner_document_download(request):
-    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     pid = int(request.match_info["id"])
     doc_id = int(request.match_info["doc_id"])
+    # Accept a signed one-off token (?t=...) so the document can be opened in a
+    # plain browser tab; otherwise fall back to standard header-based admin auth.
+    token = request.query.get("t", "").strip()
+    admin_id = _verify_doc_token(token, pid, doc_id, request.app.get("stage3_bot_token")) if token else None
+    if admin_id is None:
+        admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     row = _db_fetchone("SELECT original_filename, mime_type, file_data FROM partner_verification_documents WHERE id=%s AND partner_id=%s", (doc_id, pid))
     if not row or row.get("file_data") is None:
         return web.json_response({"ok": False, "error": "document_file_not_available"}, status=404)
