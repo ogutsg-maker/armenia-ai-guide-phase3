@@ -54,29 +54,35 @@ def _direction_match(db, profile: dict[str, Any]) -> tuple[int | None, list[int]
 # Cursor-based helpers. Every write in persist_ready_application() shares ONE
 # cursor/connection so the whole application is a single atomic transaction.
 # --------------------------------------------------------------------------
+def _row_to_dict(cur, row):
+    # database._connect() uses row_factory=dict_row, so rows already arrive as
+    # plain dicts. Older code did dict(zip(cur.description, row)); with a dict
+    # row that zips over the dict KEYS and silently replaces every value with
+    # its column name (e.g. id -> "id"), which broke _safe_int() downstream.
+    # Handle both dict rows and legacy tuple rows.
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return dict(row)
+    cols = [d.name for d in cur.description] if cur.description else []
+    return dict(zip(cols, row))
+
+
 def _cur_one(cur, query: str, params=()):
     cur.execute(query, params)
-    row = cur.fetchone()
-    if not row:
-        return None
-    return dict(zip([d.name for d in cur.description], row))
+    return _row_to_dict(cur, cur.fetchone())
 
 
 def _cur_all(cur, query: str, params=()):
     cur.execute(query, params)
-    rows = cur.fetchall()
-    cols = [d.name for d in cur.description]
-    return [dict(zip(cols, row)) for row in rows]
+    return [_row_to_dict(cur, row) for row in cur.fetchall()]
 
 
 def _cur_exec(cur, query: str, params=(), returning=False):
     cur.execute(query, params)
     if not returning:
         return None
-    row = cur.fetchone()
-    if row is None:
-        return None
-    return dict(zip([d.name for d in cur.description], row))
+    return _row_to_dict(cur, cur.fetchone())
 
 
 def _ensure_partner(db, uid: int, profile: dict[str, Any]):
