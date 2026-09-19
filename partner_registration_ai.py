@@ -28,7 +28,7 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
-def _catalog(db) -> list[dict]:
+def get_catalog(db) -> list[dict]:
     rows = []
     try:
         for master in db.get_all_master_categories() or []:
@@ -111,36 +111,155 @@ def _parse_json(text: str) -> dict:
 
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
-    catalog = _catalog(db)
+    catalog = get_catalog(db)
     previous_profile = previous_profile or {}
     key = os.getenv("GROQ_API_KEY", "").strip()
+
     if not key or AsyncGroq is None:
         data = _heuristic(text)
-        if pending_field in {"business_name", "city", "district"}: data[pending_field] = _norm(text)
-        elif pending_field == "services": data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
+        if pending_field in {"business_name", "city", "district"}:
+            data[pending_field] = _norm(text)
+        elif pending_field == "services":
+            data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown", "matched_subcategory_id": None}]
         return data
 
-    messages = [
-        {"role": "system", "content": """You are the AI registration concierge for Armenia AI Guide. Understand Armenian, Russian and English. Extract only facts stated by the partner and merge the previous profile. Use the catalogue when it fits. Determine the platform direction yourself. If no catalogue direction fits, create a concise proposed direction name and leave master_category_id null, and provide at least one concise suggested subcategory_name for that new direction. Never ask the partner to choose a direction. Never invent facts. Return ONLY one valid JSON object, no markdown, with exactly these fields: business_name, city, district, direction, master_category_id, subcategory_names, description, services, missing, ready. services is an array of objects with name, price, price_type. ready=true when business_name, city and at least one meaningful service are known. The direction is never a required question."""},
-        {"role": "user", "content": "CATALOG:\n" + json.dumps(catalog[:500], ensure_ascii=False) + "\nPREVIOUS PROFILE:\n" + json.dumps(previous_profile, ensure_ascii=False) + "\nPENDING FIELD:\n" + str(pending_field or "") + "\nHISTORY:\n" + json.dumps(history[-10:], ensure_ascii=False) + "\nNEW MESSAGE:\n" + text},
+    # IMPORTANT:
+    # The model receives the COMPLETE existing subcategory catalogue, including
+    # real database IDs. It must classify EACH service separately and return the
+    # ID of an existing category. It is forbidden to invent category IDs/names
+    # when an existing category fits.
+    catalog_for_ai = [
+        {
+            "subcategory_id": row["category_id"],
+            "subcategory_name_hy": row["category_am"],
+            "subcategory_name_ru": row["category_ru"],
+            "subcategory_name_en": row["category_en"],
+            "master_category_id": row["master_id"],
+            "master_name_hy": row["master_am"],
+            "master_name_ru": row["master_ru"],
+            "master_name_en": row["master_en"],
+        }
+        for row in catalog
     ]
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "business_name": {"type": ["string", "null"]},
+            "city": {"type": ["string", "null"]},
+            "district": {"type": ["string", "null"]},
+            "direction": {"type": ["string", "null"]},
+            "master_category_id": {"type": ["integer", "null"]},
+            "subcategory_names": {"type": "array", "items": {"type": "string"}},
+            "description": {"type": "string"},
+            "services": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "price": {"type": ["number", "null"]},
+                        "price_type": {"type": "string"},
+                        "matched_subcategory_id": {"type": ["integer", "null"]},
+                    },
+                    "required": ["name", "price", "price_type", "matched_subcategory_id"],
+                    "additionalProperties": False,
+                },
+            },
+            "missing": {"type": "array", "items": {"type": "string"}},
+            "ready": {"type": "boolean"},
+        },
+        "required": [
+            "business_name", "city", "district", "direction",
+            "master_category_id", "subcategory_names", "description",
+            "services", "missing", "ready"
+        ],
+        "additionalProperties": False,
+    }
+
+    system_prompt = """You are the AI registration concierge for Armenia AI Guide.
+
+Understand Armenian, Russian and English.
+
+CATALOG RULES — THESE ARE ABSOLUTE:
+1. The catalogue in the user message is the ONLY source of valid subcategory IDs.
+2. You MUST semantically classify EACH partner service against the EXISTING catalogue.
+3. Return the existing subcategory's EXACT numeric subcategory_id in matched_subcategory_id.
+4. Never invent a subcategory ID.
+5. Never create or propose a new subcategory if an existing catalogue subcategory is a reasonable semantic match.
+6. The words used by the partner may differ completely from the catalogue language. Match by meaning across Armenian/Russian/English, not only by exact text.
+7. Example: "մազերի կտրում", "մազ կտրել", "стрижка волос", "стрижки", "haircut" should match an existing "Парикмахер / Վարսավիր" subcategory when that subcategory is present.
+8. Example: "մազերի ներկում", "окрашивание волос", "hair coloring" should match an existing "Մազերի ներկում / Окрашивание" subcategory when present.
+9. If several services are stated, KEEP THEM AS SEPARATE service objects. Do not merge them into one service.
+10. If the partner gives "3000-ից", "от 3000", "from 3000", store price=3000 and price_type="from".
+11. Do not invent prices, business names, cities, districts or services.
+12. master_category_id must be the existing master category ID that contains the selected matched subcategories.
+13. Only if NO existing subcategory genuinely fits a service may matched_subcategory_id be null. Do not invent a replacement category.
+14. subcategory_names is informational only; matched_subcategory_id is the authoritative database link.
+
+DIRECTION RULES:
+- Determine the platform direction yourself.
+- Never ask the partner to choose a direction.
+- If no existing master direction fits the business, set master_category_id=null and provide a concise proposed direction in direction plus at least one suggested subcategory_name.
+- ready=true when business_name, city and at least one meaningful service are known.
+
+Return ONLY JSON matching the supplied schema."""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": (
+                "EXISTING CATALOGUE — USE THESE REAL DATABASE IDS:\n"
+                + json.dumps(catalog_for_ai, ensure_ascii=False)
+                + "\n\nPREVIOUS PROFILE:\n"
+                + json.dumps(previous_profile, ensure_ascii=False)
+                + "\n\nPENDING FIELD:\n"
+                + str(pending_field or "")
+                + "\n\nHISTORY:\n"
+                + json.dumps(history[-10:], ensure_ascii=False)
+                + "\n\nNEW MESSAGE:\n"
+                + text
+            ),
+        },
+    ]
+
     try:
         client = AsyncGroq(api_key=key)
         response = await client.chat.completions.create(
-            model=os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")),
+            model=os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")),
             messages=messages,
             temperature=0.1,
-            max_tokens=2200,
+            max_tokens=2600,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "partner_onboarding_catalog_match",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
         )
         data = _parse_json(response.choices[0].message.content or "{}")
-        if not isinstance(data, dict): raise ValueError("AI response is not an object")
-        if pending_field in {"business_name", "city", "district"} and not data.get(pending_field): data[pending_field] = _norm(text)
-        if pending_field == "services" and not data.get("services"): data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
-        data = _recover_obvious_facts(" ".join([str(x.get("content") or "") for x in history] + [text]), data)
+        if not isinstance(data, dict):
+            raise ValueError("AI response is not an object")
+
+        if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
+            data[pending_field] = _norm(text)
+        if pending_field == "services" and not data.get("services"):
+            data["services"] = [{
+                "name": _norm(text),
+                "price": None,
+                "price_type": "unknown",
+                "matched_subcategory_id": None,
+            }]
+
+        data = _recover_obvious_facts(
+            " ".join([str(x.get("content") or "") for x in history] + [text]),
+            data,
+        )
         return data
     except Exception as exc:
-        # Never break partner registration because of an AI-provider/model
-        # incompatibility. The deterministic fallback keeps the conversation alive.
         logging_message = f"Groq partner extraction failed: {exc}"
         try:
             import logging
@@ -148,101 +267,89 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         except Exception:
             pass
         data = _heuristic(text)
-        if pending_field in {"business_name", "city", "district"}: data[pending_field] = _norm(text)
-        elif pending_field == "services": data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
-        data = _recover_obvious_facts(" ".join([str(x.get("content") or "") for x in history] + [text]), data)
+        if pending_field in {"business_name", "city", "district"}:
+            data[pending_field] = _norm(text)
+        elif pending_field == "services":
+            data["services"] = [{
+                "name": _norm(text),
+                "price": None,
+                "price_type": "unknown",
+                "matched_subcategory_id": None,
+            }]
+        data = _recover_obvious_facts(
+            " ".join([str(x.get("content") or "") for x in history] + [text]),
+            data,
+        )
         return data
 
-
 def match_catalog(db, profile: dict) -> tuple[int | None, list[int]]:
-    """Map an AI-extracted profile onto the existing 3-language catalogue.
+    """Validate AI-selected catalogue IDs against the real database.
 
-    Матчинг намеренно "жадный", чтобы НЕ плодить ложные предложения нового
-    направления, когда направление на самом деле уже есть в каталоге. Порядок:
-      1) явный master_category_id, либо совпадение названия направления с
-         названием мастер-категории (am/ru/en/slug);
-      2) если направление не совпало — вычисляем мастер-категорию по названиям
-         ПОДкатегорий, найденным в свободном тексте партнёра (названия услуг,
-         описание, перечисленные подкатегории). Напр. услуга «Մазери неркум»
-         однозначно указывает на «Гегецкутьюн ев кхнамк / Красота и уход».
-      3) собираем id подкатегорий внутри выбранной мастер-категории.
+    The AI does the semantic classification. Python does NOT guess a category
+    from the first row or from substring matching. It only validates the IDs
+    returned by Structured Outputs and derives the master direction from them.
     """
-    catalog = _catalog(db)
-    if not catalog:
-        return _safe_int(profile.get("master_category_id")), []
-
-    def norm(value: Any) -> str:
-        return _norm(value).lower()
-
-    wanted_master = norm(profile.get("direction"))
-    requested = [norm(x) for x in (profile.get("subcategory_names") or []) if norm(x)]
-
-    # Свободный текст партнёра: направление + описание + названия услуг + подкатегории.
-    text_parts: list[str] = [str(profile.get("direction") or ""), str(profile.get("description") or "")]
-    for item in (profile.get("services") or []):
-        if isinstance(item, dict):
-            text_parts.append(str(item.get("name") or ""))
-        else:
-            text_parts.append(str(item))
-    text_parts.extend(str(x) for x in (profile.get("subcategory_names") or []))
-    haystack = norm(" ".join(p for p in text_parts if p))
-
-    master_id = _safe_int(profile.get("master_category_id"))
-
-    # 1) Совпадение по названию мастер-категории (в названиях есть эмодзи-префикс,
-    #    поэтому проверяем вхождение в обе стороны).
-    if not master_id and wanted_master:
-        for row in catalog:
-            names = norm(" ".join([row["master_am"], row["master_ru"], row["master_en"], row["master_slug"]]))
-            if names and (wanted_master == names or wanted_master in names or names in wanted_master):
-                master_id = row["master_id"]
-                break
-
-    # 2) Не нашли — определяем мастер-категорию по названиям подкатегорий,
-    #    встречающимся в тексте партнёра. Берём мастер с наибольшим числом
-    #    попаданий (устойчивее к пересечениям вроде «Массаж»).
-    if not master_id and haystack:
-        score: dict[int, int] = {}
-        for row in catalog:
-            for cname in (row["category_am"], row["category_ru"], row["category_en"]):
-                c = norm(cname)
-                if len(c) >= 4 and c in haystack:
-                    score[row["master_id"]] = score.get(row["master_id"], 0) + 1
-                    break
-        if score:
-            master_id = max(score, key=lambda k: score[k])
-
-    # 3) Собираем id подкатегорий выбранной мастер-категории: по явно указанным
-    #    подкатегориям И по названиям подкатегорий, найденным в тексте.
-    category_ids: list[int] = []
+    catalog = get_catalog(db)
+    by_category = {}
     for row in catalog:
-        if master_id and row["master_id"] != master_id:
-            continue
-        cnames = [norm(row["category_am"]), norm(row["category_ru"]), norm(row["category_en"])]
-        hit = False
-        for wanted in requested:
-            if any(cn and (wanted == cn or wanted in cn or cn in wanted) for cn in cnames):
-                hit = True
-                break
-        if not hit:
-            for cn in cnames:
-                if len(cn) >= 4 and cn in haystack:
-                    hit = True
-                    break
-        if not hit:
-            continue
         cid = _safe_int(row.get("category_id"))
-        if cid is None or cid in category_ids:
+        mid = _safe_int(row.get("master_id"))
+        if cid is not None:
+            by_category[cid] = mid
+
+    selected: list[int] = []
+    for item in profile.get("services") or []:
+        if not isinstance(item, dict):
             continue
-        category_ids.append(cid)
-        if not master_id:
-            master_id = row["master_id"]
-    return master_id, category_ids
+        cid = _safe_int(item.get("matched_subcategory_id"))
+        if cid is not None and cid in by_category and cid not in selected:
+            selected.append(cid)
+
+    explicit_master = _safe_int(profile.get("master_category_id"))
+    if explicit_master is not None:
+        valid_master_ids = {row["master_id"] for row in catalog}
+        if explicit_master not in valid_master_ids:
+            explicit_master = None
+
+    # If AI selected valid subcategories, their parent direction is authoritative.
+    parent_ids = {by_category[cid] for cid in selected if cid in by_category}
+    master_id = explicit_master
+    if parent_ids:
+        if master_id not in parent_ids:
+            # Prefer the parent of the selected service categories. This avoids
+            # trusting an inconsistent master ID returned alongside valid IDs.
+            master_id = next(iter(parent_ids))
+        selected = [
+            cid for cid in selected
+            if by_category.get(cid) == master_id
+        ]
+
+    # If the model identified a valid master but no subcategory, return the
+    # master with an empty category list. The persistence layer must NOT invent
+    # a category as a fallback.
+    return master_id, selected
 
 
 def match_subcategories(db, names: list[str]) -> list[int]:
-    return match_catalog(db, {"subcategory_names": names})[1]
+    """Compatibility helper: exact catalogue-name lookup for legacy callers.
 
+    Active onboarding uses matched_subcategory_id from the AI and does not use
+    this function for semantic classification.
+    """
+    catalog = get_catalog(db)
+    wanted = {_norm(name).lower() for name in names if _norm(name)}
+    result = []
+    for row in catalog:
+        names3 = {
+            _norm(row.get("category_am")).lower(),
+            _norm(row.get("category_ru")).lower(),
+            _norm(row.get("category_en")).lower(),
+        }
+        if wanted & names3:
+            cid = _safe_int(row.get("category_id"))
+            if cid is not None and cid not in result:
+                result.append(cid)
+    return result
 
 def missing_question(data: dict, lang: str) -> str:
     field = (data.get("missing") or ["services"])[0]
