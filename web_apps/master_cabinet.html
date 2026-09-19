@@ -22,7 +22,7 @@
 </nav><main>
 <section id="dashboard" class="view on"><div class="title"><h2>📊 Գործընկերոջ սենյակ</h2><button class="secondary" onclick="loadAll()">↻</button></div><div id="dashboardNotice"></div><div class="grid" id="metrics"></div><div class="card" id="profileCard"></div></section>
 <section id="directions" class="view"><div class="title"><h2>🧭 Ուղղություններ</h2></div><div class="notice">Յուրաքանչյուր ուղղություն անցնում է առանձին ստուգում։ Նոր ուղղությունը ավելացվում է AI-ի միջոցով, ոչ թե երկար ձևով։</div><div id="directionList"></div></section>
-<section id="services" class="view"><div class="title"><h2>🛠 Ծառայություններ</h2><button class="primary" onclick="openService()">+ Ավելացնել</button></div><div id="serviceList"></div></section>
+<section id="services" class="view"><div class="title"><h2>🛠 Ծառայություններ</h2><button type="button" class="primary" id="addServiceButton">+ Ավելացնել</button></div><div id="serviceList"></div></section>
 <section id="objects" class="view"><div class="title"><h2>🏢 Օբյեկտներ</h2><button class="primary" onclick="openObject()">+ Ավելացնել</button></div><div id="objectList"></div></section>
 <section id="orders" class="view"><div class="title"><h2>📥 Պատվերներ</h2></div><div id="orderList"></div></section>
 <section id="locations" class="view"><div class="title"><h2>📍 Տարածքներ</h2></div><div id="locationList"></div></section>
@@ -41,7 +41,38 @@ function show(id){document.querySelectorAll('.view').forEach(x=>x.classList.remo
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{show(b.dataset.view);if(b.dataset.view==='dashboard'||b.dataset.view==='services'||b.dataset.view==='objects'||b.dataset.view==='orders'||b.dataset.view==='locations'||b.dataset.view==='reviews'||b.dataset.view==='documents')loadAll()});
 async function loadDashboard(){const d=await api(`/api/master/${uid}/dashboard`);const p=d.partner||{};document.getElementById('partnerName').textContent=p.business_name||'Գործընկերոջ սենյակ';document.getElementById('metrics').innerHTML=Object.entries({services:d.metrics.services,objects:d.metrics.objects,bookings:d.metrics.bookings,active:d.metrics.active_bookings}).map(([k,v])=>`<div class="card metric">${esc(k)}<b>${esc(v)}</b></div>`).join('');document.getElementById('profileCard').innerHTML=`<div class="row"><div><b>${esc(p.business_name||'')}</b><div class="muted">${esc(p.business_description||'')}</div></div><div>${badge(p.status)}</div></div>`;document.getElementById('dashboardNotice').innerHTML=p.status==='approved'?'<div class="notice">Ձեր գործընկերային պրոֆիլը ակտիվ է։</div>':'<div class="notice">Պրոֆիլը դեռ ստուգման փուլում է։</div>'}
 async function loadDirections(){try{const d=await api(`/api/master/${uid}/partner-directions`);const el=document.getElementById('directionList');if(!d.directions?.length)return empty(el);el.innerHTML=d.directions.filter(x=>x.status!=='not_added').map(x=>`<div class="item"><div class="row"><div><b>${esc(x.name_am||x.name_ru)}</b><div class="muted">${(x.subcategories||[]).map(c=>esc(c.name_am||c.name_ru)).join(' · ')||'Ենթաուղղություններ դեռ չկան'}</div></div><div>${badge(x.status)}<div class="muted">Փաստաթղթեր՝ ${esc(x.document_count)}</div></div></div></div>`).join('')}catch(e){empty(document.getElementById('directionList'),'Չհաջողվեց բեռնել ուղղությունները') }}
-async function loadServices(){try{const d=await api(`/api/master/${uid}/services`),el=document.getElementById('serviceList');if(!d.services?.length)return empty(el);el.innerHTML=d.services.map(s=>`<div class="item"><div class="row"><div><b>${esc(s.name)}</b><div class="muted">${esc(s.description||'')}</div></div><div>${esc(s.price??'—')} ֏<br>${badge(s.status)}</div></div><div class="actions"><button class="secondary" onclick="editService(${s.id},${JSON.stringify(s.name)},${JSON.stringify(s.price??'')})">Փոխել</button><button class="danger" onclick="deleteService(${s.id})">Ջնջել</button></div></div>`).join('')}catch(e){empty(document.getElementById('serviceList'))}}
+async function loadServices(){
+  try{
+    const d=await api(`/api/master/${uid}/services`);
+    const el=document.getElementById('serviceList');
+    if(!d.services?.length)return empty(el);
+    el.innerHTML=d.services.map(s=>`<div class="item">
+      <div class="row"><div><b>${esc(s.name)}</b><div class="muted">${esc(s.description||'')}</div></div>
+      <div>${esc(s.price??'—')} ֏<br>${badge(s.status)}</div></div>
+      <div class="actions">
+        <button type="button" class="secondary js-service-edit" data-id="${Number(s.id)}" data-name="${esc(s.name)}" data-price="${esc(s.price??'')}" >Փոխել</button>
+        <button type="button" class="danger js-service-delete" data-id="${Number(s.id)}">Ջնջել</button>
+      </div>
+    </div>`).join('');
+  }catch(e){
+    console.error('loadServices failed',e);
+    empty(document.getElementById('serviceList'),'Չհաջողվեց բեռնել ծառայությունները');
+  }
+}
+document.addEventListener('click',async(event)=>{
+  const edit=event.target.closest('.js-service-edit');
+  if(edit){
+    event.preventDefault();
+    editService(Number(edit.dataset.id),edit.dataset.name||'',edit.dataset.price||'');
+    return;
+  }
+  const del=event.target.closest('.js-service-delete');
+  if(del){
+    event.preventDefault();
+    await deleteService(Number(del.dataset.id));
+  }
+});
+
 async function loadObjects(){const d=await api(`/api/master/${uid}/objects`),el=document.getElementById('objectList');if(!d.objects?.length)return empty(el);el.innerHTML=d.objects.map(o=>`<div class="item"><div class="row"><div><b>${esc(o.object_name)}</b><div class="muted">${esc(o.city||'')} ${esc(o.address||'')}</div></div><button class="danger" onclick="deleteObject(${o.id})">Ջնջել</button></div></div>`).join('')}
 async function loadOrders(){const d=await api(`/api/master/${uid}/bookings`),el=document.getElementById('orderList');if(!d.bookings?.length)return empty(el,'Պատվերներ դեռ չկան');el.innerHTML=`<div class="table"><table><tr><th>ID</th><th>Status</th><th>Price</th><th>Created</th></tr>${d.bookings.map(x=>`<tr><td>${esc(x.id)}</td><td>${badge(x.status)}</td><td>${esc(x.agreed_price??'—')} ֏</td><td>${esc(String(x.created_at||'').slice(0,19))}</td></tr>`).join('')}</table></div>`}
 async function loadLocations(){const d=await api(`/api/master/${uid}/locations`),el=document.getElementById('locationList');if(!d.locations?.length)return empty(el);el.innerHTML=d.locations.map(x=>`<div class="item"><b>${esc(x.city||x.village||x.marz||'Armenia')}</b><div class="muted">${esc(x.address||'')}</div></div>`).join('')}
@@ -113,5 +144,6 @@ function openObject(){openModal('Նոր օբյեկտ',`<label>Անվանում</
 async function createObject(){await api(`/api/master/${uid}/objects`,{method:'POST',body:JSON.stringify({object_name:oName.value,city:oCity.value,address:oAddress.value})});closeModal();loadObjects()}
 async function deleteObject(id){if(!confirm('Ջնջե՞լ օբյեկտը'))return;await api(`/api/master/${uid}/objects/${id}`,{method:'DELETE'});loadObjects()}
 async function loadAll(){if(!init){document.body.innerHTML='<div style="padding:30px">Բացեք գործընկերոջ սենյակը Telegram հավելվածում։</div>';return}try{await Promise.all([loadDashboard(),loadDirections(),loadServices(),loadObjects(),loadOrders(),loadLocations(),loadReviews(),loadDocuments(),loadSettings()])}catch(e){console.error(e)}}
+document.getElementById('addServiceButton')?.addEventListener('click',()=>openService());
 loadAll();
 </script></body></html>
