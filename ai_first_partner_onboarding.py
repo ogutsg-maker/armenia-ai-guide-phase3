@@ -189,20 +189,11 @@ def _save_direction(cur, partner_id: int, profile: dict[str, Any], master_id, ca
         raise ValueError("partner_direction_id_invalid")
 
     _cur_exec(cur, "DELETE FROM partner_direction_categories WHERE partner_direction_id=%s", (direction_id,))
-    # Guarantee at least one subcategory link. Client search INNER JOINs
-    # services -> partner_direction_categories on category_id, so a service
-    # with a NULL/unlinked category is invisible. If the AI could not map a
-    # concrete subcategory, fall back to the first active subcategory of the
-    # matched direction so the partner's services stay discoverable.
-    if not category_ids:
-        fallback = _cur_one(
-            cur,
-            "SELECT id FROM categories WHERE master_category_id=%s AND is_active=TRUE ORDER BY id LIMIT 1",
-            (master_id,),
-        )
-        fb_id = _safe_int(fallback.get("id")) if fallback else None
-        if fb_id is not None:
-            category_ids = [fb_id]
+    # IMPORTANT: never invent or silently choose a category here.
+    # category_ids are the exact IDs selected by the AI and already validated
+    # against the real catalogue in partner_registration_ai.match_catalog().
+    # If AI cannot map a service, it remains unclassified instead of being put
+    # into an arbitrary first category.
     for category_id in category_ids:
         safe_category_id = _safe_int(category_id)
         if safe_category_id is None:
@@ -218,24 +209,33 @@ def _save_direction(cur, partner_id: int, profile: dict[str, Any], master_id, ca
 def _save_services(cur, partner_id: int, direction_id: int | None, profile: dict[str, Any]):
     if not direction_id:
         return 0
-    raw_category_ids = [
-        r.get("category_id")
-        for r in _cur_all(
-            cur,
-            "SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s",
-            (direction_id,),
-        )
-    ]
-    category_ids = [_safe_int(value) for value in raw_category_ids]
-    category_ids = [value for value in category_ids if value is not None]
-    default_category = category_ids[0] if category_ids else None
+
+    # Only categories explicitly linked to this partner direction are allowed.
+    linked_rows = _cur_all(
+        cur,
+        "SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s",
+        (direction_id,),
+    )
+    linked_category_ids = {
+        cid for cid in (_safe_int(r.get("category_id")) for r in linked_rows)
+        if cid is not None
+    }
+
     count = 0
     for item in profile.get("services") or []:
         if not isinstance(item, dict):
             continue
+
         name = str(item.get("name") or "").strip()[:300]
         if not name:
             continue
+
+        # The AI returns the exact existing categories.id selected from the
+        # catalogue. Validate it one more time against this partner direction.
+        matched_category_id = _safe_int(item.get("matched_subcategory_id"))
+        if matched_category_id not in linked_category_ids:
+            matched_category_id = None
+
         price = item.get("price")
         try:
             price = float(price) if price not in (None, "") else None
@@ -243,8 +243,7 @@ def _save_services(cur, partner_id: int, direction_id: int | None, profile: dict
             price = None
 
         # 3-level catalogue: master_categories -> categories -> services.
-        # A service is attached to a categories.id (subcategory_id stays NULL);
-        # there is no separate catalog_subcategories level.
+        # category_id is the real catalogue subcategory link.
         existing = _cur_one(
             cur,
             "SELECT id FROM services WHERE partner_id=%s AND name=%s AND status<>'deleted' ORDER BY id DESC LIMIT 1",
@@ -255,14 +254,16 @@ def _save_services(cur, partner_id: int, direction_id: int | None, profile: dict
                 "ai_source": True,
                 "price_type": item.get("price_type") or "unknown",
                 "direction_id": direction_id,
+                "matched_subcategory_id": matched_category_id,
             },
             ensure_ascii=False,
         )
+
         if existing:
             _cur_exec(
                 cur,
                 "UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,status='pending',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",
-                (default_category, price, payload, existing["id"]),
+                (matched_category_id, price, payload, existing["id"]),
             )
         else:
             _cur_exec(
@@ -273,7 +274,7 @@ def _save_services(cur, partner_id: int, direction_id: int | None, profile: dict
                 """,
                 (
                     partner_id,
-                    default_category,
+                    matched_category_id,
                     name,
                     str(profile.get("description") or "")[:1000],
                     price,
@@ -282,7 +283,6 @@ def _save_services(cur, partner_id: int, direction_id: int | None, profile: dict
             )
         count += 1
     return count
-
 
 def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str, Any]:
     """Persist a completed AI application without approving anything.
