@@ -99,6 +99,74 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
     return out
 
 
+
+
+def _repair_service_matches(catalog: list[dict], profile: dict) -> dict:
+    """Repair obvious multilingual matches missed by the model.
+
+    This is intentionally conservative: it only assigns an existing DB
+    category when the service/category names share a known semantic concept.
+    It never creates a category or invents an ID.
+    """
+    if not isinstance(profile, dict):
+        return profile
+
+    groups = [
+        {"key": "haircut", "terms": {"стриж", "парикмах", "haircut", "hair cut", "մազերի կտր", "մազ կտր", "վարսավիր", "սանրվածք"}},
+        {"key": "haircolor", "terms": {"окраш", "краск", "hair color", "hair coloring", "coloring", "մազերի ներկ", "ներկում"}},
+        {"key": "styling", "terms": {"уклад", "причес", "hairdo", "styling", "դասավորում", "վարսահարդարում"}},
+        {"key": "makeup", "terms": {"макияж", "визаж", "makeup", "դիմահարդարում"}},
+        {"key": "manicure", "terms": {"маникюр", "nail", "ногт", "մատնահարդարում"}},
+        {"key": "pedicure", "terms": {"педикюр", "toe nail", "ոտնահարդարում"}},
+        {"key": "brows", "terms": {"бров", "коррекция бров", "brow", "eyebrow", "հոնք", "հոնքերի", "հոնքեր"}},
+        {"key": "lashes", "terms": {"ресниц", "lash", "eyelash", "թարթիչ"}},
+    ]
+
+    def concepts(value: Any) -> set[str]:
+        low = _norm(value).lower()
+        found = set()
+        for g in groups:
+            if any(term in low for term in g["terms"]):
+                found.add(g["key"])
+        return found
+
+    services = profile.get("services")
+    if not isinstance(services, list):
+        return profile
+
+    for service in services:
+        if not isinstance(service, dict):
+            continue
+        if _safe_int(service.get("matched_subcategory_id")) is not None:
+            continue
+        service_concepts = concepts(service.get("name"))
+        if not service_concepts:
+            continue
+
+        candidates = []
+        for row in catalog:
+            category_concepts = concepts(
+                " ".join([
+                    str(row.get("category_am") or ""),
+                    str(row.get("category_ru") or ""),
+                    str(row.get("category_en") or ""),
+                ])
+            )
+            overlap = service_concepts & category_concepts
+            if overlap:
+                candidates.append((len(overlap), _safe_int(row.get("category_id")), _safe_int(row.get("master_id"))))
+
+        # Only use an unambiguous existing category. If several categories
+        # represent the same concept, leave the decision to the model/admin.
+        if candidates:
+            candidates.sort(reverse=True)
+            best_score = candidates[0][0]
+            best = [x for x in candidates if x[0] == best_score and x[1] is not None]
+            if len(best) == 1:
+                service["matched_subcategory_id"] = best[0][1]
+
+    return profile
+
 def _parse_json(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
@@ -372,6 +440,12 @@ Return ONLY JSON matching the supplied schema."""
             " ".join([str(x.get("content") or "") for x in history] + [text]),
             data,
         )
+
+        # Final deterministic repair for common cross-language service/category
+        # names. Groq is still the semantic classifier, but if it returns null
+        # while the real catalogue contains an obvious multilingual equivalent,
+        # do not turn that service into a new taxonomy proposal.
+        data = _repair_service_matches(catalog, data)
 
         # Recalculate readiness from the accumulated profile. This is
         # deliberately deterministic so a pending-field turn cannot turn a
