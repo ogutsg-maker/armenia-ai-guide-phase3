@@ -559,6 +559,32 @@ def register_partner_direction_routes(app, db=None, bot=None):
             reason=str(data.get("reason") or "Մերժվել է ադմինիստրատորի կողմից")[:1000]
             _exec("UPDATE subcategory_proposals SET status='rejected',admin_note=%s,reviewed_by=%s,reviewed_at=NOW() WHERE id=%s",(reason,admin_id,proposal_id))
             return web.json_response({"ok":True,"status":"rejected"})
+
+        if action=="edit":
+            # Admin can fully correct the partner's proposal before approval.
+            name=str(data.get("name") or proposal.get("proposed_name") or "").strip()[:200]
+            service_name=str(data.get("service_name") or proposal.get("requested_service_name") or "").strip()[:200]
+            description=str(data.get("description") if data.get("description") is not None else (proposal.get("description") or ""))[:3000]
+            price=data.get("price", proposal.get("price"))
+            try:
+                price=float(price) if price not in (None,"") else None
+            except (TypeError,ValueError):
+                return web.json_response({"ok":False,"error":"invalid_price"},status=400)
+            if not name:
+                return web.json_response({"ok":False,"error":"category_name_required"},status=400)
+            _exec(
+                """UPDATE subcategory_proposals
+                   SET proposed_name=%s, requested_service_name=%s, description=%s,
+                       price=%s, admin_note=%s
+                   WHERE id=%s AND status='pending'""",
+                (name,service_name,description,price,str(data.get("admin_note") or "")[:2000],proposal_id),
+            )
+            return web.json_response({
+                "ok":True,
+                "status":"pending",
+                "proposal":_fetchone("SELECT * FROM subcategory_proposals WHERE id=%s",(proposal_id,))
+            })
+
         if action!="approve":return web.json_response({"ok":False,"error":"unknown_action"},status=400)
 
         import re
