@@ -372,6 +372,102 @@ def register_partner_direction_routes(app, db=None, bot=None):
         for m in masters: m['subcategories']=by.get(m['id'],[])
         return web.json_response({'ok':True,'directions':masters})
 
+    async def admin_category_settings_action(request):
+        _auth_admin(request)
+        cid=int(request.match_info["id"])
+        data=await request.json() if request.can_read_body else {}
+        category=_fetchone("SELECT id,master_category_id,name_am,name_ru FROM categories WHERE id=%s",(cid,))
+        if not category:
+            return web.json_response({"ok":False,"error":"category_not_found"},status=404)
+
+        # Keep tariff settings in the dedicated category_settings table.
+        _exec("""
+        CREATE TABLE IF NOT EXISTS category_settings (
+            category_id INT PRIMARY KEY REFERENCES categories(id) ON DELETE CASCADE,
+            bank_commission_type TEXT NOT NULL DEFAULT 'none',
+            bank_commission_value NUMERIC NOT NULL DEFAULT 0,
+            cancellation_policy TEXT NOT NULL DEFAULT 'no_refund',
+            premium_contact_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            premium_contact_fee NUMERIC NOT NULL DEFAULT 0,
+            premium_disclosure_scope TEXT NOT NULL DEFAULT 'none',
+            contact_reveal_after_booking BOOLEAN NOT NULL DEFAULT TRUE
+        )
+        """)
+        _exec("""
+        ALTER TABLE category_settings
+          ADD COLUMN IF NOT EXISTS bank_commission_type TEXT NOT NULL DEFAULT 'none',
+          ADD COLUMN IF NOT EXISTS bank_commission_value NUMERIC NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS cancellation_policy TEXT NOT NULL DEFAULT 'no_refund',
+          ADD COLUMN IF NOT EXISTS premium_contact_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+          ADD COLUMN IF NOT EXISTS premium_contact_fee NUMERIC NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS premium_disclosure_scope TEXT NOT NULL DEFAULT 'none',
+          ADD COLUMN IF NOT EXISTS contact_reveal_after_booking BOOLEAN NOT NULL DEFAULT TRUE
+        """)
+
+        fields={}
+        ct=str(data.get("commission_type") or "").strip()
+        if ct in ("inside","on_top","fixed"): fields["commission_type"]=ct
+        if "commission_value" in data:
+            try: fields["commission_value"]=max(0.0,float(data["commission_value"]))
+            except (TypeError,ValueError): pass
+
+        bct=str(data.get("bank_commission_type") or "").strip()
+        if bct in ("none","percent","fixed"): fields["bank_commission_type"]=bct
+        if "bank_commission_value" in data:
+            try: fields["bank_commission_value"]=max(0.0,float(data["bank_commission_value"]))
+            except (TypeError,ValueError): pass
+
+        cp=str(data.get("cancellation_policy") or "").strip()
+        if cp in ("full_refund","half_refund","no_refund"): fields["cancellation_policy"]=cp
+
+        if "premium_contact_enabled" in data:
+            fields["premium_contact_enabled"]=bool(data["premium_contact_enabled"])
+        if "premium_contact_fee" in data:
+            try: fields["premium_contact_fee"]=max(0.0,float(data["premium_contact_fee"]))
+            except (TypeError,ValueError): pass
+
+        ds=str(data.get("premium_disclosure_scope") or "").strip()
+        if ds in ("none","name_district_type","name_district","limited"): fields["premium_disclosure_scope"]=ds
+        if "contact_reveal_after_booking" in data:
+            fields["contact_reveal_after_booking"]=bool(data["contact_reveal_after_booking"])
+
+        if not fields:
+            return web.json_response({"ok":False,"error":"no_fields"},status=400)
+
+        tariff_fields={"commission_type","commission_value"}
+        category_fields={k:v for k,v in fields.items() if k in tariff_fields}
+        settings_fields={k:v for k,v in fields.items() if k not in tariff_fields}
+
+        if category_fields:
+            sets=", ".join(f"{k}=%s" for k in category_fields)
+            _exec(f"UPDATE categories SET {sets} WHERE id=%s",(*category_fields.values(),cid))
+
+        if settings_fields:
+            existing=_fetchone("SELECT category_id FROM category_settings WHERE category_id=%s",(cid,))
+            if existing:
+                sets=", ".join(f"{k}=%s" for k in settings_fields)
+                _exec(f"UPDATE category_settings SET {sets} WHERE category_id=%s",(*settings_fields.values(),cid))
+            else:
+                cols=["category_id",*settings_fields.keys()]
+                vals=[cid,*settings_fields.values()]
+                marks=",".join(["%s"]*len(vals))
+                _exec(f"INSERT INTO category_settings ({','.join(cols)}) VALUES ({marks})",tuple(vals))
+
+        result=_fetchone("""
+            SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,c.is_active,
+                   c.commission_type,c.commission_value,
+                   COALESCE(cs.bank_commission_type,'none') bank_commission_type,
+                   COALESCE(cs.bank_commission_value,0) bank_commission_value,
+                   COALESCE(cs.cancellation_policy,'no_refund') cancellation_policy,
+                   COALESCE(cs.premium_contact_enabled,FALSE) premium_contact_enabled,
+                   COALESCE(cs.premium_contact_fee,0) premium_contact_fee,
+                   COALESCE(cs.premium_disclosure_scope,'none') premium_disclosure_scope,
+                   COALESCE(cs.contact_reveal_after_booking,TRUE) contact_reveal_after_booking
+            FROM categories c LEFT JOIN category_settings cs ON cs.category_id=c.id
+            WHERE c.id=%s
+        """,(cid,))
+        return web.json_response({"ok":True,"category":result})
+
     async def admin_master_direction_action(request):
         admin_id=_auth_admin(request); mid=int(request.match_info['id']); data=await request.json() if request.can_read_body else {}; action=str(data.get('action') or '').lower()
         m=_fetchone('SELECT * FROM master_categories WHERE id=%s',(mid,))
