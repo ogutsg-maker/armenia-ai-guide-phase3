@@ -40,7 +40,6 @@ def _profile_ready(profile: dict[str, Any]) -> bool:
     return bool(
         str(profile.get("business_name") or "").strip()
         and str(profile.get("city") or "").strip()
-        and str(profile.get("direction") or "").strip()
         and profile.get("services")
     )
 
