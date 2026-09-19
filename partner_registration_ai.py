@@ -170,9 +170,22 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     found = []
     for m in pattern.finditer(text):
         name = _norm(m.group("name"))
-        # Remove common introductory words from a service phrase.
-        name = re.sub(r"^(?:կատարում\s+ենք|անում\s+ենք|мы\s+делаем|делаем)\s+",
-                      "", name, flags=re.I).strip()
+        # Keep only the actual service phrase. The price regex can capture
+        # the whole preceding sentence (for example: "Ես ... ունեմ։ Կատարում ենք
+        # հոնքերի շտկում՝ 2200 դրամ"). Strip the natural-language introduction.
+        name = re.split(
+            r"(?:^|[.!?]\s*)(?:[^.!?]*?\s+)?(?:կատարում\s+ենք|անում\s+ենք|"
+            r"մատուցում\s+ենք|առաջարկում\s+ենք|мы\s+делаем|оказываем|"
+            r"предлагаем|we\s+(?:do|offer|provide))\s+",
+            name, maxsplit=1, flags=re.I
+        )[-1].strip()
+        name = re.sub(
+            r"^(?:կատարում\s+ենք|անում\s+ենք|մատուցում\s+ենք|առաջարկում\s+ենք|"
+            r"мы\s+делаем|оказываем|предлагаем|we\s+(?:do|offer|provide))\s+",
+            "", name, flags=re.I
+        ).strip()
+        if ". " in name:
+            name = name.rsplit(". ", 1)[-1].strip()
         raw_price = m.group("price").replace(" ", "").replace(",", ".")
         if not name or not raw_price:
             continue
@@ -220,10 +233,10 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         ],
         temperature=0.1,
         max_tokens=max_tokens,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {"name": schema_name, "strict": True, "schema": schema},
-        },
+        # Some Groq configurations reject JSON Schema response_format with
+        # HTTP 400. The prompt still enforces the exact JSON shape, while the
+        # parser below extracts the returned object.
+        response_format={"type": "json_object"},
     )
     return _parse_json(response.choices[0].message.content or "{}")
 
