@@ -566,16 +566,53 @@ def register_partner_direction_routes(app, db=None, bot=None):
         if not name:return web.json_response({"ok":False,"error":"category_name_required"},status=400)
         slug=re.sub(r"[^a-z0-9\u0531-\u0587]+","-",name.lower()).strip("-") or ("category-"+str(proposal_id))
         existing=_fetchone("SELECT id FROM categories WHERE master_category_id=%s AND (lower(trim(name_am))=lower(trim(%s)) OR lower(trim(name_ru))=lower(trim(%s)))",(proposal["master_category_id"],name,name))
-        if existing:
-            _exec("UPDATE subcategory_proposals SET status='approved',admin_note='Արդեն գոյություն ուներ',reviewed_by=%s,reviewed_at=NOW() WHERE id=%s",(admin_id,proposal_id))
-            return web.json_response({"ok":True,"status":"approved","category_id":existing["id"]})
-        category=_exec("""
-            INSERT INTO categories(master_category_id,name_am,name_ru,name_en,slug,is_active,commission_type,commission_value)
-            VALUES(%s,%s,%s,%s,%s,TRUE,'inside',0)
-            RETURNING id,master_category_id,name_am,name_ru,name_en,slug
-        """,(proposal["master_category_id"],name,name,name,slug),True)
+        category_id = int(existing["id"]) if existing else None
+        if not category_id:
+            category=_exec("""
+                INSERT INTO categories(master_category_id,name_am,name_ru,name_en,slug,is_active,commission_type,commission_value)
+                VALUES(%s,%s,%s,%s,%s,TRUE,'inside',0)
+                RETURNING id,master_category_id,name_am,name_ru,name_en,slug
+            """,(proposal["master_category_id"],name,name,name,slug),True)
+            category_id=int(category["id"])
+        else:
+            category=_fetchone("SELECT id,master_category_id,name_am,name_ru,name_en,slug FROM categories WHERE id=%s",(category_id,))
+
+        # The proposal also contains the service the partner wanted to add.
+        # Approving the new subcategory must not lose that service: create it
+        # under the approved category so it immediately appears in the
+        # partner cabinet. Keep it as draft because the category approval is
+        # not itself a separate service-content approval.
+        service_name=str(proposal.get("requested_service_name") or "").strip()
+        service_price=proposal.get("price")
+        if service_name:
+            duplicate=_fetchone(
+                """SELECT id FROM services
+                   WHERE partner_id=%s AND category_id=%s
+                     AND lower(trim(name))=lower(trim(%s))
+                     AND (status IS NULL OR status <> 'deleted')
+                   LIMIT 1""",
+                (proposal["partner_id"],category_id,service_name),
+            )
+            if not duplicate:
+                _exec(
+                    """INSERT INTO services(
+                           partner_id,category_id,subcategory_id,name,description,
+                           price,status,data_json
+                       )
+                       VALUES(%s,%s,%s,%s,%s,%s,'draft',%s)""",
+                    (
+                        proposal["partner_id"],category_id,category_id,service_name,
+                        str(proposal.get("description") or ""),
+                        service_price,
+                        json.dumps({
+                            "subcategory_proposal_id": proposal_id,
+                            "source": "partner_subcategory_proposal",
+                        }),
+                    ),
+                )
+
         _exec("UPDATE subcategory_proposals SET status='approved',admin_note=NULL,reviewed_by=%s,reviewed_at=NOW() WHERE id=%s",(admin_id,proposal_id))
-        return web.json_response({"ok":True,"status":"approved","category":category})
+        return web.json_response({"ok":True,"status":"approved","category_id":category_id,"category":category})
 
 
     app.router.add_get("/api/admin/subcategory-proposals", admin_subcategory_proposals)
