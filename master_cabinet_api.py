@@ -6,6 +6,7 @@ with Telegram WebApp initData and operate on the current PostgreSQL schema.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from typing import Any
 
 from aiohttp import web
@@ -20,6 +21,8 @@ def _json(value: Any):
     """Make PostgreSQL values safe for aiohttp JSON responses."""
     if value is None:
         return None
+    if isinstance(value, Decimal):
+        return float(value)
     if hasattr(value, "isoformat"):
         return value.isoformat()
     if isinstance(value, dict):
