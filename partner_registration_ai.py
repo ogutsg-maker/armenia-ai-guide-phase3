@@ -117,7 +117,11 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
 
 def _recover_services_from_history(history: list[dict]) -> list[dict]:
-    """Keep explicit service/price facts if an LLM turn omits them."""
+    """Preserve explicit service/price facts across follow-up turns.
+
+    This extracts only price-bearing service phrases. It does not classify
+    services into catalogue categories.
+    """
     text = " ".join(
         _norm(x.get("content") or "")
         for x in history
@@ -126,32 +130,46 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     if not text:
         return []
 
-    # Generic extraction only: it understands a price-bearing phrase, but it
-    # never decides the catalogue category. Category matching remains AI-only.
+    # Armenian/Russian/English price forms, including "դրամից" / "от 3000".
     pattern = re.compile(
-        r"([^,;]+?)\\s*[—–-]\\s*(?:от\\s*)?(\\d[\\d\\s.,]*)\\s*(?:դրամ|֏|amd|dram)\\b"
-        r"|([^,;]+?)\\s*[—–-]\\s*(\\d[\\d\\s.,]*)\\s*(?:դրամ|֏|amd|dram)\\b",
+        r"(?P<name>[^,;]+?)\s*[—–-]\s*"
+        r"(?P<from>от\s+|from\s+)?"
+        r"(?P<price>\d[\d\s.,]*)\s*"
+        r"(?P<currency>դրամ(?:ից)?|֏|amd|dram)\b",
         re.I,
     )
+
     found = []
     for m in pattern.finditer(text):
-        name = _norm(m.group(1) or m.group(3))
-        raw_price = (m.group(2) or m.group(4) or "").replace(" ", "").replace(",", ".")
+        name = _norm(m.group("name"))
+        # Remove common introductory words from a service phrase.
+        name = re.sub(r"^(?:կատարում\s+ենք|անում\s+ենք|мы\s+делаем|делаем)\s+",
+                      "", name, flags=re.I).strip()
+        raw_price = m.group("price").replace(" ", "").replace(",", ".")
         if not name or not raw_price:
             continue
         try:
             price = float(raw_price)
         except ValueError:
             continue
-        price_type = "from" if "от" in m.group(0).lower() or "ից" in m.group(0) else "fixed"
+        full = m.group(0).lower()
+        price_type = "from" if m.group("from") or "ից" in full else "fixed"
         found.append({
             "name": name,
             "price": price,
             "price_type": price_type,
             "matched_subcategory_id": None,
         })
-    return found
 
+    # Deduplicate while preserving order.
+    result = []
+    seen = set()
+    for item in found:
+        key = (item["name"].lower(), item["price"], item["price_type"])
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
 
 def _parse_json(text: str) -> dict:
     raw = (text or "").strip()
