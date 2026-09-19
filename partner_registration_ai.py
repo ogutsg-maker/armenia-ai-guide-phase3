@@ -136,6 +136,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         if not isinstance(data, dict): raise ValueError("AI response is not an object")
         if pending_field in {"business_name", "city", "district"} and not data.get(pending_field): data[pending_field] = _norm(text)
         if pending_field == "services" and not data.get("services"): data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
+        data = _recover_obvious_facts(" ".join([str(x.get("content") or "") for x in history] + [text]), data)
         return data
     except Exception as exc:
         # Never break partner registration because of an AI-provider/model
@@ -149,6 +150,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         data = _heuristic(text)
         if pending_field in {"business_name", "city", "district"}: data[pending_field] = _norm(text)
         elif pending_field == "services": data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
+        data = _recover_obvious_facts(" ".join([str(x.get("content") or "") for x in history] + [text]), data)
         return data
 
 
