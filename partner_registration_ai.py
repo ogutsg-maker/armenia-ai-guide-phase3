@@ -71,7 +71,7 @@ def _heuristic(text: str) -> dict:
     direction = next((name for name, words in aliases.items() if any(w in low for w in words)), None)
     return {"business_name": None, "city": None, "district": None, "direction": direction,
             "master_category_id": None, "subcategory_names": [], "description": _norm(text),
-            "services": [], "missing": ["business_name", "city", "direction", "services"], "ready": False}
+            "services": [], "missing": ["business_name", "city", "services"], "ready": False}
 
 
 def _parse_json(text: str) -> dict:
@@ -91,12 +91,12 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key or AsyncGroq is None:
         data = _heuristic(text)
-        if pending_field in {"business_name", "city", "district", "direction"}: data[pending_field] = _norm(text)
+        if pending_field in {"business_name", "city", "district"}: data[pending_field] = _norm(text)
         elif pending_field == "services": data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown"}]
         return data
 
     messages = [
-        {"role": "system", "content": """You are the AI registration concierge for Armenia AI Guide. Understand Armenian, Russian and English. Extract only facts stated by the partner and merge the previous profile. Use the catalogue when it fits. If no catalogue direction fits, keep the proposed direction. Never invent facts. Return ONLY one valid JSON object, no markdown, with exactly these fields: business_name, city, district, direction, master_category_id, subcategory_names, description, services, missing, ready. services is an array of objects with name, price, price_type. ready=true only when business_name, city, direction and at least one service are known."""},
+        {"role": "system", "content": """You are the AI registration concierge for Armenia AI Guide. Understand Armenian, Russian and English. Extract only facts stated by the partner and merge the previous profile. Use the catalogue when it fits. Determine the platform direction yourself. If no catalogue direction fits, create a concise proposed direction name and leave master_category_id null. Never ask the partner to choose a direction. Never invent facts. Return ONLY one valid JSON object, no markdown, with exactly these fields: business_name, city, district, direction, master_category_id, subcategory_names, description, services, missing, ready. services is an array of objects with name, price, price_type. ready=true when business_name, city and at least one meaningful service are known. The direction is never a required question."""},
         {"role": "user", "content": "CATALOG:\n" + json.dumps(catalog[:500], ensure_ascii=False) + "\nPREVIOUS PROFILE:\n" + json.dumps(previous_profile, ensure_ascii=False) + "\nPENDING FIELD:\n" + str(pending_field or "") + "\nHISTORY:\n" + json.dumps(history[-10:], ensure_ascii=False) + "\nNEW MESSAGE:\n" + text},
     ]
     try:
@@ -220,8 +220,8 @@ def match_subcategories(db, names: list[str]) -> list[int]:
 def missing_question(data: dict, lang: str) -> str:
     field = (data.get("missing") or ["services"])[0]
     questions = {
-        "hy": {"business_name":"Ինչպե՞ս է կոչվում ձեր բիզնեսը։", "city":"Ո՞ր քաղաքում է գտնվում բիզնեսը։", "direction":"Ի՞նչ հիմնական ուղղությամբ եք աշխատում։", "services":"Ի՞նչ ծառայություններ եք առաջարկում և ինչ գներով։"},
-        "ru": {"business_name":"Как называется ваш бизнес?", "city":"В каком городе находится ваш бизнес?", "direction":"Какое основное направление вашего бизнеса?", "services":"Какие услуги вы предлагаете и сколько они стоят?"},
-        "en": {"business_name":"What is the name of your business?", "city":"Which city is the business located in?", "direction":"What is the main direction of your business?", "services":"What services do you offer and what are their prices?"},
+        "hy": {"business_name":"Ինչպե՞ս է կոչվում ձեր բիզնեսը։", "city":"Ո՞ր քաղաքում է աշխատում բիզնեսը։", "services":"Ի՞նչ ծառայություն եք առաջարկում։ Եթե գինը հայտնի է, նշեք նաև գինը։"},
+        "ru": {"business_name":"Как называется ваш бизнес?", "city":"В каком городе работает бизнес?", "services":"Какую услугу вы оказываете? Если цена известна, укажите и её."},
+        "en": {"business_name":"What is the name of your business?", "city":"Which city does the business operate in?", "services":"What service do you provide? If the price is known, include it."},
     }
     return questions.get(lang, questions["ru"]).get(field, questions.get(lang, questions["ru"])["services"])
