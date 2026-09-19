@@ -108,8 +108,10 @@ function modalError(message){
 }
 async function openService(){
   serviceCatalog=await getServiceCategories();
+  const masters=[...new Map(serviceCatalog.map(c=>[c.master_category_id,c.master_name_am||c.master_name_ru||('ID '+c.master_category_id)])).entries()];
+  const masterOptions=masters.map(([id,name])=>`<option value="${id}">${esc(name)}</option>`).join('');
   const options=serviceCatalog.map(c=>`<option value="${c.id}">${esc(c.name_am||c.name_ru||c.name_en)}</option>`).join('');
-  openModal('Նոր ծառայություն',`<label>Կատեգորիա</label>
+  openModal('Նոր ծառայություն',`<label>Ուղղություն</label><select id="mMaster">${masterOptions}</select><label>Կատեգորիա</label>
     <input id="mCategorySearch" placeholder="🔍 Որոնել բոլոր ենթակատեգորիաները..." autocomplete="off">
     <select id="mCategory" size="6">${options||'<option value="">Հաստատված ուղղությունների ենթակատեգորիաներ չկան</option>'}</select>
     <div class="muted" style="margin:4px 0 10px">Եթե անհրաժեշտ ենթակատեգորիան չկա, ծառայությունը պահպանելիս այն ավտոմատ կուղարկվի ադմինիստրատորին նոր ենթակատեգորիա ստեղծելու համար։</div>
@@ -130,6 +132,7 @@ async function createService(){
       const proposal=await api(`/api/master/${uid}/subcategory-proposals`,{method:'POST',body:JSON.stringify({
         proposed_name:name,
         requested_service_name:name,
+        master_category_id:Number(document.getElementById('mMaster')?.value||0),
         description:desc,
         price:price===''?null:Number(price)
       })});
