@@ -204,7 +204,9 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         if combined:
             merged["services"] = combined
 
-    missing = [key for key in ("business_name", "city", "direction", "services") if not merged.get(key)]
+    # The partner never needs to provide an internal catalogue direction.
+    # AI matching/proposal handles that automatically.
+    missing = [key for key in ("business_name", "city", "services") if not merged.get(key)]
     merged["missing"] = missing
     merged["ready"] = not missing
     await state.update_data(partner_onboarding_history=history, partner_profile=merged)
