@@ -157,7 +157,58 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                 row for row in catalog if row["master_id"] in matching_master_ids
             ]
 
-    # Keep the payload compact: the AI only needs IDs and names for matching.
+    # Keep the request below Groq's 8K TPM limit. A direction can contain
+    # hundreds of subcategories, so sending every row is still too large.
+    # Build a small semantic candidate set locally, then let the AI make the
+    # final meaning-based decision using only REAL catalogue IDs.
+    service_terms = re.findall(r"[\\w\\u0530-\\u058F\\u0400-\\u04FF]+", hint_text.lower())
+    service_terms = [x for x in service_terms if len(x) >= 3]
+    stop_words = {
+        "у меня", "салон", "красоты", "работаем", "женщинами", "делаем",
+        "драм", "от", "также", "в", "и", "за", "the", "and", "with",
+    }
+    service_terms = [x for x in service_terms if x not in stop_words]
+
+    # Useful cross-language semantic anchors for the common beauty services.
+    # These only improve candidate retrieval; the LLM still chooses the final
+    # existing category ID and cannot invent taxonomy.
+    semantic_groups = [
+        {"стриж", "парикмах", "волос", "hair", "մազ", "վարս"},
+        {"окраш", "краск", "color", "colour", "մազերի", "ներկ"},
+        {"уклад", "причес", "hairdo", "стайлинг", "վարսահարդ"},
+        {"маникюр", "nail", "ногт", "մատնահարդ"},
+        {"педикюр", "ոտնահարդ"},
+        {"макияж", "makeup", "визаж", "դիմահարդ"},
+    ]
+
+    def _candidate_score(row: dict) -> float:
+        names = " ".join([
+            _norm(row.get("category_am")),
+            _norm(row.get("category_ru")),
+            _norm(row.get("category_en")),
+        ]).lower()
+        score = 0.0
+        for term in service_terms:
+            if term in names:
+                score += 4.0
+        for group in semantic_groups:
+            if any(term in hint_text.lower() for term in group):
+                if any(term in names for term in group):
+                    score += 8.0
+        # Exact category-name fragments are especially valuable.
+        for name in (
+            _norm(row.get("category_ru")),
+            _norm(row.get("category_am")),
+            _norm(row.get("category_en")),
+        ):
+            words = [w for w in re.findall(r"[\\w\\u0530-\\u058F\\u0400-\\u04FF]+", name.lower()) if len(w) >= 4]
+            score += sum(2.0 for w in words if w in service_terms)
+        return score
+
+    ranked_catalog = sorted(candidate_catalog, key=_candidate_score, reverse=True)
+    # Keep enough candidates for several services, but cap the prompt hard.
+    candidate_catalog = ranked_catalog[:80]
+
     catalog_for_ai = [
         {
             "id": row["category_id"],
