@@ -182,6 +182,106 @@ def _parse_json(text: str) -> dict:
     return json.loads(raw)
 
 
+
+async def _groq_json(client, model, system_prompt, user_content, schema_name, schema, max_tokens):
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.1,
+        max_tokens=max_tokens,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": schema_name, "strict": True, "schema": schema},
+        },
+    )
+    return _parse_json(response.choices[0].message.content or "{}")
+
+
+async def _match_services_universal(client, model, services, catalog):
+    """Semantically match services without exceeding Groq's 8K TPM limit.
+
+    The complete real catalogue is preserved, but it is evaluated in small
+    AI batches. No hard-coded aliases, keywords, or direction-specific rules
+    are used. Each batch returns only the best real category ID.
+    """
+    if not services or not catalog:
+        return services
+
+    compact = [
+        {
+            "id": _safe_int(row.get("category_id")),
+            "hy": _norm(row.get("category_am")),
+            "ru": _norm(row.get("category_ru")),
+            "en": _norm(row.get("category_en")),
+        }
+        for row in catalog
+        if _safe_int(row.get("category_id")) is not None
+    ]
+    match_schema = {
+        "type": "object",
+        "properties": {
+            "matches": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "service_index": {"type": "integer"},
+                        "matched_subcategory_id": {"type": ["integer", "null"]},
+                    },
+                    "required": ["service_index", "matched_subcategory_id"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["matches"],
+        "additionalProperties": False,
+    }
+    system = """You are a universal multilingual catalogue matcher.
+Understand Armenian, Russian and English.
+For every service, choose the ONE existing catalogue item whose meaning is
+the closest. Match by meaning, not exact wording or language.
+Use ONLY IDs present in the supplied catalogue. Never invent an ID.
+If no catalogue item genuinely fits, return null.
+Do not create categories and do not merge services."""
+    # 50 rows keeps each request comfortably below the Groq 8K TPM limit.
+    chunk_size = 50
+    best = [None] * len(services)
+    for start in range(0, len(compact), chunk_size):
+        chunk = compact[start:start + chunk_size]
+        prompt = (
+            "SERVICES:\n" + json.dumps(
+                [{"service_index": i, "name": _norm(x.get("name"))}
+                 for i, x in enumerate(services)],
+                ensure_ascii=False,
+            )
+            + "\n\nCATALOGUE CHUNK:\n"
+            + json.dumps(chunk, ensure_ascii=False)
+        )
+        try:
+            result = await _groq_json(
+                client, model, system, prompt,
+                "service_catalog_matches", match_schema, 300
+            )
+            for item in result.get("matches") or []:
+                idx = _safe_int(item.get("service_index"))
+                cid = _safe_int(item.get("matched_subcategory_id"))
+                if idx is not None and 0 <= idx < len(services):
+                    if cid is not None and any(
+                        _safe_int(row.get("category_id")) == cid for row in chunk
+                    ):
+                        best[idx] = cid
+        except Exception:
+            continue
+
+    out = [dict(x) for x in services]
+    for i, item in enumerate(out):
+        item["matched_subcategory_id"] = best[i]
+    return out
+
+
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
     catalog = get_catalog(db)
     previous_profile = previous_profile or {}
@@ -193,37 +293,15 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
             data[pending_field] = _norm(text)
         elif pending_field == "services":
             data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown", "matched_subcategory_id": None}]
+        data = _recover_obvious_facts(" ".join([str(x.get("content") or "") for x in history] + [text]), data)
+        recovered = _recover_services_from_history(history + [{"role": "user", "content": text}])
+        if recovered:
+            data["services"] = recovered
+        data["ready"] = bool(data.get("business_name") and data.get("city") and data.get("services"))
         return data
 
-    # IMPORTANT:
-    # Universal semantic matching:
-    # - The AI sees the COMPLETE existing subcategory catalogue.
-    # - Every catalogue item contains its real DB ID plus Armenian/Russian/English names.
-    # - No hard-coded per-service dictionaries, aliases or direction-specific groups are used.
-    # - The model decides by meaning across languages; Python only validates the returned IDs.
-    #
-    # The previous implementation tried to preselect 80 rows using hand-written
-    # keyword groups. That is not scalable: a new service such as "Коррекция
-    # бровей" could miss the real "Брови" category simply because the words did
-    # not share one of those hard-coded groups.
-    #
-    # To stay under Groq's 8K TPM limit, the catalogue sent to the model is
-    # deliberately compact: only category ID + the three existing names.
-    # Parent/master data is not repeated for every row because the returned
-    # category ID is validated against the complete DB catalogue afterwards.
-
-    compact_catalog = [
-        {
-            "id": _safe_int(row.get("category_id")),
-            "hy": _norm(row.get("category_am")),
-            "ru": _norm(row.get("category_ru")),
-            "en": _norm(row.get("category_en")),
-        }
-        for row in catalog
-        if _safe_int(row.get("category_id")) is not None
-    ]
-
-    catalog_for_ai = compact_catalog
+    model = os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
+    client = AsyncGroq(api_key=key)
 
     schema = {
         "type": "object",
@@ -235,191 +313,120 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
             "master_category_id": {"type": ["integer", "null"]},
             "subcategory_names": {"type": "array", "items": {"type": "string"}},
             "description": {"type": "string"},
-            "services": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "price": {"type": ["number", "null"]},
-                        "price_type": {"type": "string"},
-                        "matched_subcategory_id": {"type": ["integer", "null"]},
-                    },
-                    "required": ["name", "price", "price_type", "matched_subcategory_id"],
-                    "additionalProperties": False,
+            "services": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "price": {"type": ["number", "null"]},
+                    "price_type": {"type": "string"},
+                    "matched_subcategory_id": {"type": ["integer", "null"]},
                 },
-            },
+                "required": ["name", "price", "price_type", "matched_subcategory_id"],
+                "additionalProperties": False,
+            }},
             "missing": {"type": "array", "items": {"type": "string"}},
             "ready": {"type": "boolean"},
         },
-        "required": [
-            "business_name", "city", "district", "direction",
-            "master_category_id", "subcategory_names", "description",
-            "services", "missing", "ready"
-        ],
+        "required": ["business_name", "city", "district", "direction",
+                     "master_category_id", "subcategory_names", "description",
+                     "services", "missing", "ready"],
         "additionalProperties": False,
     }
 
-    system_prompt = """You are the AI registration concierge for Armenia AI Guide.
-
+    system = """You are the AI registration concierge for Armenia AI Guide.
 Understand Armenian, Russian and English.
+Extract facts from the partner's current message and accumulated history.
+Do not invent business names, cities, services or prices.
+Keep every stated service as a separate object.
+For prices such as "3000-ից", "от 3000", "from 3000", use price=3000 and price_type="from".
+Determine the platform direction yourself when possible; never ask the partner to choose it.
+ready=true when business_name, city and at least one meaningful service are known.
+matched_subcategory_id MUST remain null in this extraction step; catalogue matching
+is performed separately against the complete real catalogue.
+Return only the supplied JSON schema."""
 
-CATALOG RULES — THESE ARE ABSOLUTE:
-1. The catalogue in the user message is the ONLY source of valid subcategory IDs.
-2. You MUST semantically classify EACH partner service against the EXISTING catalogue.
-3. Return the existing subcategory's EXACT numeric subcategory_id in matched_subcategory_id.
-4. Never invent a subcategory ID.
-5. Never create or propose a new subcategory if an existing catalogue subcategory is a reasonable semantic match.
-6. The words used by the partner may differ completely from the catalogue language. Match by meaning across Armenian/Russian/English, not only by exact text.
-7. Example: "մազերի կտրում", "մազ կտրել", "стрижка волос", "стрижки", "haircut" should match an existing "Парикмахер / Վարսավիր" subcategory when that subcategory is present.
-8. Example: "մազերի ներկում", "окрашивание волос", "hair coloring" should match an existing "Մազերի ներկում / Окрашивание" subcategory when present.
-9. If several services are stated, KEEP THEM AS SEPARATE service objects. Do not merge them into one service.
-10. If the partner gives "3000-ից", "от 3000", "from 3000", store price=3000 and price_type="from".
-11. Do not invent prices, business names, cities, districts or services.
-12. master_category_id must be the existing master category ID that contains the selected matched subcategories.
-13. Only if NO existing subcategory genuinely fits a service may matched_subcategory_id be null. Do not invent a replacement category.
-14. subcategory_names is informational only; matched_subcategory_id is the authoritative database link.
-
-DIRECTION RULES:
-- Determine the platform direction yourself.
-- Never ask the partner to choose a direction.
-- If no existing master direction fits the business, set master_category_id=null and provide a concise proposed direction in direction plus at least one suggested subcategory_name.
-- ready=true when business_name, city and at least one meaningful service are known.
-
-Return ONLY JSON matching the supplied schema."""
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {
-            "role": "user",
-            "content": (
-                "EXISTING CATALOGUE — USE THESE REAL DATABASE IDS:\n"
-                + json.dumps(catalog_for_ai, ensure_ascii=False)
-                + "\n\nPREVIOUS PROFILE:\n"
-                + json.dumps(previous_profile, ensure_ascii=False)
-                + "\n\nPENDING FIELD:\n"
-                + str(pending_field or "")
-                + "\n\nHISTORY:\n"
-                + json.dumps([
-                    {
-                        "role": str(x.get("role") or ""),
-                        "content": _norm(x.get("content") or "")[:1200],
-                    }
-                    for x in history[-4:]
-                ], ensure_ascii=False)
-                + "\n\nNEW MESSAGE:\n"
-                + _norm(text)[:3000]
-            ),
-        },
-    ]
+    user_content = (
+        "PREVIOUS PROFILE:\n" + json.dumps(previous_profile, ensure_ascii=False)
+        + "\nPENDING FIELD:\n" + str(pending_field or "")
+        + "\nHISTORY:\n" + json.dumps([
+            {"role": str(x.get("role") or ""), "content": _norm(x.get("content") or "")[:1200]}
+            for x in history[-4:]
+        ], ensure_ascii=False)
+        + "\nNEW MESSAGE:\n" + _norm(text)[:3000]
+    )
 
     try:
-        client = AsyncGroq(api_key=key)
-        response = await client.chat.completions.create(
-            model=os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")),
-            messages=messages,
-            temperature=0.1,
-            max_tokens=1400,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "partner_onboarding_catalog_match",
-                    "strict": True,
-                    "schema": schema,
-                },
-            },
-        )
-        ai_data = _parse_json(response.choices[0].message.content or "{}")
-        if not isinstance(ai_data, dict):
-            raise ValueError("AI response is not an object")
-
-        # IMPORTANT: each chat turn must UPDATE the accumulated profile, not
-        # replace it. When the first message already contained city/services
-        # and the AI asks only for the business name, a model response focused
-        # on that pending field may omit the earlier services. Losing them here
-        # makes the next turn ask for services again.
+        ai_data = await _groq_json(client, model, system, user_content,
+                                   "partner_onboarding_extract", schema, 700)
         data = dict(previous_profile)
 
-        for field in (
-            "business_name", "city", "district", "direction",
-            "master_category_id", "description"
-        ):
+        for field in ("business_name", "city", "district", "direction",
+                      "master_category_id", "description"):
             value = ai_data.get(field)
             if value not in (None, ""):
                 data[field] = value
 
-        # Keep the complete service list from the accumulated profile unless
-        # the current AI response actually returned a non-empty list.
         ai_services = ai_data.get("services")
         if isinstance(ai_services, list) and ai_services:
             data["services"] = ai_services
         elif "services" not in data:
             data["services"] = []
 
-        # If a later turn is focused only on the business name/city, some
-        # models may omit services from their structured response. Recover the
-        # explicit price-bearing service facts from the original user history
-        # so a pending-field turn can never erase them.
-        if not data.get("services"):
-            recovered_services = _recover_services_from_history(history)
-            if recovered_services:
-                data["services"] = recovered_services
+        recovered = _recover_services_from_history(
+            history + [{"role": "user", "content": text}]
+        )
+        if recovered:
+            # Recovery is authoritative for explicit price-bearing facts.
+            by_name = {str(x.get("name")).strip().lower(): x for x in (data.get("services") or [])}
+            for item in recovered:
+                by_name[item["name"].lower()] = item
+            data["services"] = list(by_name.values())
 
-        # Keep catalog suggestions from the newest response when present.
-        if isinstance(ai_data.get("subcategory_names"), list) and ai_data.get("subcategory_names"):
-            data["subcategory_names"] = ai_data["subcategory_names"]
-        if isinstance(ai_data.get("missing"), list):
-            data["missing"] = ai_data["missing"]
-        if "ready" in ai_data:
-            data["ready"] = bool(ai_data["ready"])
+        data = _recover_obvious_facts(
+            " ".join([str(x.get("content") or "") for x in history] + [text]), data
+        )
+        data["services"] = await _match_services_universal(
+            client, model, data.get("services") or [], catalog
+        )
 
         if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
             data[pending_field] = _norm(text)
         if pending_field == "services" and not data.get("services"):
             data["services"] = [{
-                "name": _norm(text),
-                "price": None,
-                "price_type": "unknown",
-                "matched_subcategory_id": None,
+                "name": _norm(text), "price": None, "price_type": "unknown",
+                "matched_subcategory_id": None
             }]
 
-        data = _recover_obvious_facts(
-            " ".join([str(x.get("content") or "") for x in history] + [text]),
-            data,
-        )
-
-        # Recalculate readiness from the accumulated profile. This is
-        # deliberately deterministic so a pending-field turn cannot turn a
-        # previously complete application back into an incomplete one.
         data["ready"] = bool(
             str(data.get("business_name") or "").strip()
             and str(data.get("city") or "").strip()
             and data.get("services")
         )
-        if data["ready"]:
-            data["missing"] = []
+        data["missing"] = [] if data["ready"] else [
+            key for key in ("business_name", "city", "services") if not data.get(key)
+        ]
         return data
+
     except Exception as exc:
-        logging_message = f"Groq partner extraction failed: {exc}"
         try:
             import logging
-            logging.getLogger(__name__).warning(logging_message)
+            logging.getLogger(__name__).warning(
+                "Groq partner extraction failed: %s", exc
+            )
         except Exception:
             pass
         data = _heuristic(text)
+        data = _recover_obvious_facts(
+            " ".join([str(x.get("content") or "") for x in history] + [text]), data
+        )
+        recovered = _recover_services_from_history(
+            history + [{"role": "user", "content": text}]
+        )
+        if recovered:
+            data["services"] = recovered
         if pending_field in {"business_name", "city", "district"}:
             data[pending_field] = _norm(text)
-        elif pending_field == "services":
-            data["services"] = [{
-                "name": _norm(text),
-                "price": None,
-                "price_type": "unknown",
-                "matched_subcategory_id": None,
-            }]
-        data = _recover_obvious_facts(
-            " ".join([str(x.get("content") or "") for x in history] + [text]),
-            data,
-        )
+        data["ready"] = bool(data.get("business_name") and data.get("city") and data.get("services"))
         return data
 
 def match_catalog(db, profile: dict) -> tuple[int | None, list[int]]:
