@@ -49,8 +49,34 @@ async function loadSubcategoryProposals(){
   try{
     const d=await api('/api/admin/subcategory-proposals');
     const rows=d.proposals||[];
-    el.innerHTML=rows.length?rows.map(x=>`<div class="card"><div class="row"><div><b>${esc(x.proposed_name)}</b><div class="muted">${esc(x.master_name_am||x.master_name_ru||'')} · ${esc(x.business_name||'')} · ծառայություն՝ ${esc(x.requested_service_name||'—')}</div></div><span class="badge yellow">pending</span></div><div class="muted">${esc(x.description||'')}</div><div class="actions"><button class="btn ok" onclick="subcategoryProposalAction(${x.id},'approve')">✓ Հաստատել</button><button class="btn danger" onclick="subcategoryProposalAction(${x.id},'reject')">✕ Մերժել</button></div></div>`).join(''):'<div class="empty">Նոր առաջարկներ չկան</div>';
+    el.innerHTML=rows.length?rows.map(x=>`<div class="card">
+      <div class="row"><div><b>${esc(x.proposed_name)}</b><div class="muted">${esc(x.master_name_am||x.master_name_ru||'')} · ${esc(x.business_name||'')} · ծառայություն՝ ${esc(x.requested_service_name||'—')}</div></div><span class="badge yellow">pending</span></div>
+      <div class="settings" style="margin-top:10px">
+        <div class="field"><label>Ենթակատեգորիա / Подкатегория</label><input id="spName${x.id}" value="${esc(x.proposed_name)}"></div>
+        <div class="field"><label>Ծառայություն / Услуга</label><input id="spService${x.id}" value="${esc(x.requested_service_name||'')}"></div>
+        <div class="field"><label>Գին, AMD</label><input id="spPrice${x.id}" type="number" min="0" step="1" value="${esc(x.price??'')}"></div>
+      </div>
+      <div class="field" style="margin-top:8px"><label>Նկարագրություն / Описание</label><textarea id="spDesc${x.id}">${esc(x.description||'')}</textarea></div>
+      <div class="field" style="margin-top:8px"><label>Նշում ադմինիստրատորի համար / Заметка</label><input id="spNote${x.id}" value="${esc(x.admin_note||'')}"></div>
+      <div class="actions">
+        <button class="btn" onclick="subcategoryProposalEdit(${x.id})">💾 Պահպանել փոփոխությունները</button>
+        <button class="btn ok" onclick="subcategoryProposalAction(${x.id},'approve')">✓ Հաստատել</button>
+        <button class="btn danger" onclick="subcategoryProposalAction(${x.id},'reject')">✕ Մերժել</button>
+      </div>
+    </div>`).join(''):'<div class="empty">Նոր առաջարկներ չկան</div>';
   }catch(e){el.innerHTML=`<div class="error">${esc(e.message)}</div>`}
+}
+async function subcategoryProposalEdit(id){
+  await post('/api/admin/subcategory-proposals/'+id+'/action',{
+    action:'edit',
+    name:$('spName'+id).value.trim(),
+    service_name:$('spService'+id).value.trim(),
+    price:$('spPrice'+id).value,
+    description:$('spDesc'+id).value.trim(),
+    admin_note:$('spNote'+id).value.trim()
+  });
+  await loadSubcategoryProposals();
+  alert('Փոփոխությունները պահպանված են');
 }
 async function subcategoryProposalAction(id,action){
   const reason=action==='reject'?prompt('Պատճառ / Причина','Չի համապատասխանում կատալոգին'):'';
