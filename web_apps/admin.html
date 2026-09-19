@@ -22,7 +22,7 @@
 <section id="orders" class="page"><div id="ordersList"></div></section>
 <section id="disputes" class="page"><div id="disputesList"></div></section>
 <section id="potential" class="page"><div class="card"><b>🔎 Հնարավոր գործընկերներ</b><div class="muted">Միայն իրական աղբյուրներից ստացված տվյալներ։</div><input id="researchQuery" placeholder="Օր․ beauty salons in Arabkir"><textarea id="researchText" placeholder="Կամ տեղադրեք աղբյուրի տեքստը"></textarea><div class="actions"><button class="btn" onclick="runResearch()">🔎 AI որոնել</button><button class="btn ok" onclick="structurePotential()">🤖 Կառուցվածքավորել</button></div></div><div id="potentialList"></div></section>
-<section id="proposals" class="page"><div class="card"><b>🧠 AI կատալոգի առաջարկներ</b><div class="muted">AI-ն կարող է առաջարկել նոր ուղղություն, ադմինը հաստատում է կամ ուղարկում ճշտման։</div><button class="btn soft" onclick="loadProposals()">↻</button></div><div id="proposalList"></div></section>
+<section id="proposals" class="page"><div class="card"><b>🧠 AI կատալոգի առաջարկներ</b><div class="muted">Նոր ուղղություններ և գործընկերների առաջարկած նոր ենթակատեգորիաներ։</div><button class="btn soft" onclick="loadProposals()">↻</button></div><div id="proposalList"></div><div class="card"><b>🏷 Նոր ենթակատեգորիաներ գործընկերներից</b><div class="muted">Գործընկերը չի ստեղծում կատեգորիան ինքնուրույն. առաջարկը նախ ստուգվում է ադմինի կողմից։</div><button class="btn soft" onclick="loadSubcategoryProposals()">↻</button></div><div id="subcategoryProposalList"></div></section>
 <section id="ai" class="page"><div class="grid"><div class="stat"><span class="muted">AI #1</span><b>Partner Onboarding</b></div><div class="stat"><span class="muted">AI #2</span><b>Hunter / Dispatcher</b></div><div class="stat"><span class="muted">Provider</span><b>Groq</b></div><div class="stat"><span class="muted">Mode</span><b>AI-first</b></div></div></section>
 </main></div>
 <script>
@@ -43,6 +43,21 @@ async function togglePartner(id){const el=$('expand'+id);if(el.style.display==='
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
 async function decision(id,a){const reason=a==='reject'?prompt('Պատճառ / Причина','Փաստաթուղթը չի համապատասխանում'):'';await post(`/api/admin/partner-applications/${id}/${a}`,reason?{reason}:{});await Promise.all([loadPartners(),loadStats()])}
 async function directionAction(id,a,pid){const reason=a==='reject'?prompt('Պատճառ','Փաստաթուղթը չի համապատասխանում'):'';await post(`/api/admin/partner-directions/${id}/action`,reason?{action:a,reason}:{action:a});const el=$('expand'+pid);el.style.display='none';await togglePartner(pid);await loadStats()}
+
+async function loadSubcategoryProposals(){
+  const el=$('subcategoryProposalList');
+  try{
+    const d=await api('/api/admin/subcategory-proposals');
+    const rows=d.proposals||[];
+    el.innerHTML=rows.length?rows.map(x=>`<div class="card"><div class="row"><div><b>${esc(x.proposed_name)}</b><div class="muted">${esc(x.master_name_am||x.master_name_ru||'')} · ${esc(x.business_name||'')} · ծառայություն՝ ${esc(x.requested_service_name||'—')}</div></div><span class="badge yellow">pending</span></div><div class="muted">${esc(x.description||'')}</div><div class="actions"><button class="btn ok" onclick="subcategoryProposalAction(${x.id},'approve')">✓ Հաստատել</button><button class="btn danger" onclick="subcategoryProposalAction(${x.id},'reject')">✕ Մերժել</button></div></div>`).join(''):'<div class="empty">Նոր առաջարկներ չկան</div>';
+  }catch(e){el.innerHTML=`<div class="error">${esc(e.message)}</div>`}
+}
+async function subcategoryProposalAction(id,action){
+  const reason=action==='reject'?prompt('Պատճառ / Причина','Չի համապատասխանում կատալոգին'):'';
+  await post('/api/admin/subcategory-proposals/'+id+'/action',reason?{action,reason}:{action});
+  await loadSubcategoryProposals();
+  if(action==='approve') await loadCats();
+}
 async function loadCats(){
   const d=await api('/api/admin/directions-tree');
   const list=d.directions||[];
