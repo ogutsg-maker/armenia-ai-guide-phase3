@@ -101,72 +101,6 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
 
 
-def _repair_service_matches(catalog: list[dict], profile: dict) -> dict:
-    """Repair obvious multilingual matches missed by the model.
-
-    This is intentionally conservative: it only assigns an existing DB
-    category when the service/category names share a known semantic concept.
-    It never creates a category or invents an ID.
-    """
-    if not isinstance(profile, dict):
-        return profile
-
-    groups = [
-        {"key": "haircut", "terms": {"стриж", "парикмах", "haircut", "hair cut", "մազերի կտր", "մազ կտր", "վարսավիր", "սանրվածք"}},
-        {"key": "haircolor", "terms": {"окраш", "краск", "hair color", "hair coloring", "coloring", "մազերի ներկ", "ներկում"}},
-        {"key": "styling", "terms": {"уклад", "причес", "hairdo", "styling", "դասավորում", "վարսահարդարում"}},
-        {"key": "makeup", "terms": {"макияж", "визаж", "makeup", "դիմահարդարում"}},
-        {"key": "manicure", "terms": {"маникюр", "nail", "ногт", "մատնահարդարում"}},
-        {"key": "pedicure", "terms": {"педикюр", "toe nail", "ոտնահարդարում"}},
-        {"key": "brows", "terms": {"бров", "коррекция бров", "brow", "eyebrow", "հոնք", "հոնքերի", "հոնքեր"}},
-        {"key": "lashes", "terms": {"ресниц", "lash", "eyelash", "թարթիչ"}},
-    ]
-
-    def concepts(value: Any) -> set[str]:
-        low = _norm(value).lower()
-        found = set()
-        for g in groups:
-            if any(term in low for term in g["terms"]):
-                found.add(g["key"])
-        return found
-
-    services = profile.get("services")
-    if not isinstance(services, list):
-        return profile
-
-    for service in services:
-        if not isinstance(service, dict):
-            continue
-        if _safe_int(service.get("matched_subcategory_id")) is not None:
-            continue
-        service_concepts = concepts(service.get("name"))
-        if not service_concepts:
-            continue
-
-        candidates = []
-        for row in catalog:
-            category_concepts = concepts(
-                " ".join([
-                    str(row.get("category_am") or ""),
-                    str(row.get("category_ru") or ""),
-                    str(row.get("category_en") or ""),
-                ])
-            )
-            overlap = service_concepts & category_concepts
-            if overlap:
-                candidates.append((len(overlap), _safe_int(row.get("category_id")), _safe_int(row.get("master_id"))))
-
-        # Only use an unambiguous existing category. If several categories
-        # represent the same concept, leave the decision to the model/admin.
-        if candidates:
-            candidates.sort(reverse=True)
-            best_score = candidates[0][0]
-            best = [x for x in candidates if x[0] == best_score and x[1] is not None]
-            if len(best) == 1:
-                service["matched_subcategory_id"] = best[0][1]
-
-    return profile
-
 def _parse_json(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
@@ -192,100 +126,34 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         return data
 
     # IMPORTANT:
-    # The model receives the COMPLETE existing subcategory catalogue, including
-    # real database IDs. It must classify EACH service separately and return the
-    # ID of an existing category. It is forbidden to invent category IDs/names
-    # when an existing category fits.
-    # Groq's free/on-demand tier has an 8K TPM request limit. Sending the
-    # entire multilingual catalogue on every chat turn can exceed that limit
-    # (the old payload reached ~32K tokens). First narrow the catalogue to the
-    # direction suggested by deterministic hints in the user's text/profile.
-    # This still sends the COMPLETE subcategory catalogue for the selected
-    # direction, with real DB IDs, so service matching remains semantic and
-    # cannot invent taxonomy.
-    hint_text = " ".join([
-        str(text or ""),
-        str(previous_profile.get("description") or ""),
-        str(previous_profile.get("business_name") or ""),
-    ])
-    hinted_direction = _heuristic(hint_text).get("direction")
-    candidate_catalog = catalog
-    if hinted_direction:
-        wanted = _norm(hinted_direction).lower()
-        matching_master_ids = {
-            row["master_id"] for row in catalog
-            if wanted in {
-                _norm(row.get("master_ru")).lower(),
-                _norm(row.get("master_am")).lower(),
-                _norm(row.get("master_en")).lower(),
-            }
-        }
-        if matching_master_ids:
-            candidate_catalog = [
-                row for row in catalog if row["master_id"] in matching_master_ids
-            ]
+    # Universal semantic matching:
+    # - The AI sees the COMPLETE existing subcategory catalogue.
+    # - Every catalogue item contains its real DB ID plus Armenian/Russian/English names.
+    # - No hard-coded per-service dictionaries, aliases or direction-specific groups are used.
+    # - The model decides by meaning across languages; Python only validates the returned IDs.
+    #
+    # The previous implementation tried to preselect 80 rows using hand-written
+    # keyword groups. That is not scalable: a new service such as "Коррекция
+    # бровей" could miss the real "Брови" category simply because the words did
+    # not share one of those hard-coded groups.
+    #
+    # To stay under Groq's 8K TPM limit, the catalogue sent to the model is
+    # deliberately compact: only category ID + the three existing names.
+    # Parent/master data is not repeated for every row because the returned
+    # category ID is validated against the complete DB catalogue afterwards.
 
-    # Keep the request below Groq's 8K TPM limit. A direction can contain
-    # hundreds of subcategories, so sending every row is still too large.
-    # Build a small semantic candidate set locally, then let the AI make the
-    # final meaning-based decision using only REAL catalogue IDs.
-    service_terms = re.findall(r"[\\w\\u0530-\\u058F\\u0400-\\u04FF]+", hint_text.lower())
-    service_terms = [x for x in service_terms if len(x) >= 3]
-    stop_words = {
-        "у меня", "салон", "красоты", "работаем", "женщинами", "делаем",
-        "драм", "от", "также", "в", "и", "за", "the", "and", "with",
-    }
-    service_terms = [x for x in service_terms if x not in stop_words]
-
-    # Useful cross-language semantic anchors for the common beauty services.
-    # These only improve candidate retrieval; the LLM still chooses the final
-    # existing category ID and cannot invent taxonomy.
-    semantic_groups = [
-        {"стриж", "парикмах", "волос", "hair", "մազ", "վարս"},
-        {"окраш", "краск", "color", "colour", "մազերի", "ներկ"},
-        {"уклад", "причес", "hairdo", "стайлинг", "վարսահարդ"},
-        {"маникюр", "nail", "ногт", "մատնահարդ"},
-        {"педикюр", "ոտնահարդ"},
-        {"макияж", "makeup", "визаж", "դիմահարդ"},
-    ]
-
-    def _candidate_score(row: dict) -> float:
-        names = " ".join([
-            _norm(row.get("category_am")),
-            _norm(row.get("category_ru")),
-            _norm(row.get("category_en")),
-        ]).lower()
-        score = 0.0
-        for term in service_terms:
-            if term in names:
-                score += 4.0
-        for group in semantic_groups:
-            if any(term in hint_text.lower() for term in group):
-                if any(term in names for term in group):
-                    score += 8.0
-        # Exact category-name fragments are especially valuable.
-        for name in (
-            _norm(row.get("category_ru")),
-            _norm(row.get("category_am")),
-            _norm(row.get("category_en")),
-        ):
-            words = [w for w in re.findall(r"[\\w\\u0530-\\u058F\\u0400-\\u04FF]+", name.lower()) if len(w) >= 4]
-            score += sum(2.0 for w in words if w in service_terms)
-        return score
-
-    ranked_catalog = sorted(candidate_catalog, key=_candidate_score, reverse=True)
-    # Keep enough candidates for several services, but cap the prompt hard.
-    candidate_catalog = ranked_catalog[:80]
-
-    catalog_for_ai = [
+    compact_catalog = [
         {
-            "id": row["category_id"],
-            "hy": row["category_am"],
-            "ru": row["category_ru"],
-            "en": row["category_en"],
+            "id": _safe_int(row.get("category_id")),
+            "hy": _norm(row.get("category_am")),
+            "ru": _norm(row.get("category_ru")),
+            "en": _norm(row.get("category_en")),
         }
-        for row in candidate_catalog
+        for row in catalog
+        if _safe_int(row.get("category_id")) is not None
     ]
+
+    catalog_for_ai = compact_catalog
 
     schema = {
         "type": "object",
@@ -381,7 +249,7 @@ Return ONLY JSON matching the supplied schema."""
             model=os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")),
             messages=messages,
             temperature=0.1,
-            max_tokens=2600,
+            max_tokens=1400,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
@@ -440,12 +308,6 @@ Return ONLY JSON matching the supplied schema."""
             " ".join([str(x.get("content") or "") for x in history] + [text]),
             data,
         )
-
-        # Final deterministic repair for common cross-language service/category
-        # names. Groq is still the semantic classifier, but if it returns null
-        # while the real catalogue contains an obvious multilingual equivalent,
-        # do not turn that service into a new taxonomy proposal.
-        data = _repair_service_matches(catalog, data)
 
         # Recalculate readiness from the accumulated profile. This is
         # deliberately deterministic so a pending-field turn cannot turn a
