@@ -144,7 +144,7 @@ def _install_ai_first_partner_flow(main,db):
         profile=await extract(text,history,db,previous_profile=previous,pending_field=pending); merged=dict(previous)
         for k,v in (profile or {}).items():
             if v not in (None,"",[],{}):merged[k]=v
-        required=[k for k in ("business_name","city","direction","services") if not merged.get(k)]; merged["missing"]=required; merged["ready"]=not required
+        required=[k for k in ("business_name","city","services") if not merged.get(k)]; merged["missing"]=required; merged["ready"]=not required
         await state.update_data(partner_onboarding_history=history,partner_profile=merged)
         if required:
             question=missing_question(merged,lang); history.append({"role":"assistant","content":question}); await state.update_data(partner_onboarding_pending_field=required[0],partner_onboarding_history=history)
