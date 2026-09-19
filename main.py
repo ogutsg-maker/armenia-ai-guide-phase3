@@ -93,14 +93,7 @@ async def api_webapp_session(request: web.Request):
         tg_user.get("username") or f"user_{uid}",
         tg_user.get("first_name") or tg_user.get("last_name") or "",
     )
-    with db._connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, status, verification_status, business_name "
-                "FROM partners WHERE user_id=%s ORDER BY id DESC LIMIT 1",
-                (uid,),
-            )
-            partner = cur.fetchone()
+    partner = db.get_partner_by_user(uid)
     if partner and str(partner.get("status") or "").lower() == "approved":
         return web.json_response({
             "ok": True,
