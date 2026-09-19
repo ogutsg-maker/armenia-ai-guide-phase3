@@ -132,7 +132,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
 
     # Armenian/Russian/English price forms, including "դրամից" / "от 3000".
     pattern = re.compile(
-        r"(?P<name>[^,;]+?)\s*[—–-]\s*"
+        r"(?P<name>[^,;]+?)\s*[—–\-՝:]\s*"
         r"(?P<from>от\s+|from\s+)?"
         r"(?P<price>\d[\d\s.,]*)\s*"
         r"(?P<currency>դրամ(?:ից)?|֏|amd|dram)\b",
