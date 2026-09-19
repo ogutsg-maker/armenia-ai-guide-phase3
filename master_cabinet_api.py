@@ -410,6 +410,118 @@ async def update_profile_by_voice(request):
     return web.json_response({"ok": False, "error": "voice_processing_requires_openai_api"}, status=503)
 
 
+async def api_service_catalog(request: web.Request):
+    """Return every active subcategory under the partner's approved directions."""
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.id, c.master_category_id,
+                       c.name_am, c.name_ru, c.name_en, c.slug,
+                       m.name_am AS master_name_am,
+                       m.name_ru AS master_name_ru,
+                       m.name_en AS master_name_en
+                FROM categories c
+                JOIN master_categories m ON m.id=c.master_category_id
+                JOIN partner_directions pd
+                  ON pd.partner_id=%s
+                 AND pd.master_category_id=c.master_category_id
+                 AND pd.status='approved'
+                WHERE c.is_active=TRUE AND m.is_active=TRUE
+                ORDER BY c.master_category_id, c.id
+            """, (pid,))
+            rows = cur.fetchall()
+    return web.json_response({"ok": True, "categories": _json(rows)})
+
+
+async def api_subcategory_proposal(request: web.Request):
+    """Automatically create a pending admin proposal when no catalog match exists."""
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    data = await request.json()
+    proposed_name = str(data.get("proposed_name") or "").strip()
+    master_id = int(data.get("master_category_id") or 0)
+    if not proposed_name:
+        return web.json_response({"ok": False, "error": "proposed_name_required"}, status=400)
+    if not master_id:
+        return web.json_response({"ok": False, "error": "master_category_required"}, status=400)
+
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM partner_directions
+                WHERE partner_id=%s AND master_category_id=%s AND status='approved'
+            """, (pid, master_id))
+            if not cur.fetchone():
+                return web.json_response({"ok": False, "error": "direction_not_approved"}, status=403)
+
+            cur.execute("""
+                SELECT id,name_am,name_ru,name_en FROM categories
+                WHERE master_category_id=%s AND is_active=TRUE
+            """, (master_id,))
+            rows = cur.fetchall()
+
+            import re
+            def norm(v):
+                return re.sub(r"[^a-z0-9\u0531-\u0587]+", "", str(v or "").lower())
+            wanted = norm(proposed_name)
+            for row in rows:
+                names = {norm(row["name_am"]), norm(row["name_ru"]), norm(row["name_en"])}
+                if wanted and wanted in names:
+                    return web.json_response({
+                        "ok": False, "error": "subcategory_already_exists", "category": dict(row)
+                    }, status=409)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS subcategory_proposals (
+                    id BIGSERIAL PRIMARY KEY,
+                    partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+                    master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
+                    proposed_name TEXT NOT NULL,
+                    requested_service_name TEXT,
+                    description TEXT,
+                    price NUMERIC,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    admin_note TEXT,
+                    reviewed_by BIGINT,
+                    reviewed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                SELECT id FROM subcategory_proposals
+                WHERE partner_id=%s AND master_category_id=%s
+                  AND lower(trim(proposed_name))=lower(trim(%s))
+                  AND status='pending'
+                LIMIT 1
+            """, (pid, master_id, proposed_name))
+            duplicate = cur.fetchone()
+            if duplicate:
+                return web.json_response({
+                    "ok": True,
+                    "proposal_id": int(duplicate["id"]),
+                    "message": "Այս ենթակատեգորիայի առաջարկն արդեն ուղարկված է ադմինիստրատորին։"
+                })
+
+            cur.execute("""
+                INSERT INTO subcategory_proposals
+                    (partner_id,master_category_id,proposed_name,requested_service_name,description,price,status)
+                VALUES(%s,%s,%s,%s,%s,%s,'pending')
+                RETURNING id
+            """, (pid, master_id, proposed_name,
+                  str(data.get("requested_service_name") or "").strip() or None,
+                  str(data.get("description") or "").strip() or None,
+                  data.get("price")))
+            proposal_id = int(cur.fetchone()["id"])
+        conn.commit()
+    return web.json_response({
+        "ok": True,
+        "proposal_id": proposal_id,
+        "message": "Առաջարկը ավտոմատ ուղարկվեց ադմինիստրատորին։"
+    })
+
+
 def register_master_cabinet_routes(app, db=None, bot=None):
     """Register the complete current partner cabinet API.
 
@@ -423,6 +535,8 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/objects", api_object_create)
     app.router.add_delete("/api/master/{id}/objects/{object_id}", api_object_delete)
     app.router.add_get("/api/master/{id}/services", api_services)
+    app.router.add_get("/api/master/{id}/service-catalog", api_service_catalog)
+    app.router.add_post("/api/master/{id}/subcategory-proposals", api_subcategory_proposal)
     app.router.add_post("/api/master/{id}/services", api_service_create)
     app.router.add_post("/api/master/{id}/services/{service_id}", api_service_update)
     app.router.add_delete("/api/master/{id}/services/{service_id}", api_service_delete)
