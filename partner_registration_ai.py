@@ -74,6 +74,31 @@ def _heuristic(text: str) -> dict:
             "services": [], "missing": ["business_name", "city", "services"], "ready": False}
 
 
+def _recover_obvious_facts(text: str, data: dict) -> dict:
+    """Recover simple facts the LLM may omit while answering a pending field."""
+    out = dict(data or {})
+    raw = _norm(text)
+    low = raw.lower()
+
+    # Common natural-language location forms in Russian/English/Armenian.
+    city_patterns = [
+        r"\\b(?:в|из|город(?:е)?|город)\\s+([А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})",
+        r"\\b(?:in|from)\\s+([A-Z][A-Za-z-]{2,})",
+    ]
+    if not out.get("city"):
+        for pattern in city_patterns:
+            m = re.search(pattern, raw, flags=re.I)
+            if m:
+                candidate = m.group(1).strip(" .,;:()")
+                if candidate.lower() not in {"the", "city"}:
+                    out["city"] = candidate
+                    break
+    if not out.get("city") and "раздан" in low:
+        out["city"] = "Раздан"
+
+    return out
+
+
 def _parse_json(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
