@@ -203,12 +203,15 @@ async def api_services(request: web.Request):
     pid = _require_partner(uid)
     with _connect() as conn:
         with conn.cursor() as cur:
+            # Keep the partner service list independent from optional
+            # category translation columns. The dashboard already proves that
+            # services exist for this partner; the cabinet must display them
+            # even if a legacy DB has a different category schema.
             cur.execute(
-                """SELECT s.*, c.name_am AS category_name_am, c.name_ru AS category_name_ru,
-                          c.name_en AS category_name_en
+                """SELECT s.*
                    FROM services s
-                   LEFT JOIN categories c ON c.id=s.category_id
-                   WHERE s.partner_id=%s AND (s.status IS NULL OR s.status <> 'deleted')
+                   WHERE s.partner_id=%s
+                     AND (s.status IS NULL OR s.status <> 'deleted')
                    ORDER BY s.id DESC""",
                 (pid,),
             )
