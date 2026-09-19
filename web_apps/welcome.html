@@ -22,9 +22,30 @@
   <div class="foot">Armenia AI Guide · Услуги Армении — проще с AI</div>
 </div>
 <script>
-const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
+const tg=window.Telegram?.WebApp;
+tg?.ready();tg?.expand();
+
+async function restoreSession(){
+  // Telegram Mini App supplies the authenticated init data here.
+  // If it is missing (for example when opened directly in a normal browser),
+  // keep the normal welcome screen.
+  if(!tg?.initData) return;
+  try{
+    const r=await fetch('/api/webapp/session',{
+      method:'GET',
+      headers:{'X-Telegram-Init-Data':tg.initData}
+    });
+    if(!r.ok) return;
+    const s=await r.json();
+    if(s.ok && s.role==='partner' && s.partner_status==='approved' && s.destination){
+      location.replace('/'+s.destination);
+    }
+  }catch(e){
+    console.warn('Session restore failed',e);
+  }
+}
 const copy={hy:{intro:'Ձեր AI օգնականը ծառայություններ գտնելու, ընտրելու և ամրագրման հարցերում։',ct:'Ես հաճախորդ եմ',cp:'Պատմեք, թե ինչ ծառայություն եք փնտրում։ AI-ը կօգնի գտնել և ընտրել հարմար տարբերակ։',cb:'✦ Բացել AI օգնականը',pt:'Ես գործընկեր եմ',pp:'Պատմեք ձեր բիզնեսի մասին, ավելացրեք ծառայությունները և ստացեք նոր հաճախորդներ։',pb:'🏢 Բացել գործընկերոջ բաժինը'},ru:{intro:'Ваш AI-помощник для поиска, выбора и бронирования услуг в Армении.',ct:'Я клиент',cp:'Расскажите, какую услугу вы ищете. AI поможет найти и выбрать подходящий вариант.',cb:'✦ Открыть AI-помощника',pt:'Я партнёр',pp:'Расскажите о своём бизнесе, добавьте услуги и получайте новых клиентов.',pb:'🏢 Открыть раздел партнёра'},en:{intro:'Your AI assistant for finding, choosing and booking services in Armenia.',ct:'I am a client',cp:'Tell us what service you need. AI will help you find and choose the right option.',cb:'✦ Open AI assistant',pt:'I am a partner',pp:'Tell us about your business, add your services and get new customers.',pb:'🏢 Open partner section'}};
 let lang=localStorage.aig_lang||'hy';function render(){const c=copy[lang];intro.textContent=c.intro;clientTitle.textContent=c.ct;clientText.textContent=c.cp;clientBtn.textContent=c.cb;partnerTitle.textContent=c.pt;partnerText.textContent=c.pp;partnerBtn.textContent=c.pb;document.querySelectorAll('[data-lang]').forEach(b=>b.classList.toggle('active',b.dataset.lang===lang))}document.querySelectorAll('[data-lang]').forEach(b=>b.onclick=()=>{lang=b.dataset.lang;localStorage.aig_lang=lang;render()});
-function openRole(role){location.href=role==='client'?'client.html':'partner.html'}render();
+function openRole(role){location.href=role==='client'?'client.html':'partner.html'}render();restoreSession();
 </script>
 </body></html>
