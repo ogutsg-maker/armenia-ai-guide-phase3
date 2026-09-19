@@ -69,6 +69,8 @@ def activate_proposal(proposal_id, admin_id, data=None):
         pd=execute("INSERT INTO partner_directions(partner_id,master_category_id,status) VALUES(%s,%s,'pending') ON CONFLICT(partner_id,master_category_id) DO UPDATE SET updated_at=NOW() RETURNING id",(p['partner_id'],m['id']),True)
         if pd:
             execute("INSERT INTO partner_direction_categories(partner_direction_id,category_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(pd['id'],c['id']))
+            # Attach a document uploaded before proposal activation to the new direction.
+            execute("UPDATE partner_verification_documents SET partner_direction_id=%s WHERE id=(SELECT id FROM partner_verification_documents WHERE partner_id=%s AND partner_direction_id IS NULL AND status='pending' ORDER BY created_at DESC LIMIT 1)",(pd['id'],p['partner_id']))
             # Materialise the services the partner submitted with the proposal.
             # persist_ready_application() stored the FULL profile in
             # payload_json when it could not map the direction, so approving
