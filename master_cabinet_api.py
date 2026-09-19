@@ -208,7 +208,7 @@ async def api_services(request: web.Request):
                           c.name_en AS category_name_en
                    FROM services s
                    LEFT JOIN categories c ON c.id=s.category_id
-                   WHERE s.partner_id=%s AND s.status <> 'deleted'
+                   WHERE s.partner_id=%s AND (s.status IS NULL OR s.status <> 'deleted')
                    ORDER BY s.id DESC""",
                 (pid,),
             )
