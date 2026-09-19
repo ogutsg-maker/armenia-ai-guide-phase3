@@ -86,16 +86,14 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
     # generically; do not maintain a city-by-city dictionary.
     city_patterns = [
         # Russian: "в Раздане", "из Раздана", "город Раздан"
-        r"\\b(?:в|из|город(?:е)?|город)\\s+([А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})",
+        r"\b(?:в|из|город(?:е)?|город)\s+([А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})",
         # English: "in Hrazdan", "from Hrazdan"
-        r"\\b(?:in|from)\\s+([A-Z][A-Za-z-]{2,})",
-        # Armenian: "Հրազդանում", "Երևանում", "Գյումրիում".
-        # Capture the lexical stem and restore the city name without the
-        # Armenian locative ending. The contextual prefix prevents matching
-        # ordinary verbs such as "կատարում".
-        r"(?:Ես\\s+)?([Ա-Ֆա-ֆև-ֆ]+?)(?:անում|ենում|ում)(?=\\s+(?:գեղեցկության|սրահ|աշխատ|գործ|ունեմ|ենք|է|եմ))",
-        # Armenian with an explicit "քաղաք" form: "քաղաք Հրազդանում".
-        r"քաղաք\\s+([Ա-Ֆա-ֆև-ֆ]+?)(?:անում|ենում|ում)\\b",
+        r"\b(?:in|from)\s+([A-Z][A-Za-z-]{2,})",
+        # Armenian locative forms: "Հրազդանում", "Երևանում", "Գյումրիում".
+        # Use the Armenian Unicode block instead of a hand-written character
+        # range; this avoids regex parser errors such as "bad character range".
+        r"(?:Ես\s+)?([\u0531-\u058F]+?)(?:անում|ենում|ում)(?=\s+(?:գեղեցկության|սրահ|աշխատ|գործ|ունեմ|ենք|է|եմ))",
+        r"քաղաք\s+([\u0531-\u058F]+?)(?:անում|ենում|ում)\b",
     ]
     if not out.get("city"):
         for pattern in city_patterns:
@@ -107,11 +105,9 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                 out["city"] = candidate
                 break
 
-    # If the model already returned an Armenian locative form, normalize it
-    # instead of replacing it with a hard-coded city name.
     if out.get("city"):
         city = _norm(out["city"])
-        m = re.fullmatch(r"([Ա-Ֆա-ֆև-ֆ]+?)(?:անում|ենում|ում)", city, flags=re.I)
+        m = re.fullmatch(r"([\u0531-\u058F]+?)(?:անում|ենում|ում)", city, flags=re.I)
         if m and len(m.group(1)) >= 3:
             out["city"] = m.group(1)
 
