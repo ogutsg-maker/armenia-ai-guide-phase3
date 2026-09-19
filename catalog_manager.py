@@ -49,8 +49,12 @@ def _materialize_proposal_services(p, category_id):
 def activate_proposal(proposal_id, admin_id, data=None):
     p=proposal(proposal_id)
     if not p: raise ValueError('proposal_not_found')
-    master=p.get('proposed_master_category') or 'Նոր ուղղություն'
-    category=p.get('proposed_category') or 'Նոր կատեգորիա'
+    master=str(p.get('proposed_master_category') or '').strip()
+    if not master:
+        raise ValueError('proposal_direction_required')
+    category=str(p.get('proposed_category') or p.get('proposed_subcategory') or '').strip()
+    if not category:
+        raise ValueError('proposal_subcategory_required')
     sub=p.get('proposed_subcategory') or None
     service=p.get('proposed_service') or None
     # Prefer an existing direction/category with the same normalized name.
