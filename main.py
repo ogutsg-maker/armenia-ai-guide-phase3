@@ -85,6 +85,38 @@ def _telegram_user_from_request(request: web.Request) -> tuple[int, dict]:
         raise web.HTTPUnauthorized(text=json.dumps({"ok": False, "error": str(exc) or "invalid_telegram_init_data"}), content_type="application/json")
 
 
+async def api_webapp_session(request: web.Request):
+    """Return the user's current app role/session destination."""
+    uid, tg_user = _telegram_user_from_request(request)
+    db.register_user(
+        uid,
+        tg_user.get("username") or f"user_{uid}",
+        tg_user.get("first_name") or tg_user.get("last_name") or "",
+    )
+    with db._connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, status, verification_status, business_name "
+                "FROM partners WHERE user_id=%s ORDER BY id DESC LIMIT 1",
+                (uid,),
+            )
+            partner = cur.fetchone()
+    if partner and str(partner.get("status") or "").lower() == "approved":
+        return web.json_response({
+            "ok": True,
+            "role": "partner",
+            "partner_status": "approved",
+            "destination": "master_cabinet.html",
+            "business_name": partner.get("business_name") or "",
+        })
+    return web.json_response({
+        "ok": True,
+        "role": "client",
+        "partner_status": str(partner.get("status") or "") if partner else None,
+        "destination": "welcome.html",
+    })
+
+
 async def api_webapp_role(request: web.Request):
     uid, tg_user = _telegram_user_from_request(request)
     try:
@@ -339,6 +371,7 @@ async def main():
     app.router.add_get("/health", health)
     app.router.add_post("/telegram/webhook", telegram_webhook)
     app.router.add_get("/", serve_index)
+    app.router.add_get("/api/webapp/session", api_webapp_session)
     app.router.add_post("/api/webapp/role", api_webapp_role)
     app.router.add_post("/api/webapp/partner/start", api_webapp_partner_start)
     app.router.add_post("/api/webapp/partner/message", api_webapp_partner_message)
