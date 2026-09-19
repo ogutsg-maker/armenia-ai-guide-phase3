@@ -201,85 +201,76 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
 
 
 async def _match_services_universal(client, model, services, catalog):
-    """Semantically match services without exceeding Groq's 8K TPM limit.
-
-    The complete real catalogue is preserved, but it is evaluated in small
-    AI batches. No hard-coded aliases, keywords, or direction-specific rules
-    are used. Each batch returns only the best real category ID.
-    """
+    """Universal matching with generic n-gram candidates and one AI call."""
     if not services or not catalog:
         return services
 
-    compact = [
-        {
-            "id": _safe_int(row.get("category_id")),
-            "hy": _norm(row.get("category_am")),
-            "ru": _norm(row.get("category_ru")),
-            "en": _norm(row.get("category_en")),
-        }
-        for row in catalog
-        if _safe_int(row.get("category_id")) is not None
-    ]
-    match_schema = {
+    def grams(value):
+        value = re.sub(r"\\s+", "", _norm(value).lower())
+        return {value[i:i+3] for i in range(max(0, len(value)-2))}
+
+    def score(service_name, row):
+        sg = grams(service_name)
+        rg = set()
+        for key in ("category_am", "category_ru", "category_en"):
+            rg |= grams(row.get(key))
+        return len(sg & rg) / max(1, len(sg)) if sg and rg else 0
+
+    ranked = sorted(
+        ((max(score(x.get("name"), row) for x in services), row) for row in catalog),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+    candidates = [row for value, row in ranked[:80] if value > 0]
+    if not candidates:
+        candidates = [row for _, row in ranked[:30]]
+
+    schema = {
         "type": "object",
-        "properties": {
-            "matches": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "service_index": {"type": "integer"},
-                        "matched_subcategory_id": {"type": ["integer", "null"]},
-                    },
-                    "required": ["service_index", "matched_subcategory_id"],
-                    "additionalProperties": False,
-                },
-            }
-        },
+        "properties": {"matches": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "service_index": {"type": "integer"},
+                "matched_subcategory_id": {"type": ["integer", "null"]},
+            },
+            "required": ["service_index", "matched_subcategory_id"],
+            "additionalProperties": False,
+        }}},
         "required": ["matches"],
         "additionalProperties": False,
     }
     system = """You are a universal multilingual catalogue matcher.
-Understand Armenian, Russian and English.
-For every service, choose the ONE existing catalogue item whose meaning is
-the closest. Match by meaning, not exact wording or language.
-Use ONLY IDs present in the supplied catalogue. Never invent an ID.
-If no catalogue item genuinely fits, return null.
-Do not create categories and do not merge services."""
-    # 50 rows keeps each request comfortably below the Groq 8K TPM limit.
-    chunk_size = 50
-    best = [None] * len(services)
-    for start in range(0, len(compact), chunk_size):
-        chunk = compact[start:start + chunk_size]
-        prompt = (
-            "SERVICES:\n" + json.dumps(
-                [{"service_index": i, "name": _norm(x.get("name"))}
-                 for i, x in enumerate(services)],
-                ensure_ascii=False,
-            )
-            + "\n\nCATALOGUE CHUNK:\n"
-            + json.dumps(chunk, ensure_ascii=False)
+Understand Armenian, Russian and English. Choose the closest existing
+catalogue item by meaning. Use ONLY supplied real IDs. Never invent a
+category. Return null only when no supplied category genuinely fits."""
+    prompt = (
+        "SERVICES:\n" + json.dumps(
+            [{"service_index": i, "name": _norm(x.get("name"))}
+             for i, x in enumerate(services)], ensure_ascii=False)
+        + "\nREAL CANDIDATES:\n"
+        + json.dumps([
+            {"id": _safe_int(x.get("category_id")),
+             "hy": _norm(x.get("category_am")),
+             "ru": _norm(x.get("category_ru")),
+             "en": _norm(x.get("category_en"))}
+            for x in candidates
+        ], ensure_ascii=False)
+    )
+    try:
+        result = await _groq_json(
+            client, model, system, prompt,
+            "service_catalog_matches", schema, 250
         )
-        try:
-            result = await _groq_json(
-                client, model, system, prompt,
-                "service_catalog_matches", match_schema, 300
-            )
-            for item in result.get("matches") or []:
-                idx = _safe_int(item.get("service_index"))
-                cid = _safe_int(item.get("matched_subcategory_id"))
-                if idx is not None and 0 <= idx < len(services):
-                    if cid is not None and any(
-                        _safe_int(row.get("category_id")) == cid for row in chunk
-                    ):
-                        best[idx] = cid
-        except Exception:
-            continue
-
-    out = [dict(x) for x in services]
-    for i, item in enumerate(out):
-        item["matched_subcategory_id"] = best[i]
-    return out
+        allowed = {_safe_int(x.get("category_id")) for x in candidates}
+        out = [dict(x) for x in services]
+        for item in result.get("matches") or []:
+            idx = _safe_int(item.get("service_index"))
+            cid = _safe_int(item.get("matched_subcategory_id"))
+            if idx is not None and 0 <= idx < len(out) and (cid is None or cid in allowed):
+                out[idx]["matched_subcategory_id"] = cid
+        return out
+    except Exception:
+        return [dict(x, matched_subcategory_id=None) for x in services]
 
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
@@ -324,12 +315,10 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                 "required": ["name", "price", "price_type", "matched_subcategory_id"],
                 "additionalProperties": False,
             }},
-            "missing": {"type": "array", "items": {"type": "string"}},
-            "ready": {"type": "boolean"},
-        },
+                    },
         "required": ["business_name", "city", "district", "direction",
                      "master_category_id", "subcategory_names", "description",
-                     "services", "missing", "ready"],
+                     "services"],
         "additionalProperties": False,
     }
 
