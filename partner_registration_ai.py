@@ -240,9 +240,40 @@ Return ONLY JSON matching the supplied schema."""
                 },
             },
         )
-        data = _parse_json(response.choices[0].message.content or "{}")
-        if not isinstance(data, dict):
+        ai_data = _parse_json(response.choices[0].message.content or "{}")
+        if not isinstance(ai_data, dict):
             raise ValueError("AI response is not an object")
+
+        # IMPORTANT: each chat turn must UPDATE the accumulated profile, not
+        # replace it. When the first message already contained city/services
+        # and the AI asks only for the business name, a model response focused
+        # on that pending field may omit the earlier services. Losing them here
+        # makes the next turn ask for services again.
+        data = dict(previous_profile)
+
+        for field in (
+            "business_name", "city", "district", "direction",
+            "master_category_id", "description"
+        ):
+            value = ai_data.get(field)
+            if value not in (None, ""):
+                data[field] = value
+
+        # Keep the complete service list from the accumulated profile unless
+        # the current AI response actually returned a non-empty list.
+        ai_services = ai_data.get("services")
+        if isinstance(ai_services, list) and ai_services:
+            data["services"] = ai_services
+        elif "services" not in data:
+            data["services"] = []
+
+        # Keep catalog suggestions from the newest response when present.
+        if isinstance(ai_data.get("subcategory_names"), list) and ai_data.get("subcategory_names"):
+            data["subcategory_names"] = ai_data["subcategory_names"]
+        if isinstance(ai_data.get("missing"), list):
+            data["missing"] = ai_data["missing"]
+        if "ready" in ai_data:
+            data["ready"] = bool(ai_data["ready"])
 
         if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
             data[pending_field] = _norm(text)
@@ -258,6 +289,17 @@ Return ONLY JSON matching the supplied schema."""
             " ".join([str(x.get("content") or "") for x in history] + [text]),
             data,
         )
+
+        # Recalculate readiness from the accumulated profile. This is
+        # deliberately deterministic so a pending-field turn cannot turn a
+        # previously complete application back into an incomplete one.
+        data["ready"] = bool(
+            str(data.get("business_name") or "").strip()
+            and str(data.get("city") or "").strip()
+            and data.get("services")
+        )
+        if data["ready"]:
+            data["missing"] = []
         return data
     except Exception as exc:
         logging_message = f"Groq partner extraction failed: {exc}"
