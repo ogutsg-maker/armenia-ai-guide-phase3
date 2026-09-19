@@ -51,15 +51,40 @@ async function loadSettings(){const d=await api(`/api/master/${uid}/settings`),s
 async function saveSettings(){await api(`/api/master/${uid}/settings`,{method:'POST',body:JSON.stringify({business_name:sName.value,business_description:sDesc.value,contact_share_policy:sPolicy.value,lang})});alert('Պահպանվեց')}
 async function uploadDocument(){const f=document.getElementById('docUpload')?.files?.[0],s=document.getElementById('docUploadStatus');if(!f){s.textContent='Ընտրեք փաստաթուղթ';return}if(f.size>10*1024*1024){s.textContent='Ֆայլը մեծ է (մինչև 10 MB)';return}const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_verification');try{const r=await fetch('/api/master/'+uid+'/documents/upload',{method:'POST',headers:{'X-Telegram-Init-Data':init},body:fd});const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));s.textContent='✅ Փաստաթուղթը ուղարկված է';await loadDocuments()}catch(e){s.textContent='❌ '+e.message}}
 function openModal(title,body){modalTitle.textContent=title;modalBody.innerHTML=body;modal.classList.remove('hidden')}function closeModal(){modal.classList.add('hidden')}
-function openService(){openModal('Նոր ծառայություն',`<label>Անվանում</label><input id="mName"><label>Գին, AMD</label><input id="mPrice" type="number"><label>Նկարագրություն</label><textarea id="mDesc"></textarea><div class="actions"><button class="primary" onclick="createService()">Պահպանել</button></div>`)}
-function modalError(message){const el=document.getElementById('modalError');if(el)el.textContent='❌ '+message}
+async function getServiceCategories(){
+  try{
+    const d=await api(`/api/master/${uid}/partner-directions`);
+    const out=[];
+    for(const direction of (d.directions||[])){
+      if(direction.status!=='approved') continue;
+      for(const cat of (direction.subcategories||[])){
+        const id=cat.id??cat.category_id;
+        const name=cat.name_am||cat.name_ru||cat.name_en||('ID '+id);
+        if(id!=null) out.push({id,name});
+      }
+    }
+    return out;
+  }catch(e){return []}
+}
+function modalError(message){
+  const el=document.getElementById('modalError');
+  if(el) el.textContent='❌ '+message;
+  else alert('❌ '+message);
+}
+async function openService(){
+  const cats=await getServiceCategories();
+  const options=cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  openModal('Նոր ծառայություն',`<label>Կատեգորիա</label><select id="mCategory">${options||'<option value="">Չկան հաստատված ենթաուղղություններ</option>'}</select><label>Անվանում</label><input id="mName"><label>Գին, AMD</label><input id="mPrice" type="number" min="0"><label>Նկարագրություն</label><textarea id="mDesc"></textarea><div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div><div class="actions"><button class="primary" onclick="createService()">Պահպանել</button></div>`)
+}
 async function createService(){
   const name=document.getElementById('mName').value.trim();
   const price=document.getElementById('mPrice').value;
   const desc=document.getElementById('mDesc').value.trim();
+  const category=document.getElementById('mCategory')?.value||'';
+  if(!category){modalError('Ընտրեք հաստատված ենթաուղղությունը');return}
   if(!name){modalError('Անվանումը պարտադիր է');return}
   try{
-    await api(`/api/master/${uid}/services`,{method:'POST',body:JSON.stringify({name,price:price===''?null:Number(price),description:desc})});
+    await api(`/api/master/${uid}/services`,{method:'POST',body:JSON.stringify({name,category_id:Number(category),price:price===''?null:Number(price),description:desc})});
     closeModal();await loadServices();await loadDashboard();
   }catch(e){modalError(e.message)}
 }
@@ -76,11 +101,13 @@ async function updateService(id){
   }catch(e){modalError(e.message)}
 }
 async function deleteService(id){
-  if(!confirm('Ջնջե՞լ ծառայությունը'))return;
-  try{
+  const ask=window.Telegram?.WebApp?.showConfirm;
+  const proceed=async()=>{try{
     await api(`/api/master/${uid}/services/${id}`,{method:'DELETE'});
     await loadServices();await loadDashboard();
-  }catch(e){alert('❌ '+e.message)}
+  }catch(e){alert('❌ '+e.message)}};
+  if(ask) ask('Ջնջե՞լ այս ծառայությունը',ok=>{if(ok)proceed()});
+  else if(confirm('Ջնջե՞լ այս ծառայությունը')) await proceed();
 }
 function openObject(){openModal('Նոր օբյեկտ',`<label>Անվանում</label><input id="oName"><label>Քաղաք</label><input id="oCity"><label>Հասցե</label><input id="oAddress"><div class="actions"><button class="primary" onclick="createObject()">Պահպանել</button></div>`)}
 async function createObject(){await api(`/api/master/${uid}/objects`,{method:'POST',body:JSON.stringify({object_name:oName.value,city:oCity.value,address:oAddress.value})});closeModal();loadObjects()}
