@@ -128,18 +128,44 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
     # real database IDs. It must classify EACH service separately and return the
     # ID of an existing category. It is forbidden to invent category IDs/names
     # when an existing category fits.
+    # Groq's free/on-demand tier has an 8K TPM request limit. Sending the
+    # entire multilingual catalogue on every chat turn can exceed that limit
+    # (the old payload reached ~32K tokens). First narrow the catalogue to the
+    # direction suggested by deterministic hints in the user's text/profile.
+    # This still sends the COMPLETE subcategory catalogue for the selected
+    # direction, with real DB IDs, so service matching remains semantic and
+    # cannot invent taxonomy.
+    hint_text = " ".join([
+        str(text or ""),
+        str(previous_profile.get("description") or ""),
+        str(previous_profile.get("business_name") or ""),
+    ])
+    hinted_direction = _heuristic(hint_text).get("direction")
+    candidate_catalog = catalog
+    if hinted_direction:
+        wanted = _norm(hinted_direction).lower()
+        matching_master_ids = {
+            row["master_id"] for row in catalog
+            if wanted in {
+                _norm(row.get("master_ru")).lower(),
+                _norm(row.get("master_am")).lower(),
+                _norm(row.get("master_en")).lower(),
+            }
+        }
+        if matching_master_ids:
+            candidate_catalog = [
+                row for row in catalog if row["master_id"] in matching_master_ids
+            ]
+
+    # Keep the payload compact: the AI only needs IDs and names for matching.
     catalog_for_ai = [
         {
-            "subcategory_id": row["category_id"],
-            "subcategory_name_hy": row["category_am"],
-            "subcategory_name_ru": row["category_ru"],
-            "subcategory_name_en": row["category_en"],
-            "master_category_id": row["master_id"],
-            "master_name_hy": row["master_am"],
-            "master_name_ru": row["master_ru"],
-            "master_name_en": row["master_en"],
+            "id": row["category_id"],
+            "hy": row["category_am"],
+            "ru": row["category_ru"],
+            "en": row["category_en"],
         }
-        for row in catalog
+        for row in candidate_catalog
     ]
 
     schema = {
@@ -217,9 +243,15 @@ Return ONLY JSON matching the supplied schema."""
                 + "\n\nPENDING FIELD:\n"
                 + str(pending_field or "")
                 + "\n\nHISTORY:\n"
-                + json.dumps(history[-10:], ensure_ascii=False)
+                + json.dumps([
+                    {
+                        "role": str(x.get("role") or ""),
+                        "content": _norm(x.get("content") or "")[:1200],
+                    }
+                    for x in history[-4:]
+                ], ensure_ascii=False)
                 + "\n\nNEW MESSAGE:\n"
-                + text
+                + _norm(text)[:3000]
             ),
         },
     ]
