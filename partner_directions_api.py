@@ -532,6 +532,54 @@ def register_partner_direction_routes(app, db=None, bot=None):
         else:return web.json_response({"ok":False,"error":"unknown_action"},status=400)
         return web.json_response({"ok":True,"service":_fetchone("SELECT * FROM services WHERE id=%s",(sid,)) if action!='delete' else None})
 
+    async def admin_subcategory_proposals(request):
+        _auth_admin(request)
+        rows=_fetchall("""
+            SELECT sp.id,sp.partner_id,sp.master_category_id,sp.proposed_name,
+                   sp.requested_service_name,sp.description,sp.price,sp.status,
+                   sp.admin_note,sp.created_at,
+                   p.business_name,m.name_am master_name_am,m.name_ru master_name_ru
+            FROM subcategory_proposals sp
+            JOIN partners p ON p.id=sp.partner_id
+            JOIN master_categories m ON m.id=sp.master_category_id
+            WHERE sp.status='pending'
+            ORDER BY sp.created_at DESC
+        """)
+        return web.json_response({"ok":True,"proposals":rows})
+
+    async def admin_subcategory_proposal_action(request):
+        admin_id=_auth_admin(request)
+        proposal_id=int(request.match_info["id"])
+        data=await request.json() if request.can_read_body else {}
+        action=str(data.get("action") or "").lower()
+        proposal=_fetchone("SELECT * FROM subcategory_proposals WHERE id=%s",(proposal_id,))
+        if not proposal:return web.json_response({"ok":False,"error":"proposal_not_found"},status=404)
+        if proposal["status"]!="pending":return web.json_response({"ok":False,"error":"proposal_already_reviewed"},status=400)
+        if action=="reject":
+            reason=str(data.get("reason") or "Մերժվել է ադմինիստրատորի կողմից")[:1000]
+            _exec("UPDATE subcategory_proposals SET status='rejected',admin_note=%s,reviewed_by=%s,reviewed_at=NOW() WHERE id=%s",(reason,admin_id,proposal_id))
+            return web.json_response({"ok":True,"status":"rejected"})
+        if action!="approve":return web.json_response({"ok":False,"error":"unknown_action"},status=400)
+
+        import re
+        name=str(data.get("name") or proposal["proposed_name"] or "").strip()
+        if not name:return web.json_response({"ok":False,"error":"category_name_required"},status=400)
+        slug=re.sub(r"[^a-z0-9\u0531-\u0587]+","-",name.lower()).strip("-") or ("category-"+str(proposal_id))
+        existing=_fetchone("SELECT id FROM categories WHERE master_category_id=%s AND (lower(trim(name_am))=lower(trim(%s)) OR lower(trim(name_ru))=lower(trim(%s)))",(proposal["master_category_id"],name,name))
+        if existing:
+            _exec("UPDATE subcategory_proposals SET status='approved',admin_note='Արդեն գոյություն ուներ',reviewed_by=%s,reviewed_at=NOW() WHERE id=%s",(admin_id,proposal_id))
+            return web.json_response({"ok":True,"status":"approved","category_id":existing["id"]})
+        category=_exec("""
+            INSERT INTO categories(master_category_id,name_am,name_ru,name_en,slug,is_active,commission_type,commission_value)
+            VALUES(%s,%s,%s,%s,%s,TRUE,'inside',0)
+            RETURNING id,master_category_id,name_am,name_ru,name_en,slug
+        """,(proposal["master_category_id"],name,name,name,slug),True)
+        _exec("UPDATE subcategory_proposals SET status='approved',admin_note=NULL,reviewed_by=%s,reviewed_at=NOW() WHERE id=%s",(admin_id,proposal_id))
+        return web.json_response({"ok":True,"status":"approved","category":category})
+
+
+    app.router.add_get("/api/admin/subcategory-proposals", admin_subcategory_proposals)
+    app.router.add_post("/api/admin/subcategory-proposals/{id}/action", admin_subcategory_proposal_action)
     app.router.add_get("/api/master/{id}/partner-directions", directions)
     app.router.add_post("/api/master/{id}/partner-directions", add_direction)
     app.router.add_post("/api/master/{id}/partner-directions/{direction_id}/documents/upload", direction_document)
