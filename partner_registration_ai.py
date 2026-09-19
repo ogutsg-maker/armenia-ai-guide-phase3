@@ -116,6 +116,43 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
 
 
+def _recover_services_from_history(history: list[dict]) -> list[dict]:
+    """Keep explicit service/price facts if an LLM turn omits them."""
+    text = " ".join(
+        _norm(x.get("content") or "")
+        for x in history
+        if str(x.get("role") or "").lower() == "user"
+    )
+    if not text:
+        return []
+
+    # Generic extraction only: it understands a price-bearing phrase, but it
+    # never decides the catalogue category. Category matching remains AI-only.
+    pattern = re.compile(
+        r"([^,;]+?)\\s*[—–-]\\s*(?:от\\s*)?(\\d[\\d\\s.,]*)\\s*(?:դրամ|֏|amd|dram)\\b"
+        r"|([^,;]+?)\\s*[—–-]\\s*(\\d[\\d\\s.,]*)\\s*(?:դրամ|֏|amd|dram)\\b",
+        re.I,
+    )
+    found = []
+    for m in pattern.finditer(text):
+        name = _norm(m.group(1) or m.group(3))
+        raw_price = (m.group(2) or m.group(4) or "").replace(" ", "").replace(",", ".")
+        if not name or not raw_price:
+            continue
+        try:
+            price = float(raw_price)
+        except ValueError:
+            continue
+        price_type = "from" if "от" in m.group(0).lower() or "ից" in m.group(0) else "fixed"
+        found.append({
+            "name": name,
+            "price": price,
+            "price_type": price_type,
+            "matched_subcategory_id": None,
+        })
+    return found
+
+
 def _parse_json(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
@@ -300,6 +337,15 @@ Return ONLY JSON matching the supplied schema."""
             data["services"] = ai_services
         elif "services" not in data:
             data["services"] = []
+
+        # If a later turn is focused only on the business name/city, some
+        # models may omit services from their structured response. Recover the
+        # explicit price-bearing service facts from the original user history
+        # so a pending-field turn can never erase them.
+        if not data.get("services"):
+            recovered_services = _recover_services_from_history(history)
+            if recovered_services:
+                data["services"] = recovered_services
 
         # Keep catalog suggestions from the newest response when present.
         if isinstance(ai_data.get("subcategory_names"), list) and ai_data.get("subcategory_names"):
