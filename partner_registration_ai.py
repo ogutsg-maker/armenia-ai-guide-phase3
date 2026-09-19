@@ -56,6 +56,34 @@ def get_catalog(db) -> list[dict]:
     return rows
 
 
+def get_master_catalog(db) -> list[dict]:
+    """Return only top-level directions for the first AI classification step."""
+    rows = []
+    try:
+        for master in db.get_all_master_categories() or []:
+            mid = _safe_int(master.get("id"))
+            if mid is None:
+                continue
+            rows.append({
+                "master_id": mid,
+                "master_am": master.get("name_am") or master.get("name_hy") or "",
+                "master_ru": master.get("name_ru") or "",
+                "master_en": master.get("name_en") or "",
+                "master_slug": master.get("slug") or "",
+            })
+    except Exception:
+        return []
+    return rows
+
+
+def get_catalog_for_master(db, master_id: int | None) -> list[dict]:
+    """Load subcategories only from the already selected direction."""
+    mid = _safe_int(master_id)
+    if mid is None:
+        return []
+    return [row for row in get_catalog(db) if _safe_int(row.get("master_id")) == mid]
+
+
 def _heuristic(text: str) -> dict:
     low = _norm(text).lower()
     aliases = {
@@ -201,7 +229,7 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
 
 
 async def _match_services_universal(client, model, services, catalog):
-    """Universal matching with generic n-gram candidates and one AI call."""
+    """Match services only against subcategories of the selected direction."""
     if not services or not catalog:
         return services
 
@@ -274,8 +302,10 @@ category. Return null only when no supplied category genuinely fits."""
 
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
-    catalog = get_catalog(db)
     previous_profile = previous_profile or {}
+    # Step 1: AI sees only the top-level directions, never the full subcategory
+    # catalogue. Step 2 below loads subcategories only for the selected direction.
+    master_catalog = get_master_catalog(db)
     key = os.getenv("GROQ_API_KEY", "").strip()
 
     if not key or AsyncGroq is None:
@@ -328,10 +358,15 @@ Extract facts from the partner's current message and accumulated history.
 Do not invent business names, cities, services or prices.
 Keep every stated service as a separate object.
 For prices such as "3000-ից", "от 3000", "from 3000", use price=3000 and price_type="from".
-Determine the platform direction yourself when possible; never ask the partner to choose it.
-ready=true when business_name, city and at least one meaningful service are known.
-matched_subcategory_id MUST remain null in this extraction step; catalogue matching
-is performed separately against the complete real catalogue.
+Determine the platform direction yourself; never ask the partner to choose it.
+
+TOP-LEVEL DIRECTIONS:
+The direction list below is the ONLY taxonomy you may use for master_category_id.
+Choose the direction whose meaning best matches the partner's business. Return its real ID.
+Do not invent an ID and do not choose a subcategory here.
+""" + json.dumps(master_catalog, ensure_ascii=False) + """
+If the business does not genuinely fit any supplied direction, return master_category_id=null.
+matched_subcategory_id MUST remain null in this extraction step.
 Return only the supplied JSON schema."""
 
     user_content = (
@@ -374,9 +409,32 @@ Return only the supplied JSON schema."""
         data = _recover_obvious_facts(
             " ".join([str(x.get("content") or "") for x in history] + [text]), data
         )
-        data["services"] = await _match_services_universal(
-            client, model, data.get("services") or [], catalog
-        )
+
+        # Validate the AI-selected direction against the real DB, then load
+        # ONLY that direction's subcategories for service matching.
+        valid_masters = {_safe_int(x.get("master_id")) for x in master_catalog}
+        master_id = _safe_int(data.get("master_category_id"))
+        if master_id not in valid_masters:
+            master_id = None
+            data["master_category_id"] = None
+
+        direction_catalog = get_catalog_for_master(db, master_id)
+        if direction_catalog:
+            data["services"] = await _match_services_universal(
+                client, model, data.get("services") or [], direction_catalog
+            )
+            selected_names = []
+            by_id = {
+                _safe_int(x.get("category_id")): x for x in direction_catalog
+            }
+            for item in data.get("services") or []:
+                cid = _safe_int(item.get("matched_subcategory_id"))
+                row = by_id.get(cid)
+                if row:
+                    label = _norm(row.get("category_am") or row.get("category_ru") or row.get("category_en"))
+                    if label and label not in selected_names:
+                        selected_names.append(label)
+            data["subcategory_names"] = selected_names
 
         if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
             data[pending_field] = _norm(text)
