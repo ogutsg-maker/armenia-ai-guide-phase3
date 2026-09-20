@@ -127,8 +127,9 @@ def ensure_partner_direction_schema():
         ON service_direction_requests(status, created_at DESC);
     """)
 
-    # Backfill the current legacy master_skills into partner directions.
-    # For an already approved partner, existing selected directions become approved.
+    # Backfill legacy master_skills without relying on a missing composite
+    # UNIQUE constraint. partner_directions may now contain multiple rows for
+    # the same master across different businesses.
     _exec("""
     INSERT INTO partner_directions(partner_id, master_category_id, status)
     SELECT DISTINCT p.id, c.master_category_id,
@@ -138,7 +139,11 @@ def ensure_partner_direction_schema():
     JOIN master_skills ms ON ms.user_id=p.user_id AND ms.is_active=TRUE
     JOIN categories c ON c.id=ms.category_id
     WHERE c.master_category_id IS NOT NULL
-    ON CONFLICT(partner_id, master_category_id) DO NOTHING
+      AND NOT EXISTS (
+          SELECT 1 FROM partner_directions pd
+          WHERE pd.partner_id=p.id
+            AND pd.master_category_id=c.master_category_id
+      )
     """)
     _exec("""
     INSERT INTO partner_direction_categories(partner_direction_id, category_id)
