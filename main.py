@@ -67,7 +67,7 @@ def _client_keyboard():
 
 
 def _partner_keyboard():
-    return _keyboard("partner.html", "🏢 Բացել գործընկերոջ AI բաժինը")
+    return _keyboard("partner.html?entry=welcome", "🏢 Բացել գործընկերոջ AI բաժինը")
 
 
 def _partner_state(uid: int) -> FSMContext:
