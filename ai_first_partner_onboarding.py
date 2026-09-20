@@ -463,8 +463,8 @@ def create_partner_application_draft(db, uid: int, profile: dict[str, Any]) -> d
                     subcategory_name,category_id,service_name,price,description,object_name,
                     ai_reason,payload_json)
                     VALUES(%s,%s,'pending_partner',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
-                    RETURNING id""",(partner_id,*values,
-                    "AI draft; partner must complete and submit the full application."))
+                    RETURNING id""",(partner_id,*values[:-1],
+                    "AI draft; partner must complete and submit the full application.",values[-1]))
                 aid=cur.fetchone()["id"]
         conn.commit()
     return {"partner_id":partner_id,"application_id":aid,"status":"pending_partner","open_form":True,"profile":payload}
