@@ -226,7 +226,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         else:
             # Keep only the final noun-like fragment if punctuation/connector
             # text survived extraction; never keep a location or business intro.
-            name = re.sub(r"^(?:և|ու|then|and|и|а)\s+", "", name, flags=re.I).strip()
+            name = re.sub(r"^(?:և|ու|ինչպես\s+նաև|then|and|и|а|also)\s+", "", name, flags=re.I).strip()
         if not name:
             continue
         try:
@@ -520,6 +520,27 @@ Return only the supplied JSON schema."""
         data = _recover_obvious_facts(
             " ".join([str(x.get("content") or "") for x in history] + [text]), data
         )
+
+        # Normalize service objects so the form always receives a stable shape,
+        # even when Groq uses legacy service_name instead of name.
+        normalized_services = []
+        for item in (data.get("services") or []):
+            if not isinstance(item, dict):
+                continue
+            item = dict(item)
+            item["name"] = _norm(item.get("name") or item.get("service_name"))
+            if not item["name"]:
+                continue
+            item["raw_sub_direction"] = _norm(item.get("raw_sub_direction") or item["name"])
+            if item.get("price") not in (None, ""):
+                try:
+                    item["price"] = float(item["price"])
+                except (TypeError, ValueError):
+                    item["price"] = None
+            item["price_type"] = _norm(item.get("price_type") or "fixed") or "fixed"
+            item["matched_subcategory_id"] = _safe_int(item.get("matched_subcategory_id"))
+            normalized_services.append(item)
+        data["services"] = normalized_services
 
         # Validate the AI-selected direction against the real DB, then load
         # ONLY that direction's subcategories for service matching.
