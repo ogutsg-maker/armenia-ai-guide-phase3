@@ -352,7 +352,7 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
                     service_name,price,description,object_name,ai_reason,payload_json
                 )
                 VALUES(
-                    %s,%s,'pending_admin',%s,
+                    %s,%s,'document_pending',%s,
                     %s,%s,%s,%s,%s,
                     %s,%s,%s,%s,
                     %s,%s,%s,%s,%s,%s::jsonb
@@ -392,6 +392,6 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
         "mapped_to_catalog": bool(master_id),
         "proposal_created": True,
         "service_count": len(services),
-        "status": "pending_admin",
+        "status": "document_pending",
     }
 
