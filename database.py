@@ -41,6 +41,7 @@ class DatabaseManager:
         try:
             with _connect() as conn:
                 with conn.cursor() as cur:
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
                     # 1. Таблица пользователей
                     cur.execute('''
                         CREATE TABLE IF NOT EXISTS users (
@@ -230,7 +231,6 @@ class DatabaseManager:
             return []
         with _connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
                 cur.execute("""
                     SELECT id, master_category_id, name_am, name_ru, name_en, slug,
                            GREATEST(
