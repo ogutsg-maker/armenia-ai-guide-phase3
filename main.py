@@ -189,6 +189,18 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     history = list(data.get("partner_onboarding_history") or [])
     pending = data.get("partner_onboarding_pending_field")
     previous = data.get("partner_profile") or {}
+    # Give the onboarding classifier the current organization context so it can
+    # distinguish "new direction in this business" from "another business".
+    try:
+        from partner_business_application_api import default_business
+        partner_row=db.get_partner_by_user(uid) or {}
+        current_business=default_business(int(partner_row["id"])) if partner_row.get("id") else None
+        if current_business:
+            previous=dict(previous)
+            previous["current_business_name"]=current_business.get("name")
+            previous["current_business_description"]=current_business.get("description") or ""
+    except Exception:
+        pass
     history.append({"role": "user", "content": text})
     from partner_registration_ai import extract, missing_question
     from ai_first_partner_onboarding import persist_ready_application
