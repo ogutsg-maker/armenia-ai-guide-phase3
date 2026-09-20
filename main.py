@@ -255,7 +255,35 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         # contain several fields at once; extraction will merge them naturally.
         await state.update_data(partner_onboarding_pending_field=missing[0], partner_onboarding_history=history)
         return {"message": t(lang, "🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ " + question, "🤖 Я уже собрал данные. " + question, "🤖 I have collected the information. " + question), "completed": False, "profile": merged}
-    result = persist_ready_application(db, uid, merged)
+    try:
+        result = persist_ready_application(db, uid, merged)
+    except ValueError as exc:
+        # The persistence layer may reject an incomplete profile. This is a
+        # normal conversational state, not an error for the partner.
+        if str(exc) == "partner_profile_not_ready":
+            required = ("business_name", "marz", "city", "address", "phone", "services")
+            missing = [key for key in required if not merged.get(key)]
+            merged["missing"] = missing
+            merged["ready"] = not missing
+            if missing:
+                question = missing_question(merged, lang)
+                history.append({"role": "assistant", "content": question})
+                await state.update_data(
+                    partner_onboarding_pending_field=missing[0],
+                    partner_onboarding_history=history,
+                    partner_profile=merged,
+                )
+                return {
+                    "message": t(
+                        lang,
+                        "🤖 " + question,
+                        "🤖 " + question,
+                        "🤖 " + question,
+                    ),
+                    "completed": False,
+                    "profile": merged,
+                }
+        raise
     if result.get("error") or result.get("ok") is False:
         # Never expose an internal persistence error as a generic profile error.
         await state.update_data(
