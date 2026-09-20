@@ -241,7 +241,7 @@ async def api_services(request: web.Request):
                    WHERE s.partner_id=%s AND s.business_id=%s
                      AND (s.status IS NULL OR s.status <> 'deleted')
                    ORDER BY s.id DESC""",
-                (pid,),
+                (pid,bid),
             )
             rows = cur.fetchall()
             # Some older partner records may still live in partner_services.
@@ -357,7 +357,6 @@ async def api_service_update(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     bid = _business_id(request,pid)
-    bid = _business_id(request, pid)
     sid = int(request.match_info["service_id"])
     data = await request.json()
     allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json"}
