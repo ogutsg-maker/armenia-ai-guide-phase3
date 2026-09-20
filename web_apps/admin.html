@@ -167,41 +167,102 @@ async function directionRequestAction(id,action){
  await post('/api/admin/service-direction-requests/'+id+'/action',reason?{action,reason}:{action});
  await loadServiceDirectionRequests(); await loadPartners();
 }
+let applicationCatalog=null;
+async function getApplicationCatalog(){
+ if(applicationCatalog) return applicationCatalog;
+ const d=await api('/api/admin/directions-tree');
+ applicationCatalog=d.directions||[];
+ return applicationCatalog;
+}
+function applicationCategoryOptions(selectedMaster,selectedCategory){
+ return (applicationCatalog||[]).map(m=>'<option value="'+m.id+'" '+(Number(m.id)===Number(selectedMaster)?'selected':'')+'>'+esc(m.name_am||m.name_ru||m.name_en)+'</option>').join('');
+}
+function applicationSubcategoryOptions(masterId,selectedCategory){
+ const m=(applicationCatalog||[]).find(x=>Number(x.id)===Number(masterId));
+ return (m?.subcategories||[]).map(x=>'<option value="'+x.id+'" '+(Number(x.id)===Number(selectedCategory)?'selected':'')+'>'+esc(x.name_am||x.name_ru||x.name_en)+'</option>').join('');
+}
+function renderApplicationEditor(x){
+ const mid=x.master_category_id||'';
+ const cid=x.category_id||'';
+ return '<div class="card" style="margin-top:12px;border:1px solid rgba(255,255,255,.12)">'+
+  '<div class="row"><b>✎ Խմբագրել հայտը / Редактировать заявку</b><span class="muted">Ամբողջ հայտը մեկ տեղում</span></div>'+
+  '<div class="settings">'+
+  '<div class="field"><label>Բիզնես / կազմակերպություն</label><input id="appBusiness'+x.id+'" value="'+esc(x.business_name||x.partner_legacy_name||'')+'"></div>'+
+  '<div class="field"><label>Մարզ</label><input id="appMarz'+x.id+'" value="'+esc(x.location_marz||'')+'"></div>'+
+  '<div class="field"><label>Քաղաք / բնակավայր</label><input id="appCity'+x.id+'" value="'+esc(x.location_city||x.location_village||'')+'"></div>'+
+  '<div class="field"><label>Հասցե</label><input id="appAddress'+x.id+'" value="'+esc(x.address||'')+'"></div>'+
+  '<div class="field"><label>Հեռախոս</label><input id="appPhone'+x.id+'" value="'+esc(x.phone||'')+'"></div>'+
+  '<div class="field"><label>Ուղղություն</label><select id="appMaster'+x.id+'" onchange="refreshApplicationSubcats('+x.id+')"><option value="">Ընտրեք ուղղությունը</option>'+applicationCategoryOptions(mid,cid)+'</select></div>'+
+  '<div class="field"><label>Ենթաուղղություն</label><select id="appCategory'+x.id+'"><option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcategoryOptions(mid,cid)+'</select></div>'+
+  '<div class="field"><label>Ծառայություն</label><input id="appService'+x.id+'" value="'+esc(x.service_name||'')+'"></div>'+
+  '<div class="field"><label>Գին, AMD</label><input id="appPrice'+x.id+'" type="number" min="0" step="1" value="'+esc(x.price??'')+'"></div>'+
+  '<div class="field"><label>Օբյեկտ (եթե անհրաժեշտ է)</label><input id="appObject'+x.id+'" value="'+esc(x.object_name||'')+'"></div>'+
+  '</div>'+
+  '<div class="field"><label>Նկարագրություն</label><textarea id="appDesc'+x.id+'">'+esc(x.description||'')+'</textarea></div>'+
+  '<div class="actions"><button class="btn ok" onclick="saveApplicationEdit('+x.id+')">💾 Պահպանել</button><button class="btn soft" onclick="cancelApplicationEdit('+x.id+')">Փակել</button></div>'+
+ '</div>';
+}
+function refreshApplicationSubcats(id){
+ const mid=$('appMaster'+id)?.value;
+ if($('appCategory'+id)) $('appCategory'+id).innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcategoryOptions(mid,'');
+}
+function cancelApplicationEdit(id){const e=$('appEditor'+id);if(e)e.innerHTML=''}
+async function saveApplicationEdit(id){
+ const data={action:'edit',
+  business_name:$('appBusiness'+id).value.trim(),
+  location_marz:$('appMarz'+id).value.trim(),
+  location_city:$('appCity'+id).value.trim(),
+  address:$('appAddress'+id).value.trim(),
+  phone:$('appPhone'+id).value.trim(),
+  master_category_id:$('appMaster'+id).value?Number($('appMaster'+id).value):null,
+  category_id:$('appCategory'+id).value?Number($('appCategory'+id).value):null,
+  service_name:$('appService'+id).value.trim(),
+  price:$('appPrice'+id).value===''?null:Number($('appPrice'+id).value),
+  object_name:$('appObject'+id).value.trim(),
+  description:$('appDesc'+id).value.trim()
+ };
+ const m=(applicationCatalog||[]).find(x=>Number(x.id)===Number(data.master_category_id));
+ const cat=(m?.subcategories||[]).find(x=>Number(x.id)===Number(data.category_id));
+ data.direction_name=m?.name_am||m?.name_ru||'';
+ data.subcategory_name=cat?.name_am||cat?.name_ru||'';
+ await post('/api/admin/partner-applications/'+id+'/action',data);
+ await loadApplications();
+}
 async function loadApplications(){
  const el=$('applicationsList');
  try{
+  await getApplicationCatalog();
   const d=await api('/api/admin/universal-applications'),rows=d.applications||[];
-  el.innerHTML=rows.length?rows.map(x=>`<div class="card">
-   <div class="row"><div><b>#${esc(x.id)} · ${esc(x.business_name||x.partner_legacy_name||'—')}</b><div class="muted">Telegram ${esc(x.user_id||'')} · ${esc(x.location_marz||'')} ${esc(x.location_city||'')} ${esc(x.address||'')}</div></div>${badge(x.status)}</div>
-   <div class="detail"><b>☎</b> ${esc(x.phone||'—')} · <b>Ուղղություն</b> ${esc(x.direction_name||x.master_name_am||x.master_name_ru||'—')} · <b>Ենթաուղղություն</b> ${esc(x.subcategory_name||x.category_name_am||x.category_name_ru||'—')}</div>
-   <div class="detail"><b>Ծառայություն</b> ${esc(x.service_name||'—')} · <b>Գին</b> ${x.price==null?'—':Number(x.price).toLocaleString()+' ֏'}<div class="muted">${esc(x.description||'')}</div></div>
-   <div class="actions">
-    ${x.status==='pending_admin'?'<button class="btn" onclick="appAction('+x.id+',\'edit\')">✎ Փոփոխել</button><button class="btn ok" onclick="appAction('+x.id+',\'send_to_partner\')">↗ Ուղարկել գործընկերոջը</button>':''}
-    ${x.status==='pending_partner'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել տվյալները → փաստաթուղթ</button>':''}
-    ${x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':''}
-    ${x.status==='document_under_review'||x.status==='document_pending'?'<button class="btn soft" onclick="appAction('+x.id+',\'activate\')">▶ Ակտիվացնել</button>':''}
-    ${!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':''}
-   </div>
-  </div>`).join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
+  el.innerHTML=rows.length?rows.map(x=>'<div class="card">'+
+   '<div class="row"><div><b>📨 Հայտ #'+esc(x.id)+' · '+esc(x.business_name||x.partner_legacy_name||'Առանց անվան')+'</b><div class="muted">Telegram '+esc(x.user_id||'—')+' · '+esc(x.created_at||'')+'</div></div>'+badge(x.status)+'</div>'+
+   '<div class="detail"><b>🏢 Բիզնես</b> '+esc(x.business_name||x.partner_legacy_name||'—')+' · <b>📍 Տեղադրություն</b> '+esc([x.location_marz,x.location_city,x.location_village,x.address].filter(Boolean).join(', ')||'—')+'</div>'+
+   '<div class="detail"><b>☎ Հեռախոս</b> '+esc(x.phone||'—')+' · <b>🧭 Ուղղություն</b> '+esc(x.direction_name||x.master_name_am||x.master_name_ru||'—')+' · <b>📂 Ենթաուղղություն</b> '+esc(x.subcategory_name||x.category_name_am||x.category_name_ru||'—')+'</div>'+
+   '<div class="detail"><b>🛠 Ծառայություն</b> '+esc(x.service_name||'—')+' · <b>💰 Գին</b> '+(x.price==null?'—':Number(x.price).toLocaleString()+' ֏')+'</div>'+
+   (x.description?'<div class="detail"><b>📝 Նկարագրություն</b><br>'+esc(x.description)+'</div>':'')+
+   (x.object_name?'<div class="detail"><b>🏷 Օբյեկտ</b> '+esc(x.object_name)+'</div>':'')+
+   (x.document_id?'<div class="detail"><b>📄 Փաստաթուղթ</b> #'+esc(x.document_id)+' · '+esc(x.document_status||'կցված')+'</div>':'<div class="detail"><b>📄 Փաստաթուղթ</b> դեռ կցված չէ</div>')+
+   '<div id="appEditor'+x.id+'"></div>'+
+   '<div class="actions">'+
+   '<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել ամբողջ հայտը</button>'+
+   (x.status==='pending_admin'?'<button class="btn ok" onclick="appAction('+x.id+',\'send_to_partner\')">↗ Ուղարկել գործընկերոջը</button>':'')+
+   (x.status==='pending_partner'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել տվյալները → փաստաթուղթ</button>':'')+
+   (x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':'')+
+   (x.status==='document_under_review'||x.status==='document_pending'?'<button class="btn soft" onclick="appAction('+x.id+',\'activate\')">▶ Ակտիվացնել</button>':'')+
+   (!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':'')+
+   '</div></div>').join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
  }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
+}
+async function editApplication(id){
+ const rows=(await api('/api/admin/universal-applications')).applications||[];
+ const x=rows.find(v=>Number(v.id)===Number(id));
+ if(!x)return;
+ await getApplicationCatalog();
+ $('appEditor'+id).innerHTML=renderApplicationEditor(x);
 }
 async function appAction(id,action){
  const list=(await api('/api/admin/universal-applications')).applications||[]; const x=list.find(v=>Number(v.id)===Number(id))||{};
  let data={action};
- if(action==='edit'){
-  data.business_name=prompt('Բիզնեսի անուն')||'';
-  data.location_city=prompt('Քաղաք / բնակավայր')||'';
-  data.address=prompt('Հասցե')||'';
-  data.phone=prompt('Հեռախոս')||'';
-  data.direction_name=prompt('Ուղղություն')||'';
-  const mid=prompt('Master category ID (եթե հայտնի է)',x.master_category_id??''); if(mid)data.master_category_id=mid;
-  data.subcategory_name=prompt('Ենթաուղղություն')||'';
-  const cid=prompt('Category ID (եթե կա)',x.category_id??''); if(cid)data.category_id=cid;
-  data.service_name=prompt('Ծառայություն')||'';
-  const p=prompt('Գին AMD'); if(p!==null)data.price=p;
-  data.description=prompt('Նկարագրություն')||'';
- }
- if(action==='reject'){data.admin_note=prompt('Պատճառ / Причина')||'Մերժվել է ադմինիստրատորի կողմից'}
+ if(action==='reject')data.admin_note=prompt('Պատճառ / Причина')||'Մերժվել է ադմինիստրատորի կողմից';
  await post('/api/admin/partner-applications/'+id+'/action',data);
  await loadApplications();
 }
