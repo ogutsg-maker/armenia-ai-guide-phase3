@@ -167,24 +167,24 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     if not text:
         return []
     found = []
-    for clause in re.split(r"[,;.!?\\n]+", text):
+    for clause in re.split(r"[,;.!?\n]+", text):
         clause = _norm(clause).strip(" —–-:;")
         if not clause:
             continue
         m = re.search(
-            r"(?P<name>.+?)\\s*(?:\\u055D|:|—|–|-|\\b(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է|от|from|starting\\s+at)\\b)?\\s*"
-            r"(?P<price>\\d[\\d\\s.,]*)\\s*(?P<currency>դրամ(?:ից)?|֏|amd|dram)\\b",
+            r"(?P<name>.+?)\s*(?:\u055D|:|—|–|-|\b(?:սկսվում\s+են|սկսվում\s+է|արժե|գինն\s+է|от|from|starting\s+at)\b)?\s*"
+            r"(?P<price>\d[\d\s.,]*)\s*(?P<currency>դրամ(?:ից)?|֏|amd|dram)\b",
             clause, flags=re.I
         )
         if not m:
             continue
         name = _norm(m.group("name")).strip(" —–-:;")
         name = re.sub(
-            r"^(?:Ես\\s+[^,;.!?]*?\\s+)?(?:ունեմ|ունենք|կատարում\\s+ենք|անում\\s+ենք|մատուցում\\s+ենք|"
-            r"առաջարկում\\s+ենք|мы\\s+делаем|оказываем|предлагаем|we\\s+(?:do|offer|provide))\\s+",
+            r"^(?:Ես\s+[^,;.!?]*?\s+)?(?:ունեմ|ունենք|կատարում\s+ենք|անում\s+ենք|մատուցում\s+ենք|"
+            r"առաջարկում\s+ենք|мы\s+делаем|оказываем|предлагаем|we\s+(?:do|offer|provide))\s+",
             "", name, flags=re.I
         ).strip()
-        name = re.sub(r"^(?:սրահում|մեզ\\s+մոտ)\\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"^(?:սրահում|մեզ\s+մոտ)\s+", "", name, flags=re.I).strip()
         if not name:
             continue
         try:
@@ -193,7 +193,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             continue
         full = m.group(0).lower()
         price_type = "from" if "ից" in full or re.search(
-            r"\\b(?:от|from|starting\\s+at|սկսվում\\s+են|սկսվում\\s+է)\\b", full, re.I
+            r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I
         ) else "fixed"
         found.append({"name": name, "price": price, "price_type": price_type, "matched_subcategory_id": None})
     result=[]; seen=set()
