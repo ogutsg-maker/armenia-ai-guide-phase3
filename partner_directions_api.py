@@ -214,7 +214,7 @@ def _direction_payload(pd):
     return pd
 
 
-def _catalog_for_partner(partner_id):
+def _catalog_for_partner(partner_id, business_id=None):
     masters = _fetchall("SELECT id,name_am,name_ru,slug,is_active FROM master_categories ORDER BY id")
     rows = _fetchall("""
         SELECT pd.id direction_id,pd.master_category_id,pd.status,pd.rejection_reason,
@@ -222,9 +222,9 @@ def _catalog_for_partner(partner_id):
                COALESCE((SELECT COUNT(*) FROM partner_verification_documents d WHERE d.partner_direction_id=pd.id),0) document_count
         FROM partner_directions pd
         JOIN master_categories m ON m.id=pd.master_category_id
-        WHERE pd.partner_id=%s AND pd.status<>'deleted'
+        WHERE pd.partner_id=%s AND pd.status<>'deleted' AND (%s IS NULL OR pd.business_id=%s)
         ORDER BY m.id
-    """, (partner_id,))
+    """, (partner_id,business_id,business_id))
     selected = _fetchall("""
         SELECT pdc.partner_direction_id, c.id,c.master_category_id,c.name_am,c.name_ru,c.slug,c.is_active
         FROM partner_direction_categories pdc
@@ -314,7 +314,14 @@ def register_partner_direction_routes(app, db=None, bot=None):
     async def directions(request):
         uid=int(request.match_info["id"]); partner=_partner(uid)
         if not partner: return web.json_response({"ok":False,"error":"partner_registration_required"},status=404)
-        return web.json_response({"ok":True,"directions":_catalog_for_partner(partner["id"])})
+        raw=str(request.headers.get("X-Business-Id") or "").strip()
+        business_id=int(raw) if raw.isdigit() else None
+        if business_id and not _fetchone("SELECT id FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(business_id,partner["id"])):
+            business_id=None
+        if business_id is None:
+            b=_fetchone("SELECT id FROM partner_businesses WHERE partner_id=%s AND status='active' ORDER BY is_default DESC,id LIMIT 1",(partner["id"],))
+            business_id=b["id"] if b else None
+        return web.json_response({"ok":True,"directions":_catalog_for_partner(partner["id"],business_id)})
 
     async def add_direction(request):
         uid=int(request.match_info["id"]); partner=_partner(uid)
