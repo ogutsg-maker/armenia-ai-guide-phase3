@@ -191,7 +191,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     if not text:
         return []
     found = []
-    for clause in re.split(r"[,;.!?\n]+", text):
+    for clause in re.split(r"[,;.!?։\n]+", text):
         clause = _norm(clause).strip(" —–-:;")
         if not clause:
             continue
@@ -203,12 +203,30 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         if not m:
             continue
         name = _norm(m.group("name")).strip(" —–-:;")
+        # Remove conversational wrappers so a whole sentence can never become
+        # the service name (e.g. "Ռազդանում ունեմ BYUTI անունով սրահ").
         name = re.sub(
-            r"^(?:Ես\s+[^,;.!?]*?\s+)?(?:ունեմ|ունենք|կատարում\s+ենք|անում\s+ենք|մատուցում\s+ենք|"
+            r"^(?:Ես\s+[^,;.!?։]*?\s+)?(?:ունեմ|ունենք|կատարում\s+ենք|անում\s+ենք|մատուցում\s+ենք|"
             r"առաջարկում\s+ենք|мы\s+делаем|оказываем|предлагаем|we\s+(?:do|offer|provide))\s+",
             "", name, flags=re.I
         ).strip()
         name = re.sub(r"^(?:սրահում|մեզ\s+մոտ)\s+", "", name, flags=re.I).strip()
+        # Armenian conversational/inflected forms -> clean service noun.
+        arm_clean = {
+            "սանրվածքները": "Սանրվածք", "սանրվածքը": "Սանրվածք",
+            "գունավորումը": "Գունավորում", "գունավորումը": "Գունավորում",
+            "ոճավորումը": "Ոճավորում", "ոճավորումը": "Ոճավորում",
+            "մատնահարդարումը": "Մատնահարդարում",
+            "պեդիկյուրը": "Պեդիկյուր", "պեդիկյուրը": "Պեդիկյուր",
+            "դիմահարդարումը": "Դիմահարդարում",
+        }
+        clean_key = name.lower().strip("՝:- ")
+        if clean_key in arm_clean:
+            name = arm_clean[clean_key]
+        else:
+            # Keep only the final noun-like fragment if punctuation/connector
+            # text survived extraction; never keep a location or business intro.
+            name = re.sub(r"^(?:և|ու|then|and|и|а)\s+", "", name, flags=re.I).strip()
         if not name:
             continue
         try:
@@ -465,14 +483,17 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
 Understand Armenian, Russian and English.
 Extract facts from the partner's current message and accumulated history.
 Extract marz/region, exact address, and business phone when stated. Never invent them.
-Do not invent business names, cities, services or prices.
-Keep every stated service as a separate object.
+You are doing strict Named Entity Recognition (NER) and classification, not free-form form filling.
+Never copy a complete sentence into a field.
+BUSINESS NAME: extract only the proper business/organization name. For "BYUTI անունով սրահ" return "BYUTI", never "սրահ BYUTI" and never surrounding context.
+LOCATION: normalize Armenian/Russian/English inflected place names to the canonical city name. For example "Հրազդանում" -> "Հրազդան". Derive marz only from a known city-to-marz relationship or an explicitly stated marz; never invent an address.
+SERVICE NAMES: every price-bearing service is a separate entity. Strip prepositions, conjunctions, introductions, location text, business context, punctuation and grammatical endings. Use a short clean noun in the nominative/base form: "սանրվածքները սկսվում են" -> "Սանրվածք"; "գունավորումը" -> "Գունավորում"; "ոճավորումը" -> "Ոճավորում"; "մատնահարդարումը" -> "Մատնահարդարում"; "պեդիկյուրը" -> "Պեդիկյուր"; "երեկոյան դիմահարդարումը" -> "Երեկոյան դիմահարդարում". Never put words such as "սկսվում է", "դրամից", "սրահում", "ունեմ", "անունով", a city, or the business name into service_name.
+PRICES: output only the numeric amount. "3000 դրամից", "սկսվում է 3000 դրամից", "от 3000", "from 3000" => price=3000 and price_type="from". An exact "3000 դրամ" => price_type="fixed".
+KEEP ENTITIES SEPARATE: business, city, address, phone, direction, subcategory, service, price and working hours are different fields. Do not merge them.
+Keep every stated service as a separate object, including several services in one sentence.
 If a current business is supplied in PREVIOUS PROFILE, decide whether the new request belongs to that same business or clearly describes a separate organization. Return business_action as same_business or new_business and proposed_business_name when new_business.
-For prices such as "3000-ից", "от 3000", "from 3000", use price=3000 and price_type="from".
 Determine the platform direction yourself; never ask the partner to choose it.
-Think in terms of meaning and context. Several services may be mentioned in one sentence.
-Do not confuse a business name with a service name.
-Do not invent missing required information: use null and let the form collect it.
+Do not invent missing information: use null and let the form collect it.
 If the message clearly describes another organization than PREVIOUS PROFILE, use business_action="new_business".
 If it is clearly another service of the same organization, use business_action="same_business".
 If genuinely ambiguous, use same_business, set needs_review=true, and explain the ambiguity.
