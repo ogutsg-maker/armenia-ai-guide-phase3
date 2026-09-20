@@ -303,7 +303,9 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
     ensure_business_application_schema()
 
     existing_business = default_business(partner_id)
-    business_id = existing_business["id"] if existing_business and existing_business.get("status") == "active" else None
+    business_action = str(profile.get("business_action") or "same_business").strip().lower()
+    is_new_business = business_action in {"new_business","new business","new-business"}
+    business_id = None if is_new_business else (existing_business["id"] if existing_business and existing_business.get("status") == "active" else None)
 
     # AI classification is informational at application time. Admin can edit
     # master/category IDs before activation; do not materialise them yet.
@@ -321,6 +323,7 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
     payload["ai_category_id"] = category_id
     payload["application_version"] = 1
 
+    proposed_business_name = str(profile.get("proposed_business_name") or "").strip()[:200] or None
     direction_name = str(
         profile.get("direction")
         or profile.get("master_category_name")
@@ -359,7 +362,7 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
                 (
                     partner_id,
                     business_id,
-                    str(profile.get("business_name") or "").strip()[:200],
+                    (proposed_business_name if is_new_business else str(profile.get("business_name") or "").strip()[:200]),
                     str(profile.get("marz") or profile.get("region") or "").strip()[:200] or None,
                     str(profile.get("city") or "").strip()[:200] or None,
                     str(profile.get("village") or "").strip()[:200] or None,
@@ -384,6 +387,7 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
         "partner_id": partner_id,
         "application_id": row["id"] if row else None,
         "business_id": business_id,
+        "new_business": is_new_business,
         "direction_id": None,
         "mapped_to_catalog": bool(master_id),
         "proposal_created": True,
