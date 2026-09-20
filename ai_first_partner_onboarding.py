@@ -288,7 +288,7 @@ def _save_services(cur, partner_id: int, direction_id: int | None, profile: dict
     return count
 
 def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str, Any]:
-    """Create a reviewable universal partner application.
+    """Create the single editable universal partner application draft.
 
     IMPORTANT: completion of the AI conversation no longer writes directions,
     subcategories or services directly into the live catalogue. The partner
@@ -296,9 +296,8 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
     location, contact, AI direction/subcategory and service proposal are kept
     in partner_applications for admin review.
     """
-    if not _profile_ready(profile):
-        raise ValueError("partner_profile_not_ready")
-
+    # The form, not the chat, is responsible for collecting missing fields.
+    # Create a draft even when the initial free-form message is incomplete.
     partner_id = _ensure_partner(db, uid, profile)
     services = [x for x in (profile.get("services") or []) if isinstance(x, dict)]
     first = services[0] if services else {}
@@ -355,7 +354,7 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
                     service_name,price,description,object_name,ai_reason,payload_json
                 )
                 VALUES(
-                    %s,%s,'document_pending',%s,
+                    %s,%s,'pending_partner',%s,
                     %s,%s,%s,%s,%s,
                     %s,%s,%s,%s,
                     %s,%s,%s,%s,%s,%s::jsonb
@@ -395,6 +394,70 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
         "mapped_to_catalog": bool(master_id),
         "proposal_created": True,
         "service_count": len(services),
-        "status": "document_pending",
+        "status": "pending_partner",
+        "open_form": True,
     }
 
+
+
+def create_partner_application_draft(db, uid: int, profile: dict[str, Any]) -> dict[str, Any]:
+    """Create/update the one initial partner application draft."""
+    partner_id = _ensure_partner(db, uid, profile)
+    services = [dict(x) for x in (profile.get("services") or []) if isinstance(x, dict)]
+    master_id = None
+    category_id = None
+    try:
+        master_id, category_ids = _direction_match(db, profile)
+        category_id = _safe_int(category_ids[0]) if category_ids else None
+    except Exception:
+        logger.exception("Draft catalogue classification failed")
+    payload = dict(profile)
+    payload["services"] = services
+    payload["ai_master_category_id"] = master_id
+    payload["ai_category_id"] = category_id
+    payload["application_version"] = 1
+    business_action = str(profile.get("business_action") or "same_business").strip().lower()
+    existing = None
+    if business_action not in {"new_business","new business","new-business"}:
+        from partner_business_application_api import default_business
+        existing = default_business(partner_id)
+    business_id = existing["id"] if existing and existing.get("status") == "active" else None
+    first = services[0] if services else {}
+    bname = str(profile.get("proposed_business_name") or "").strip()[:200] if business_action in {"new_business","new business","new-business"} else str(profile.get("business_name") or "").strip()[:200]
+    values = (
+        business_id,bname,
+        str(profile.get("marz") or profile.get("region") or "").strip()[:200] or None,
+        str(profile.get("city") or "").strip()[:200] or None,
+        str(profile.get("village") or "").strip()[:200] or None,
+        str(profile.get("address") or "").strip()[:500] or None,
+        str(profile.get("phone") or "").strip()[:80] or None,
+        str(profile.get("direction") or "").strip()[:300] or None,master_id,
+        str(first.get("subcategory_name") or "").strip()[:300] or None,category_id,
+        str(first.get("name") or "").strip()[:300] or None,first.get("price"),
+        str(profile.get("description") or "").strip()[:5000] or None,
+        str(profile.get("object_name") or profile.get("object") or "").strip()[:300] or None,
+        json.dumps(payload,ensure_ascii=False)
+    )
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM partner_applications WHERE partner_id=%s AND status IN ('pending_partner','sent_back') ORDER BY id DESC LIMIT 1",(partner_id,))
+            old=cur.fetchone()
+            if old:
+                cur.execute("""UPDATE partner_applications SET business_id=%s,business_name=%s,
+                    location_marz=%s,location_city=%s,location_village=%s,address=%s,phone=%s,
+                    direction_name=%s,master_category_id=%s,subcategory_name=%s,category_id=%s,
+                    service_name=%s,price=%s,description=%s,object_name=%s,payload_json=%s::jsonb,
+                    updated_at=NOW() WHERE id=%s RETURNING id""",(*values,old["id"]))
+                aid=cur.fetchone()["id"]
+            else:
+                cur.execute("""INSERT INTO partner_applications(
+                    partner_id,business_id,status,business_name,location_marz,location_city,
+                    location_village,address,phone,direction_name,master_category_id,
+                    subcategory_name,category_id,service_name,price,description,object_name,
+                    ai_reason,payload_json)
+                    VALUES(%s,%s,'pending_partner',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                    RETURNING id""",(partner_id,*values,
+                    "AI draft; partner must complete and submit the full application."))
+                aid=cur.fetchone()["id"]
+        conn.commit()
+    return {"partner_id":partner_id,"application_id":aid,"status":"pending_partner","open_form":True,"profile":payload}
