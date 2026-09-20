@@ -160,8 +160,10 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
 
     # Armenian/Russian/English price forms, including "դրամից" / "от 3000".
     pattern = re.compile(
-        r"(?P<name>[^,;]+?)\s*[—–\-՝:]\s*"
-        r"(?P<from>от\s+|from\s+)?"
+        r"(?P<name>[^,;.!?]+?)"
+        r"(?:\s*(?:՝|—|–|-|:|\s+(?:սկսվում\s+են|սկսվում\s+է|արժե|գինն\s+է|"
+        r"от|from|starting\s+at)\s*))"
+        r"(?P<from>от\s+|from\s+|սկսվում\s+են\s+|սկսվում\s+է\s+)?"
         r"(?P<price>\d[\d\s.,]*)\s*"
         r"(?P<currency>դրամ(?:ից)?|֏|amd|dram)\b",
         re.I,
@@ -201,6 +203,18 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             "price_type": price_type,
             "matched_subcategory_id": None,
         })
+
+    # Armenian often expresses a starting price as:
+    # "սանրվածքները սկսվում են 3000 դրամից" without a colon/dash.
+    # The generic regex above may otherwise include the verb in the service name.
+    cleaned = []
+    for item in found:
+        name = re.sub(r"\\s+(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է)\\s*$", "", item["name"], flags=re.I).strip()
+        name = re.sub(r"^(?:սրահում|մեզ մոտ)\\s+", "", name, flags=re.I).strip()
+        if name:
+            item["name"] = name
+            cleaned.append(item)
+    found = cleaned
 
     # Deduplicate while preserving order.
     result = []
