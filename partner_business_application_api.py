@@ -259,7 +259,37 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         aid=int(request.match_info["application_id"])
         row=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
         if not row: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        return web.json_response({"ok":True,"application":row})
+
+        # Always expose one normalized application object. The AI draft keeps
+        # the complete profile in payload_json; the legacy one-service columns
+        # contain only the first service. The WebApp must not have to guess
+        # which representation is authoritative.
+        payload=row.get("payload_json") or {}
+        if isinstance(payload,str):
+            try: payload=json.loads(payload)
+            except Exception: payload={}
+        if not isinstance(payload,dict): payload={}
+        services=payload.get("services") if isinstance(payload.get("services"),list) else []
+        normalized=dict(row)
+        normalized["payload_json"]=payload
+        normalized["services"]=services
+        for key,payload_keys in {
+            "business_name":["business_name"],
+            "location_marz":["marz","region"],
+            "location_city":["city"],
+            "location_village":["village"],
+            "address":["address"],
+            "phone":["phone"],
+            "direction_name":["direction","master_category_name"],
+            "master_category_id":["master_category_id","ai_master_category_id"],
+            "description":["description"],
+        }.items():
+            if normalized.get(key) in (None,""):
+                for pk in payload_keys:
+                    if payload.get(pk) not in (None,""):
+                        normalized[key]=payload.get(pk)
+                        break
+        return web.json_response({"ok":True,"application":normalized})
 
     async def application_catalog(request):
         uid=_auth(request); p=_partner(uid)
