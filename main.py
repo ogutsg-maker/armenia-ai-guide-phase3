@@ -14,7 +14,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import MenuButtonWebApp, WebAppInfo
+from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import BOT_TOKEN, ADMIN_ID, WEBAPP_BASE_URL
@@ -363,7 +363,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
     # Reset any per-chat Telegram menu button that may still point to an old
     # partner WebApp URL. The current menu is always the welcome screen.
     try:
-        await bot.delete_chat_menu_button(chat_id=message.chat.id)
+        await bot.set_chat_menu_button(
+            chat_id=message.chat.id,
+            menu_button=MenuButtonDefault(),
+        )
         await bot.set_chat_menu_button(
             chat_id=message.chat.id,
             menu_button=MenuButtonWebApp(text="Armenia AI Guide", web_app=WebAppInfo(url=webapp_url("welcome.html")))
