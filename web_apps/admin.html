@@ -13,7 +13,7 @@
 <div id="app" style="display:none">
 <header><b>👑 Armenia AI Guide — Ադմինիստրացիա</b><small>Գործընկերներ · ուղղություններ · պատվերներ · AI · ֆինանսներ</small></header>
 <nav>
-<button class="active" data-page="overview">📊 Ընդհանուր</button><button data-page="partners">🤝 Գործընկերներ</button><button data-page="cats">📂 Ուղղություններ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="ai">🤖 AI</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Настройки</button>
+<button class="active" data-page="overview">📊 Ընդհանուր</button><button data-page="partners">🤝 Գործընկերներ</button><button data-page="cats">📂 Ուղղություններ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="applications">📨 Հայտեր</button><button data-page="ai">🤖 AI</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Настройки</button>
 </nav>
 <main>
 <section id="overview" class="page active"><div class="grid" id="stats"></div><div class="card"><b>Վերջին գործընկերային հայտերը</b><div id="recent"></div></div></section>
@@ -166,6 +166,41 @@ async function directionRequestAction(id,action){
  await post('/api/admin/service-direction-requests/'+id+'/action',reason?{action,reason}:{action});
  await loadServiceDirectionRequests(); await loadPartners();
 }
-async function loadPage(p){if(p==='overview'){await Promise.all([loadStats(),loadPartners()])}else if(p==='partners')await loadPartners();else if(p==='cats')await loadCats();else if(p==='orders')await loadOrders();else if(p==='disputes')await loadDisputes();else if(p==='potential')await loadPotential();else if(p==='proposals'){await loadProposals();await loadSubcategoryProposals();await loadServiceDirectionRequests()}}
+async function loadApplications(){
+ const el=$('applicationsList');
+ try{
+  const d=await api('/api/admin/partner-applications'),rows=d.applications||[];
+  el.innerHTML=rows.length?rows.map(x=>`<div class="card">
+   <div class="row"><div><b>#${esc(x.id)} · ${esc(x.business_name||x.partner_legacy_name||'—')}</b><div class="muted">Telegram ${esc(x.user_id||'')} · ${esc(x.location_marz||'')} ${esc(x.location_city||'')} ${esc(x.address||'')}</div></div>${badge(x.status)}</div>
+   <div class="detail"><b>☎</b> ${esc(x.phone||'—')} · <b>Ուղղություն</b> ${esc(x.direction_name||x.master_name_am||x.master_name_ru||'—')} · <b>Ենթաուղղություն</b> ${esc(x.subcategory_name||x.category_name_am||x.category_name_ru||'—')}</div>
+   <div class="detail"><b>Ծառայություն</b> ${esc(x.service_name||'—')} · <b>Գին</b> ${x.price==null?'—':Number(x.price).toLocaleString()+' ֏'}<div class="muted">${esc(x.description||'')}</div></div>
+   <div class="actions">
+    ${x.status==='pending_admin'?'<button class="btn" onclick="appAction('+x.id+',\'edit\')">✎ Փոփոխել</button><button class="btn ok" onclick="appAction('+x.id+',\'send_to_partner\')">↗ Ուղարկել գործընկերոջը</button>':''}
+    ${x.status==='pending_partner'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել տվյալները → փաստաթուղթ</button>':''}
+    ${x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':''}
+    ${x.status==='document_under_review'||x.status==='document_pending'?'<button class="btn soft" onclick="appAction('+x.id+',\'activate\')">▶ Ակտիվացնել</button>':''}
+    ${!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':''}
+   </div>
+  </div>`).join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
+ }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
+}
+async function appAction(id,action){
+ let data={action};
+ if(action==='edit'){
+  data.business_name=prompt('Բիզնեսի անուն')||'';
+  data.location_city=prompt('Քաղաք / բնակավայր')||'';
+  data.address=prompt('Հասցե')||'';
+  data.phone=prompt('Հեռախոս')||'';
+  data.direction_name=prompt('Ուղղություն')||'';
+  data.subcategory_name=prompt('Ենթաուղղություն')||'';
+  data.service_name=prompt('Ծառայություն')||'';
+  const p=prompt('Գին AMD'); if(p!==null)data.price=p;
+  data.description=prompt('Նկարագրություն')||'';
+ }
+ if(action==='reject'){data.admin_note=prompt('Պատճառ / Причина')||'Մերժվել է ադմինիստրատորի կողմից'}
+ await post('/api/admin/partner-applications/'+id+'/action',data);
+ await loadApplications();
+}
+async function loadPage(p){if(p==='overview'){await Promise.all([loadStats(),loadPartners()])}else if(p==='partners')await loadPartners();else if(p==='cats')await loadCats();else if(p==='orders')await loadOrders();else if(p==='disputes')await loadDisputes();else if(p==='potential')await loadPotential();else if(p==='proposals'){await loadProposals();await loadSubcategoryProposals();await loadServiceDirectionRequests()}else if(p==='applications')await loadApplications()}
 (async()=>{if(await auth())await loadPage('overview').catch(showError)})();
 </script></body></html>
