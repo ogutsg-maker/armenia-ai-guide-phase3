@@ -8,6 +8,7 @@ import json, os
 from datetime import date, datetime
 from decimal import Decimal
 import psycopg
+from psycopg.rows import dict_row
 from aiohttp import web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 
@@ -17,7 +18,7 @@ def _db_url():
     return v
 
 def _connect():
-    return psycopg.connect(_db_url(), prepare_threshold=None, row_factory=psycopg.rows.dict_row)
+    return psycopg.connect(_db_url(), prepare_threshold=None, row_factory=dict_row)
 
 def _safe(v):
     if isinstance(v,(datetime,date)): return v.isoformat()
