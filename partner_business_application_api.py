@@ -264,7 +264,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         action=str(data.get("action") or "").strip()
         a=_one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
         if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        allowed={"edit","send_to_partner","reject","approve","activate"}
+        allowed={"edit","send_to_partner","reject","approve","approve_document","activate"}
         if action not in allowed: return web.json_response({"ok":False,"error":"invalid_action"},status=400)
         fields={}
         for k in ("business_name","location_marz","location_city","location_village","address","phone",
@@ -289,6 +289,18 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         if action=="approve":
             row=_exec("""UPDATE partner_applications SET status='document_pending',
                          updated_at=NOW() WHERE id=%s RETURNING *""",(aid,),True)
+            return web.json_response({"ok":True,"application":row})
+
+        if action=="approve_document":
+            if not a.get("document_id"):
+                return web.json_response({"ok":False,"error":"document_required"},status=409)
+            doc=_one("SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(a["document_id"],a["partner_id"]))
+            if not doc: return web.json_response({"ok":False,"error":"document_not_found"},status=404)
+            if doc["status"]!="pending": return web.json_response({"ok":False,"error":"document_not_pending"},status=409)
+            admin_id=_admin(request)
+            _exec("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE id=%s",(admin_id,doc["id"]))
+            row=_exec("""UPDATE partner_applications SET status='document_under_review',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
+                         WHERE id=%s RETURNING *""",(admin_id,aid),True)
             return web.json_response({"ok":True,"application":row})
 
         if not a.get("document_id"):
