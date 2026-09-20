@@ -233,12 +233,8 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         ],
         temperature=0.1,
         max_tokens=max_tokens,
-        # Some Groq configurations reject JSON Schema response_format with
-        # HTTP 400. The prompt still enforces the exact JSON shape, while the
-        # parser below extracts the returned object.
-        response_format={"type": "json_object"},
-        # GPT-OSS does not support reasoning_format; disable the reasoning field instead.
-        include_reasoning=False,
+        # Keep the request compatible with all Groq GPT-OSS deployments.
+        # JSON shape is enforced by the prompt and parsed below.
     )
     return _parse_json(response.choices[0].message.content or "{}")
 
