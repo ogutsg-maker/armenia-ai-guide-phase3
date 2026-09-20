@@ -281,7 +281,32 @@ async def _ai_match_new_service(pid: int,name: str,description: str="",business_
             business=cur.fetchone() or {}
     if not catalog: return {"status":"no_catalog","business_action":"same_business"}
     approved={int(x["master_category_id"]) for x in catalog}
-    candidates=catalog[:80]
+    # First resolve obvious matches locally. This prevents Groq from returning a
+    # clarification simply because the catalog is larger than the model context.
+    import re
+    from difflib import SequenceMatcher
+    def _norm_match(v):
+        return re.sub(r"[^a-zа-яёա-ֆ0-9]+", " ", str(v or "").lower(), flags=re.IGNORECASE).strip()
+    q=_norm_match(f"{name} {description}")
+    q_tokens=set(q.split())
+    def _score(x):
+        texts=[x.get("category_am"),x.get("category_ru"),x.get("category_en"),x.get("category_slug")]
+        best=0.0
+        for t in texts:
+            s=_norm_match(t)
+            if not s: continue
+            st=set(s.split())
+            overlap=len(q_tokens & st) / max(1,len(st))
+            ratio=SequenceMatcher(None,q,s).ratio()
+            best=max(best, overlap*0.75+ratio*0.25, ratio)
+        return best
+    ranked=sorted(catalog,key=_score,reverse=True)
+    exact=next((x for x in catalog if any(_norm_match(name)==_norm_match(x.get(k)) or _norm_match(name) in _norm_match(x.get(k)) or _norm_match(x.get(k)) in _norm_match(name) for k in ("category_am","category_ru","category_en","category_slug"))),None)
+    if exact:
+        return {"status":"matched","category_id":_safe_int(exact["category_id"]),"master_category_id":_safe_int(exact["master_category_id"]),
+                "business_action":"same_business","proposed_business_name":None,"reason":"exact_catalog_match"}
+    # Send only the best candidates to Groq instead of the first 80 arbitrary rows.
+    candidates=[x for x in ranked[:60] if _score(x)>=0.20] or ranked[:30]
     schema={"type":"object","properties":{
       "matched_category_id":{"type":["integer","null"]},"master_category_id":{"type":["integer","null"]},
       "proposed_subcategory_name":{"type":["string","null"]},"out_of_scope_master_id":{"type":["integer","null"]},
