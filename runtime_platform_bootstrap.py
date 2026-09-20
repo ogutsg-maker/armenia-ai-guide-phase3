@@ -144,13 +144,34 @@ def _install_ai_first_partner_flow(main,db):
         profile=await extract(text,history,db,previous_profile=previous,pending_field=pending); merged=dict(previous)
         for k,v in (profile or {}).items():
             if v not in (None,"",[],{}):merged[k]=v
-        required=[k for k in ("business_name","city","services") if not merged.get(k)]; merged["missing"]=required; merged["ready"]=not required
+        required=[k for k in ("business_name","marz","city","address","phone","services") if not merged.get(k)]
+        merged["missing"]=required
+        merged["ready"]=not required
         await state.update_data(partner_onboarding_history=history,partner_profile=merged)
         if required:
-            question=missing_question(merged,lang); history.append({"role":"assistant","content":question}); await state.update_data(partner_onboarding_pending_field=required[0],partner_onboarding_history=history)
+            question=missing_question(merged,lang)
+            history.append({"role":"assistant","content":question})
+            await state.update_data(
+                partner_onboarding_pending_field=required[0],
+                partner_onboarding_history=history,
+                partner_profile=merged,
+            )
             return {"message":{"hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ","ru":"🤖 Я уже собрал данные. ","en":"🤖 I have collected the information. "}.get(lang,"🤖 ")+question,"completed":False,"profile":merged}
         from ai_first_partner_onboarding import persist_ready_application
-        result=persist_ready_application(db,uid,merged); await state.clear(); message={"hy":"✅ Բիզնեսի տվյալները պահպանված են։ Ուղղությունը ուղարկված է ստուգման։ Հաջորդ քայլը՝ բեռնեք հաստատող փաստաթուղթը։","ru":"✅ Данные бизнеса сохранены. Направление отправлено на проверку. Следующий шаг — загрузите подтверждающий документ.","en":"✅ Business data saved. The direction was submitted for review. Next step: upload the verification document."}.get(lang,"Данные сохранены и отправлены на проверку.")
+        try:
+            result=persist_ready_application(db,uid,merged)
+        except ValueError as exc:
+            if str(exc)=="partner_profile_not_ready":
+                required=[k for k in ("business_name","marz","city","address","phone","services") if not merged.get(k)]
+                merged["missing"]=required
+                merged["ready"]=not required
+                if required:
+                    question=missing_question(merged,lang)
+                    history.append({"role":"assistant","content":question})
+                    await state.update_data(partner_onboarding_pending_field=required[0],partner_onboarding_history=history,partner_profile=merged)
+                    return {"message":{"hy":"🤖 ","ru":"🤖 ","en":"🤖 "}.get(lang,"🤖 ")+question,"completed":False,"profile":merged}
+            raise
+        await state.clear(); message={"hy":"✅ Բիզնեսի տվյալները պահպանված են։ Ուղղությունը ուղարկված է ստուգման։ Հաջորդ քայլը՝ բեռնեք հաստատող փաստաթուղթը։","ru":"✅ Данные бизнеса сохранены. Направление отправлено на проверку. Следующий шаг — загрузите подтверждающий документ.","en":"✅ Business data saved. The direction was submitted for review. Next step: upload the verification document."}.get(lang,"Данные сохранены и отправлены на проверку.")
         if result.get("proposal_created"):message={"hy":"✅ Տվյալները պահպանված են։ Նոր ուղղության առաջարկը ուղարկվել է ադմինիստրատորին։","ru":"✅ Данные сохранены. Предложение нового направления отправлено администратору.","en":"✅ Data saved. The new-direction proposal was sent to the administrator."}.get(lang,"Предложение нового направления отправлено администратору.")
         return {"message":message,"completed":True,"profile":merged,**result}
     main._process_partner_onboarding_text=_new_process; main._armenia_ai_first_partner_flow=True
