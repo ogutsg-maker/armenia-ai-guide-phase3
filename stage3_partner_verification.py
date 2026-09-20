@@ -427,6 +427,36 @@ async def api_partner_document_upload(request):
         print(f"[partner-verification] document upload failed: partner={partner['id']} error={exc!r}", flush=True)
         return web.json_response({"ok": False, "error": "document_upload_failed", "details": str(exc)[:1000]}, status=500)
 
+    # The AI registration page uploads through this legacy verification endpoint.
+    # Attach that document to the same universal application created by AI.
+    # This prevents the admin from seeing one half under Partners and another
+    # half under Applications.
+    try:
+        linked = _db_execute(
+            """UPDATE partner_applications a
+               SET document_id=%s,
+                   status='pending_admin',
+                   updated_at=NOW()
+               WHERE a.id=(
+                   SELECT id FROM partner_applications
+                   WHERE partner_id=%s
+                     AND status='document_pending'
+                     AND document_id IS NULL
+                   ORDER BY created_at DESC,id DESC
+                   LIMIT 1
+               )
+               RETURNING id,business_id""",
+            (doc["id"], partner["id"]),
+            returning=True,
+        )
+        if linked:
+            _db_execute(
+                "UPDATE partner_verification_documents SET business_id=%s WHERE id=%s",
+                (linked.get("business_id"), doc["id"]),
+            )
+    except Exception as exc:
+        print(f"[partner-verification] application/document link failed: partner={partner['id']} document={doc.get('id')} error={exc!r}", flush=True)
+
     return web.json_response({"ok": True, "document": doc, "verification_status": "pending"})
 
 
