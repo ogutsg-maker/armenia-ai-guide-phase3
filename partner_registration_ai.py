@@ -341,6 +341,8 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         "type": "object",
         "properties": {
             "business_name": {"type": ["string", "null"]},
+            "business_action": {"type": "string"},
+            "proposed_business_name": {"type": ["string", "null"]},
             "city": {"type": ["string", "null"]},
             "district": {"type": ["string", "null"]},
             "direction": {"type": ["string", "null"]},
@@ -359,7 +361,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                 "additionalProperties": False,
             }},
                     },
-        "required": ["business_name", "city", "district", "direction",
+        "required": ["business_name", "business_action", "proposed_business_name", "city", "district", "direction",
                      "master_category_id", "subcategory_names", "description",
                      "services"],
         "additionalProperties": False,
@@ -370,6 +372,7 @@ Understand Armenian, Russian and English.
 Extract facts from the partner's current message and accumulated history.
 Do not invent business names, cities, services or prices.
 Keep every stated service as a separate object.
+If a current business is supplied in PREVIOUS PROFILE, decide whether the new request belongs to that same business or clearly describes a separate organization. Return business_action as same_business or new_business and proposed_business_name when new_business.
 For prices such as "3000-ից", "от 3000", "from 3000", use price=3000 and price_type="from".
 Determine the platform direction yourself; never ask the partner to choose it.
 
@@ -397,7 +400,7 @@ Return only the supplied JSON schema."""
                                    "partner_onboarding_extract", schema, 700)
         data = dict(previous_profile)
 
-        for field in ("business_name", "city", "district", "direction",
+        for field in ("business_name", "business_action", "proposed_business_name", "city", "district", "direction",
                       "master_category_id", "description"):
             value = ai_data.get(field)
             if value not in (None, ""):
