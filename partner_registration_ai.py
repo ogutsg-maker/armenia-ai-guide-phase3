@@ -135,7 +135,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
     if not out.get("business_name"):
         name_patterns = [
-            r"([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
+            r"([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'_-]{0,60})\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
             r"(?:salon|салон|стudio|студия)\s+([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})",
         ]
         for pattern in name_patterns:
@@ -145,6 +145,30 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                 if candidate:
                     out["business_name"] = candidate
                     break
+
+    if not out.get("marz") and out.get("city"):
+        city_key = _norm(out["city"]).lower()
+        marz_by_city = {
+            "հրազդան": "Կոտայք", "hrazdan": "Կոտայք",
+            "աբովյան": "Կոտայք", "abovyan": "Կոտայք",
+            "չարենցավան": "Կոտայք", "charentsavan": "Կոտայք",
+            "գյումրի": "Շիրակ", "gyumri": "Շիրակ",
+            "վանաձոր": "Լոռի", "vanadzor": "Լոռի",
+            "արմավիր": "Արմավիր", "armavir": "Արմավիր",
+            "էջմիածին": "Արմավիր", "ejmiatsin": "Արմավիր",
+            "արտաշատ": "Արարատ", "artashat": "Արարատ",
+            "գավառ": "Գեղարքունիք", "gavar": "Գեղարքունիք",
+            "դիլիջան": "Տավուշ", "dilijan": "Տավուշ",
+            "իջևան": "Տավուշ", "ijevan": "Տավուշ",
+            "ապարան": "Արագածոտն", "aparan": "Արագածոտն",
+            "աշտարակ": "Արագածոտն", "ashtarak": "Արագածոտն",
+            "կապան": "Սյունիք", "kapan": "Սյունիք",
+            "գորիս": "Սյունիք", "goris": "Սյունիք",
+            "ջերմուկ": "Վայոց ձոր", "jermuk": "Վայոց ձոր",
+            "վայք": "Վայոց ձոր", "vayk": "Վայոց ձոր",
+        }
+        if city_key in marz_by_city:
+            out["marz"] = marz_by_city[city_key]
 
     if out.get("city"):
         city = _norm(out["city"])
