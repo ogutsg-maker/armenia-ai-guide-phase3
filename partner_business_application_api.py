@@ -200,14 +200,44 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     async def applications(request):
         uid=_auth(request); p=_partner(uid)
         if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
-        rows=_all("""SELECT a.*,b.name AS business_name,m.name_am AS master_name_am,m.name_ru AS master_name_ru,
+        rows=_all("""SELECT a.*,b.name AS business_name_db,m.name_am AS master_name_am,m.name_ru AS master_name_ru,
                             c.name_am AS category_name_am,c.name_ru AS category_name_ru
                      FROM partner_applications a
                      LEFT JOIN partner_businesses b ON b.id=a.business_id
                      LEFT JOIN master_categories m ON m.id=a.master_category_id
                      LEFT JOIN categories c ON c.id=a.category_id
                      WHERE a.partner_id=%s ORDER BY a.created_at DESC""",(p["id"],))
-        return web.json_response({"ok":True,"applications":rows})
+        # The editable form is driven by the full JSON profile, not only the
+        # legacy one-service columns. Normalize every draft here too, because
+        # the WebApp may open a saved draft directly from this endpoint.
+        normalized=[]
+        for row in rows:
+            payload=row.get("payload_json") or {}
+            if isinstance(payload,str):
+                try: payload=json.loads(payload)
+                except Exception: payload={}
+            if not isinstance(payload,dict): payload={}
+            row["payload_json"]=payload
+            row["services"]=payload.get("services") if isinstance(payload.get("services"),list) else []
+            for key,alts in {
+                "business_name":["business_name"],
+                "location_marz":["marz","region"],
+                "location_city":["city"],
+                "location_village":["village"],
+                "address":["address"],
+                "phone":["phone"],
+                "direction_name":["direction","master_category_name"],
+                "master_category_id":["master_category_id","ai_master_category_id"],
+                "category_id":["category_id","ai_category_id"],
+                "description":["description"],
+            }.items():
+                if row.get(key) in (None,""):
+                    for alt in alts:
+                        if payload.get(alt) not in (None,""):
+                            row[key]=payload.get(alt)
+                            break
+            normalized.append(row)
+        return web.json_response({"ok":True,"applications":normalized})
 
     async def admin_applications(request):
         _admin(request)
