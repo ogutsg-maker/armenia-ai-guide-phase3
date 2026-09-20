@@ -439,7 +439,8 @@ async def api_admin_partner_applications(request):
                COALESCE((SELECT COUNT(*) FROM partner_verification_documents d WHERE d.partner_id=p.id),0) AS document_count,
                (SELECT MAX(d.created_at) FROM partner_verification_documents d WHERE d.partner_id=p.id) AS last_document_at
         FROM partners p
-        ORDER BY CASE WHEN p.status IN ('pending','under_review') THEN 0 ELSE 1 END, p.created_at DESC
+        WHERE p.status IN ('approved','suspended','blocked')
+        ORDER BY CASE WHEN p.status='approved' THEN 0 ELSE 1 END, p.created_at DESC
         """
     )
     return web.json_response({"ok": True, "admin_id": admin_id, "partners": rows})
