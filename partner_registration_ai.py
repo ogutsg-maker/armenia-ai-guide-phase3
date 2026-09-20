@@ -135,13 +135,14 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
     if not out.get("business_name"):
         name_patterns = [
+            r"[«\"']([^«»\"']{1,100})[»\"']\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
             r"([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'_-]{0,60})\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
-            r"(?:salon|салон|стudio|студия)\s+([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})",
+            r"(?:salon|салон|studio|студия)\s+([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})",
         ]
         for pattern in name_patterns:
             m = re.search(pattern, raw, flags=re.I)
             if m:
-                candidate = _norm(m.group(1)).strip(" .,;:()")
+                candidate = _norm(m.group(1)).strip(" .,;:()«»\"'")
                 if candidate:
                     out["business_name"] = candidate
                     break
@@ -198,6 +199,39 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
     return out
 
 
+
+
+def _recover_master_category(db, text: str, data: dict) -> dict:
+    """Resolve a high-signal top-level direction when Groq omits its ID."""
+    out = dict(data or {})
+    try:
+        masters = db.get_all_master_categories() or []
+    except Exception:
+        return out
+    valid = {}
+    for row in masters:
+        mid = _safe_int(row.get("id"))
+        if mid is None:
+            continue
+        valid[mid] = [_norm(row.get(k)) for k in ("name_am", "name_ru", "name_en") if _norm(row.get(k))]
+
+    current = _norm(out.get("direction"))
+    if current and _safe_int(out.get("master_category_id")) is None:
+        low = current.lower()
+        for mid, labels in valid.items():
+            if any(low == label.lower() or low in label.lower() or label.lower() in low for label in labels):
+                out["master_category_id"] = mid
+                return out
+
+    low_text = _norm(text).lower()
+    if any(w in low_text for w in ("ֆոտոստուդ", "լուսանկար", "ֆոտոսեսիա", "տեսանկարահանում", "տեսանյութ", "photograph", "photo studio", "video")):
+        for mid, labels in valid.items():
+            joined = " ".join(labels).lower()
+            if "ֆոտո" in joined and ("տեսանյութ" in joined or "video" in joined or "լուսանկար" in joined):
+                out["master_category_id"] = mid
+                out["direction"] = next((x for x in labels if x), out.get("direction") or "")
+                return out
+    return out
 
 
 def _recover_services_from_history(history: list[dict]) -> list[dict]:
@@ -279,6 +313,10 @@ def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[d
         (("մատնահարդարում", "маникюр", "manicure"), ("մատնահարդարում", "маникюр", "manicure")),
         (("պեդիկյուր", "педикюр", "pedicure"), ("ոտնահարդարում", "педикюр", "pedicure")),
         (("դիմահարդարում", "դիմահարդարումը", "макияж", "makeup"), ("դիմահարդարում", "макияж", "makeup")),
+        (("հարսանեկան ֆոտոսեսիա", "հարսանեկան լուսանկար", "wedding photo", "wedding photography"), ("հարսանեկան լուսանկարիչ", "wedding photographer", "свадебный фотограф")),
+        (("միջոցառումների լուսանկարահանում", "միջոցառման լուսանկար", "event photo", "event photography"), ("լուսանկարիչ", "photographer", "фотограф")),
+        (("անհատական ֆոտոսեսիա", "անձնական ֆոտոսեսիա", "portrait", "individual photo"), ("լուսանկարիչ", "photographer", "фотограф")),
+        (("տեսանկարահանում", "տեսանյութ", "video shooting", "videography"), ("տեսագրահանող", "videographer", "видеограф")),
     ]
     for item in out:
         if _safe_int(item.get("matched_subcategory_id")) is not None:
@@ -421,7 +459,9 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
             data[pending_field] = _norm(text)
         elif pending_field == "services":
             data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown", "matched_subcategory_id": None}]
-        data = _recover_obvious_facts(" ".join([str(x.get("content") or "") for x in history] + [text]), data)
+        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
+        data = _recover_obvious_facts(combined_text, data)
+        data = _recover_master_category(db, combined_text, data)
         recovered = _recover_services_from_history(history + [{"role": "user", "content": text}])
         if recovered:
             data["services"] = recovered
@@ -537,9 +577,9 @@ Return only the supplied JSON schema."""
                 by_name[item["name"].lower()] = item
             data["services"] = list(by_name.values())
 
-        data = _recover_obvious_facts(
-            " ".join([str(x.get("content") or "") for x in history] + [text]), data
-        )
+        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
+        data = _recover_obvious_facts(combined_text, data)
+        data = _recover_master_category(db, combined_text, data)
 
         # Normalize service objects so the form always receives a stable shape,
         # even when Groq uses legacy service_name instead of name.
@@ -574,6 +614,9 @@ Return only the supplied JSON schema."""
         if direction_catalog:
             data["services"] = _match_services_universal(
                 db, data.get("services") or [], master_id
+            )
+            data["services"] = _fallback_catalog_match(
+                data.get("services") or [], direction_catalog
             )
             selected_names = []
             by_id = {
@@ -618,9 +661,9 @@ Return only the supplied JSON schema."""
         except Exception:
             pass
         data = _heuristic(text)
-        data = _recover_obvious_facts(
-            " ".join([str(x.get("content") or "") for x in history] + [text]), data
-        )
+        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
+        data = _recover_obvious_facts(combined_text, data)
+        data = _recover_master_category(db, combined_text, data)
         recovered = _recover_services_from_history(
             history + [{"role": "user", "content": text}]
         )
