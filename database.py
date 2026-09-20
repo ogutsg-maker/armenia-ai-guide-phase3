@@ -473,8 +473,21 @@ class DatabaseManager:
         if not data: return self.get_partner_by_id(partner_id)
         sets=[]; vals=[]
         for k,v in data.items():
-            if k == "profile_json" and not isinstance(v,str):
-                v=json.dumps(v,ensure_ascii=False)
+            if k == "profile_json":
+                # JSONB must always receive valid JSON text. Never pass a Python
+                # dict through the driver as a PostgreSQL hstore/dict literal.
+                # Also reject NaN/Infinity because PostgreSQL jsonb does not
+                # accept those values.
+                if isinstance(v,str):
+                    try:
+                        v=json.dumps(json.loads(v),ensure_ascii=False,allow_nan=False)
+                    except Exception:
+                        v=json.dumps({"raw": v},ensure_ascii=False,allow_nan=False)
+                else:
+                    try:
+                        v=json.dumps(v,ensure_ascii=False,allow_nan=False)
+                    except (TypeError, ValueError):
+                        v=json.dumps({"raw": str(v)},ensure_ascii=False,allow_nan=False)
                 sets.append(f"{k}=%s::jsonb")
             else:
                 sets.append(f"{k}=%s")
