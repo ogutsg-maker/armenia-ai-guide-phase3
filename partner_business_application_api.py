@@ -234,12 +234,32 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         if not row: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
         allowed=("business_name","location_marz","location_city","location_village","address","phone","direction_name","master_category_id","subcategory_name","category_id","service_name","price","description","object_name")
         fields={k:data[k] for k in allowed if k in data}
+        payload=data.get("payload")
+        if isinstance(payload,dict):
+            current=row.get("payload_json") or {}
+            if isinstance(current,str):
+                try: current=json.loads(current)
+                except Exception: current={}
+            merged=dict(current or {})
+            merged.update(payload)
+            fields["payload_json"]=json.dumps(merged,ensure_ascii=False)
         if not fields: return web.json_response({"ok":True,"application":row})
         sets=", ".join(f"{k}=%s" for k in fields)
         sets+=", updated_at=NOW()"
         vals=list(fields.values())+[aid]
+        if "payload_json" in fields:
+            vals=[v if k!="payload_json" else v for k,v in zip(fields.keys(),vals[:-1])]+[aid]
+            sets=sets.replace("payload_json=%s","payload_json=%s::jsonb")
         updated=_exec(f"UPDATE partner_applications SET {sets} WHERE id=%s RETURNING *",vals,True)
         return web.json_response({"ok":True,"application":updated})
+
+    async def application_get(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        aid=int(request.match_info["application_id"])
+        row=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
+        if not row: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
+        return web.json_response({"ok":True,"application":row})
 
     async def application_catalog(request):
         uid=_auth(request); p=_partner(uid)
@@ -308,11 +328,10 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      partner_id,business_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status)
                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending') RETURNING id""",
                   (p["id"],a.get("business_id"),document_type,original,storage_path,blob,mime,len(data)),True)
-        # A document uploaded from the initial AI registration belongs to the
-        # SAME universal application. Once the partner has supplied the
-        # document, the complete application becomes visible to the admin.
+        # Uploading the document does not submit the application. The partner
+        # must explicitly press the final submit button after reviewing the form.
         row=_exec("""UPDATE partner_applications
-                     SET document_id=%s,status='pending_admin',updated_at=NOW()
+                     SET document_id=%s,updated_at=NOW()
                      WHERE id=%s RETURNING *""",(doc["id"],aid),True)
         return web.json_response({"ok":True,"application":row,"document_id":doc["id"]})
 
@@ -414,5 +433,6 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/master/{id}/applications/{application_id}/submit",application_submit)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document",application_document_upload)
     app.router.add_get("/api/master/{id}/applications",applications)
+    app.router.add_get("/api/master/{id}/applications/{application_id}",application_get)
     app.router.add_get("/api/admin/universal-applications",admin_applications)
     app.router.add_post("/api/admin/partner-applications/{application_id}/action",admin_application_action)
