@@ -133,6 +133,19 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                 out["city"] = candidate
                 break
 
+    if not out.get("business_name"):
+        name_patterns = [
+            r"([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
+            r"(?:salon|салон|стudio|студия)\s+([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})",
+        ]
+        for pattern in name_patterns:
+            m = re.search(pattern, raw, flags=re.I)
+            if m:
+                candidate = _norm(m.group(1)).strip(" .,;:()")
+                if candidate:
+                    out["business_name"] = candidate
+                    break
+
     if out.get("city"):
         city = _norm(out["city"])
         m = re.fullmatch(r"([\u0531-\u058F]+?)(?:անում|ենում|ում)", city, flags=re.I)
@@ -145,11 +158,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
 
 def _recover_services_from_history(history: list[dict]) -> list[dict]:
-    """Preserve explicit service/price facts across follow-up turns.
-
-    This extracts only price-bearing service phrases. It does not classify
-    services into catalogue categories.
-    """
+    """Recover explicit service/price facts without depending on the LLM."""
     text = " ".join(
         _norm(x.get("content") or "")
         for x in history
@@ -157,74 +166,43 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     )
     if not text:
         return []
-
-    # Armenian/Russian/English price forms, including "դրամից" / "от 3000".
-    pattern = re.compile(
-        r"(?P<name>[^,;.!?]+?)"
-        r"(?:\s*(?:՝|—|–|-|:|\s+(?:սկսվում\s+են|սկսվում\s+է|արժե|գինն\s+է|"
-        r"от|from|starting\s+at)\s*))"
-        r"(?P<from>от\s+|from\s+|սկսվում\s+են\s+|սկսվում\s+է\s+)?"
-        r"(?P<price>\d[\d\s.,]*)\s*"
-        r"(?P<currency>դրամ(?:ից)?|֏|amd|dram)\b",
-        re.I,
-    )
-
     found = []
-    for m in pattern.finditer(text):
-        name = _norm(m.group("name"))
-        # Keep only the actual service phrase. The price regex can capture
-        # the whole preceding sentence (for example: "Ես ... ունեմ։ Կատարում ենք
-        # հոնքերի շտկում՝ 2200 դրամ"). Strip the natural-language introduction.
-        name = re.split(
-            r"(?:^|[.!?]\s*)(?:[^.!?]*?\s+)?(?:կատարում\s+ենք|անում\s+ենք|"
-            r"մատուցում\s+ենք|առաջարկում\s+ենք|мы\s+делаем|оказываем|"
-            r"предлагаем|we\s+(?:do|offer|provide))\s+",
-            name, maxsplit=1, flags=re.I
-        )[-1].strip()
+    for clause in re.split(r"[,;.!?\\n]+", text):
+        clause = _norm(clause).strip(" —–-:;")
+        if not clause:
+            continue
+        m = re.search(
+            r"(?P<name>.+?)\\s*(?:\\u055D|:|—|–|-|\\b(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է|от|from|starting\\s+at)\\b)?\\s*"
+            r"(?P<price>\\d[\\d\\s.,]*)\\s*(?P<currency>դրամ(?:ից)?|֏|amd|dram)\\b",
+            clause, flags=re.I
+        )
+        if not m:
+            continue
+        name = _norm(m.group("name")).strip(" —–-:;")
         name = re.sub(
-            r"^(?:կատարում\s+ենք|անում\s+ենք|մատուցում\s+ենք|առաջարկում\s+ենք|"
-            r"мы\s+делаем|оказываем|предлагаем|we\s+(?:do|offer|provide))\s+",
+            r"^(?:Ես\\s+[^,;.!?]*?\\s+)?(?:ունեմ|ունենք|կատարում\\s+ենք|անում\\s+ենք|մատուցում\\s+ենք|"
+            r"առաջարկում\\s+ենք|мы\\s+делаем|оказываем|предлагаем|we\\s+(?:do|offer|provide))\\s+",
             "", name, flags=re.I
         ).strip()
-        if ". " in name:
-            name = name.rsplit(". ", 1)[-1].strip()
-        raw_price = m.group("price").replace(" ", "").replace(",", ".")
-        if not name or not raw_price:
+        name = re.sub(r"^(?:սրահում|մեզ\\s+մոտ)\\s+", "", name, flags=re.I).strip()
+        if not name:
             continue
         try:
-            price = float(raw_price)
+            price = float(m.group("price").replace(" ", "").replace(",", "."))
         except ValueError:
             continue
         full = m.group(0).lower()
-        price_type = "from" if m.group("from") or "ից" in full else "fixed"
-        found.append({
-            "name": name,
-            "price": price,
-            "price_type": price_type,
-            "matched_subcategory_id": None,
-        })
-
-    # Armenian often expresses a starting price as:
-    # "սանրվածքները սկսվում են 3000 դրամից" without a colon/dash.
-    # The generic regex above may otherwise include the verb in the service name.
-    cleaned = []
+        price_type = "from" if "ից" in full or re.search(
+            r"\\b(?:от|from|starting\\s+at|սկսվում\\s+են|սկսվում\\s+է)\\b", full, re.I
+        ) else "fixed"
+        found.append({"name": name, "price": price, "price_type": price_type, "matched_subcategory_id": None})
+    result=[]; seen=set()
     for item in found:
-        name = re.sub(r"\s+(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է)\\s*$", "", item["name"], flags=re.I).strip()
-        name = re.sub(r"^(?:սրահում|մեզ մոտ)\s+", "", name, flags=re.I).strip()
-        if name:
-            item["name"] = name
-            cleaned.append(item)
-    found = cleaned
-
-    # Deduplicate while preserving order.
-    result = []
-    seen = set()
-    for item in found:
-        key = (item["name"].lower(), item["price"], item["price_type"])
+        key=(item["name"].lower(),item["price"],item["price_type"])
         if key not in seen:
-            seen.add(key)
-            result.append(item)
+            seen.add(key); result.append(item)
     return result
+
 
 def _parse_json(text: str) -> dict:
     raw = (text or "").strip()
@@ -239,30 +217,40 @@ def _parse_json(text: str) -> dict:
 
 
 async def _groq_json(client, model, system_prompt, user_content, schema_name, schema, max_tokens):
-    kwargs = dict(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.0,
-        max_tokens=max_tokens,
-    )
-    try:
-        # Prefer native structured output. This prevents the model from
-        # drifting away from the application schema and inventing fields/IDs.
-        kwargs["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": schema_name, "schema": schema, "strict": True},
+    """Call Groq with structured JSON and recover automatically from old model settings."""
+    models = []
+    for candidate in (str(model or "").strip(), "openai/gpt-oss-20b"):
+        if candidate and candidate not in models:
+            models.append(candidate)
+    last_error = None
+    for active_model in models:
+        base = {
+            "model": active_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
         }
-        response = await client.chat.completions.create(**kwargs)
-    except Exception:
-        # Some Groq model/deployment combinations may not expose json_schema.
-        # Keep the exact same semantic prompt and fall back to JSON object mode.
-        kwargs.pop("response_format", None)
-        kwargs["response_format"] = {"type": "json_object"}
-        response = await client.chat.completions.create(**kwargs)
-    return _parse_json(response.choices[0].message.content or "{}")
+        try:
+            kwargs = dict(base)
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "schema": schema, "strict": True},
+            }
+            response = await client.chat.completions.create(**kwargs)
+            return _parse_json(response.choices[0].message.content or "{}")
+        except Exception as exc:
+            last_error = exc
+            try:
+                kwargs = dict(base)
+                kwargs["response_format"] = {"type": "json_object"}
+                response = await client.chat.completions.create(**kwargs)
+                return _parse_json(response.choices[0].message.content or "{}")
+            except Exception as exc2:
+                last_error = exc2
+    raise last_error or RuntimeError("Groq request failed")
 
 
 async def _match_services_universal(client, model, services, catalog):
@@ -367,7 +355,9 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         data["ready"] = bool(data.get("business_name") and data.get("city") and data.get("services"))
         return data
 
-    model = os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
+    model = os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")).strip() or "openai/gpt-oss-20b"
+    if model in {"llama-3.1-8b-instant", "llama-3.3-70b-versatile"}:
+        model = "openai/gpt-oss-20b"
     client = AsyncGroq(api_key=key)
 
     schema = {
