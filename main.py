@@ -262,11 +262,11 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         }
     await state.clear()
     message = t(lang,
-        "✅ Բիզնեսի տվյալները ճանաչեցի և պահպանեցի։ Ուղղությունը ստեղծված է որպես սպասող հայտ։ Հաջորդ քայլը՝ բեռնեք հաստատող փաստաթուղթը։",
-        "✅ Данные бизнеса распознаны и сохранены. Направление создано как заявка на проверку. Следующий шаг — загрузите подтверждающий документ.",
-        "✅ I recognized and saved the business. The direction is pending review. Next step: upload the verification document.")
+        "✅ Հայտը կազմված է և ուղարկված է ադմինիստրատորին։ Նա կստուգի բիզնեսը, ուղղությունը, ենթաուղղությունը, ծառայությունը և կուղարկի ձեզ լրացման/փաստաթղթի պահանջը։",
+        "✅ Полная заявка сформирована и отправлена администратору. Он проверит бизнес, направление, поднаправление и услугу, после чего при необходимости вернёт вам на уточнение и запросит документ.",
+        "✅ The full application has been created and sent to the administrator for review. They can request missing details and the verification document.")
     if result.get("proposal_created"):
-        message = t(lang, "✅ Տվյալները պահպանված են։ Նոր ուղղության առաջարկը ուղարկվել է ադմինիստրատորին։", "✅ Данные сохранены. Предложение нового направления отправлено администратору.", "✅ Data saved. The new-direction proposal was sent to the administrator.")
+        message = t(lang, "✅ Ամբողջական հայտը ուղարկվել է ադմինիստրատորին։", "✅ Полная заявка отправлена администратору.", "✅ The full application was sent to the administrator.")
     return {"message": message, "completed": True, "profile": merged, **result}
 
 
