@@ -139,50 +139,29 @@ def _legacy_document_open(request):
 
 def _install_ai_first_partner_flow(main,db):
     async def _new_process(uid,text,state):
-        user=db.get_user(uid) or {}; lang=user.get("lang","hy"); data=await state.get_data(); history=list(data.get("partner_onboarding_history") or []); pending=data.get("partner_onboarding_pending_field"); previous=data.get("partner_profile") or {}; history.append({"role":"user","content":text})
-        from partner_registration_ai import extract,missing_question
-        profile=await extract(text,history,db,previous_profile=previous,pending_field=pending); merged=dict(previous)
+        user=db.get_user(uid) or {}
+        lang=user.get("lang","hy")
+        data=await state.get_data()
+        history=list(data.get("partner_onboarding_history") or [])
+        previous=data.get("partner_profile") or {}
+        history.append({"role":"user","content":text})
+        from partner_registration_ai import extract
+        from ai_first_partner_onboarding import create_partner_application_draft
+        profile=await extract(text,history,db,previous_profile=previous,pending_field=None)
+        merged=dict(previous)
         for k,v in (profile or {}).items():
-            if v not in (None,"",[],{}):merged[k]=v
-        required=[k for k in ("business_name","marz","city","address","phone","services") if not merged.get(k)]
-        merged["missing"]=required
-        merged["ready"]=not required
-        await state.update_data(partner_onboarding_history=history,partner_profile=merged)
-        if required:
-            question=missing_question(merged,lang)
-            history.append({"role":"assistant","content":question})
-            await state.update_data(
-                partner_onboarding_pending_field=required[0],
-                partner_onboarding_history=history,
-                partner_profile=merged,
-            )
-            acknowledgement = str(text or "").strip().lower() in {
-                "լավ", "եղավ", "հա", "այո", "ok", "okay", "хорошо", "ладно", "да", "понял", "понятно", "ок"
-            }
-            prefix = "" if acknowledgement else {
-                "hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ",
-                "ru":"🤖 Я уже собрал данные. ",
-                "en":"🤖 I have collected the information. ",
-            }.get(lang, "🤖 ")
-            return {"message":prefix+question,"completed":False,"profile":merged}
-        from ai_first_partner_onboarding import persist_ready_application
-        try:
-            result=persist_ready_application(db,uid,merged)
-        except ValueError as exc:
-            if str(exc)=="partner_profile_not_ready":
-                required=[k for k in ("business_name","marz","city","address","phone","services") if not merged.get(k)]
-                merged["missing"]=required
-                merged["ready"]=not required
-                if required:
-                    question=missing_question(merged,lang)
-                    history.append({"role":"assistant","content":question})
-                    await state.update_data(partner_onboarding_pending_field=required[0],partner_onboarding_history=history,partner_profile=merged)
-                    return {"message":{"hy":"🤖 ","ru":"🤖 ","en":"🤖 "}.get(lang,"🤖 ")+question,"completed":False,"profile":merged}
-            raise
-        await state.clear(); message={"hy":"✅ Բիզնեսի տվյալները պահպանված են։ Ուղղությունը ուղարկված է ստուգման։ Հաջորդ քայլը՝ բեռնեք հաստատող փաստաթուղթը։","ru":"✅ Данные бизнеса сохранены. Направление отправлено на проверку. Следующий шаг — загрузите подтверждающий документ.","en":"✅ Business data saved. The direction was submitted for review. Next step: upload the verification document."}.get(lang,"Данные сохранены и отправлены на проверку.")
-        if result.get("proposal_created"):message={"hy":"✅ Տվյալները պահպանված են։ Նոր ուղղության առաջարկը ուղարկվել է ադմինիստրատորին։","ru":"✅ Данные сохранены. Предложение нового направления отправлено администратору.","en":"✅ Data saved. The new-direction proposal was sent to the administrator."}.get(lang,"Предложение нового направления отправлено администратору.")
-        return {"message":message,"completed":True,"profile":merged,**result}
-    main._process_partner_onboarding_text=_new_process; main._armenia_ai_first_partner_flow=True
+            if k not in ("missing","ready") and v not in (None,"",[],{}):
+                merged[k]=v
+        result=create_partner_application_draft(db,uid,merged)
+        await state.clear()
+        messages={
+            "hy":"🤖 Ձեր տեղեկությունները հավաքեցի։ Բացել եմ ամբողջական հայտը․ լրացրեք բաց դաշտերը, ստուգեք ուղղությունն ու ենթաուղղությունները, կցեք փաստաթուղթը և սեղմեք «Համաձայն եմ / Ուղարկել հայտը»։",
+            "ru":"🤖 Я собрал информацию из вашего сообщения. Открыл полную анкету: заполните пустые поля, проверьте направление и подкатегории, прикрепите документ и нажмите «Согласен / Отправить заявку».",
+            "en":"🤖 I collected the information from your message. The full application is open: fill in missing fields, check the direction and subcategories, attach the document, and press “Agree / Submit application”."
+        }
+        return {"message":messages.get(lang,messages["ru"]),"completed":False,"open_form":True,**result}
+    main._process_partner_onboarding_text=_new_process
+    main._armenia_ai_first_partner_flow=True
 
 async def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
