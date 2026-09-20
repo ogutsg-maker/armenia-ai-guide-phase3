@@ -456,6 +456,7 @@ async def telegram_webhook(request: web.Request):
         return web.json_response({"ok": False}, status=500)
 
 
+@web.middleware
 async def _webapp_cache_middleware(request: web.Request, handler):
     response = await handler(request)
     # Never let Telegram's embedded WebView keep HTML entry points stale.
