@@ -262,7 +262,12 @@ async def _load_partner_service_catalog(pid: int):
 
 
 async def _ai_match_new_service(pid: int, name: str, description: str = ""):
-    """Map one partner service to the approved catalogue, without exposing taxonomy to the partner."""
+    """Classify a partner service without exposing taxonomy to the partner.
+
+    Services may be created only inside directions already approved for this
+    partner. A service from another direction becomes a structured admin
+    direction request instead of being placed under the wrong direction.
+    """
     key = __import__("os").getenv("GROQ_API_KEY", "").strip()
     if not key or AsyncGroq is None:
         raise RuntimeError("groq_not_configured")
@@ -271,7 +276,31 @@ async def _ai_match_new_service(pid: int, name: str, description: str = ""):
     if not catalog:
         return {"status": "no_catalog"}
 
-    # Keep the prompt compact for the current Groq TPM limit.
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name_am, name_ru, name_en, slug
+                FROM master_categories
+                WHERE is_active=TRUE
+                ORDER BY id
+            """)
+            all_masters = [dict(row) for row in cur.fetchall()]
+
+    approved_master_ids = {_safe_int(x.get("master_category_id")) for x in catalog}
+    approved_masters = []
+    seen = set()
+    for row in catalog:
+        mid = _safe_int(row.get("master_category_id"))
+        if mid in seen:
+            continue
+        seen.add(mid)
+        approved_masters.append({
+            "master_category_id": mid,
+            "hy": _norm(row.get("master_am")),
+            "ru": _norm(row.get("master_ru")),
+            "en": _norm(row.get("master_en")),
+        })
+
     def grams(value):
         value = __import__("re").sub(r"\\s+", "", _norm(value).lower())
         return {value[i:i+3] for i in range(max(0, len(value)-2))}
@@ -283,8 +312,7 @@ async def _ai_match_new_service(pid: int, name: str, description: str = ""):
             rg |= grams(row.get(key))
         return len(sg & rg) / max(1, len(sg)) if sg and rg else 0
 
-    ranked = sorted(catalog, key=score, reverse=True)
-    candidates = ranked[:80]
+    candidates = sorted(catalog, key=score, reverse=True)[:80]
 
     schema = {
         "type": "object",
@@ -292,57 +320,121 @@ async def _ai_match_new_service(pid: int, name: str, description: str = ""):
             "matched_category_id": {"type": ["integer", "null"]},
             "master_category_id": {"type": ["integer", "null"]},
             "proposed_subcategory_name": {"type": ["string", "null"]},
+            "out_of_scope_master_id": {"type": ["integer", "null"]},
             "reason": {"type": "string"},
         },
-        "required": ["matched_category_id", "master_category_id", "proposed_subcategory_name", "reason"],
+        "required": [
+            "matched_category_id", "master_category_id",
+            "proposed_subcategory_name", "out_of_scope_master_id", "reason"
+        ],
         "additionalProperties": False,
     }
+
     system = """You are the service classifier for Armenia AI Guide.
 Understand Armenian, Russian and English.
-The partner gives ONLY a service name and optional description. You decide the catalogue placement.
-Use ONLY real IDs supplied in CANDIDATES.
-If an existing subcategory genuinely fits, return its exact matched_category_id and its master_category_id.
-If none fits, return matched_category_id=null and propose a concise NEW SUBCATEGORY name under the best existing approved master_category_id.
-Never invent an existing ID.
-Do not create a new master direction in this flow.
-If the service is too ambiguous to classify, return both IDs null and proposed_subcategory_name=null.
+
+The partner NEVER chooses a direction or subcategory manually.
+The partner only writes a service and price. You classify it.
+
+STRICT RULES:
+1. A partner may create services ONLY inside directions already approved for that partner.
+2. If an existing subcategory genuinely fits, return its exact matched_category_id
+   and its master_category_id. That master MUST be approved for this partner.
+3. If no existing subcategory fits, but the service clearly belongs to an APPROVED
+   partner direction, return matched_category_id=null, the approved master_category_id,
+   and a concise proposed_subcategory_name.
+4. If the service clearly belongs to a MASTER direction that is NOT approved for this
+   partner, do NOT map it to any approved direction and do NOT propose a subcategory
+   under an approved direction. Return out_of_scope_master_id with the real master ID.
+5. If genuinely ambiguous, return all classification IDs null and no proposal.
+6. Use ONLY real IDs supplied in the prompt. Never invent IDs.
 Return JSON only."""
+
     prompt = (
-        "SERVICE:\n" + json.dumps({"name": _norm(name), "description": _norm(description)[:500]}, ensure_ascii=False)
-        + "\nCANDIDATES:\n" + json.dumps([
+        "SERVICE:\n" + json.dumps(
+            {"name": _norm(name), "description": _norm(description)[:500]},
+            ensure_ascii=False
+        )
+        + "\nAPPROVED PARTNER DIRECTIONS:\n"
+        + json.dumps(approved_masters, ensure_ascii=False)
+        + "\nALL PLATFORM DIRECTIONS (for detecting an unapproved direction):\n"
+        + json.dumps([
+            {"master_category_id": _safe_int(x.get("id")),
+             "hy": _norm(x.get("name_am")),
+             "ru": _norm(x.get("name_ru")),
+             "en": _norm(x.get("name_en"))}
+            for x in all_masters
+        ], ensure_ascii=False)
+        + "\nAPPROVED DIRECTION SUBCATEGORIES:\n"
+        + json.dumps([
             {"category_id": _safe_int(x.get("category_id")),
              "master_category_id": _safe_int(x.get("master_category_id")),
-             "subcategory_hy": _norm(x.get("category_am")),
-             "subcategory_ru": _norm(x.get("category_ru")),
-             "subcategory_en": _norm(x.get("category_en")),
+             "hy": _norm(x.get("category_am")),
+             "ru": _norm(x.get("category_ru")),
+             "en": _norm(x.get("category_en")),
              "direction_hy": _norm(x.get("master_am")),
              "direction_ru": _norm(x.get("master_ru")),
              "direction_en": _norm(x.get("master_en"))}
             for x in candidates
         ], ensure_ascii=False)
     )
+
     client = AsyncGroq(api_key=key)
-    result = await _groq_json(client, __import__("os").getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-                              system, prompt, "partner_service_classification", schema, 220)
-    allowed = {_safe_int(x.get("category_id")) for x in candidates}
+    result = await _groq_json(
+        client,
+        __import__("os").getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+        system,
+        prompt,
+        "partner_service_classification",
+        schema,
+        260,
+    )
+
+    allowed = {_safe_int(x.get("category_id")) for x in catalog}
     cid = _safe_int(result.get("matched_category_id"))
     mid = _safe_int(result.get("master_category_id"))
+    out_mid = _safe_int(result.get("out_of_scope_master_id"))
+
     if cid is not None and cid not in allowed:
         cid = None
-    valid_masters = {_safe_int(x.get("master_category_id")) for x in catalog}
-    if mid is not None and mid not in valid_masters:
+    if mid is not None and mid not in approved_master_ids:
         mid = None
+    all_master_ids = {_safe_int(x.get("id")) for x in all_masters}
+    if out_mid is not None and out_mid not in all_master_ids:
+        out_mid = None
+
     if cid is not None:
         row = next((x for x in catalog if _safe_int(x.get("category_id")) == cid), None)
         mid = _safe_int(row.get("master_category_id")) if row else mid
+        out_mid = None
+
+    if out_mid is not None and out_mid not in approved_master_ids:
+        master = next((x for x in all_masters if _safe_int(x.get("id")) == out_mid), None)
+        return {
+            "status": "out_of_scope",
+            "category_id": None,
+            "master_category_id": None,
+            "out_of_scope_master_id": out_mid,
+            "out_of_scope_master_name": _norm(
+                (master or {}).get("name_am")
+                or (master or {}).get("name_ru")
+                or (master or {}).get("name_en")
+            ),
+            "proposed_name": "",
+            "reason": _norm(result.get("reason")),
+        }
+
+    proposed = _norm(result.get("proposed_subcategory_name"))
     return {
-        "status": "matched" if cid is not None else ("proposal" if mid is not None and _norm(result.get("proposed_subcategory_name")) else "clarification"),
+        "status": (
+            "matched" if cid is not None
+            else ("proposal" if mid is not None and proposed else "clarification")
+        ),
         "category_id": cid,
         "master_category_id": mid,
-        "proposed_name": _norm(result.get("proposed_subcategory_name")),
+        "proposed_name": proposed,
         "reason": _norm(result.get("reason")),
     }
-
 
 async def api_service_create(request: web.Request):
     uid = _auth_partner(request)
@@ -369,6 +461,62 @@ async def api_service_create(request: web.Request):
             "error": "no_approved_catalog",
             "message": "Նախ պետք է հաստատված ուղղություն ունենաք։"
         }, status=409)
+
+    if match["status"] == "out_of_scope":
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS service_direction_requests (
+                        id BIGSERIAL PRIMARY KEY,
+                        partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+                        requested_master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
+                        requested_master_name TEXT,
+                        requested_service_name TEXT NOT NULL,
+                        description TEXT,
+                        price NUMERIC,
+                        reason TEXT,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        admin_note TEXT,
+                        reviewed_by BIGINT,
+                        reviewed_at TIMESTAMPTZ,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    SELECT id FROM service_direction_requests
+                    WHERE partner_id=%s
+                      AND requested_master_category_id=%s
+                      AND lower(trim(requested_service_name))=lower(trim(%s))
+                      AND status='pending'
+                    LIMIT 1
+                """, (pid, match["out_of_scope_master_id"], name))
+                duplicate = cur.fetchone()
+                if duplicate:
+                    request_id = int(duplicate["id"])
+                else:
+                    cur.execute("""
+                        INSERT INTO service_direction_requests
+                            (partner_id, requested_master_category_id, requested_master_name,
+                             requested_service_name, description, price, reason, status)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,'pending')
+                        RETURNING id
+                    """, (
+                        pid,
+                        match["out_of_scope_master_id"],
+                        match.get("out_of_scope_master_name") or None,
+                        name,
+                        description or None,
+                        price,
+                        match.get("reason") or None,
+                    ))
+                    request_id = int(cur.fetchone()["id"])
+            conn.commit()
+        return web.json_response({
+            "ok": True,
+            "direction_request_created": True,
+            "request_id": request_id,
+            "message": "Այս ծառայությունը ձեր հաստատված ուղղությունների մեջ չէ։ AI-ն կառուցվածքային հարցումն ուղարկել է ադմինիստրատորին՝ համապատասխան ուղղության հաստատման համար։"
+        })
 
     if match["status"] == "clarification":
         return web.json_response({
