@@ -64,6 +64,19 @@ def _partner_id(telegram_id: int) -> int | None:
             return int(row["id"]) if row else None
 
 
+def _business_id(request: web.Request, pid: int) -> int | None:
+    raw=str(request.headers.get("X-Business-Id") or "").strip()
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            if raw.isdigit():
+                cur.execute("SELECT id FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(int(raw),pid))
+                row=cur.fetchone()
+                if row: return int(row["id"])
+            cur.execute("SELECT id FROM partner_businesses WHERE partner_id=%s AND status='active' ORDER BY is_default DESC,id LIMIT 1",(pid,))
+            row=cur.fetchone()
+            return int(row["id"]) if row else None
+
+
 def _require_partner(telegram_id: int) -> int:
     pid = _partner_id(telegram_id)
     if not pid:
@@ -84,27 +97,28 @@ def _table_exists(conn, table_name: str) -> bool:
 async def api_dashboard(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM partners WHERE id=%s", (pid,))
             partner = cur.fetchone() or {}
 
-            cur.execute("SELECT COUNT(*) AS n FROM services WHERE partner_id=%s", (pid,))
+            cur.execute("SELECT COUNT(*) AS n FROM services WHERE partner_id=%s AND business_id=%s", (pid,bid))
             services_count = int(cur.fetchone()["n"])
-            cur.execute("SELECT COUNT(*) AS n FROM partner_objects WHERE partner_id=%s", (pid,))
+            cur.execute("SELECT COUNT(*) AS n FROM partner_objects WHERE partner_id=%s AND business_id=%s", (pid,bid))
             objects_count = int(cur.fetchone()["n"])
-            cur.execute("SELECT COUNT(*) AS n FROM partner_locations WHERE partner_id=%s", (pid,))
+            cur.execute("SELECT COUNT(*) AS n FROM partner_locations WHERE partner_id=%s AND business_id=%s", (pid,bid))
             locations_count = int(cur.fetchone()["n"])
 
             bookings_count = 0
             active_bookings = 0
             if _table_exists(conn, "bookings"):
-                cur.execute("SELECT COUNT(*) AS n FROM bookings WHERE partner_id=%s", (pid,))
+                cur.execute("SELECT COUNT(*) AS n FROM bookings WHERE partner_id=%s AND business_id=%s", (pid,bid))
                 bookings_count = int(cur.fetchone()["n"])
                 cur.execute(
                     """SELECT COUNT(*) AS n FROM bookings
-                       WHERE partner_id=%s AND status IN ('pending','confirmed','paid','booked','in_progress')""",
-                    (pid,),
+                       WHERE partner_id=%s AND business_id=%s AND status IN ('pending','confirmed','paid','booked','in_progress')""",
+                    (pid,bid),
                 )
                 active_bookings = int(cur.fetchone()["n"])
 
@@ -168,9 +182,10 @@ async def api_settings_update(request: web.Request):
 async def api_objects(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM partner_objects WHERE partner_id=%s ORDER BY id", (pid,))
+            cur.execute("SELECT * FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid,bid))
             rows = cur.fetchall()
     return web.json_response({"ok": True, "objects": _json(rows)})
 
@@ -178,6 +193,7 @@ async def api_objects(request: web.Request):
 async def api_object_create(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     data = await request.json()
     name = str(data.get("object_name") or data.get("name") or "").strip()
     if not name:
@@ -185,9 +201,9 @@ async def api_object_create(request: web.Request):
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO partner_objects(partner_id,object_name,address,city,marz,data_json)
-                   VALUES(%s,%s,%s,%s,%s,%s) RETURNING *""",
-                (pid, name, data.get("address"), data.get("city"), data.get("marz"), json.dumps(data.get("data_json") or {})),
+                """INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,data_json)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                (pid,bid,name,data.get("address"),data.get("city"),data.get("marz"),json.dumps(data.get("data_json") or {})),
             )
             row = cur.fetchone()
         conn.commit()
@@ -197,10 +213,11 @@ async def api_object_create(request: web.Request):
 async def api_object_delete(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     oid = int(request.match_info["object_id"])
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM partner_objects WHERE id=%s AND partner_id=%s RETURNING id", (oid, pid))
+            cur.execute("DELETE FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING id", (oid,pid,bid))
             row = cur.fetchone()
         conn.commit()
     if not row:
@@ -211,6 +228,7 @@ async def api_object_delete(request: web.Request):
 async def api_services(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
             # Keep the partner service list independent from optional
@@ -220,7 +238,7 @@ async def api_services(request: web.Request):
             cur.execute(
                 """SELECT s.*
                    FROM services s
-                   WHERE s.partner_id=%s
+                   WHERE s.partner_id=%s AND s.business_id=%s
                      AND (s.status IS NULL OR s.status <> 'deleted')
                    ORDER BY s.id DESC""",
                 (pid,),
@@ -239,175 +257,106 @@ async def api_services(request: web.Request):
     return web.json_response({"ok": True, "services": _json(rows)})
 
 
-async def _load_partner_service_catalog(pid: int, business_id: int | None = None):
-    """Load subcategories only from the selected business's approved directions."""
+async def _load_partner_service_catalog(pid: int, business_id: int | None):
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT c.id AS category_id, c.master_category_id,
-                       c.name_am AS category_am, c.name_ru AS category_ru,
-                       c.name_en AS category_en, c.slug AS category_slug,
-                       m.name_am AS master_am, m.name_ru AS master_ru,
-                       m.name_en AS master_en, m.slug AS master_slug
-                FROM categories c
-                JOIN master_categories m ON m.id=c.master_category_id
-                JOIN partner_directions pd
-                  ON pd.partner_id=%s
-                 AND pd.master_category_id=c.master_category_id
-                 AND pd.status='approved'
-                 AND pd.business_id=%s
-                WHERE c.is_active=TRUE AND m.is_active=TRUE
-                ORDER BY c.master_category_id, c.id
-            """, (pid,business_id))
-            return [dict(row) for row in cur.fetchall()]
+            cur.execute("""SELECT c.id AS category_id,c.master_category_id,c.name_am AS category_am,c.name_ru AS category_ru,c.name_en AS category_en,c.slug AS category_slug,
+                                  m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en,m.slug AS master_slug
+                           FROM categories c JOIN master_categories m ON m.id=c.master_category_id
+                           JOIN partner_directions pd ON pd.partner_id=%s AND pd.master_category_id=c.master_category_id
+                              AND pd.status='approved' AND pd.business_id=%s
+                           WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.master_category_id,c.id""",(pid,business_id))
+            return [dict(x) for x in cur.fetchall()]
 
 
-async def _ai_match_new_service(pid: int, name: str, description: str = "", business_id: int | None = None):
-    key = __import__("os").getenv("GROQ_API_KEY", "").strip()
-    if not key or AsyncGroq is None:
-        raise RuntimeError("groq_not_configured")
-    catalog = await _load_partner_service_catalog(pid, business_id)
+async def _ai_match_new_service(pid: int,name: str,description: str="",business_id: int|None=None):
+    key=__import__("os").getenv("GROQ_API_KEY","").strip()
+    if not key or AsyncGroq is None: raise RuntimeError("groq_not_configured")
+    catalog=await _load_partner_service_catalog(pid,business_id)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,name_am,name_ru,name_en,slug FROM master_categories WHERE is_active=TRUE ORDER BY id")
-            all_masters=[dict(row) for row in cur.fetchall()]
-            cur.execute("SELECT id,name,description FROM partner_businesses WHERE id=%s AND partner_id=%s", (business_id,pid))
+            cur.execute("SELECT id,name_am,name_ru,name_en FROM master_categories WHERE is_active=TRUE ORDER BY id")
+            masters=[dict(x) for x in cur.fetchall()]
+            cur.execute("SELECT name,description FROM partner_businesses WHERE id=%s AND partner_id=%s",(business_id,pid))
             business=cur.fetchone() or {}
-    if not catalog:
-        return {"status":"no_catalog","business_action":"same_business"}
-    approved_ids={_safe_int(x.get("master_category_id")) for x in catalog}
-    approved_masters=[]; seen=set()
-    for x in catalog:
-        mid=_safe_int(x.get("master_category_id"))
-        if mid in seen: continue
-        seen.add(mid)
-        approved_masters.append({"master_category_id":mid,"hy":_norm(x.get("master_am")),"ru":_norm(x.get("master_ru")),"en":_norm(x.get("master_en"))})
-    def grams(v):
-        v=__import__("re").sub(r"\s+","",_norm(v).lower())
-        return {v[i:i+3] for i in range(max(0,len(v)-2))}
-    sg=grams(name+" "+description)
-    def score(row):
-        rg=set()
-        for k in ("category_am","category_ru","category_en","master_am","master_ru","master_en"): rg |= grams(row.get(k))
-        return len(sg&rg)/max(1,len(sg)) if sg and rg else 0
-    candidates=sorted(catalog,key=score,reverse=True)[:80]
-    schema={
-      "type":"object","properties":{
-        "matched_category_id":{"type":["integer","null"]},
-        "master_category_id":{"type":["integer","null"]},
-        "proposed_subcategory_name":{"type":["string","null"]},
-        "out_of_scope_master_id":{"type":["integer","null"]},
-        "business_action":{"type":"string"},
-        "proposed_business_name":{"type":["string","null"]},
-        "reason":{"type":"string"}
-      },
-      "required":["matched_category_id","master_category_id","proposed_subcategory_name","out_of_scope_master_id","business_action","proposed_business_name","reason"],
-      "additionalProperties":False
-    }
-    system="""You classify a partner's new service for Armenia AI Guide.
-The partner does not choose taxonomy manually.
-Decide whether this service belongs to the selected business or clearly represents a separate organization/business.
-Use new_business only when the text/meaning indicates a distinct organization or activity that should not be mixed into the current business.
-If it is the same business but a new direction, use same_business.
-If an existing approved subcategory fits, return its exact ID.
-If another platform direction is needed, return its exact master ID.
-Never invent IDs."""
-    prompt=json.dumps({
-      "current_business":{"name":_norm(business.get("name")),"description":_norm(business.get("description"))},
-      "service":{"name":_norm(name),"description":_norm(description)[:800]},
-      "approved_directions":approved_masters,
-      "all_directions":[{"id":_safe_int(x.get("id")),"hy":_norm(x.get("name_am")),"ru":_norm(x.get("name_ru")),"en":_norm(x.get("name_en"))} for x in all_masters],
-      "approved_subcategories":[{"category_id":_safe_int(x.get("category_id")),"master_category_id":_safe_int(x.get("master_category_id")),"hy":_norm(x.get("category_am")),"ru":_norm(x.get("category_ru")),"en":_norm(x.get("category_en"))} for x in candidates]
-    },ensure_ascii=False)
-    client=AsyncGroq(api_key=key)
-    result=await _groq_json(client,__import__("os").getenv("GROQ_MODEL","openai/gpt-oss-20b"),system,prompt,"partner_service_classification",schema,300)
+    if not catalog: return {"status":"no_catalog","business_action":"same_business"}
+    approved={int(x["master_category_id"]) for x in catalog}
+    candidates=catalog[:80]
+    schema={"type":"object","properties":{
+      "matched_category_id":{"type":["integer","null"]},"master_category_id":{"type":["integer","null"]},
+      "proposed_subcategory_name":{"type":["string","null"]},"out_of_scope_master_id":{"type":["integer","null"]},
+      "business_action":{"type":"string"},"proposed_business_name":{"type":["string","null"]},"reason":{"type":"string"}},
+      "required":["matched_category_id","master_category_id","proposed_subcategory_name","out_of_scope_master_id","business_action","proposed_business_name","reason"],"additionalProperties":False}
+    system="""Classify a partner service. The partner does not choose taxonomy manually.
+Use same_business when it belongs to the selected organization. Use new_business only when it clearly represents a separate organization/business.
+If it fits an approved subcategory return its exact category ID. If it needs an unapproved platform direction return that exact master ID. Never invent IDs."""
+    prompt=json.dumps({"current_business":dict(business),"service":{"name":name,"description":description[:800]},
+      "approved_directions":[{"id":x["master_category_id"],"hy":x["master_am"],"ru":x["master_ru"],"en":x["master_en"]} for x in catalog if x["master_category_id"] in approved],
+      "all_directions":[{"id":x["id"],"hy":x["name_am"],"ru":x["name_ru"],"en":x["name_en"]} for x in masters],
+      "subcategories":[{"id":x["category_id"],"master_id":x["master_category_id"],"hy":x["category_am"],"ru":x["category_ru"],"en":x["category_en"]} for x in candidates]},ensure_ascii=False)
+    result=await _groq_json(AsyncGroq(api_key=key),__import__("os").getenv("GROQ_MODEL","openai/gpt-oss-20b"),system,prompt,"partner_service_classification",schema,280)
     cid=_safe_int(result.get("matched_category_id")); mid=_safe_int(result.get("master_category_id")); out=_safe_int(result.get("out_of_scope_master_id"))
-    all_ids={_safe_int(x.get("id")) for x in all_masters}
-    if cid not in {_safe_int(x.get("category_id")) for x in catalog}: cid=None
-    if mid not in approved_ids: mid=None
-    if out not in all_ids: out=None
-    action=_norm(result.get("business_action")).lower()
-    action="new_business" if action in {"new_business","new-business","new business"} else "same_business"
-    proposed_business=_norm(result.get("proposed_business_name"))
+    valid={_safe_int(x["category_id"]) for x in catalog}; allids={_safe_int(x["id"]) for x in masters}
+    if cid not in valid: cid=None
+    if mid not in approved: mid=None
+    if out not in allids: out=None
+    action="new_business" if str(result.get("business_action") or "").strip().lower() in {"new_business","new business","new-business"} else "same_business"
+    proposed=_norm(result.get("proposed_business_name"))
     if cid is not None:
-        row=next(x for x in catalog if _safe_int(x.get("category_id"))==cid)
-        return {"status":"matched","category_id":cid,"master_category_id":_safe_int(row.get("master_category_id")),"business_action":action,"proposed_business_name":proposed_business,"reason":_norm(result.get("reason"))}
+        row=next(x for x in catalog if _safe_int(x["category_id"])==cid)
+        return {"status":"matched","category_id":cid,"master_category_id":_safe_int(row["master_category_id"]),"business_action":action,"proposed_business_name":proposed,"reason":_norm(result.get("reason"))}
     if out is not None:
-        master=next((x for x in all_masters if _safe_int(x.get("id"))==out),{})
+        m=next((x for x in masters if _safe_int(x["id"])==out),{})
         return {"status":"out_of_scope","category_id":None,"master_category_id":None,"out_of_scope_master_id":out,
-                "out_of_scope_master_name":_norm(master.get("name_am") or master.get("name_ru") or master.get("name_en")),
-                "proposed_name":_norm(result.get("proposed_subcategory_name")),
-                "business_action":action,"proposed_business_name":proposed_business,"reason":_norm(result.get("reason"))}
-    proposed=_norm(result.get("proposed_subcategory_name"))
-    return {"status":"proposal" if mid and proposed else "clarification","category_id":None,"master_category_id":mid,
-            "proposed_name":proposed,"business_action":action,"proposed_business_name":proposed_business,"reason":_norm(result.get("reason"))}
+                "out_of_scope_master_name":_norm(m.get("name_am") or m.get("name_ru") or m.get("name_en")),
+                "proposed_name":_norm(result.get("proposed_subcategory_name")),"business_action":action,"proposed_business_name":proposed,"reason":_norm(result.get("reason"))}
+    proposed_sub=_norm(result.get("proposed_subcategory_name"))
+    return {"status":"proposal" if mid and proposed_sub else "clarification","category_id":None,"master_category_id":mid,
+            "proposed_name":proposed_sub,"business_action":action,"proposed_business_name":proposed,"reason":_norm(result.get("reason"))}
 
 async def api_service_create(request: web.Request):
     uid=_auth_partner(request); pid=_require_partner(uid); bid=_business_id(request,pid)
-    data=await request.json()
-    name=str(data.get("name") or data.get("service_name") or "").strip()
-    description=str(data.get("description") or "").strip()
+    data=await request.json(); name=str(data.get("name") or data.get("service_name") or "").strip(); description=str(data.get("description") or "").strip()
     if not name: return web.json_response({"ok":False,"error":"service_name_required"},status=400)
-    price=data.get("price")
-    try: price=float(price) if price not in (None,"") else None
+    try: price=float(data.get("price")) if data.get("price") not in (None,"") else None
     except (TypeError,ValueError): return web.json_response({"ok":False,"error":"invalid_price"},status=400)
     try: match=await _ai_match_new_service(pid,name,description,bid)
     except Exception as exc: return web.json_response({"ok":False,"error":"service_ai_failed","detail":str(exc)[:300]},status=503)
-
-    # A new direction/business is always an application, never an immediate live record.
     if match["status"] in {"out_of_scope","proposal"} or match.get("business_action")=="new_business":
         from partner_business_application_api import ensure_business_application_schema
         ensure_business_application_schema()
-        application_business_id = None if match.get("business_action")=="new_business" else bid
+        app_bid=None if match.get("business_action")=="new_business" else bid
         with _connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                  INSERT INTO partner_applications(
-                    partner_id,business_id,status,business_name,location_city,
-                    direction_name,master_category_id,subcategory_name,service_name,
-                    price,description,ai_reason,payload_json
-                  ) VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
-                  RETURNING id
-                """,(
-                  pid,application_business_id,
-                  match.get("proposed_business_name") if application_business_id is None else None,
-                  data.get("city") or None,
-                  match.get("out_of_scope_master_name") or "",
-                  match.get("out_of_scope_master_id") or match.get("master_category_id"),
-                  match.get("proposed_name") or None,name,price,description,
-                  match.get("reason") or "",
-                  json.dumps({"source":"partner_service","current_business_id":bid,"new_business":match.get("business_action")=="new_business"},ensure_ascii=False)
-                ))
+                cur.execute("""INSERT INTO partner_applications(partner_id,business_id,status,business_name,direction_name,master_category_id,subcategory_name,service_name,price,description,ai_reason,payload_json)
+                               VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
+                            (pid,app_bid,match.get("proposed_business_name") if app_bid is None else None,
+                             match.get("out_of_scope_master_name") or "",match.get("out_of_scope_master_id") or match.get("master_category_id"),
+                             match.get("proposed_name") or None,name,price,description,match.get("reason") or "",
+                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None},ensure_ascii=False)))
                 aid=int(cur.fetchone()["id"])
             conn.commit()
-        return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,
-          "new_business":match.get("business_action")=="new_business",
-          "message":"AI-ն կազմեց ամբողջական հայտ և ուղարկեց ադմինիստրատորին։"})
-
-    if match["status"]=="no_catalog":
-        return web.json_response({"ok":False,"error":"no_approved_catalog","message":"Նախ պետք է ունենաք հաստատված ուղղություն։"},status=409)
-    if match["status"]=="clarification":
-        return web.json_response({"ok":False,"error":"service_needs_clarification","message":"Գրեք ծառայության մասին մի փոքր ավելի մանրամասն։"},status=422)
-
+        return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,"new_business":app_bid is None,
+                                  "message":"AI-ն կազմեց ամբողջական հայտ և ուղարկեց ադմինիստրատորին։"})
+    if match["status"]=="no_catalog": return web.json_response({"ok":False,"error":"no_approved_catalog","message":"Նախ պետք է ունենաք հաստատված ուղղություն։"},status=409)
+    if match["status"]=="clarification": return web.json_response({"ok":False,"error":"service_needs_clarification","message":"Գրեք ծառայության մասին մի փոքր ավելի մանրամասն։"},status=422)
     payload=json.dumps({"ai_source":True,"matched_subcategory_id":match["category_id"],"master_category_id":match["master_category_id"],"business_id":bid},ensure_ascii=False)
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted' ORDER BY id DESC LIMIT 1",(pid,bid,name))
-            existing=cur.fetchone()
-            if existing:
-                cur.execute("""UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,description=%s,status='pending',data_json=%s::jsonb,updated_at=NOW()
-                               WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *""",(match["category_id"],price,description,payload,existing["id"],pid,bid))
+            old=cur.fetchone()
+            if old:
+                cur.execute("UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,description=%s,status='pending',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",(match["category_id"],price,description,payload,old["id"],pid,bid))
             else:
-                cur.execute("""INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json)
-                               VALUES(%s,%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb) RETURNING *""",(pid,bid,match["category_id"],name,description,price,payload))
+                cur.execute("INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json) VALUES(%s,%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb) RETURNING *",(pid,bid,match["category_id"],name,description,price,payload))
             row=cur.fetchone()
         conn.commit()
-    return web.json_response({"ok":True,"service":_json(row),"matched_category_id":match["category_id"],"master_category_id":match["master_category_id"],
-                              "message":"Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ստուգման։"})
+    return web.json_response({"ok":True,"service":_json(row),"matched_category_id":match["category_id"],"master_category_id":match["master_category_id"],"message":"Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ստուգման։"})
 
 async def api_service_update(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     bid = _business_id(request, pid)
     sid = int(request.match_info["service_id"])
     data = await request.json()
@@ -431,6 +380,7 @@ async def api_service_update(request: web.Request):
 async def api_service_delete(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     sid = int(request.match_info["service_id"])
     bid = _business_id(request, pid)
     with _connect() as conn:
