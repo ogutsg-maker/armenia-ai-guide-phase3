@@ -474,9 +474,12 @@ async def api_service_create(request: web.Request):
                         requested_service_name TEXT NOT NULL,
                         description TEXT,
                         price NUMERIC,
+                        proposed_subcategory_name TEXT,
                         reason TEXT,
-                        status TEXT NOT NULL DEFAULT 'pending',
+                        status TEXT NOT NULL DEFAULT 'pending_admin',
                         admin_note TEXT,
+                        partner_direction_id BIGINT REFERENCES partner_directions(id) ON DELETE SET NULL,
+                        document_id BIGINT REFERENCES partner_verification_documents(id) ON DELETE SET NULL,
                         reviewed_by BIGINT,
                         reviewed_at TIMESTAMPTZ,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -497,14 +500,16 @@ async def api_service_create(request: web.Request):
                     cur.execute("""
                         INSERT INTO service_direction_requests
                             (partner_id, requested_master_category_id, requested_master_name,
-                             requested_service_name, description, price, reason, status)
-                        VALUES(%s,%s,%s,%s,%s,%s,%s,'pending')
+                             requested_service_name, proposed_subcategory_name,
+                             description, price, reason, status)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending_admin')
                         RETURNING id
                     """, (
                         pid,
                         match["out_of_scope_master_id"],
                         match.get("out_of_scope_master_name") or None,
                         name,
+                        match.get("proposed_name") or "",
                         description or None,
                         price,
                         match.get("reason") or None,
