@@ -408,8 +408,15 @@ def create_partner_application_draft(db, uid: int, profile: dict[str, Any]) -> d
     category_id = None
     try:
         master_id, category_ids = _direction_match(db, profile)
+        # Keep the AI-selected real master direction even when a particular
+        # service has no subcategory match yet; the partner can correct it in
+        # the full form.
+        if not master_id:
+            master_id = _safe_int(profile.get("master_category_id"))
         category_id = _safe_int(category_ids[0]) if category_ids else None
     except Exception:
+        master_id = _safe_int(profile.get("master_category_id"))
+        category_id = None
         logger.exception("Draft catalogue classification failed")
     payload = dict(profile)
     payload["services"] = services
