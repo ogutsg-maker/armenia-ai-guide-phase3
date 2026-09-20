@@ -149,7 +149,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
     if not out.get("marz") and out.get("city"):
         city_key = _norm(out["city"]).lower()
         marz_by_city = {
-            "հրազդան": "Կոտայք", "hrazdan": "Կոտայք",
+            "հրազդան": "Կոտայք", "ռազդան": "Կոտայք", "hrazdan": "Կոտայք",
             "աբովյան": "Կոտայք", "abovyan": "Կոտայք",
             "չարենցավան": "Կոտայք", "charentsavan": "Կոտայք",
             "գյումրի": "Շիրակ", "gyumri": "Շիրակ",
@@ -226,6 +226,47 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         if key not in seen:
             seen.add(key); result.append(item)
     return result
+
+
+def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[dict]:
+    """Deterministic safety net when Groq catalog matching rejects a request.
+    It only returns IDs whose Armenian/Russian/English names are actually in the
+    supplied active catalogue; it never invents an ID.
+    """
+    out = [dict(x) for x in services]
+    rules = [
+        (("սանրվածք", "սանրվածքները", "стриж", "haircut"), ("սանրված", "парикмах", "haircut")),
+        (("գունավորում", "գունավորումը", "ներկում", "ներկ", "окраш", "волос", "coloring"), ("ներկ", "окраш", "color")),
+        (("ոճավորում", "ոճավորումը", "դասավորում", "уклад", "styling"), ("դասավորում", "уклад", "styling")),
+        (("մատնահարդարում", "маникюр", "manicure"), ("մատնահարդարում", "маникюр", "manicure")),
+        (("պեդիկյուր", "педикюр", "pedicure"), ("ոտնահարդարում", "педикюр", "pedicure")),
+        (("դիմահարդարում", "դիմահարդարումը", "макияж", "makeup"), ("դիմահարդարում", "макияж", "makeup")),
+    ]
+    for item in out:
+        if _safe_int(item.get("matched_subcategory_id")) is not None:
+            continue
+        name = _norm(item.get("name")).lower()
+        if not name:
+            continue
+        needles = None
+        targets = None
+        for src, dst in rules:
+            if any(x in name for x in src):
+                needles, targets = src, dst
+                break
+        if not targets:
+            continue
+        for row in catalog:
+            labels = [_norm(row.get("category_am")), _norm(row.get("category_ru")), _norm(row.get("category_en"))]
+            low = [x.lower() for x in labels if x]
+            if any(any(t in label for t in targets) for label in low):
+                cid = _safe_int(row.get("category_id"))
+                if cid is not None:
+                    item["matched_subcategory_id"] = cid
+                    item["match_confidence"] = 0.85
+                    item["match_reason"] = "Deterministic multilingual fallback matched an explicit service term to the active catalogue."
+                    break
+    return out
 
 
 def _parse_json(text: str) -> dict:
@@ -356,7 +397,7 @@ prefer null or the clearer broader candidate. Give a short reason."""
                 out[idx]["match_reason"] = _norm(item.get("match_reason") or "")[:500]
         return out
     except Exception:
-        return [dict(x, matched_subcategory_id=None, match_confidence=0.0, match_reason="No reliable catalogue match.") for x in services]
+        return _fallback_catalog_match(services, catalog)
 
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
