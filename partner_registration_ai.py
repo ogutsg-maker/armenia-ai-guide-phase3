@@ -237,7 +237,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         price_type = "from" if "ից" in full or re.search(
             r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I
         ) else "fixed"
-        found.append({"name": name, "price": price, "price_type": price_type, "matched_subcategory_id": None})
+        found.append({"name": name, "raw_sub_direction": name, "price": price, "price_type": price_type, "matched_subcategory_id": None})
     result=[]; seen=set()
     for item in found:
         key=(item["name"].lower(),item["price"],item["price_type"])
@@ -336,86 +336,56 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
     raise last_error or RuntimeError("Groq request failed")
 
 
-async def _match_services_universal(client, model, services, catalog):
-    """Match services only against subcategories of the selected direction."""
-    if not services or not catalog:
+def _match_services_universal(db, services, master_id):
+    """Resolve each AI service phrase to a real active subcategory in PostgreSQL.
+
+    Groq supplies semantic text; PostgreSQL owns the final ID decision.
+    No subcategory IDs are invented by the model.
+    """
+    if not services or _safe_int(master_id) is None:
         return services
 
-    def grams(value):
-        value = re.sub(r"\s+", "", _norm(value).lower())
-        return {value[i:i+3] for i in range(max(0, len(value)-2))}
+    out = [dict(x) for x in services]
+    for item in out:
+        if _safe_int(item.get("matched_subcategory_id")) is not None:
+            continue
 
-    def score(service_name, row):
-        sg = grams(service_name)
-        rg = set()
-        for key in ("category_am", "category_ru", "category_en"):
-            rg |= grams(row.get(key))
-        return len(sg & rg) / max(1, len(sg)) if sg and rg else 0
+        query = _norm(item.get("raw_sub_direction") or item.get("name"))
+        if not query:
+            continue
 
-    # Use every active subcategory of the selected direction. This avoids
-    # lexical pre-filtering that can send Armenian/Russian service names to
-    # the wrong beauty/repair category.
-    candidates = list(catalog)
+        try:
+            matches = db.find_similar_subcategories(_safe_int(master_id), query, limit=3)
+        except Exception:
+            matches = []
 
+        if not matches:
+            continue
 
-    schema = {
-        "type": "object",
-        "properties": {"matches": {"type": "array", "items": {
-            "type": "object",
-            "properties": {
-                "service_index": {"type": "integer"},
-                "matched_subcategory_id": {"type": ["integer", "null"]},
-                "match_confidence": {"type": "number"},
-                "match_reason": {"type": "string"},
-            },
-            "required": ["service_index", "matched_subcategory_id", "match_confidence", "match_reason"],
-            "additionalProperties": False,
-        }}},
-        "required": ["matches"],
-        "additionalProperties": False,
-    }
-    system = """You are a universal multilingual catalogue matcher for a real marketplace.
-Understand Armenian, Russian and English, including inflected forms, colloquial wording and transliteration.
-This is SEMANTIC classification, not keyword matching.
-For every service, understand what the customer actually receives, compare it with EVERY supplied
-candidate, and choose the most specific existing candidate that genuinely represents that service.
-Never choose a merely related candidate. Example: haircut is NOT hair coloring.
-Use ONLY supplied real IDs. Never invent an ID or category. If none is a genuine fit, return null.
-Confidence must be 0..1. If two candidates are genuinely close and the wording is insufficient,
-prefer null or the clearer broader candidate. Give a short reason."""
-    prompt = (
-        "SERVICES:\n" + json.dumps(
-            [{"service_index": i, "name": _norm(x.get("name"))}
-             for i, x in enumerate(services)], ensure_ascii=False)
-        + "\nREAL CANDIDATES:\n"
-        + json.dumps([
-            {"id": _safe_int(x.get("category_id")),
-             "hy": _norm(x.get("category_am")),
-             "ru": _norm(x.get("category_ru")),
-             "en": _norm(x.get("category_en"))}
-            for x in candidates
-        ], ensure_ascii=False)
-    )
-    try:
-        result = await _groq_json(
-            client, model, system, prompt,
-            "service_catalog_matches", schema, 250
-        )
-        allowed = {_safe_int(x.get("category_id")) for x in candidates}
-        out = [dict(x) for x in services]
-        for item in result.get("matches") or []:
-            idx = _safe_int(item.get("service_index"))
-            cid = _safe_int(item.get("matched_subcategory_id"))
-            if idx is not None and 0 <= idx < len(out) and (cid is None or cid in allowed):
-                out[idx]["matched_subcategory_id"] = cid
-                try:
-                    out[idx]["match_confidence"] = max(0.0, min(1.0, float(item.get("match_confidence") or 0.0)))
-                except (TypeError, ValueError):
-                    out[idx]["match_confidence"] = 0.0
-                out[idx]["match_reason"] = _norm(item.get("match_reason") or "")[:500]
-        return out
-    except Exception:
-        return _fallback_catalog_match(services, catalog)
+        best = matches[0]
+        score = float(best.get("match_score") or 0)
+        if score > 0.60:
+            item["matched_subcategory_id"] = _safe_int(best.get("id"))
+            item["match_confidence"] = min(1.0, score)
+            item["match_reason"] = "PostgreSQL pg_trgm high-confidence match."
+        elif score >= 0.30:
+            item["catalog_candidates"] = [
+                {
+                    "id": _safe_int(row.get("id")),
+                    "name_am": _norm(row.get("name_am")),
+                    "name_ru": _norm(row.get("name_ru")),
+                    "name_en": _norm(row.get("name_en")),
+                    "match_score": float(row.get("match_score") or 0),
+                }
+                for row in matches
+            ]
+            item["match_confidence"] = score
+            item["match_reason"] = "Several catalogue candidates are close; partner/admin can choose."
+        else:
+            item["match_confidence"] = score
+            item["match_reason"] = "No sufficiently similar active catalogue subcategory was found."
+
+    return out
 
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
@@ -465,11 +435,12 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
+                    "raw_sub_direction": {"type": ["string", "null"]},
                     "price": {"type": ["number", "null"]},
                     "price_type": {"type": "string"},
                     "matched_subcategory_id": {"type": ["integer", "null"]},
                 },
-                "required": ["name", "price", "price_type", "matched_subcategory_id"],
+                "required": ["name", "raw_sub_direction", "price", "price_type", "matched_subcategory_id"],
                 "additionalProperties": False,
             }},
                     },
@@ -491,6 +462,8 @@ SERVICE NAMES: every price-bearing service is a separate entity. Strip prepositi
 PRICES: output only the numeric amount. "3000 դրամից", "սկսվում է 3000 դրամից", "от 3000", "from 3000" => price=3000 and price_type="from". An exact "3000 դրամ" => price_type="fixed".
 KEEP ENTITIES SEPARATE: business, city, address, phone, direction, subcategory, service, price and working hours are different fields. Do not merge them.
 Keep every stated service as a separate object, including several services in one sentence.
+For every service also return raw_sub_direction: 1-3 clean Armenian words describing the narrow service specialization, in base/nominative form. This is a search phrase for the database, not a new category. Examples: "Ֆոտոստուդիա", "Հարսանեկան լուսանկարում", "Անհատական ֆոտոսեսիա", "Տեսանկարահանում".
+Do not invent a catalogue ID. matched_subcategory_id must remain null in this extraction step.
 If a current business is supplied in PREVIOUS PROFILE, decide whether the new request belongs to that same business or clearly describes a separate organization. Return business_action as same_business or new_business and proposed_business_name when new_business.
 Determine the platform direction yourself; never ask the partner to choose it.
 Do not invent missing information: use null and let the form collect it.
@@ -558,8 +531,8 @@ Return only the supplied JSON schema."""
 
         direction_catalog = get_catalog_for_master(db, master_id)
         if direction_catalog:
-            data["services"] = await _match_services_universal(
-                client, model, data.get("services") or [], direction_catalog
+            data["services"] = _match_services_universal(
+                db, data.get("services") or [], master_id
             )
             selected_names = []
             by_id = {
@@ -578,7 +551,7 @@ Return only the supplied JSON schema."""
             data[pending_field] = _norm(text)
         if pending_field == "services" and not data.get("services"):
             data["services"] = [{
-                "name": _norm(text), "price": None, "price_type": "unknown",
+                "name": _norm(text), "raw_sub_direction": _norm(text), "price": None, "price_type": "unknown",
                 "matched_subcategory_id": None
             }]
 
