@@ -27,7 +27,7 @@
 <section id="orders" class="view"><div class="title"><h2>📥 Պատվերներ</h2></div><div id="orderList"></div></section>
 <section id="locations" class="view"><div class="title"><h2>📍 Տարածքներ</h2></div><div id="locationList"></div></section>
 <section id="reviews" class="view"><div class="title"><h2>⭐ Վարկանիշ</h2></div><div id="reviewList"></div></section>
-<section id="documents" class="view"><div class="title"><h2>📄 Փաստաթղթեր</h2></div><div id="documentList"></div></section>
+<section id="documents" class="view"><div class="title"><h2>📄 Փաստաթղթեր և հայտեր</h2></div><div id="documentList"></div><div id="applicationList"></div></section>
 <section id="settings" class="view"><div class="title"><h2>⚙️ Կարգավորումներ</h2></div><div class="card"><label>Բիզնեսի անուն</label><input id="sName"><label>Նկարագրություն</label><textarea id="sDesc"></textarea><label>Կոնտակտների բացման քաղաքականություն</label><select id="sPolicy"><option value="after_booking">Բացումից հետո ամրագրումից</option><option value="premium">Premium</option><option value="never">Չբացել</option></select><div class="actions"><button class="primary" onclick="saveSettings()">Պահպանել</button></div></div></section>
 </main></div>
 <div id="modal" class="modal hidden"><div class="modalbox"><div class="title"><h3 id="modalTitle"></h3><button class="secondary" onclick="closeModal()">×</button></div><div id="modalBody"></div></div></div>
@@ -92,8 +92,9 @@ async function loadLocations(){const d=await api(`/api/master/${uid}/locations`)
 async function loadReviews(){const d=await api(`/api/master/${uid}/reviews`),el=document.getElementById('reviewList');if(!d.reviews?.length)return empty(el);el.innerHTML=d.reviews.map(x=>`<div class="item"><b>⭐ ${esc(x.rating)}/5</b><div>${esc(x.comment||'')}</div></div>`).join('')}
 async function loadApplications(){
  const d=await api('/api/master/'+uid+'/applications'),rows=d.applications||[];
- if(!rows.length)return '';
- return rows.map(x=>`<div class="item"><div class="row"><div><b>📨 Հայտ #${esc(x.id)}</b><div class="muted">${esc(x.business_name||x.business_name_db||'')} · ${esc(x.direction_name||x.master_name_am||x.master_name_ru||'')} · ${esc(x.service_name||'')}</div><div class="muted">${esc(x.location_marz||'')} ${esc(x.location_city||'')} ${esc(x.address||'')}</div></div>${badge(x.status)}</div>${x.status==='pending_partner'?'<div class="actions"><button class="secondary" onclick="completeApplication('+x.id+')">✎ Լրացնել տվյալները</button></div>':''}${x.status==='pending_partner'||x.status==='document_pending'?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել փաստաթուղթը</button></div>':''}${x.status==='document_under_review'?'<div class="muted">⏳ Փաստաթուղթը ուղարկված է ստուգման։</div>':''}</div>`).join('');
+ const el=document.getElementById('applicationList'); if(!el)return;
+ if(!rows.length){el.innerHTML='';return}
+ el.innerHTML=rows.map(x=>`<div class="item"><div class="row"><div><b>📨 Հայտ #${esc(x.id)}</b><div class="muted">${esc(x.business_name||x.business_name_db||'')} · ${esc(x.direction_name||x.master_name_am||x.master_name_ru||'')} · ${esc(x.service_name||'')}</div><div class="muted">${esc(x.location_marz||'')} ${esc(x.location_city||'')} ${esc(x.address||'')}</div></div>${badge(x.status)}</div>${x.status==='pending_partner'?'<div class="actions"><button class="secondary" onclick="completeApplication('+x.id+')">✎ Լրացնել տվյալները</button></div>':''}${x.status==='pending_partner'||x.status==='document_pending'?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել փաստաթուղթը</button></div>':''}${x.status==='document_under_review'?'<div class="muted">⏳ Փաստաթուղթը ուղարկված է ստուգման։</div>':''}</div>`).join('');
 }
 async function completeApplication(id){
  const d=await api('/api/master/'+uid+'/applications'),a=(d.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
