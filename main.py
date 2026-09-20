@@ -254,6 +254,23 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         await state.update_data(partner_onboarding_pending_field=missing[0], partner_onboarding_history=history)
         return {"message": t(lang, "🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ " + question, "🤖 Я уже собрал данные. " + question, "🤖 I have collected the information. " + question), "completed": False, "profile": merged}
     result = persist_ready_application(db, uid, merged)
+    if result.get("error") or result.get("ok") is False:
+        # Never expose an internal persistence error as a generic profile error.
+        await state.update_data(
+            partner_onboarding_pending_field="services",
+            partner_onboarding_history=history,
+            partner_profile=merged,
+        )
+        return {
+            "message": t(
+                lang,
+                "⚠️ Չհաջողվեց պահպանել հայտը։ Խնդրում եմ նշեք ծառայության անունը և գինը։",
+                "⚠️ Не удалось сохранить заявку. Укажите услугу и цену.",
+                "⚠️ I could not save the application. Please provide the service and price.",
+            ),
+            "completed": False,
+            "profile": merged,
+        }
     if not result.get("proposal_created") and int(result.get("service_count") or 0) < 1:
         # A malformed AI response must never produce a "completed" application
         # with zero persisted services.
