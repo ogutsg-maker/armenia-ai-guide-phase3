@@ -213,12 +213,14 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         rows=_all("""SELECT a.*,p.business_name AS partner_legacy_name,p.user_id,
                             b.name AS business_name_db,
                             m.name_am AS master_name_am,m.name_ru AS master_name_ru,
-                            c.name_am AS category_name_am,c.name_ru AS category_name_ru
+                            c.name_am AS category_name_am,c.name_ru AS category_name_ru,
+                            d.original_filename AS document_filename,d.status AS document_status
                      FROM partner_applications a
                      JOIN partners p ON p.id=a.partner_id
                      LEFT JOIN partner_businesses b ON b.id=a.business_id
                      LEFT JOIN master_categories m ON m.id=a.master_category_id
                      LEFT JOIN categories c ON c.id=a.category_id
+                     LEFT JOIN partner_verification_documents d ON d.id=a.document_id
                      WHERE a.status<>'approved'
                      ORDER BY a.created_at DESC""")
         return web.json_response({"ok":True,"applications":rows})
