@@ -44,8 +44,15 @@ BASE_DIR = Path(__file__).resolve().parent
 WEB_APPS_DIR = BASE_DIR / "web_apps"
 
 
+# Telegram WebView can retain HTML aggressively. Change this value when a
+# frontend deployment must invalidate an already opened Mini App URL.
+WEBAPP_VERSION = os.getenv("WEBAPP_VERSION", "20260920-1").strip() or "20260920-1"
+
+
 def webapp_url(path: str) -> str:
-    return f"{WEBAPP_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    base = f"{WEBAPP_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}v={WEBAPP_VERSION}"
 
 
 def t(lang: str, hy: str, ru: str, en: str) -> str:
@@ -449,9 +456,20 @@ async def telegram_webhook(request: web.Request):
         return web.json_response({"ok": False}, status=500)
 
 
+async def _webapp_cache_middleware(request: web.Request, handler):
+    response = await handler(request)
+    # Never let Telegram's embedded WebView keep HTML entry points stale.
+    # Static assets can remain cacheable; HTML always revalidates.
+    if request.path.endswith(".html") or request.path == "/":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 async def main():
     logger.info("🚀 Запуск Armenia AI Guide — AI-first runtime")
-    app = web.Application(middlewares=[telegram_partner_auth_middleware])
+    app = web.Application(middlewares=[telegram_partner_auth_middleware, _webapp_cache_middleware])
     app.router.add_get("/health", health)
     app.router.add_post("/telegram/webhook", telegram_webhook)
     app.router.add_get("/", serve_index)
