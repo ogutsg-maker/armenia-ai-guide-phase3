@@ -354,8 +354,10 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                       (*fields.values(),aid),True)
             return web.json_response({"ok":True,"application":row})
         if action=="send_to_partner":
+            note=str(data.get("admin_note") or "").strip()[:3000] or "Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը."
             row=_exec("""UPDATE partner_applications SET status='pending_partner',
-                         updated_at=NOW() WHERE id=%s RETURNING *""",(aid,),True)
+                         admin_note=%s, reviewed_by=%s, reviewed_at=NOW(), updated_at=NOW()
+                         WHERE id=%s RETURNING *""",(note,_auth(request),aid),True)
             return web.json_response({"ok":True,"application":row})
         if action=="reject":
             row=_exec("""UPDATE partner_applications SET status='rejected',admin_note=%s,
