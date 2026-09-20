@@ -251,6 +251,8 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     if missing:
         question = missing_question(merged, lang)
         history.append({"role": "assistant", "content": question})
+        # Keep the whole missing set in context. The next user message may
+        # contain several fields at once; extraction will merge them naturally.
         await state.update_data(partner_onboarding_pending_field=missing[0], partner_onboarding_history=history)
         return {"message": t(lang, "🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ " + question, "🤖 Я уже собрал данные. " + question, "🤖 I have collected the information. " + question), "completed": False, "profile": merged}
     result = persist_ready_application(db, uid, merged)
