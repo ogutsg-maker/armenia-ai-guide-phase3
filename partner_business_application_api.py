@@ -372,5 +372,5 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/master/{id}/applications/{application_id}",application_update)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document",application_document_upload)
     app.router.add_get("/api/master/{id}/applications",applications)
-    app.router.add_get("/api/admin/partner-applications",admin_applications)
+    app.router.add_get("/api/admin/universal-applications",admin_applications)
     app.router.add_post("/api/admin/partner-applications/{application_id}/action",admin_application_action)
