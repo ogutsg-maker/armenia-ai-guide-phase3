@@ -420,7 +420,7 @@ Return JSON only."""
                 or (master or {}).get("name_ru")
                 or (master or {}).get("name_en")
             ),
-            "proposed_name": "",
+            "proposed_name": _norm(result.get("proposed_subcategory_name")),
             "reason": _norm(result.get("reason")),
         }
 
