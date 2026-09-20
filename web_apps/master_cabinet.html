@@ -96,22 +96,68 @@ async function loadApplications(){
  if(!rows.length){el.innerHTML='';return}
  el.innerHTML=rows.map(x=>`<div class="item"><div class="row"><div><b>📨 Հայտ #${esc(x.id)}</b><div class="muted">${esc(x.business_name||x.business_name_db||'')} · ${esc(x.direction_name||x.master_name_am||x.master_name_ru||'')} · ${esc(x.service_name||'')}</div><div class="muted">${esc(x.location_marz||'')} ${esc(x.location_city||'')} ${esc(x.address||'')}</div></div>${badge(x.status)}</div>${x.status==='pending_partner'?'<div class="actions"><button class="secondary" onclick="completeApplication('+x.id+')">✎ Լրացնել տվյալները</button></div>':''}${x.status==='pending_partner'||x.status==='document_pending'?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել փաստաթուղթը</button></div>':''}${x.status==='document_under_review'?'<div class="muted">⏳ Փաստաթուղթը ուղարկված է ստուգման։</div>':''}</div>`).join('');
 }
-async function completeApplication(id){
- const d=await api('/api/master/'+uid+'/applications'),a=(d.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
- const fields={
-  business_name:prompt('Բիզնես / կազմակերպություն',a.business_name||''),
-  location_marz:prompt('Մարզ',a.location_marz||''),
-  location_city:prompt('Քաղաք / բնակավայր',a.location_city||''),
-  address:prompt('Հասցե',a.address||''),
-  phone:prompt('Հեռախոս',a.phone||''),
-  direction_name:prompt('Ուղղություն',a.direction_name||a.master_name_am||a.master_name_ru||''),
-  subcategory_name:prompt('Ենթաուղղություն',a.subcategory_name||''),
-  service_name:prompt('Ծառայություն',a.service_name||''),
-  price:prompt('Գին AMD',a.price??''),
-  description:prompt('Նկարագրություն',a.description||'')
- };
- await api('/api/master/'+uid+'/applications/'+id,{method:'POST',body:JSON.stringify(fields)});
- alert('Տվյալները լրացված են և ուղարկված են ադմինիստրատորին։');await loadAll();
+let applicationCatalog=null;
+async function getApplicationCatalog(){
+  if(applicationCatalog)return applicationCatalog;
+  const d=await api('/api/master/'+uid+'/application-catalog');
+  applicationCatalog=d.directions||[];
+  return applicationCatalog;
+}
+function applicationSubcats(masterId,selected){
+  const m=(applicationCatalog||[]).find(x=>Number(x.id)===Number(masterId));
+  return (m?.subcategories||[]).map(x=>`<option value="${Number(x.id)}" ${Number(x.id)===Number(selected)?'selected':''}>${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
+}
+async function openApplicationEditor(id, focusAfter=false){
+  const d=await api('/api/master/'+uid+'/applications');
+  const a=(d.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
+  await getApplicationCatalog();
+  const masters=(applicationCatalog||[]).map(x=>`<option value="${Number(x.id)}" ${Number(x.id)===Number(a.master_category_id)?'selected':''}>${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
+  openModal('Լրացնել նոր ուղղության հայտը',`
+    <div class="notice">🧾 Նոր ուղղություն է հայտնաբերվել։ Լրացրեք ամբողջ հայտը և պարտադիր կցեք հաստատող փաստաթուղթը։ AI-ի առաջարկած ուղղությունն ու ենթաուղղությունը կարող եք փոխել ցուցակից։</div>
+    <label>Բիզնես / կազմակերպություն *</label><input id="appBusiness" value="${esc(a.business_name||'')}">
+    <label>Մարզ *</label><input id="appMarz" value="${esc(a.location_marz||'')}">
+    <label>Քաղաք / բնակավայր</label><input id="appCity" value="${esc(a.location_city||a.location_village||'')}">
+    <label>Հասցե *</label><input id="appAddress" value="${esc(a.address||'')}">
+    <label>Հեռախոս *</label><input id="appPhone" value="${esc(a.phone||'')}">
+    <label>AI առաջարկած ուղղություն *</label><select id="appMaster"><option value="">Ընտրեք ուղղությունը</option>${masters}</select>
+    <label>Ենթաուղղություն *</label><select id="appCategory"><option value="">Ընտրեք ենթաուղղությունը</option>${applicationSubcats(a.master_category_id,a.category_id)}</select>
+    <label>Ծառայություն *</label><input id="appService" value="${esc(a.service_name||'')}">
+    <label>Գին, AMD *</label><input id="appPrice" type="number" min="0" step="1" value="${esc(a.price??'')}">
+    <label>Օբյեկտ (եթե անհրաժեշտ է)</label><input id="appObject" value="${esc(a.object_name||'')}">
+    <label>Նկարագրություն</label><textarea id="appDesc">${esc(a.description||'')}</textarea>
+    <label>📄 Հաստատող փաստաթուղթ * </label><input id="appDoc" type="file" accept="image/*,.pdf">
+    <div id="appFormError" class="muted" style="color:var(--danger);margin-top:8px"></div>
+    <div class="actions"><button class="primary" onclick="savePartnerApplication(${id})">📨 Լրացնել և ուղարկել ադմինին</button></div>`);
+  document.getElementById('appMaster').onchange=()=>{document.getElementById('appCategory').innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(document.getElementById('appMaster').value,'')};
+  if(focusAfter)document.getElementById('appBusiness')?.focus();
+}
+async function savePartnerApplication(id){
+  const get=id=>document.getElementById(id);
+  const data={
+    business_name:get('appBusiness').value.trim(),location_marz:get('appMarz').value.trim(),
+    location_city:get('appCity').value.trim(),address:get('appAddress').value.trim(),phone:get('appPhone').value.trim(),
+    direction_name:(()=>{const s=get('appMaster');return s.options[s.selectedIndex]?.text||''})(),
+    master_category_id:Number(get('appMaster').value||0)||null,
+    subcategory_name:(()=>{const s=get('appCategory');return s.options[s.selectedIndex]?.text||''})(),
+    category_id:Number(get('appCategory').value||0)||null,
+    service_name:get('appService').value.trim(),price:get('appPrice').value===''?null:Number(get('appPrice').value),
+    object_name:get('appObject').value.trim(),description:get('appDesc').value.trim()
+  };
+  if(!data.business_name||!data.location_marz||!data.address||!data.phone||!data.master_category_id||!data.category_id||!data.service_name||data.price==null){
+    document.getElementById('appFormError').textContent='❌ Լրացրեք բոլոր պարտադիր դաշտերը։';return;
+  }
+  try{
+    await api('/api/master/'+uid+'/applications/'+id,{method:'POST',body:JSON.stringify(data)});
+    const f=get('appDoc').files?.[0];
+    if(!f){document.getElementById('appFormError').textContent='❌ Փաստաթուղթը պարտադիր է նոր ուղղության համար։';return}
+    if(f.size>10*1024*1024){document.getElementById('appFormError').textContent='❌ Ֆայլը մեծ է (մինչև 10 MB)';return}
+    const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_verification');
+    const h={'X-Telegram-Init-Data':init};if(businessId)h['X-Business-Id']=String(businessId);
+    const r=await fetch('/api/master/'+uid+'/applications/'+id+'/document',{method:'POST',headers:h,body:fd});
+    const doc=await r.json();if(!r.ok||doc.ok===false)throw Error(doc.error||('HTTP '+r.status));
+    await api('/api/master/'+uid+'/applications/'+id+'/submit',{method:'POST',body:'{}'});
+    closeModal();await loadAll();alert('Հայտը ամբողջությամբ լրացված է և ուղարկված է ադմինիստրատորի ստուգմանը։');
+  }catch(e){document.getElementById('appFormError').textContent='❌ '+e.message}
 }
 async function uploadApplicationDocument(id){
  const f=document.getElementById('appDoc'+id)?.files?.[0]; if(!f)return alert('Ընտրեք փաստաթուղթ');
@@ -151,20 +197,16 @@ async function createService(){
   if(!name){modalError('Անվանումը պարտադիր է');return}
   try{
     const d=await api(`/api/master/${uid}/services`,{method:'POST',body:JSON.stringify({
-      name,
-      price:price===''?null:Number(price),
-      description:desc
+      name, price:price===''?null:Number(price), description:desc
     })});
     closeModal();
     if(d.proposal_created){
-      alert(d.message||'AI-ն առաջարկը ուղարկել է ադմինիստրատորին։');
+      await openApplicationEditor(Number(d.application_id), true);
     }else{
       await loadServices();await loadDashboard();
       alert(d.message||'Ծառայությունը ավելացվեց և ուղարկվեց ստուգման։');
     }
-  }catch(e){
-    modalError(e.message);
-  }
+  }catch(e){ modalError(e.message); }
 }
 function editService(id,name,price){
   openModal('Փոփոխել ծառայությունը',`<label>Անվանում</label><input id="mName" value="${esc(name)}"><label>Գին</label><input id="mPrice" type="number" min="0" value="${esc(price)}"><div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div><div class="actions"><button class="primary" onclick="updateService(${id})">Պահպանել</button></div>`)
