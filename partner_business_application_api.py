@@ -388,17 +388,23 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             bid=a["business_id"]
         else:
             b=_exec("""INSERT INTO partner_businesses(partner_id,name,description,is_default)
-                       VALUES(%s,%s,%s,FALSE) RETURNING id""",
-                    (a["partner_id"],a.get("business_name") or "Նոր բիզնես",a.get("description")),True)
+                       VALUES(%s,%s,%s,NOT EXISTS(SELECT 1 FROM partner_businesses WHERE partner_id=%s))
+                       RETURNING id""",
+                    (a["partner_id"],a.get("business_name") or "Նոր բիզնես",a.get("description"),a["partner_id"]),True)
             bid=b["id"]
         mid=a.get("master_category_id")
         if not mid:
             return web.json_response({"ok":False,"error":"direction_required"},status=409)
-        pd=_exec("""INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
-                    VALUES(%s,%s,%s,'approved')
-                    ON CONFLICT(business_id,master_category_id) DO UPDATE SET status='approved',updated_at=NOW()
-                    RETURNING id""",(a["partner_id"],bid,mid),True)
-        direction_id=pd["id"]
+        pd=_one("""SELECT id FROM partner_directions
+                    WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
+                    ORDER BY id LIMIT 1""",(a["partner_id"],bid,mid))
+        if pd:
+            _exec("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(pd["id"],))
+            direction_id=pd["id"]
+        else:
+            pd=_exec("""INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+                        VALUES(%s,%s,%s,'approved') RETURNING id""",(a["partner_id"],bid,mid),True)
+            direction_id=pd["id"]
         cid=a.get("category_id")
         if not cid and a.get("subcategory_name"):
             import re
@@ -416,11 +422,21 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             _exec("""INSERT INTO partner_direction_categories(partner_direction_id,category_id)
                      VALUES(%s,%s) ON CONFLICT DO NOTHING""",(direction_id,cid))
         _exec("UPDATE partner_verification_documents SET business_id=%s,partner_direction_id=%s,status='approved' WHERE id=%s",(bid,direction_id,a["document_id"]))
-        if a.get("service_name"):
+        payload=a.get("payload_json") or {}
+        if isinstance(payload,str):
+            try: payload=json.loads(payload)
+            except Exception: payload={}
+        app_services=payload.get("services") if isinstance(payload,dict) else None
+        if not isinstance(app_services,list) or not app_services:
+            app_services=[{"name":a.get("service_name"),"price":a.get("price")}]
+        for svc in app_services:
+            if not isinstance(svc,dict) or not str(svc.get("name") or "").strip():
+                continue
+            svc_cid=svc.get("matched_subcategory_id") or cid
             _exec("""INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json)
                      VALUES(%s,%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb)""",
-                  (a["partner_id"],bid,cid,a["service_name"],a.get("description"),a.get("price"),
-                   json.dumps({"application_id":aid,"ai_source":True},ensure_ascii=False)))
+                  (a["partner_id"],bid,svc_cid,str(svc.get("name")).strip()[:300],a.get("description"),
+                   svc.get("price"),json.dumps({"application_id":aid,"ai_source":True,"price_type":svc.get("price_type")},ensure_ascii=False)))
         _exec("""UPDATE partner_applications SET business_id=%s,status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                  WHERE id=%s""",(bid,_auth(request),aid))
         _exec("UPDATE partners SET status='approved',verification_status='approved',updated_at=NOW() WHERE id=%s",(a["partner_id"],))
