@@ -275,10 +275,10 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     await state.clear()
     message = t(lang,
         "✅ Հայտը կազմված է և ուղարկված է ադմինիստրատորին։ Նա կստուգի բիզնեսը, ուղղությունը, ենթաուղղությունը, ծառայությունը և կուղարկի ձեզ լրացման/փաստաթղթի պահանջը։",
-        "✅ Полная заявка сформирована и отправлена администратору. Он проверит бизнес, направление, поднаправление и услугу, после чего при необходимости вернёт вам на уточнение и запросит документ.",
-        "✅ The full application has been created and sent to the administrator for review. They can request missing details and the verification document.")
+        "✅ Заявка полностью сформирована. Следующий шаг — загрузите подтверждающий документ. После загрузки вся анкета вместе с документом будет отправлена администратору одним заявлением.",
+        "✅ The application is fully prepared. Next, upload the verification document. After upload, the complete application and document will be sent to the administrator together.")
     if result.get("proposal_created"):
-        message = t(lang, "✅ Ամբողջական հայտը ուղարկվել է ադմինիստրատորին։", "✅ Полная заявка отправлена администратору.", "✅ The full application was sent to the administrator.")
+        message = t(lang, "✅ Ամբողջական հայտը կազմված է։ Բեռնեք փաստաթուղթը, և ամբողջ հայտը միասին կուղարկվի ադմինիստրատորին։", "✅ Полная заявка сформирована. Загрузите документ — после этого вся заявка будет отправлена администратору вместе.", "✅ The full application is prepared. Upload the document and the complete application will be sent to the administrator together.")
     return {"message": message, "completed": True, "profile": merged, **result}
 
 
