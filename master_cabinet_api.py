@@ -490,7 +490,7 @@ async def api_service_create(request: web.Request):
                     WHERE partner_id=%s
                       AND requested_master_category_id=%s
                       AND lower(trim(requested_service_name))=lower(trim(%s))
-                      AND status='pending'
+                      AND status IN ('pending','pending_admin','document_pending','document_under_review')
                     LIMIT 1
                 """, (pid, match["out_of_scope_master_id"], name))
                 duplicate = cur.fetchone()
