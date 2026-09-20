@@ -192,7 +192,9 @@ async function appAction(id,action){
   data.address=prompt('Հասցե')||'';
   data.phone=prompt('Հեռախոս')||'';
   data.direction_name=prompt('Ուղղություն')||'';
+  const mid=prompt('Master category ID (եթե հայտնի է)',x.master_category_id??''); if(mid)data.master_category_id=mid;
   data.subcategory_name=prompt('Ենթաուղղություն')||'';
+  const cid=prompt('Category ID (եթե կա)',x.category_id??''); if(cid)data.category_id=cid;
   data.service_name=prompt('Ծառայություն')||'';
   const p=prompt('Գին AMD'); if(p!==null)data.price=p;
   data.description=prompt('Նկարագրություն')||'';
