@@ -60,8 +60,11 @@ def ensure_business_application_schema():
     ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE partner_objects ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE partner_locations ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
+    ALTER TABLE bookings ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE SET NULL;
     ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     CREATE INDEX IF NOT EXISTS idx_partner_businesses_partner ON partner_businesses(partner_id,status);
+    ALTER TABLE partner_directions DROP CONSTRAINT IF EXISTS partner_directions_partner_id_master_category_id_key;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_direction_business_master ON partner_directions(business_id,master_category_id);
     CREATE INDEX IF NOT EXISTS idx_partner_directions_business ON partner_directions(business_id,status);
     CREATE INDEX IF NOT EXISTS idx_services_business ON services(business_id,status);
     CREATE INDEX IF NOT EXISTS idx_partner_documents_business ON partner_verification_documents(business_id,created_at DESC);
@@ -219,12 +222,49 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      ORDER BY a.created_at DESC""")
         return web.json_response({"ok":True,"applications":rows})
 
+    async def application_document_upload(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        aid=int(request.match_info["application_id"])
+        a=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
+        if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
+        reader=await request.multipart(); file_part=None; document_type="business_document"
+        async for part in reader:
+            if part.name=="document_type": document_type=(await part.text()).strip()[:80] or document_type
+            elif part.name=="file": file_part=part; break
+        if file_part is None: return web.json_response({"ok":False,"error":"file_required"},status=400)
+        allowed={"image/jpeg":".jpg","image/png":".png","image/webp":".webp","application/pdf":".pdf"}
+        mime=(file_part.headers.get("Content-Type") or "").lower()
+        if mime not in allowed: return web.json_response({"ok":False,"error":"unsupported_file_type"},status=400)
+        data=bytearray()
+        while True:
+            chunk=await file_part.read_chunk(1024*1024)
+            if not chunk: break
+            data.extend(chunk)
+            if len(data)>10*1024*1024: return web.json_response({"ok":False,"error":"file_too_large"},status=413)
+        from stage3_partner_verification import _storage_upload
+        import uuid
+        original=os.path.basename(file_part.filename or "document")[:180]
+        path=f"partners/{p['id']}/applications/{aid}/{uuid.uuid4().hex}{allowed[mime]}"
+        try:
+            await _storage_upload(path,bytes(data),mime)
+            storage_path=path; blob=None
+        except Exception:
+            storage_path=None; blob=bytes(data)
+        doc=_exec("""INSERT INTO partner_verification_documents(
+                     partner_id,business_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status)
+                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending') RETURNING id""",
+                  (p["id"],a.get("business_id"),document_type,original,storage_path,blob,mime,len(data)),True)
+        row=_exec("""UPDATE partner_applications SET document_id=%s,status='document_under_review',
+                     updated_at=NOW() WHERE id=%s RETURNING *""",(doc["id"],aid),True)
+        return web.json_response({"ok":True,"application":row,"document_id":doc["id"]})
+
     async def admin_application_action(request):
         _admin(request); aid=int(request.match_info["application_id"]); data=await request.json()
         action=str(data.get("action") or "").strip()
         a=_one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
         if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        allowed={"edit","send_to_partner","reject","approve"}
+        allowed={"edit","send_to_partner","reject","approve","activate"}
         if action not in allowed: return web.json_response({"ok":False,"error":"invalid_action"},status=400)
         fields={}
         for k in ("business_name","location_marz","location_city","location_village","address","phone",
@@ -246,20 +286,49 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                          reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                          WHERE id=%s RETURNING *""",(data.get("admin_note"),_auth(request),aid),True)
             return web.json_response({"ok":True,"application":row})
-        # approve = materialize the business shell only; catalogue direction/service
-        # stays pending until required document review is complete.
-        if not a.get("business_id"):
+        if action=="approve":
+            row=_exec("""UPDATE partner_applications SET status='document_pending',
+                         updated_at=NOW() WHERE id=%s RETURNING *""",(aid,),True)
+            return web.json_response({"ok":True,"application":row})
+
+        if not a.get("document_id"):
+            return web.json_response({"ok":False,"error":"document_required"},status=409)
+        doc=_one("SELECT * FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(a["document_id"],a["partner_id"]))
+        if not doc or doc.get("status")!="approved":
+            return web.json_response({"ok":False,"error":"document_not_approved"},status=409)
+        if a.get("business_id"):
+            bid=a["business_id"]
+        else:
             b=_exec("""INSERT INTO partner_businesses(partner_id,name,description,is_default)
                        VALUES(%s,%s,%s,FALSE) RETURNING id""",
                     (a["partner_id"],a.get("business_name") or "Նոր բիզնես",a.get("description")),True)
             bid=b["id"]
-        else: bid=a["business_id"]
-        row=_exec("""UPDATE partner_applications SET business_id=%s,status='document_pending',
-                     updated_at=NOW() WHERE id=%s RETURNING *""",(bid,aid),True)
-        return web.json_response({"ok":True,"application":row})
+        mid=a.get("master_category_id")
+        if not mid:
+            return web.json_response({"ok":False,"error":"direction_required"},status=409)
+        pd=_exec("""INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+                    VALUES(%s,%s,%s,'approved')
+                    ON CONFLICT(business_id,master_category_id) DO UPDATE SET status='approved',updated_at=NOW()
+                    RETURNING id""",(a["partner_id"],bid,mid),True)
+        direction_id=pd["id"]
+        cid=a.get("category_id")
+        if cid:
+            _exec("""INSERT INTO partner_direction_categories(partner_direction_id,category_id)
+                     VALUES(%s,%s) ON CONFLICT DO NOTHING""",(direction_id,cid))
+        _exec("UPDATE partner_verification_documents SET business_id=%s,partner_direction_id=%s,status='approved' WHERE id=%s",(bid,direction_id,a["document_id"]))
+        if a.get("service_name"):
+            _exec("""INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json)
+                     VALUES(%s,%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb)""",
+                  (a["partner_id"],bid,cid,a["service_name"],a.get("description"),a.get("price"),
+                   json.dumps({"application_id":aid,"ai_source":True},ensure_ascii=False)))
+        _exec("""UPDATE partner_applications SET business_id=%s,status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
+                 WHERE id=%s""",(bid,_auth(request),aid))
+        _exec("UPDATE partners SET status='approved',verification_status='approved',updated_at=NOW() WHERE id=%s",(a["partner_id"],))
+        return web.json_response({"ok":True,"application":_one("SELECT * FROM partner_applications WHERE id=%s",(aid,))})
 
     app.router.add_get("/api/master/{id}/businesses",businesses)
     app.router.add_post("/api/master/{id}/businesses",create_business)
+    app.router.add_post("/api/master/{id}/applications/{application_id}/document",application_document_upload)
     app.router.add_get("/api/master/{id}/applications",applications)
     app.router.add_get("/api/admin/partner-applications",admin_applications)
     app.router.add_post("/api/admin/partner-applications/{application_id}/action",admin_application_action)
