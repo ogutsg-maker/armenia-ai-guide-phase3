@@ -21,6 +21,8 @@ label{display:block;color:#cbd3e1;font-size:12px;margin:0 0 5px}.field{margin-bo
 <div id="chat" class="chat"></div><div id="composer" class="composer"><textarea id="input" placeholder="Օրինակ՝ ունեմ համակարգչային սպասարկման ծառայություն Հրազդանում..."></textarea><button id="send" class="send">➤</button></div>
 <div id="formWrap" class="form hidden"></div><div id="status" class="status">Միացում…</div></div></div>
 <script>
+const entry=new URLSearchParams(location.search).get('entry');
+if(entry!=='welcome'){location.replace('/welcome.html');throw new Error('Direct partner entry blocked');}
 const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const initData=tg?.initData||'',uid=Number(tg?.initDataUnsafe?.user?.id||0);
 const chat=document.getElementById('chat'),input=document.getElementById('input'),send=document.getElementById('send'),status=document.getElementById('status'),composer=document.getElementById('composer'),formWrap=document.getElementById('formWrap');let busy=false,application=null,catalog=[];
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
