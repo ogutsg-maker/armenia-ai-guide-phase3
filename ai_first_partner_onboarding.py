@@ -285,36 +285,109 @@ def _save_services(cur, partner_id: int, direction_id: int | None, profile: dict
     return count
 
 def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str, Any]:
-    """Persist a completed AI application without approving anything.
+    """Create a reviewable universal partner application.
 
-    The location/direction/services writes run in ONE transaction so a failure
-    mid-way rolls back cleanly instead of leaving a half-written application.
+    IMPORTANT: completion of the AI conversation no longer writes directions,
+    subcategories or services directly into the live catalogue. The partner
+    row may be created/updated as a pending shell, while the full business,
+    location, contact, AI direction/subcategory and service proposal are kept
+    in partner_applications for admin review.
     """
     if not _profile_ready(profile):
         raise ValueError("partner_profile_not_ready")
 
-    # Partner row first (FK parent) — idempotent upsert, its own connection.
     partner_id = _ensure_partner(db, uid, profile)
-    # Catalogue match is a read — do it outside the write transaction.
-    master_id, category_ids = _direction_match(db, profile)
+    services = [x for x in (profile.get("services") or []) if isinstance(x, dict)]
+    first = services[0] if services else {}
+    from partner_business_application_api import default_business, ensure_business_application_schema
+    ensure_business_application_schema()
+
+    existing_business = default_business(partner_id)
+    business_id = existing_business["id"] if existing_business and existing_business.get("status") == "active" else None
+
+    # AI classification is informational at application time. Admin can edit
+    # master/category IDs before activation; do not materialise them yet.
+    master_id = None
+    category_id = None
+    try:
+        master_id, category_ids = _direction_match(db, profile)
+        category_id = _safe_int(category_ids[0]) if category_ids else None
+    except Exception:
+        logger.exception("Application catalogue classification failed; keeping proposal editable")
+
+    payload = dict(profile)
+    payload["services"] = services
+    payload["ai_master_category_id"] = master_id
+    payload["ai_category_id"] = category_id
+    payload["application_version"] = 1
+
+    direction_name = str(
+        profile.get("direction")
+        or profile.get("master_category_name")
+        or ""
+    ).strip()[:300] or None
+    subcategory_name = str(
+        profile.get("subcategory")
+        or profile.get("subcategory_name")
+        or (first.get("subcategory_name") or "")
+    ).strip()[:300] or None
+    service_name = str(first.get("name") or "").strip()[:300] or None
+    price = first.get("price")
+    try:
+        price = float(price) if price not in (None, "") else None
+    except (TypeError, ValueError):
+        price = None
 
     with _connect() as conn:
-        try:
-            with conn.cursor() as cur:
-                # City belongs to partner_locations in the current schema, not users.
-                _save_location(cur, partner_id, profile)
-                direction_id, mapped, proposal = _save_direction(cur, partner_id, profile, master_id, category_ids)
-                service_count = _save_services(cur, partner_id, direction_id, profile)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO partner_applications(
+                    partner_id,business_id,status,business_name,
+                    location_marz,location_city,location_village,address,phone,
+                    direction_name,master_category_id,subcategory_name,category_id,
+                    service_name,price,description,object_name,ai_reason,payload_json
+                )
+                VALUES(
+                    %s,%s,'pending_admin',%s,
+                    %s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s::jsonb
+                )
+                RETURNING id
+                """,
+                (
+                    partner_id,
+                    business_id,
+                    str(profile.get("business_name") or "").strip()[:200],
+                    str(profile.get("marz") or profile.get("region") or "").strip()[:200] or None,
+                    str(profile.get("city") or "").strip()[:200] or None,
+                    str(profile.get("village") or "").strip()[:200] or None,
+                    str(profile.get("address") or "").strip()[:500] or None,
+                    str(profile.get("phone") or "").strip()[:80] or None,
+                    direction_name,
+                    master_id,
+                    subcategory_name,
+                    category_id,
+                    service_name,
+                    price,
+                    str(profile.get("description") or "").strip()[:5000] or None,
+                    str(profile.get("object_name") or profile.get("object") or "").strip()[:300] or None,
+                    "AI classified the partner message; admin can edit all catalogue fields before activation.",
+                    json.dumps(payload, ensure_ascii=False),
+                ),
+            )
+            row = cur.fetchone()
+        conn.commit()
 
     return {
         "partner_id": partner_id,
-        "direction_id": direction_id,
-        "mapped_to_catalog": mapped,
-        "proposal_created": proposal == "proposal",
-        "service_count": service_count,
-        "status": "pending",
+        "application_id": row["id"] if row else None,
+        "business_id": business_id,
+        "direction_id": None,
+        "mapped_to_catalog": bool(master_id),
+        "proposal_created": True,
+        "service_count": len(services),
+        "status": "pending_admin",
     }
+
