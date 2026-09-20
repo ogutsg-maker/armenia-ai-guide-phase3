@@ -222,6 +222,29 @@ class DatabaseManager:
                 ''')
                 return cur.fetchall()
 
+    def find_similar_subcategories(self, master_category_id: int, query: str, limit: int = 3) -> list[dict]:
+        """Find active subcategories inside one direction using PostgreSQL pg_trgm."""
+        master_id = int(master_category_id)
+        q = str(query or "").strip()
+        if not q:
+            return []
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                cur.execute("""
+                    SELECT id, master_category_id, name_am, name_ru, name_en, slug,
+                           GREATEST(
+                               similarity(COALESCE(name_am, ''), %s),
+                               similarity(COALESCE(name_ru, ''), %s),
+                               similarity(COALESCE(name_en, ''), %s)
+                           ) AS match_score
+                    FROM categories
+                    WHERE master_category_id = %s AND is_active = TRUE
+                    ORDER BY match_score DESC, id
+                    LIMIT %s
+                """, (q, q, q, master_id, max(1, int(limit))))
+                return cur.fetchall()
+
     def get_category_by_name(self, name_to_find: str) -> dict | None:
         """Ищет подкатегорию по названию или по slug."""
         with _connect() as conn:
