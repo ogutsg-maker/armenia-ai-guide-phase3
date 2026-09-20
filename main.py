@@ -203,7 +203,7 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         pass
     history.append({"role": "user", "content": text})
     from partner_registration_ai import extract, missing_question
-    from ai_first_partner_onboarding import persist_ready_application
+    from ai_first_partner_onboarding import persist_ready_application, create_partner_application_draft
     profile = await extract(text, history, db, previous_profile=previous, pending_field=pending)
     merged = dict(previous)
 
@@ -249,12 +249,30 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     merged["ready"] = not missing
     await state.update_data(partner_onboarding_history=history, partner_profile=merged)
     if missing:
+        # IMPORTANT: the AI result is shown immediately in the universal form.
+        # Missing fields remain editable/empty; the partner does not have to
+        # answer a questionnaire before seeing what AI understood.
+        draft = create_partner_application_draft(db, uid, merged)
         question = missing_question(merged, lang)
         history.append({"role": "assistant", "content": question})
-        # Keep the whole missing set in context. The next user message may
-        # contain several fields at once; extraction will merge them naturally.
-        await state.update_data(partner_onboarding_pending_field=missing[0], partner_onboarding_history=history)
-        return {"message": t(lang, "🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ " + question, "🤖 Я уже собрал данные. " + question, "🤖 I have collected the information. " + question), "completed": False, "profile": merged}
+        await state.update_data(
+            partner_onboarding_pending_field=missing[0],
+            partner_onboarding_history=history,
+            partner_profile=merged,
+            partner_application_id=draft.get("application_id"),
+        )
+        return {
+            "message": t(
+                lang,
+                "🤖 Ես կազմեցի հայտի նախնական տարբերակը։ Ստուգեք լրացված տվյալները և լրացրեք միայն բաց դաշտերը։ " + question,
+                "🤖 Я собрал предварительную заявку. Проверьте заполненные данные и заполните только пустые поля. " + question,
+                "🤖 I prepared the application draft. Check the extracted data and fill only the missing fields. " + question,
+            ),
+            "completed": False,
+            "open_form": True,
+            "application_id": draft.get("application_id"),
+            "profile": merged,
+        }
     try:
         result = persist_ready_application(db, uid, merged)
     except ValueError as exc:
