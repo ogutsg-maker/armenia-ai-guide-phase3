@@ -35,7 +35,8 @@ function renderForm(){
  const p=payload();
  const value=(key,...alts)=>{for(const src of [application,p]){for(const k of [key,...alts]){const v=src&&src[k];if(v!==undefined&&v!==null&&String(v).trim()!=='')return v}}return ''};
  const masterId=value('master_category_id','ai_master_category_id');
- const services=Array.isArray(p.services)&&p.services.length?p.services:(Array.isArray(application.services)?application.services:[]);
+ const rawServices=Array.isArray(p.services)&&p.services.length?p.services:(Array.isArray(application.services)?application.services:[]);
+ const services=rawServices.filter(s=>s&&typeof s==='object'&&String(s.name||'').trim());
  formWrap.innerHTML='<div class="notice">AI-ի կողմից լրացված տվյալները կարող եք ամբողջությամբ փոխել։ Հայտը ադմինին չի ուղարկվի մինչև «Համաձայն եմ / Ուղարկել հայտը» կոճակը սեղմելը։</div>'+
  '<div class="grid">'+field('business_name','Բիզնես / կազմակերպության անուն',value('business_name'))+
  field('location_marz','Մարզ',value('location_marz','marz','region'))+field('location_city','Քաղաք / բնակավայր',value('location_city','city'))+
