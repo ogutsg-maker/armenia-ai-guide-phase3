@@ -431,7 +431,7 @@ Return only the supplied JSON schema."""
 
     try:
         ai_data = await _groq_json(client, model, system, user_content,
-                                   "partner_onboarding_extract", schema, 700)
+                                   "partner_onboarding_extract", schema, 1100)
         data = dict(previous_profile)
 
         for field in ("business_name", "marz", "address", "phone", "business_action", "proposed_business_name", "city", "district", "direction",
