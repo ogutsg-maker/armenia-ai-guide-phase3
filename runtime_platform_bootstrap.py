@@ -156,7 +156,15 @@ def _install_ai_first_partner_flow(main,db):
                 partner_onboarding_history=history,
                 partner_profile=merged,
             )
-            return {"message":{"hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ","ru":"🤖 Я уже собрал данные. ","en":"🤖 I have collected the information. "}.get(lang,"🤖 ")+question,"completed":False,"profile":merged}
+            acknowledgement = str(text or "").strip().lower() in {
+                "լավ", "եղավ", "հա", "այո", "ok", "okay", "хорошо", "ладно", "да", "понял", "понятно", "ок"
+            }
+            prefix = "" if acknowledgement else {
+                "hy":"🤖 Ես արդեն հավաքել եմ ձեր ասած տվյալները։ ",
+                "ru":"🤖 Я уже собрал данные. ",
+                "en":"🤖 I have collected the information. ",
+            }.get(lang, "🤖 ")
+            return {"message":prefix+question,"completed":False,"profile":merged}
         from ai_first_partner_onboarding import persist_ready_application
         try:
             result=persist_ready_application(db,uid,merged)
