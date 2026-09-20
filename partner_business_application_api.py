@@ -229,7 +229,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         aid=int(request.match_info["application_id"]); data=await request.json()
         row=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
         if not row: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        allowed=("business_name","location_marz","location_city","location_village","address","phone","direction_name","subcategory_name","service_name","price","description","object_name")
+        allowed=("business_name","location_marz","location_city","location_village","address","phone","direction_name","master_category_id","subcategory_name","category_id","service_name","price","description","object_name")
         fields={k:data[k] for k in allowed if k in data}
         if not fields: return web.json_response({"ok":True,"application":row})
         sets=", ".join(f"{k}=%s" for k in fields)
