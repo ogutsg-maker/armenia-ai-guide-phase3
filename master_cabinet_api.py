@@ -376,7 +376,7 @@ async def api_service_create(request: web.Request):
         with _connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""INSERT INTO partner_applications(partner_id,business_id,status,business_name,direction_name,master_category_id,subcategory_name,service_name,price,description,ai_reason,payload_json)
-                               VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
+                               VALUES(%s,%s,'pending_partner',%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
                             (pid,app_bid,match.get("proposed_business_name") if app_bid is None else None,
                              match.get("out_of_scope_master_name") or "",match.get("out_of_scope_master_id") or match.get("master_category_id"),
                              match.get("proposed_name") or None,name,price,description,match.get("reason") or "",
