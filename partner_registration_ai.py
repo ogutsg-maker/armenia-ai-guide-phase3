@@ -567,7 +567,17 @@ def match_subcategories(db, names: list[str]) -> list[int]:
     return result
 
 def missing_question(data: dict, lang: str) -> str:
-    field = (data.get("missing") or ["services"])[0]
+    # Always ask for the next missing application field. Never expose an
+    # internal "profile not ready" state to the partner.
+    missing = list(data.get("missing") or [])
+    if not missing:
+        # Keep this function safe for callers that invoke it after extraction.
+        return {
+            "hy": "Հայտը պատրաստ է։ Այժմ կարող եք շարունակել։",
+            "ru": "Заявка готова. Можно продолжать.",
+            "en": "The application is ready. You can continue.",
+        }.get(lang, "Заявка готова. Можно продолжать.")
+    field = missing[0]
     questions = {
         "hy": {"business_name":"Ինչպե՞ս է կոչվում ձեր բիզնեսը։", "marz":"Ո՞ր մարզում է գտնվում բիզնեսը։", "city":"Ո՞ր քաղաքում կամ բնակավայրում է աշխատում բիզնեսը։", "address":"Ո՞րն է բիզնեսի ամբողջական հասցեն։", "phone":"Ո՞ր հեռախոսահամարով կարող է հաճախորդը կապվել բիզնեսի հետ։", "services":"Ի՞նչ ծառայություն եք առաջարկում։ Եթե գինը հայտնի է, նշեք նաև գինը։"},
         "ru": {"business_name":"Как называется ваш бизнес?", "marz":"В каком марзе находится бизнес?", "city":"В каком городе или населённом пункте работает бизнес?", "address":"Какой полный адрес бизнеса?", "phone":"Какой телефон бизнеса указать для связи?", "services":"Какую услугу вы оказываете? Если цена известна, укажите и её."},
