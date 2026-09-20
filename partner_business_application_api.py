@@ -340,6 +340,18 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                     RETURNING id""",(a["partner_id"],bid,mid),True)
         direction_id=pd["id"]
         cid=a.get("category_id")
+        if not cid and a.get("subcategory_name"):
+            import re
+            sub=str(a.get("subcategory_name") or "").strip()[:200]
+            slug=re.sub(r"[^a-z0-9\\u0531-\\u0587]+","-",sub.lower()).strip("-") or ("application-"+str(aid))
+            cat=_one("""SELECT id FROM categories WHERE master_category_id=%s AND
+                        (lower(trim(name_am))=lower(trim(%s)) OR lower(trim(name_ru))=lower(trim(%s)) OR lower(trim(name_en))=lower(trim(%s)))
+                        LIMIT 1""",(mid,sub,sub,sub))
+            if cat: cid=cat["id"]
+            else:
+                cat=_exec("""INSERT INTO categories(master_category_id,name_am,name_ru,name_en,slug,is_active,commission_type,commission_value)
+                             VALUES(%s,%s,%s,%s,%s,TRUE,'inside',0) RETURNING id""",(mid,sub,sub,sub,slug),True)
+                cid=cat["id"]
         if cid:
             _exec("""INSERT INTO partner_direction_categories(partner_direction_id,category_id)
                      VALUES(%s,%s) ON CONFLICT DO NOTHING""",(direction_id,cid))
