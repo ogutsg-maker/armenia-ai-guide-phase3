@@ -146,6 +146,25 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                     out["business_name"] = candidate
                     break
 
+    # Deterministic recovery of contact/location facts if Groq fails.
+    if not out.get("phone"):
+        m = re.search(r"(?:հեռախոս(?:ահամար)?|телефон|phone)\s*[:՝-]?\s*(0\d[\d\s().-]{6,})", raw, flags=re.I)
+        if m:
+            out["phone"] = _norm(m.group(1)).strip(" .,-")
+        else:
+            m = re.search(r"\b(0\d{2}[\s-]?\d{6})\b", raw)
+            if m:
+                out["phone"] = _norm(m.group(1))
+    if not out.get("address"):
+        m = re.search(r"(?:հասցեն|հասցե|адрес|address)\s*[:՝-]?\s*([^.!?։\n]+)", raw, flags=re.I)
+        if m:
+            out["address"] = _norm(m.group(1)).strip(" .,;")
+    if not out.get("direction") and re.search(
+        r"ֆոտոստուդ|լուսանկար|ֆոտոսեսիա|տեսանկարահանում|տեսանյութ|фотостуд|фотосес|видеосъём|видеосъем|photograph|video",
+        low, flags=re.I
+    ):
+        out["direction"] = "📸 Ֆոտո և տեսանյութ"
+
     if not out.get("marz") and out.get("city"):
         city_key = _norm(out["city"]).lower()
         marz_by_city = {
@@ -211,6 +230,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             "", name, flags=re.I
         ).strip()
         name = re.sub(r"^(?:սրահում|մեզ\s+մոտ)\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"^(?:ինչպես\s+նաև|նաև|և|ու)\s+", "", name, flags=re.I).strip()
         # Armenian conversational/inflected forms -> clean service noun.
         arm_clean = {
             "սանրվածքները": "Սանրվածք", "սանրվածքը": "Սանրվածք",
