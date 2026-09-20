@@ -110,7 +110,8 @@ def ensure_business_application_schema():
     SELECT p.id, COALESCE(NULLIF(p.business_name,''),'Իմ բիզնեսը'),
            p.business_description, TRUE
     FROM partners p
-    WHERE NOT EXISTS(
+    WHERE p.status IN ('approved','suspended','blocked')
+      AND NOT EXISTS(
       SELECT 1 FROM partner_businesses b WHERE b.partner_id=p.id
     )
     """)
@@ -307,8 +308,12 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      partner_id,business_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status)
                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending') RETURNING id""",
                   (p["id"],a.get("business_id"),document_type,original,storage_path,blob,mime,len(data)),True)
-        row=_exec("""UPDATE partner_applications SET document_id=%s,status='pending_partner',
-                     updated_at=NOW() WHERE id=%s RETURNING *""",(doc["id"],aid),True)
+        # A document uploaded from the initial AI registration belongs to the
+        # SAME universal application. Once the partner has supplied the
+        # document, the complete application becomes visible to the admin.
+        row=_exec("""UPDATE partner_applications
+                     SET document_id=%s,status='pending_admin',updated_at=NOW()
+                     WHERE id=%s RETURNING *""",(doc["id"],aid),True)
         return web.json_response({"ok":True,"application":row,"document_id":doc["id"]})
 
     async def admin_application_action(request):
