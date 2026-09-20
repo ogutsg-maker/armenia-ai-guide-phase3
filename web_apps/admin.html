@@ -186,6 +186,7 @@ async function loadApplications(){
  }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
 }
 async function appAction(id,action){
+ const list=(await api('/api/admin/partner-applications')).applications||[]; const x=list.find(v=>Number(v.id)===Number(id))||{};
  let data={action};
  if(action==='edit'){
   data.business_name=prompt('Բիզնեսի անուն')||'';
