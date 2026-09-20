@@ -567,20 +567,52 @@ def match_subcategories(db, names: list[str]) -> list[int]:
     return result
 
 def missing_question(data: dict, lang: str) -> str:
-    # Always ask for the next missing application field. Never expose an
-    # internal "profile not ready" state to the partner.
-    missing = list(data.get("missing") or [])
-    if not missing:
-        # Keep this function safe for callers that invoke it after extraction.
-        return {
-            "hy": "Հայտը պատրաստ է։ Այժմ կարող եք շարունակել։",
-            "ru": "Заявка готова. Можно продолжать.",
-            "en": "The application is ready. You can continue.",
-        }.get(lang, "Заявка готова. Можно продолжать.")
-    field = missing[0]
-    questions = {
-        "hy": {"business_name":"Ինչպե՞ս է կոչվում ձեր բիզնեսը։", "marz":"Ո՞ր մարզում է գտնվում բիզնեսը։", "city":"Ո՞ր քաղաքում կամ բնակավայրում է աշխատում բիզնեսը։", "address":"Ո՞րն է բիզնեսի ամբողջական հասցեն։", "phone":"Ո՞ր հեռախոսահամարով կարող է հաճախորդը կապվել բիզնեսի հետ։", "services":"Ի՞նչ ծառայություն եք առաջարկում։ Եթե գինը հայտնի է, նշեք նաև գինը։"},
-        "ru": {"business_name":"Как называется ваш бизнес?", "marz":"В каком марзе находится бизнес?", "city":"В каком городе или населённом пункте работает бизнес?", "address":"Какой полный адрес бизнеса?", "phone":"Какой телефон бизнеса указать для связи?", "services":"Какую услугу вы оказываете? Если цена известна, укажите и её."},
-        "en": {"business_name":"What is the name of your business?", "city":"Which city does the business operate in?", "services":"What service do you provide? If the price is known, include it."},
+    """Ask only for information that is actually missing.
+
+    The application may contain many structured fields, but the partner never
+    has to follow a numbered questionnaire. One natural message can fill any
+    number of missing fields, and the next prompt is generated from what is
+    still absent.
+    """
+    missing = [str(x) for x in (data.get("missing") or [])]
+    labels = {
+        "hy": {
+            "business_name": "բիզնեսի անունը",
+            "marz": "մարզը",
+            "city": "քաղաքը/բնակավայրը",
+            "address": "ամբողջական հասցեն",
+            "phone": "հեռախոսահամարը",
+            "services": "ծառայությունները և, եթե հայտնի է, դրանց գները",
+        },
+        "ru": {
+            "business_name": "название бизнеса",
+            "marz": "марз",
+            "city": "город/населённый пункт",
+            "address": "полный адрес",
+            "phone": "телефон",
+            "services": "услуги и, если известны, их цены",
+        },
+        "en": {
+            "business_name": "business name",
+            "marz": "region/marz",
+            "city": "city/locality",
+            "address": "full address",
+            "phone": "phone number",
+            "services": "services and, if known, their prices",
+        },
     }
-    return questions.get(lang, questions["ru"]).get(field, questions.get(lang, questions["ru"])["services"])
+    if not missing:
+        return {
+            "hy": "Հայտը պատրաստ է։",
+            "ru": "Заявка готова.",
+            "en": "The application is ready.",
+        }.get(lang, "Заявка готова.")
+
+    lang_labels = labels.get(lang, labels["ru"])
+    items = [lang_labels[x] for x in missing if x in lang_labels]
+    if lang == "hy":
+        return "Որպեսզի հայտը ամբողջական լինի, նշեք նաև՝ " + ", ".join(items) + "։ Կարող եք ամեն ինչ գրել մեկ հաղորդագրությամբ։"
+    if lang == "en":
+        return "To complete the application, please provide: " + ", ".join(items) + ". You can send everything in one message."
+    return "Чтобы завершить заявку, укажите ещё: " + ", ".join(items) + ". Можно написать всё одним сообщением."
+
