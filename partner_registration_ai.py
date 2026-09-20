@@ -255,14 +255,11 @@ async def _match_services_universal(client, model, services, catalog):
             rg |= grams(row.get(key))
         return len(sg & rg) / max(1, len(sg)) if sg and rg else 0
 
-    ranked = sorted(
-        ((max(score(x.get("name"), row) for x in services), row) for row in catalog),
-        key=lambda x: x[0],
-        reverse=True,
-    )
-    candidates = [row for value, row in ranked[:80] if value > 0]
-    if not candidates:
-        candidates = [row for _, row in ranked[:30]]
+    # Use every active subcategory of the selected direction. This avoids
+    # lexical pre-filtering that can send Armenian/Russian service names to
+    # the wrong beauty/repair category.
+    candidates = list(catalog)
+
 
     schema = {
         "type": "object",
