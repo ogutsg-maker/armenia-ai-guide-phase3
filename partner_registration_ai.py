@@ -237,6 +237,8 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         # HTTP 400. The prompt still enforces the exact JSON shape, while the
         # parser below extracts the returned object.
         response_format={"type": "json_object"},
+        # GPT-OSS reasoning must be hidden when JSON mode is enabled.
+        reasoning_format="hidden",
     )
     return _parse_json(response.choices[0].message.content or "{}")
 
