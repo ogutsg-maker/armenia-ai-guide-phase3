@@ -103,6 +103,13 @@ async function getApplicationCatalog(){
   applicationCatalog=d.directions||[];
   return applicationCatalog;
 }
+function normalizeApplicationText(v){return String(v??'').trim().toLocaleLowerCase().replace(/ё/g,'е').replace(/[«»\"']/g,'').replace(/\\s+/g,' ')}
+function resolveApplicationIds(a){
+  let masterId=Number(a.master_category_id||0)||0, categoryId=Number(a.category_id||0)||0;
+  if(!masterId&&a.direction_name){const n=normalizeApplicationText(a.direction_name);const m=(applicationCatalog||[]).find(x=>[x.name_am,x.name_ru,x.name_en].some(v=>normalizeApplicationText(v)===n));if(m)masterId=Number(m.id);}
+  if(masterId&&!categoryId&&a.subcategory_name){const n=normalizeApplicationText(a.subcategory_name);const m=(applicationCatalog||[]).find(x=>Number(x.id)===masterId);const sc=(m?.subcategories||[]).find(x=>[x.name_am,x.name_ru,x.name_en].some(v=>normalizeApplicationText(v)===n));if(sc)categoryId=Number(sc.id);}
+  return {masterId,categoryId};
+}
 function applicationSubcats(masterId,selected){
   const m=(applicationCatalog||[]).find(x=>Number(x.id)===Number(masterId));
   return (m?.subcategories||[]).map(x=>`<option value="${Number(x.id)}" ${Number(x.id)===Number(selected)?'selected':''}>${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
@@ -111,7 +118,7 @@ async function openApplicationEditor(id, focusAfter=false){
   const d=await api('/api/master/'+uid+'/applications');
   const a=(d.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
   await getApplicationCatalog();
-  const masters=(applicationCatalog||[]).map(x=>`<option value="${Number(x.id)}" ${Number(x.id)===Number(a.master_category_id)?'selected':''}>${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
+  const resolved=resolveApplicationIds(a);\n  const masters=(applicationCatalog||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
   openModal('Լրացնել նոր ուղղության հայտը',`
     <div class="notice">🧾 Նոր ուղղություն է հայտնաբերվել։ Լրացրեք ամբողջ հայտը և պարտադիր կցեք հաստատող փաստաթուղթը։ AI-ի առաջարկած ուղղությունն ու ենթաուղղությունը կարող եք փոխել ցուցակից։</div>
     <label>Բիզնես / կազմակերպություն *</label><input id="appBusiness" value="${esc(a.business_name||'')}">
@@ -128,7 +135,7 @@ async function openApplicationEditor(id, focusAfter=false){
     <label>📄 Հաստատող փաստաթուղթ * </label><input id="appDoc" type="file" accept="image/*,.pdf">
     <div id="appFormError" class="muted" style="color:var(--danger);margin-top:8px"></div>
     <div class="actions"><button class="primary" onclick="savePartnerApplication(${id})">📨 Լրացնել և ուղարկել ադմինին</button></div>`);
-  document.getElementById('appMaster').onchange=()=>{document.getElementById('appCategory').innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(document.getElementById('appMaster').value,'')};
+  const masterSelect=document.getElementById('appMaster');\n  const categorySelect=document.getElementById('appCategory');\n  masterSelect.value=String(resolved.masterId||'');\n  categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,resolved.categoryId);\n  categorySelect.value=String(resolved.categoryId||'');\n  masterSelect.onchange=()=>{categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,'');categorySelect.value='';};
   if(focusAfter)document.getElementById('appBusiness')?.focus();
 }
 async function savePartnerApplication(id){
