@@ -132,6 +132,40 @@ async function runResearch(){const q=$('researchQuery').value.trim();if(!q)retur
 async function structurePotential(){const raw=$('researchText').value.trim();if(!raw)return alert('Տեղադրեք աղբյուրի տեքստը');await post('/api/admin/potential-partners/structure',{raw_text:raw,source:'admin_research'});$('researchText').value='';await loadPotential()}
 async function loadProposals(){const d=await api('/api/admin/ai/catalog-proposals');$('proposalList').innerHTML=(d.items||[]).map(x=>`<div class="item"><div class="row"><b>${esc(x.proposed_master_category||'')} → ${esc(x.proposed_category||'')} → ${esc(x.proposed_subcategory||'')}</b>${badge(x.status)}</div><div>${esc(x.description||x.reason||'')}</div><div class="actions"><button class="btn ok" onclick="proposalAction(${x.id},'activate')">✓ Ակտիվացնել</button><button class="btn warn" onclick="proposalAction(${x.id},'clarify')">↩ Ճշտման</button><button class="btn danger" onclick="proposalAction(${x.id},'reject')">✕ Մերժել</button></div></div>`).join('')||'<div class="empty">AI առաջարկներ չկան</div>'}
 async function proposalAction(id,a){await post(`/api/admin/ai/catalog-proposals/${id}/${a}`,{});await loadProposals()}
+async function loadServiceDirectionRequests(){
+  const el=$('serviceDirectionRequestList');
+  try{
+    const d=await api('/api/admin/service-direction-requests'), rows=d.requests||[];
+    el.innerHTML=rows.length?rows.map(x=>`<div class="card">
+      <div class="row"><div><b>🧭 ${esc(x.master_name_am||x.master_name_ru||'')}</b><div class="muted">${esc(x.business_name||'')} · Telegram ${esc(x.user_id||'')}</div></div>${badge(x.status||'pending_admin')}</div>
+      <div class="detail"><b>Ենթաուղղություն:</b> ${esc(x.proposed_subcategory_name||'—')}<br><b>Ծառայություն:</b> ${esc(x.requested_service_name||'—')}</div>
+      <div class="muted">Գին՝ ${x.price==null?'—':Number(x.price).toLocaleString()+' ֏'} · ${esc(x.reason||'')}</div>
+      <div class="settings" style="margin-top:10px">
+        <div class="field"><label>Ենթաուղղություն</label><input id="drSub${x.id}" value="${esc(x.proposed_subcategory_name||'')}"></div>
+        <div class="field"><label>Ծառայություն</label><input id="drService${x.id}" value="${esc(x.requested_service_name||'')}"></div>
+        <div class="field"><label>Գին, AMD</label><input id="drPrice${x.id}" type="number" min="0" step="1" value="${esc(x.price??'')}"></div>
+        <div class="field"><label>Նկարագրություն</label><textarea id="drDesc${x.id}">${esc(x.description||'')}</textarea></div>
+        <div class="field"><label>Նշում</label><input id="drNote${x.id}" value="${esc(x.admin_note||'')}"></div>
+      </div>
+      <div class="actions">
+        ${x.status==='pending_admin'||x.status==='rejected'?`<button class="btn" onclick="directionRequestEdit(${x.id})">💾 Պահպանել</button><button class="btn ok" onclick="directionRequestAction(${x.id},'send_to_partner')">📄 Ուղարկել գործընկերոջը</button>`:''}
+        ${x.status==='document_under_review'?`<button class="btn ok" onclick="directionRequestAction(${x.id},'approve_document')">✓ Փաստաթուղթը հաստատել</button>`:''}
+        ${x.status!=='approved'?`<button class="btn danger" onclick="directionRequestAction(${x.id},'reject')">✕ Մերժել</button>`:''}
+      </div>
+      ${x.original_filename?`<div class="muted">📄 ${esc(x.original_filename)} · ${esc(x.document_status||'')}</div>`:''}
+      <div class="muted" style="margin-top:6px">ID հարցման՝ #${x.id}</div>
+    </div>`).join(''):'<div class="empty">Նոր հարցումներ չկան</div>';
+  }catch(e){el.innerHTML=`<div class="error">${esc(e.message)}</div>`}
+}
+async function directionRequestEdit(id){
+ await post('/api/admin/service-direction-requests/'+id+'/action',{action:'edit',proposed_subcategory_name:$('drSub'+id).value.trim(),service_name:$('drService'+id).value.trim(),price:$('drPrice'+id).value,description:$('drDesc'+id).value.trim(),admin_note:$('drNote'+id).value.trim()});
+ await loadServiceDirectionRequests();
+}
+async function directionRequestAction(id,action){
+ const reason=action==='reject'?prompt('Պատճառ / Причина','Չի համապատասխանում պահանջներին'):'';
+ await post('/api/admin/service-direction-requests/'+id+'/action',reason?{action,reason}:{action});
+ await loadServiceDirectionRequests(); await loadPartners();
+}
 async function loadPage(p){if(p==='overview'){await Promise.all([loadStats(),loadPartners()])}else if(p==='partners')await loadPartners();else if(p==='cats')await loadCats();else if(p==='orders')await loadOrders();else if(p==='disputes')await loadDisputes();else if(p==='potential')await loadPotential();else if(p==='proposals'){await loadProposals();await loadSubcategoryProposals();await loadServiceDirectionRequests()}}
 (async()=>{if(await auth())await loadPage('overview').catch(showError)})();
 </script></body></html>
