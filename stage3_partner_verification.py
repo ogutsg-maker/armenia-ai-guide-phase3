@@ -566,6 +566,20 @@ async def _set_partner_decision(request, decision):
     return web.json_response({"ok": True, "partner_id": pid, "status": "rejected", "verification_status": "rejected", "reason": reason})
 
 
+async def api_admin_service_direction_requests(request):
+    _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    rows = _db_fetchall("""
+        SELECT r.*, p.business_name, p.user_id,
+               m.name_am AS master_name_am, m.name_ru AS master_name_ru, m.name_en AS master_name_en
+        FROM service_direction_requests r
+        JOIN partners p ON p.id=r.partner_id
+        JOIN master_categories m ON m.id=r.requested_master_category_id
+        WHERE r.status='pending'
+        ORDER BY r.created_at DESC
+    """)
+    return web.json_response({"ok": True, "requests": rows})
+
+
 async def api_admin_partner_approve(request):
     return await _set_partner_decision(request, "approve")
 
@@ -598,6 +612,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/master/{id}/documents/upload", api_partner_document_upload)
     app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
+    app.router.add_get("/api/admin/service-direction-requests", api_admin_service_direction_requests)
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/url", api_admin_partner_document_url)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/download", api_admin_partner_document_download)
