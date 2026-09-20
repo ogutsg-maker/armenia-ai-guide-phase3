@@ -307,7 +307,13 @@ def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[d
     """
     out = [dict(x) for x in services]
     rules = [
-        (("սանրվածք", "սանրվածքները", "стриж", "haircut"), ("սանրված", "парикмах", "haircut")),
+        # Armenian women-haircut phrases are semantically the catalogue
+        # subcategory "Կանացի սանրվածք", even when the catalogue wording
+        # does not contain the literal word "կտրում".
+        (("կանացի մազերի կտրում", "կանանց մազերի կտրում", "կանացի մազերի կտրել",
+          "կանացի սանրվածքի կտրում", "կանացի կտրում"),
+         ("կանացի սանրվածք",)),
+        (("սանրվածք", "սանրվածքները", "ստриж", "стриж", "haircut"), ("սանրված", "парикмах", "haircut")),
         (("գունավորում", "գունավորումը", "ներկում", "ներկ", "окраш", "волос", "coloring"), ("ներկ", "окраш", "color")),
         (("ոճավորում", "ոճավորումը", "դասավորում", "уклад", "styling"), ("դասավորում", "уклад", "styling")),
         (("մատնահարդարում", "маникюр", "manicure"), ("մատնահարդարում", "маникюр", "manicure")),
