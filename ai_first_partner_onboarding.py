@@ -39,7 +39,10 @@ def _safe_int(value):
 def _profile_ready(profile: dict[str, Any]) -> bool:
     return bool(
         str(profile.get("business_name") or "").strip()
+        and str(profile.get("marz") or profile.get("region") or "").strip()
         and str(profile.get("city") or "").strip()
+        and str(profile.get("address") or "").strip()
+        and str(profile.get("phone") or "").strip()
         and profile.get("services")
     )
 
