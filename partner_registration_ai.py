@@ -209,8 +209,8 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     # The generic regex above may otherwise include the verb in the service name.
     cleaned = []
     for item in found:
-        name = re.sub(r"\\s+(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է)\\s*$", "", item["name"], flags=re.I).strip()
-        name = re.sub(r"^(?:սրահում|մեզ մոտ)\\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"\s+(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է)\\s*$", "", item["name"], flags=re.I).strip()
+        name = re.sub(r"^(?:սրահում|մեզ մոտ)\s+", "", name, flags=re.I).strip()
         if name:
             item["name"] = name
             cleaned.append(item)
@@ -239,17 +239,29 @@ def _parse_json(text: str) -> dict:
 
 
 async def _groq_json(client, model, system_prompt, user_content, schema_name, schema, max_tokens):
-    response = await client.chat.completions.create(
+    kwargs = dict(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.1,
+        temperature=0.0,
         max_tokens=max_tokens,
-        # Keep the request compatible with all Groq GPT-OSS deployments.
-        # JSON shape is enforced by the prompt and parsed below.
     )
+    try:
+        # Prefer native structured output. This prevents the model from
+        # drifting away from the application schema and inventing fields/IDs.
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": schema_name, "schema": schema, "strict": True},
+        }
+        response = await client.chat.completions.create(**kwargs)
+    except Exception:
+        # Some Groq model/deployment combinations may not expose json_schema.
+        # Keep the exact same semantic prompt and fall back to JSON object mode.
+        kwargs.pop("response_format", None)
+        kwargs["response_format"] = {"type": "json_object"}
+        response = await client.chat.completions.create(**kwargs)
     return _parse_json(response.choices[0].message.content or "{}")
 
 
@@ -259,7 +271,7 @@ async def _match_services_universal(client, model, services, catalog):
         return services
 
     def grams(value):
-        value = re.sub(r"\\s+", "", _norm(value).lower())
+        value = re.sub(r"\s+", "", _norm(value).lower())
         return {value[i:i+3] for i in range(max(0, len(value)-2))}
 
     def score(service_name, row):
