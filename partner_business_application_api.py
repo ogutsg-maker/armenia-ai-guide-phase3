@@ -222,6 +222,22 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      ORDER BY a.created_at DESC""")
         return web.json_response({"ok":True,"applications":rows})
 
+    async def application_update(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        aid=int(request.match_info["application_id"]); data=await request.json()
+        row=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
+        if not row: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
+        allowed=("business_name","location_marz","location_city","location_village","address","phone","direction_name","subcategory_name","service_name","price","description","object_name")
+        fields={k:data[k] for k in allowed if k in data}
+        if not fields: return web.json_response({"ok":True,"application":row})
+        sets=", ".join(f"{k}=%s" for k in fields)
+        fields["status"]="pending_admin"
+        sets+=", status=%s, updated_at=NOW()"
+        vals=[v for k,v in fields.items() if k!="status"]+[fields["status"],aid]
+        updated=_exec(f"UPDATE partner_applications SET {sets} WHERE id=%s RETURNING *",vals,True)
+        return web.json_response({"ok":True,"application":updated})
+
     async def application_document_upload(request):
         uid=_auth(request); p=_partner(uid)
         if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
@@ -340,6 +356,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
     app.router.add_get("/api/master/{id}/businesses",businesses)
     app.router.add_post("/api/master/{id}/businesses",create_business)
+    app.router.add_post("/api/master/{id}/applications/{application_id}",application_update)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document",application_document_upload)
     app.router.add_get("/api/master/{id}/applications",applications)
     app.router.add_get("/api/admin/partner-applications",admin_applications)
