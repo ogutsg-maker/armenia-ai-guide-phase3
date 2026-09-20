@@ -336,6 +336,164 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
     raise last_error or RuntimeError("Groq request failed")
 
 
+async def _match_services_in_selected_direction(
+    client,
+    model: str,
+    services: list[dict],
+    direction_catalog: list[dict],
+) -> list[dict]:
+    """Second AI stage: classify services only against the selected direction's
+    active subcategories. The model never sees the other 21 directions.
+    Returned IDs are validated against direction_catalog before use.
+    """
+    if not services or not direction_catalog:
+        return services
+
+    allowed_ids = {
+        _safe_int(row.get("category_id"))
+        for row in direction_catalog
+        if _safe_int(row.get("category_id")) is not None
+    }
+    compact_catalog = [
+        {
+            "id": _safe_int(row.get("category_id")),
+            "am": _norm(row.get("category_am")),
+            "ru": _norm(row.get("category_ru")),
+            "en": _norm(row.get("category_en")),
+        }
+        for row in direction_catalog
+    ]
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "matches": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "service_index": {"type": "integer"},
+                        "matched_subcategory_id": {"type": ["integer", "null"]},
+                        "candidate_ids": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                        },
+                        "confidence": {"type": "number"},
+                    },
+                    "required": [
+                        "service_index",
+                        "matched_subcategory_id",
+                        "candidate_ids",
+                        "confidence",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["matches"],
+        "additionalProperties": False,
+    }
+
+    system = """You are the second-stage catalogue classifier for Armenia AI Guide.
+The business direction has already been selected. You must classify each partner
+service ONLY against the supplied active subcategories of that direction.
+Do not invent categories or IDs.
+Use the meaning of the service, not only literal word similarity. Armenian,
+Russian and English names are equivalent.
+For each service return its zero-based service_index.
+If one supplied subcategory clearly matches, return its real ID.
+If several are plausible, return matched_subcategory_id=null and up to 3 real
+candidate IDs.
+If none is a reasonable match, return null and an empty candidate list.
+Never return an ID not present in the supplied catalogue.
+Return only JSON matching the schema."""
+
+    user = (
+        "ACTIVE SUBCATEGORIES FOR THE ALREADY SELECTED DIRECTION:\n"
+        + json.dumps(compact_catalog, ensure_ascii=False)
+        + "\n\nPARTNER SERVICES:\n"
+        + json.dumps(
+            [
+                {
+                    "service_index": i,
+                    "name": _norm(item.get("name")),
+                    "raw_sub_direction": _norm(
+                        item.get("raw_sub_direction") or item.get("name")
+                    ),
+                }
+                for i, item in enumerate(services)
+                if isinstance(item, dict)
+            ],
+            ensure_ascii=False,
+        )
+    )
+
+    try:
+        result = await _groq_json(
+            client,
+            model,
+            system,
+            user,
+            "partner_subcategory_match",
+            schema,
+            900,
+        )
+    except Exception:
+        return services
+
+    by_index = {}
+    for row in result.get("matches") or []:
+        if not isinstance(row, dict):
+            continue
+        idx = _safe_int(row.get("service_index"))
+        if idx is None:
+            continue
+
+        matched = _safe_int(row.get("matched_subcategory_id"))
+        if matched not in allowed_ids:
+            matched = None
+
+        candidates = []
+        for candidate in row.get("candidate_ids") or []:
+            cid = _safe_int(candidate)
+            if cid in allowed_ids and cid not in candidates:
+                candidates.append(cid)
+        by_index[idx] = {
+            "matched_subcategory_id": matched,
+            "candidate_ids": candidates[:3],
+            "confidence": max(0.0, min(1.0, float(row.get("confidence") or 0))),
+        }
+
+    out = [dict(item) for item in services]
+    for idx, item in enumerate(out):
+        match = by_index.get(idx)
+        if not match:
+            continue
+        if match["matched_subcategory_id"] is not None:
+            item["matched_subcategory_id"] = match["matched_subcategory_id"]
+            item["match_confidence"] = match["confidence"]
+            item["match_reason"] = "Second-stage AI match inside the selected direction."
+            item.pop("catalog_candidates", None)
+        elif match["candidate_ids"]:
+            rows_by_id = {
+                _safe_int(row.get("category_id")): row
+                for row in direction_catalog
+            }
+            item["catalog_candidates"] = [
+                {
+                    "id": cid,
+                    "name_am": _norm(rows_by_id[cid].get("category_am")),
+                    "name_ru": _norm(rows_by_id[cid].get("category_ru")),
+                    "name_en": _norm(rows_by_id[cid].get("category_en")),
+                }
+                for cid in match["candidate_ids"]
+                if cid in rows_by_id
+            ]
+            item["match_confidence"] = match["confidence"]
+            item["match_reason"] = "Several subcategories in the selected direction are plausible."
+    return out
+
+
 def _match_services_universal(db, services, master_id):
     """Resolve each AI service phrase to a real active subcategory in PostgreSQL.
 
@@ -552,6 +710,15 @@ Return only the supplied JSON schema."""
 
         direction_catalog = get_catalog_for_master(db, master_id)
         if direction_catalog:
+            # Stage 2: only the selected direction's active subcategories are
+            # sent to Groq. PostgreSQL remains the final safety net for any
+            # service the second-stage classifier leaves unresolved.
+            data["services"] = await _match_services_in_selected_direction(
+                client,
+                model,
+                data.get("services") or [],
+                direction_catalog,
+            )
             data["services"] = _match_services_universal(
                 db, data.get("services") or [], master_id
             )
