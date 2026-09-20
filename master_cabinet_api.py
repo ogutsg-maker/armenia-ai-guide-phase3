@@ -16,6 +16,13 @@ from config import BOT_TOKEN
 from database import _connect
 from telegram_webapp_auth import validate_telegram_webapp_init_data
 
+try:
+    from groq import AsyncGroq
+except Exception:
+    AsyncGroq = None
+
+from partner_registration_ai import _groq_json, _norm, _safe_int
+
 
 def _json(value: Any):
     """Make PostgreSQL values safe for aiohttp JSON responses."""
@@ -232,28 +239,225 @@ async def api_services(request: web.Request):
     return web.json_response({"ok": True, "services": _json(rows)})
 
 
+async def _load_partner_service_catalog(pid: int):
+    """Load only subcategories belonging to this partner's approved directions."""
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.id AS category_id, c.master_category_id,
+                       c.name_am AS category_am, c.name_ru AS category_ru,
+                       c.name_en AS category_en, c.slug AS category_slug,
+                       m.name_am AS master_am, m.name_ru AS master_ru,
+                       m.name_en AS master_en, m.slug AS master_slug
+                FROM categories c
+                JOIN master_categories m ON m.id=c.master_category_id
+                JOIN partner_directions pd
+                  ON pd.partner_id=%s
+                 AND pd.master_category_id=c.master_category_id
+                 AND pd.status='approved'
+                WHERE c.is_active=TRUE AND m.is_active=TRUE
+                ORDER BY c.master_category_id, c.id
+            """, (pid,))
+            return [dict(row) for row in cur.fetchall()]
+
+
+async def _ai_match_new_service(pid: int, name: str, description: str = ""):
+    """Map one partner service to the approved catalogue, without exposing taxonomy to the partner."""
+    key = __import__("os").getenv("GROQ_API_KEY", "").strip()
+    if not key or AsyncGroq is None:
+        raise RuntimeError("groq_not_configured")
+
+    catalog = await _load_partner_service_catalog(pid)
+    if not catalog:
+        return {"status": "no_catalog"}
+
+    # Keep the prompt compact for the current Groq TPM limit.
+    def grams(value):
+        value = __import__("re").sub(r"\\s+", "", _norm(value).lower())
+        return {value[i:i+3] for i in range(max(0, len(value)-2))}
+
+    def score(row):
+        sg = grams(name + " " + description)
+        rg = set()
+        for key in ("category_am", "category_ru", "category_en", "master_am", "master_ru", "master_en"):
+            rg |= grams(row.get(key))
+        return len(sg & rg) / max(1, len(sg)) if sg and rg else 0
+
+    ranked = sorted(catalog, key=score, reverse=True)
+    candidates = ranked[:80]
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "matched_category_id": {"type": ["integer", "null"]},
+            "master_category_id": {"type": ["integer", "null"]},
+            "proposed_subcategory_name": {"type": ["string", "null"]},
+            "reason": {"type": "string"},
+        },
+        "required": ["matched_category_id", "master_category_id", "proposed_subcategory_name", "reason"],
+        "additionalProperties": False,
+    }
+    system = """You are the service classifier for Armenia AI Guide.
+Understand Armenian, Russian and English.
+The partner gives ONLY a service name and optional description. You decide the catalogue placement.
+Use ONLY real IDs supplied in CANDIDATES.
+If an existing subcategory genuinely fits, return its exact matched_category_id and its master_category_id.
+If none fits, return matched_category_id=null and propose a concise NEW SUBCATEGORY name under the best existing approved master_category_id.
+Never invent an existing ID.
+Do not create a new master direction in this flow.
+If the service is too ambiguous to classify, return both IDs null and proposed_subcategory_name=null.
+Return JSON only."""
+    prompt = (
+        "SERVICE:\n" + json.dumps({"name": _norm(name), "description": _norm(description)[:500]}, ensure_ascii=False)
+        + "\nCANDIDATES:\n" + json.dumps([
+            {"category_id": _safe_int(x.get("category_id")),
+             "master_category_id": _safe_int(x.get("master_category_id")),
+             "subcategory_hy": _norm(x.get("category_am")),
+             "subcategory_ru": _norm(x.get("category_ru")),
+             "subcategory_en": _norm(x.get("category_en")),
+             "direction_hy": _norm(x.get("master_am")),
+             "direction_ru": _norm(x.get("master_ru")),
+             "direction_en": _norm(x.get("master_en"))}
+            for x in candidates
+        ], ensure_ascii=False)
+    )
+    client = AsyncGroq(api_key=key)
+    result = await _groq_json(client, __import__("os").getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+                              system, prompt, "partner_service_classification", schema, 220)
+    allowed = {_safe_int(x.get("category_id")) for x in candidates}
+    cid = _safe_int(result.get("matched_category_id"))
+    mid = _safe_int(result.get("master_category_id"))
+    if cid is not None and cid not in allowed:
+        cid = None
+    valid_masters = {_safe_int(x.get("master_category_id")) for x in catalog}
+    if mid is not None and mid not in valid_masters:
+        mid = None
+    if cid is not None:
+        row = next((x for x in catalog if _safe_int(x.get("category_id")) == cid), None)
+        mid = _safe_int(row.get("master_category_id")) if row else mid
+    return {
+        "status": "matched" if cid is not None else ("proposal" if mid is not None and _norm(result.get("proposed_subcategory_name")) else "clarification"),
+        "category_id": cid,
+        "master_category_id": mid,
+        "proposed_name": _norm(result.get("proposed_subcategory_name")),
+        "reason": _norm(result.get("reason")),
+    }
+
+
 async def api_service_create(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     data = await request.json()
     name = str(data.get("name") or data.get("service_name") or "").strip()
+    description = str(data.get("description") or "").strip()
     if not name:
         return web.json_response({"ok": False, "error": "service_name_required"}, status=400)
-    category_id = data.get("category_id")
-    category_id = int(category_id) if category_id not in (None, "") else None
     price = data.get("price")
+    try:
+        price = float(price) if price not in (None, "") else None
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_price"}, status=400)
+
+    try:
+        match = await _ai_match_new_service(pid, name, description)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": "service_ai_failed", "detail": str(exc)[:300]}, status=503)
+
+    if match["status"] == "no_catalog":
+        return web.json_response({
+            "ok": False,
+            "error": "no_approved_catalog",
+            "message": "Նախ պետք է հաստատված ուղղություն ունենաք։"
+        }, status=409)
+
+    if match["status"] == "clarification":
+        return web.json_response({
+            "ok": False,
+            "error": "service_needs_clarification",
+            "message": "Չկարողացա վստահ որոշել ծառայության կատալոգային համապատասխանությունը։ Գրեք ծառայության մասին մի փոքր ավելի մանրամասն։"
+        }, status=422)
+
+    if match["status"] == "proposal":
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS subcategory_proposals (
+                        id BIGSERIAL PRIMARY KEY,
+                        partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+                        master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
+                        proposed_name TEXT NOT NULL,
+                        requested_service_name TEXT,
+                        description TEXT,
+                        price NUMERIC,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        admin_note TEXT,
+                        reviewed_by BIGINT,
+                        reviewed_at TIMESTAMPTZ,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    SELECT id FROM subcategory_proposals
+                    WHERE partner_id=%s AND master_category_id=%s
+                      AND lower(trim(proposed_name))=lower(trim(%s))
+                      AND status='pending'
+                    LIMIT 1
+                """, (pid, match["master_category_id"], match["proposed_name"]))
+                duplicate = cur.fetchone()
+                if duplicate:
+                    return web.json_response({
+                        "ok": True, "proposal_created": True,
+                        "proposal_id": int(duplicate["id"]),
+                        "message": "Առաջարկը արդեն ուղարկված է ադմինիստրատորին։"
+                    })
+                cur.execute("""
+                    INSERT INTO subcategory_proposals
+                        (partner_id,master_category_id,proposed_name,requested_service_name,description,price,status)
+                    VALUES(%s,%s,%s,%s,%s,%s,'pending')
+                    RETURNING id
+                """, (pid, match["master_category_id"], match["proposed_name"], name,
+                      description or None, price))
+                proposal_id = int(cur.fetchone()["id"])
+            conn.commit()
+        return web.json_response({
+            "ok": True, "proposal_created": True, "proposal_id": proposal_id,
+            "message": "AI-ն չի գտել համապատասխան գործող ենթակատեգորիա։ Առաջարկը ուղարկվել է ադմինիստրատորին։"
+        })
+
     with _connect() as conn:
         with conn.cursor() as cur:
+            payload = json.dumps({
+                "ai_source": True,
+                "matched_subcategory_id": match["category_id"],
+                "master_category_id": match["master_category_id"],
+            }, ensure_ascii=False)
+            existing = None
             cur.execute(
-                """INSERT INTO services(partner_id,category_id,subcategory_id,name,description,price,duration_minutes,status,data_json)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s,'draft',%s) RETURNING *""",
-                (pid, category_id, data.get("subcategory_id") or None, name,
-                 str(data.get("description") or ""), price, data.get("duration_minutes") or None,
-                 json.dumps(data.get("data_json") or {})),
+                "SELECT id FROM services WHERE partner_id=%s AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted' ORDER BY id DESC LIMIT 1",
+                (pid, name),
             )
+            existing = cur.fetchone()
+            if existing:
+                cur.execute(
+                    """UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,
+                       description=%s,status='pending',data_json=%s::jsonb,updated_at=NOW()
+                       WHERE id=%s AND partner_id=%s RETURNING *""",
+                    (match["category_id"], price, description, payload, existing["id"], pid),
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO services(partner_id,category_id,subcategory_id,name,description,price,status,data_json)
+                       VALUES(%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb) RETURNING *""",
+                    (pid, match["category_id"], name, description, price, payload),
+                )
             row = cur.fetchone()
         conn.commit()
-    return web.json_response({"ok": True, "service": _json(row)})
+    return web.json_response({
+        "ok": True, "service": _json(row),
+        "matched_category_id": match["category_id"],
+        "master_category_id": match["master_category_id"],
+        "message": "Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ստուգման։"
+    })
 
 
 async def api_service_update(request: web.Request):
