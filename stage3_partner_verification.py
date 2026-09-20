@@ -670,6 +670,15 @@ async def api_admin_service_direction_request_action(request):
                        SET status='document_pending',partner_direction_id=%s,admin_note=%s,
                            reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                        WHERE id=%s""",(pd["id"],req.get("admin_note") or "",admin_id,rid))
+        try:
+            bot=request.app.get("partner_direction_bot")
+            user=_db_fetchone("SELECT user_id FROM partners WHERE id=%s",(req["partner_id"],))
+            if bot and user:
+                await bot.send_message(int(user["user_id"]),
+                    "🧭 Նոր ուղղության հայտի կառուցվածքը հաստատված է ադմինիստրատորի կողմից։\n\n"
+                    "📄 Հաջորդ քայլը՝ բացեք գործընկերոջ կաբինետը և ուղարկեք հաստատող փաստաթուղթը։")
+        except Exception:
+            pass
         return web.json_response({"ok":True,"status":"document_pending","partner_direction_id":pd["id"],"request_id":rid})
 
     if action in ("reject","reject_document"):
@@ -693,6 +702,14 @@ async def api_admin_service_direction_request_action(request):
                          (SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s)
                          AND status='pending'""",(req["partner_id"],req["partner_direction_id"]))
         _db_execute("UPDATE service_direction_requests SET status='approved',admin_note=NULL,reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(admin_id,rid))
+        try:
+            bot=request.app.get("partner_direction_bot")
+            user=_db_fetchone("SELECT user_id FROM partners WHERE id=%s",(req["partner_id"],))
+            if bot and user:
+                await bot.send_message(int(user["user_id"]),
+                    "✅ Նոր ուղղությունը հաստատված է։\n\nԱյժմ կարող եք ավելացնել ծառայություններ այս ուղղության ներքո։")
+        except Exception:
+            pass
         return web.json_response({"ok":True,"status":"approved"})
 
     return web.json_response({"ok":False,"error":"unknown_action"},status=400)
