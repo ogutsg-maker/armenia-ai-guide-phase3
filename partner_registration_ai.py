@@ -268,17 +268,24 @@ async def _match_services_universal(client, model, services, catalog):
             "properties": {
                 "service_index": {"type": "integer"},
                 "matched_subcategory_id": {"type": ["integer", "null"]},
+                "match_confidence": {"type": "number"},
+                "match_reason": {"type": "string"},
             },
-            "required": ["service_index", "matched_subcategory_id"],
+            "required": ["service_index", "matched_subcategory_id", "match_confidence", "match_reason"],
             "additionalProperties": False,
         }}},
         "required": ["matches"],
         "additionalProperties": False,
     }
-    system = """You are a universal multilingual catalogue matcher.
-Understand Armenian, Russian and English. Choose the closest existing
-catalogue item by meaning. Use ONLY supplied real IDs. Never invent a
-category. Return null only when no supplied category genuinely fits."""
+    system = """You are a universal multilingual catalogue matcher for a real marketplace.
+Understand Armenian, Russian and English, including inflected forms, colloquial wording and transliteration.
+This is SEMANTIC classification, not keyword matching.
+For every service, understand what the customer actually receives, compare it with EVERY supplied
+candidate, and choose the most specific existing candidate that genuinely represents that service.
+Never choose a merely related candidate. Example: haircut is NOT hair coloring.
+Use ONLY supplied real IDs. Never invent an ID or category. If none is a genuine fit, return null.
+Confidence must be 0..1. If two candidates are genuinely close and the wording is insufficient,
+prefer null or the clearer broader candidate. Give a short reason."""
     prompt = (
         "SERVICES:\n" + json.dumps(
             [{"service_index": i, "name": _norm(x.get("name"))}
@@ -304,9 +311,14 @@ category. Return null only when no supplied category genuinely fits."""
             cid = _safe_int(item.get("matched_subcategory_id"))
             if idx is not None and 0 <= idx < len(out) and (cid is None or cid in allowed):
                 out[idx]["matched_subcategory_id"] = cid
+                try:
+                    out[idx]["match_confidence"] = max(0.0, min(1.0, float(item.get("match_confidence") or 0.0)))
+                except (TypeError, ValueError):
+                    out[idx]["match_confidence"] = 0.0
+                out[idx]["match_reason"] = _norm(item.get("match_reason") or "")[:500]
         return out
     except Exception:
-        return [dict(x, matched_subcategory_id=None) for x in services]
+        return [dict(x, matched_subcategory_id=None, match_confidence=0.0, match_reason="No reliable catalogue match.") for x in services]
 
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
@@ -347,6 +359,9 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
             "master_category_id": {"type": ["integer", "null"]},
             "subcategory_names": {"type": "array", "items": {"type": "string"}},
             "description": {"type": "string"},
+            "confidence": {"type": "number"},
+            "ambiguities": {"type": "array", "items": {"type": "string"}},
+            "needs_review": {"type": "boolean"},
             "services": {"type": "array", "items": {
                 "type": "object",
                 "properties": {
@@ -361,7 +376,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                     },
         "required": ["business_name", "marz", "city", "address", "phone", "business_action", "proposed_business_name", "district", "direction",
                      "master_category_id", "subcategory_names", "description",
-                     "services"],
+                     "confidence", "ambiguities", "needs_review", "services"],
         "additionalProperties": False,
     }
 
@@ -374,6 +389,12 @@ Keep every stated service as a separate object.
 If a current business is supplied in PREVIOUS PROFILE, decide whether the new request belongs to that same business or clearly describes a separate organization. Return business_action as same_business or new_business and proposed_business_name when new_business.
 For prices such as "3000-ից", "от 3000", "from 3000", use price=3000 and price_type="from".
 Determine the platform direction yourself; never ask the partner to choose it.
+Think in terms of meaning and context. Several services may be mentioned in one sentence.
+Do not confuse a business name with a service name.
+Do not invent missing required information: use null and let the form collect it.
+If the message clearly describes another organization than PREVIOUS PROFILE, use business_action="new_business".
+If it is clearly another service of the same organization, use business_action="same_business".
+If genuinely ambiguous, use same_business, set needs_review=true, and explain the ambiguity.
 
 TOP-LEVEL DIRECTIONS:
 The direction list below is the ONLY taxonomy you may use for master_category_id.
@@ -400,7 +421,7 @@ Return only the supplied JSON schema."""
         data = dict(previous_profile)
 
         for field in ("business_name", "marz", "address", "phone", "business_action", "proposed_business_name", "city", "district", "direction",
-                      "master_category_id", "description"):
+                      "master_category_id", "description", "confidence", "ambiguities", "needs_review"):
             value = ai_data.get(field)
             if value not in (None, ""):
                 data[field] = value
