@@ -342,6 +342,16 @@ async def cmd_start(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     db.register_user(uid, message.from_user.username or f"user_{uid}", message.from_user.full_name or "")
     await state.clear()
+    # Reset any per-chat Telegram menu button that may still point to an old
+    # partner WebApp URL. The current menu is always the welcome screen.
+    try:
+        await bot.delete_chat_menu_button(chat_id=message.chat.id)
+        await bot.set_chat_menu_button(
+            chat_id=message.chat.id,
+            menu_button=MenuButtonWebApp(text="Armenia AI Guide", web_app=WebAppInfo(url=webapp_url("welcome.html")))
+        )
+    except Exception:
+        logger.exception("Could not reset Telegram menu button for chat %s", message.chat.id)
     await message.answer(
         "✦ <b>Armenia AI Guide</b>\n<i>ARMENIA · AI CONCIERGE</i>\n\nՁեր AI օգնականը ծառայություններ գտնելու, ընտրելու, բանակցելու և ամրագրման համար։",
         reply_markup=_welcome_keyboard(),
