@@ -518,7 +518,15 @@ You are doing strict Named Entity Recognition (NER) and classification, not free
 Never copy a complete sentence into a field.
 BUSINESS NAME: extract only the proper business/organization name. For "BYUTI անունով սրահ" return "BYUTI", never "սրահ BYUTI" and never surrounding context.
 LOCATION: normalize Armenian/Russian/English inflected place names to the canonical city name. For example "Հրազդանում" -> "Հրազդան". Derive marz only from a known city-to-marz relationship or an explicitly stated marz; never invent an address.
-SERVICE NAMES: every price-bearing service is a separate entity. Strip prepositions, conjunctions, introductions, location text, business context, punctuation and grammatical endings. Use a short clean noun in the nominative/base form: "սանրվածքները սկսվում են" -> "Սանրվածք"; "գունավորումը" -> "Գունավորում"; "ոճավորումը" -> "Ոճավորում"; "մատնահարդարումը" -> "Մատնահարդարում"; "պեդիկյուրը" -> "Պեդիկյուր"; "երեկոյան դիմահարդարումը" -> "Երեկոյան դիմահարդարում". Never put words such as "սկսվում է", "դրամից", "սրահում", "ունեմ", "անունով", a city, or the business name into service_name.
+SERVICE NAMES: every price-bearing service is a separate atomic entity. One complete service + its price = ONE object. Never split a complete service phrase into fragments. For example, "կանացի մազերի կտրում՝ 3000 դրամից" is exactly ONE service; do NOT also create "կտրում" with 3000. Likewise "մազերի ներկում՝ 5000 դրամից" is ONE service; do NOT also create "ներկում". Strip only introductions, conjunctions, location text, business context, punctuation and grammatical endings; preserve meaningful modifiers such as "կանացի", "երեկոյան", "հարսանեկան" when they distinguish the service. Use a clean noun phrase suitable for a price list: "կանացի մազերի կտրում" -> "կանացի մազերի կտրում"; "մազերի ներկում" -> "մազերի ներկում"; "սանրվածք" -> "սանրվածք"; "մատնահարդարում" -> "մատնահարդարում"; "պեդիկյուր" -> "պեդիկյուր"; "երեկոյան դիմահարդարում" -> "երեկոյան դիմահարդարում". Never put words such as "սկսվում է", "դրամից", "սրահում", "ունեմ", "անունով", a city, or the business name into service_name.
+ARMENIAN FEW-SHOT SERVICE EXAMPLES:
+Input: "կանացի մազերի կտրում՝ 3000 դրամից"
+Output: one service: {"name":"կանացի մազերի կտրում","price":3000,"price_type":"from"}
+Input: "մազերի ներկում՝ 5000 դրամից"
+Output: one service: {"name":"մազերի ներկում","price":5000,"price_type":"from"}
+Input: "երեկոյան դիմահարդարում՝ 5000 դրամից"
+Output: one service: {"name":"երեկոյան դիմահարդարում","price":5000,"price_type":"from"}
+If the same text contains a complete phrase and one of its component words, treat the complete phrase as the service and never create a second fragment with the same price/context.
 PRICES: output only the numeric amount. "3000 դրամից", "սկսվում է 3000 դրամից", "от 3000", "from 3000" => price=3000 and price_type="from". An exact "3000 դրամ" => price_type="fixed".
 KEEP ENTITIES SEPARATE: business, city, address, phone, direction, subcategory, service, price and working hours are different fields. Do not merge them.
 Keep every stated service as a separate object, including several services in one sentence.
@@ -571,11 +579,13 @@ Return only the supplied JSON schema."""
             history + [{"role": "user", "content": text}]
         )
         if recovered:
-            # Recovery is authoritative for explicit price-bearing facts.
-            by_name = {str(x.get("name")).strip().lower(): x for x in (data.get("services") or [])}
-            for item in recovered:
-                by_name[item["name"].lower()] = item
-            data["services"] = list(by_name.values())
+            # Explicit price-bearing facts recovered from the partner's own
+            # text are authoritative. Do not merge them with LLM-generated
+            # fragments: that can turn one atomic service such as
+            # "կանացի մազերի կտրում" into both the full service and a second
+            # fragment such as "կտրում". The catalogue matcher may enrich these
+            # records with IDs, but it must never create additional services.
+            data["services"] = recovered
 
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
         data = _recover_obvious_facts(combined_text, data)
