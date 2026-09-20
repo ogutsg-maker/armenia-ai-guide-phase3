@@ -118,7 +118,8 @@ async function openApplicationEditor(id, focusAfter=false){
   const d=await api('/api/master/'+uid+'/applications');
   const a=(d.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
   await getApplicationCatalog();
-  const resolved=resolveApplicationIds(a);\n  const masters=(applicationCatalog||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
+  const resolved=resolveApplicationIds(a);
+  const masters=(applicationCatalog||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
   openModal('Լրացնել նոր ուղղության հայտը',`
     <div class="notice">🧾 Նոր ուղղություն է հայտնաբերվել։ Լրացրեք ամբողջ հայտը և պարտադիր կցեք հաստատող փաստաթուղթը։ AI-ի առաջարկած ուղղությունն ու ենթաուղղությունը կարող եք փոխել ցուցակից։</div>
     <label>Բիզնես / կազմակերպություն *</label><input id="appBusiness" value="${esc(a.business_name||'')}">
@@ -135,7 +136,12 @@ async function openApplicationEditor(id, focusAfter=false){
     <label>📄 Հաստատող փաստաթուղթ * </label><input id="appDoc" type="file" accept="image/*,.pdf">
     <div id="appFormError" class="muted" style="color:var(--danger);margin-top:8px"></div>
     <div class="actions"><button class="primary" onclick="savePartnerApplication(${id})">📨 Լրացնել և ուղարկել ադմինին</button></div>`);
-  const masterSelect=document.getElementById('appMaster');\n  const categorySelect=document.getElementById('appCategory');\n  masterSelect.value=String(resolved.masterId||'');\n  categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,resolved.categoryId);\n  categorySelect.value=String(resolved.categoryId||'');\n  masterSelect.onchange=()=>{categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,'');categorySelect.value='';};
+  const masterSelect=document.getElementById('appMaster');
+  const categorySelect=document.getElementById('appCategory');
+  masterSelect.value=String(resolved.masterId||'');
+  categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,resolved.categoryId);
+  categorySelect.value=String(resolved.categoryId||'');
+  masterSelect.onchange=()=>{categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,'');categorySelect.value='';};
   if(focusAfter)document.getElementById('appBusiness')?.focus();
 }
 async function savePartnerApplication(id){
