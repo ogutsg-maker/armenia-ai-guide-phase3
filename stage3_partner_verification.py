@@ -570,14 +570,132 @@ async def api_admin_service_direction_requests(request):
     _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     rows = _db_fetchall("""
         SELECT r.*, p.business_name, p.user_id,
-               m.name_am AS master_name_am, m.name_ru AS master_name_ru, m.name_en AS master_name_en
+               m.name_am AS master_name_am, m.name_ru AS master_name_ru, m.name_en AS master_name_en,
+               pd.status AS direction_status,
+               d.status AS document_status, d.original_filename
         FROM service_direction_requests r
         JOIN partners p ON p.id=r.partner_id
         JOIN master_categories m ON m.id=r.requested_master_category_id
-        WHERE r.status='pending'
+        LEFT JOIN partner_directions pd ON pd.id=r.partner_direction_id
+        LEFT JOIN partner_verification_documents d ON d.id=r.document_id
+        WHERE r.status <> 'approved'
         ORDER BY r.created_at DESC
     """)
     return web.json_response({"ok": True, "requests": rows})
+
+async def api_admin_service_direction_request_action(request):
+    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    rid = int(request.match_info["id"])
+    data = await request.json() if request.can_read_body else {}
+    action = str(data.get("action") or "").strip().lower()
+    req = _db_fetchone("SELECT * FROM service_direction_requests WHERE id=%s", (rid,))
+    if not req:
+        return web.json_response({"ok":False,"error":"direction_request_not_found"},status=404)
+    if req["status"] == "approved":
+        return web.json_response({"ok":False,"error":"direction_request_already_completed"},status=400)
+
+    if action == "edit":
+        mid = int(data.get("master_category_id") or req["requested_master_category_id"])
+        master = _db_fetchone("SELECT id,name_am,name_ru,name_en FROM master_categories WHERE id=%s AND is_active=TRUE",(mid,))
+        if not master:
+            return web.json_response({"ok":False,"error":"master_direction_not_found"},status=400)
+        sub = str(data.get("proposed_subcategory_name") if data.get("proposed_subcategory_name") is not None else (req.get("proposed_subcategory_name") or "")).strip()[:200]
+        service = str(data.get("service_name") if data.get("service_name") is not None else (req.get("requested_service_name") or "")).strip()[:200]
+        desc = str(data.get("description") if data.get("description") is not None else (req.get("description") or ""))[:3000]
+        reason = str(data.get("reason") if data.get("reason") is not None else (req.get("reason") or ""))[:2000]
+        note = str(data.get("admin_note") or "")[:2000]
+        price = data.get("price", req.get("price"))
+        try:
+            price = float(price) if price not in (None,"") else None
+        except (TypeError,ValueError):
+            return web.json_response({"ok":False,"error":"invalid_price"},status=400)
+        if not sub or not service:
+            return web.json_response({"ok":False,"error":"subcategory_and_service_required"},status=400)
+        _db_execute("""UPDATE service_direction_requests
+                       SET requested_master_category_id=%s,requested_master_name=%s,
+                           proposed_subcategory_name=%s,requested_service_name=%s,
+                           description=%s,price=%s,reason=%s,admin_note=%s,
+                           status='pending_admin',updated_at=NOW()
+                       WHERE id=%s""",
+                    (mid,master.get("name_am") or master.get("name_ru"),sub,service,desc,price,reason,note,rid))
+        return web.json_response({"ok":True,"request":_db_fetchone("SELECT * FROM service_direction_requests WHERE id=%s",(rid,))})
+
+    if action == "send_to_partner":
+        if req["status"] not in ("pending_admin","rejected"):
+            return web.json_response({"ok":False,"error":"invalid_request_status"},status=400)
+        mid = int(req["requested_master_category_id"])
+        sub = str(req.get("proposed_subcategory_name") or "").strip()
+        service = str(req.get("requested_service_name") or "").strip()
+        if not sub or not service:
+            return web.json_response({"ok":False,"error":"request_not_ready"},status=400)
+        master = _db_fetchone("SELECT id,name_am,name_ru,name_en FROM master_categories WHERE id=%s AND is_active=TRUE",(mid,))
+        if not master:
+            return web.json_response({"ok":False,"error":"master_direction_not_found"},status=400)
+        existing_pd = _db_fetchone("SELECT * FROM partner_directions WHERE partner_id=%s AND master_category_id=%s",(req["partner_id"],mid))
+        if existing_pd and existing_pd["status"]=="approved":
+            return web.json_response({"ok":False,"error":"direction_already_approved"},status=400)
+        if existing_pd:
+            pd=existing_pd
+            _db_execute("UPDATE partner_directions SET status='pending',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(pd["id"],))
+        else:
+            pd=_db_execute("""INSERT INTO partner_directions(partner_id,master_category_id,status)
+                              VALUES(%s,%s,'pending') RETURNING *""",(req["partner_id"],mid),True)
+
+        import re
+        slug=re.sub(r"[^a-z0-9\u0531-\u0587]+","-",sub.lower()).strip("-") or ("partner-request-"+str(rid))
+        category=_db_fetchone("""SELECT id,master_category_id,name_am,name_ru,name_en,slug
+                                FROM categories
+                                WHERE master_category_id=%s AND
+                                      (lower(trim(name_am))=lower(trim(%s)) OR lower(trim(name_ru))=lower(trim(%s)) OR lower(trim(name_en))=lower(trim(%s)))
+                                LIMIT 1""",(mid,sub,sub,sub))
+        if not category:
+            category=_db_execute("""INSERT INTO categories(master_category_id,name_am,name_ru,name_en,slug,is_active,commission_type,commission_value)
+                                    VALUES(%s,%s,%s,%s,%s,TRUE,'inside',0)
+                                    RETURNING id,master_category_id,name_am,name_ru,name_en,slug""",
+                                 (mid,sub,sub,sub,slug),True)
+        _db_execute("""INSERT INTO partner_direction_categories(partner_direction_id,category_id)
+                       VALUES(%s,%s) ON CONFLICT DO NOTHING""",(pd["id"],category["id"]))
+        service_row=_db_fetchone("""SELECT id FROM services WHERE partner_id=%s AND category_id=%s
+                                    AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted'
+                                    ORDER BY id DESC LIMIT 1""",(req["partner_id"],category["id"],service))
+        if service_row:
+            _db_execute("""UPDATE services SET price=%s,description=%s,status='pending',updated_at=NOW()
+                           WHERE id=%s""",(req.get("price"),req.get("description") or "",service_row["id"]))
+        else:
+            _db_execute("""INSERT INTO services(partner_id,category_id,subcategory_id,name,description,price,status,data_json)
+                           VALUES(%s,%s,%s,%s,%s,%s,'pending',%s::jsonb)""",
+                        (req["partner_id"],category["id"],category["id"],service,req.get("description") or "",req.get("price"),
+                         '{"source":"service_direction_request"}'))
+        _db_execute("""UPDATE service_direction_requests
+                       SET status='document_pending',partner_direction_id=%s,admin_note=%s,
+                           reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
+                       WHERE id=%s""",(pd["id"],req.get("admin_note") or "",admin_id,rid))
+        return web.json_response({"ok":True,"status":"document_pending","partner_direction_id":pd["id"],"request_id":rid})
+
+    if action in ("reject","reject_document"):
+        reason = str(data.get("reason") or "Մերժվել է ադմինիստրատորի կողմից")[:1000]
+        _db_execute("""UPDATE service_direction_requests SET status='rejected',admin_note=%s,
+                       reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s""",(reason,admin_id,rid))
+        if req.get("partner_direction_id"):
+            _db_execute("UPDATE partner_directions SET status='rejected',rejection_reason=%s,updated_at=NOW() WHERE id=%s",(reason,req["partner_direction_id"]))
+        return web.json_response({"ok":True,"status":"rejected"})
+
+    if action == "approve_document":
+        if req["status"] != "document_under_review" or not req.get("partner_direction_id") or not req.get("document_id"):
+            return web.json_response({"ok":False,"error":"document_not_ready"},status=400)
+        doc = _db_fetchone("SELECT * FROM partner_verification_documents WHERE id=%s AND partner_direction_id=%s AND status='pending'",(req["document_id"],req["partner_direction_id"]))
+        if not doc:
+            return web.json_response({"ok":False,"error":"pending_document_not_found"},status=404)
+        _db_execute("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE id=%s",(admin_id,doc["id"]))
+        _db_execute("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(req["partner_direction_id"],))
+        _db_execute("""UPDATE services SET status='approved',updated_at=NOW()
+                       WHERE partner_id=%s AND category_id IN
+                         (SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s)
+                         AND status='pending'""",(req["partner_id"],req["partner_direction_id"]))
+        _db_execute("UPDATE service_direction_requests SET status='approved',admin_note=NULL,reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(admin_id,rid))
+        return web.json_response({"ok":True,"status":"approved"})
+
+    return web.json_response({"ok":False,"error":"unknown_action"},status=400)
 
 
 async def api_admin_partner_approve(request):
@@ -613,6 +731,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
     app.router.add_get("/api/admin/service-direction-requests", api_admin_service_direction_requests)
+    app.router.add_post("/api/admin/service-direction-requests/{id}/action", api_admin_service_direction_request_action)
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/url", api_admin_partner_document_url)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/download", api_admin_partner_document_download)
