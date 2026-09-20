@@ -99,7 +99,7 @@ def _heuristic(text: str) -> dict:
     direction = next((name for name, words in aliases.items() if any(w in low for w in words)), None)
     return {"business_name": None, "city": None, "district": None, "direction": direction,
             "master_category_id": None, "subcategory_names": [], "description": _norm(text),
-            "services": [], "missing": ["business_name", "city", "services"], "ready": False}
+            "services": [], "missing": ["business_name", "marz", "city", "address", "phone", "services"], "ready": False}
 
 
 def _recover_obvious_facts(text: str, data: dict) -> dict:
@@ -321,7 +321,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
 
     if not key or AsyncGroq is None:
         data = _heuristic(text)
-        if pending_field in {"business_name", "city", "district"}:
+        if pending_field in {"business_name", "marz", "city", "address", "phone", "district"}:
             data[pending_field] = _norm(text)
         elif pending_field == "services":
             data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown", "matched_subcategory_id": None}]
@@ -339,6 +339,9 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         "type": "object",
         "properties": {
             "business_name": {"type": ["string", "null"]},
+            "marz": {"type": ["string", "null"]},
+            "address": {"type": ["string", "null"]},
+            "phone": {"type": ["string", "null"]},
             "business_action": {"type": "string"},
             "proposed_business_name": {"type": ["string", "null"]},
             "city": {"type": ["string", "null"]},
@@ -359,7 +362,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                 "additionalProperties": False,
             }},
                     },
-        "required": ["business_name", "business_action", "proposed_business_name", "city", "district", "direction",
+        "required": ["business_name", "marz", "city", "address", "phone", "business_action", "proposed_business_name", "district", "direction",
                      "master_category_id", "subcategory_names", "description",
                      "services"],
         "additionalProperties": False,
@@ -368,6 +371,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
     system = """You are the AI registration concierge for Armenia AI Guide.
 Understand Armenian, Russian and English.
 Extract facts from the partner's current message and accumulated history.
+Extract marz/region, exact address, and business phone when stated. Never invent them.
 Do not invent business names, cities, services or prices.
 Keep every stated service as a separate object.
 If a current business is supplied in PREVIOUS PROFILE, decide whether the new request belongs to that same business or clearly describes a separate organization. Return business_action as same_business or new_business and proposed_business_name when new_business.
@@ -398,7 +402,7 @@ Return only the supplied JSON schema."""
                                    "partner_onboarding_extract", schema, 700)
         data = dict(previous_profile)
 
-        for field in ("business_name", "business_action", "proposed_business_name", "city", "district", "direction",
+        for field in ("business_name", "marz", "address", "phone", "business_action", "proposed_business_name", "city", "district", "direction",
                       "master_category_id", "description"):
             value = ai_data.get(field)
             if value not in (None, ""):
@@ -460,11 +464,14 @@ Return only the supplied JSON schema."""
 
         data["ready"] = bool(
             str(data.get("business_name") or "").strip()
+            and str(data.get("marz") or "").strip()
             and str(data.get("city") or "").strip()
+            and str(data.get("address") or "").strip()
+            and str(data.get("phone") or "").strip()
             and data.get("services")
         )
         data["missing"] = [] if data["ready"] else [
-            key for key in ("business_name", "city", "services") if not data.get(key)
+            key for key in ("business_name", "marz", "city", "address", "phone", "services") if not data.get(key)
         ]
         return data
 
@@ -562,8 +569,8 @@ def match_subcategories(db, names: list[str]) -> list[int]:
 def missing_question(data: dict, lang: str) -> str:
     field = (data.get("missing") or ["services"])[0]
     questions = {
-        "hy": {"business_name":"Ինչպե՞ս է կոչվում ձեր բիզնեսը։", "city":"Ո՞ր քաղաքում է աշխատում բիզնեսը։", "services":"Ի՞նչ ծառայություն եք առաջարկում։ Եթե գինը հայտնի է, նշեք նաև գինը։"},
-        "ru": {"business_name":"Как называется ваш бизнес?", "city":"В каком городе работает бизнес?", "services":"Какую услугу вы оказываете? Если цена известна, укажите и её."},
+        "hy": {"business_name":"Ինչպե՞ս է կոչվում ձեր բիզնեսը։", "marz":"Ո՞ր մարզում է գտնվում բիզնեսը։", "city":"Ո՞ր քաղաքում կամ բնակավայրում է աշխատում բիզնեսը։", "address":"Ո՞րն է բիզնեսի ամբողջական հասցեն։", "phone":"Ո՞ր հեռախոսահամարով կարող է հաճախորդը կապվել բիզնեսի հետ։", "services":"Ի՞նչ ծառայություն եք առաջարկում։ Եթե գինը հայտնի է, նշեք նաև գինը։"},
+        "ru": {"business_name":"Как называется ваш бизнес?", "marz":"В каком марзе находится бизнес?", "city":"В каком городе или населённом пункте работает бизнес?", "address":"Какой полный адрес бизнеса?", "phone":"Какой телефон бизнеса указать для связи?", "services":"Какую услугу вы оказываете? Если цена известна, укажите и её."},
         "en": {"business_name":"What is the name of your business?", "city":"Which city does the business operate in?", "services":"What service do you provide? If the price is known, include it."},
     }
     return questions.get(lang, questions["ru"]).get(field, questions.get(lang, questions["ru"])["services"])
