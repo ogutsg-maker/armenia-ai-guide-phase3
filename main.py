@@ -23,6 +23,7 @@ from ai_service import AIService
 from states import PartnerAIStates
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
 from stage3_partner_verification import register_stage3_routes
+from partner_business_application_api import register_business_application_routes
 import runtime_platform_bootstrap  # noqa: F401
 
 try:
@@ -370,6 +371,8 @@ async def main():
     app.router.add_post("/api/webapp/partner/message", api_webapp_partner_message)
     app.router.add_get("/api/master/{id}/registration-status", api_partner_registration_status)
     register_stage3_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID)
+    register_business_application_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID)
+    logger.info("✅ Business/application layer registered")
     logger.info("✅ Stage 3 verification routes registered")
     if register_master_cabinet_routes is not None:
         register_master_cabinet_routes(app, db, bot=bot)
