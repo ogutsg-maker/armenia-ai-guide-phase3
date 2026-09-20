@@ -280,6 +280,21 @@ async def _ai_match_new_service(pid: int,name: str,description: str="",business_
             cur.execute("SELECT name,description FROM partner_businesses WHERE id=%s AND partner_id=%s",(business_id,pid))
             business=cur.fetchone() or {}
     if not catalog: return {"status":"no_catalog","business_action":"same_business"}
+    # Classification must know the full platform taxonomy, not only this
+    # business's approved directions. An existing category that is not yet
+    # approved for this business is an admin proposal, not a clarification.
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT c.id AS category_id,c.master_category_id,c.name_am AS category_am,
+                                  c.name_ru AS category_ru,c.name_en AS category_en,c.slug AS category_slug,
+                                  m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
+                           FROM categories c JOIN master_categories m ON m.id=c.master_category_id
+                           WHERE c.is_active=TRUE AND m.is_active=TRUE
+                           ORDER BY c.master_category_id,c.id""")
+            all_catalog=[dict(x) for x in cur.fetchall()]
+    # Keep the approved catalog for direct activation, but use the full catalog
+    # to recognize an existing platform subcategory and route it to admin.
+    full_by_id={_safe_int(x["category_id"]):x for x in all_catalog}
     approved={int(x["master_category_id"]) for x in catalog}
     # First resolve obvious matches locally. This prevents Groq from returning a
     # clarification simply because the catalog is larger than the model context.
@@ -301,10 +316,17 @@ async def _ai_match_new_service(pid: int,name: str,description: str="",business_
             best=max(best, overlap*0.75+ratio*0.25, ratio)
         return best
     ranked=sorted(catalog,key=_score,reverse=True)
-    exact=next((x for x in catalog if any(_norm_match(name)==_norm_match(x.get(k)) or _norm_match(name) in _norm_match(x.get(k)) or _norm_match(x.get(k)) in _norm_match(name) for k in ("category_am","category_ru","category_en","category_slug"))),None)
+    exact=next((x for x in all_catalog if any(_norm_match(name)==_norm_match(x.get(k)) or _norm_match(name) in _norm_match(x.get(k)) or _norm_match(x.get(k)) in _norm_match(name) for k in ("category_am","category_ru","category_en","category_slug"))),None)
     if exact:
-        return {"status":"matched","category_id":_safe_int(exact["category_id"]),"master_category_id":_safe_int(exact["master_category_id"]),
-                "business_action":"same_business","proposed_business_name":None,"reason":"exact_catalog_match"}
+        cid=_safe_int(exact["category_id"]); mid=_safe_int(exact["master_category_id"])
+        if mid in approved:
+            return {"status":"matched","category_id":cid,"master_category_id":mid,
+                    "business_action":"same_business","proposed_business_name":None,"reason":"exact_catalog_match"}
+        return {"status":"out_of_scope","category_id":None,"master_category_id":None,
+                "out_of_scope_master_id":mid,
+                "out_of_scope_master_name":_norm(exact.get("master_am") or exact.get("master_ru") or exact.get("master_en")),
+                "proposed_name":_norm(exact.get("category_am") or exact.get("category_ru") or exact.get("category_en")),
+                "business_action":"same_business","proposed_business_name":None,"reason":"existing_category_not_approved_for_business"}
     # Send only the best candidates to Groq instead of the first 80 arbitrary rows.
     candidates=[x for x in ranked[:60] if _score(x)>=0.20] or ranked[:30]
     schema={"type":"object","properties":{
