@@ -22,7 +22,7 @@
 <section id="orders" class="page"><div id="ordersList"></div></section>
 <section id="disputes" class="page"><div id="disputesList"></div></section>
 <section id="potential" class="page"><div class="card"><b>🔎 Հնարավոր գործընկերներ</b><div class="muted">Միայն իրական աղբյուրներից ստացված տվյալներ։</div><input id="researchQuery" placeholder="Օր․ beauty salons in Arabkir"><textarea id="researchText" placeholder="Կամ տեղադրեք աղբյուրի տեքստը"></textarea><div class="actions"><button class="btn" onclick="runResearch()">🔎 AI որոնել</button><button class="btn ok" onclick="structurePotential()">🤖 Կառուցվածքավորել</button></div></div><div id="potentialList"></div></section>
-<section id="proposals" class="page"><div class="card"><b>🧠 AI կատալոգի առաջարկներ</b><div class="muted">Նոր ուղղություններ և գործընկերների առաջարկած նոր ենթակատեգորիաներ։</div><button class="btn soft" onclick="loadProposals()">↻</button></div><div id="proposalList"></div><div class="card"><b>🏷 Նոր ենթակատեգորիաներ գործընկերներից</b><div class="muted">Գործընկերը չի ստեղծում կատեգորիան ինքնուրույն. առաջարկը նախ ստուգվում է ադմինի կողմից։</div><button class="btn soft" onclick="loadSubcategoryProposals()">↻</button></div><div id="subcategoryProposalList"></div></section>
+<section id="proposals" class="page"><div class="card"><b>🧠 AI կատալոգի առաջարկներ</b><div class="muted">Նոր ուղղություններ և գործընկերների առաջարկած նոր ենթակատեգորիաներ։</div><button class="btn soft" onclick="loadProposals()">↻</button></div><div id="proposalList"></div><div class="card"><b>🏷 Նոր ենթակատեգորիաներ գործընկերներից</b><div class="muted">Գործընկերը չի ստեղծում կատեգորիան ինքնուրույն. առաջարկը նախ ստուգվում է ադմինի կողմից։</div><button class="btn soft" onclick="loadSubcategoryProposals()">↻</button></div><div id="subcategoryProposalList"></div><div class="card"><b>🧭 Նոր ուղղության հարցումներ գործընկերներից</b><div class="muted">AI-ն այստեղ ուղարկում է այն ծառայությունները, որոնք դուրս են գործընկերոջ արդեն հաստատված ուղղություններից։</div><button class="btn soft" onclick="loadServiceDirectionRequests()">↻</button></div><div id="serviceDirectionRequestList"></div></section>
 <section id="ai" class="page"><div class="grid"><div class="stat"><span class="muted">AI #1</span><b>Partner Onboarding</b></div><div class="stat"><span class="muted">AI #2</span><b>Hunter / Dispatcher</b></div><div class="stat"><span class="muted">Provider</span><b>Groq</b></div><div class="stat"><span class="muted">Mode</span><b>AI-first</b></div></div></section>
 </main></div>
 <script>
@@ -43,6 +43,20 @@ async function togglePartner(id){const el=$('expand'+id);if(el.style.display==='
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
 async function decision(id,a){const reason=a==='reject'?prompt('Պատճառ / Причина','Փաստաթուղթը չի համապատասխանում'):'';await post(`/api/admin/partner-applications/${id}/${a}`,reason?{reason}:{});await Promise.all([loadPartners(),loadStats()])}
 async function directionAction(id,a,pid){const reason=a==='reject'?prompt('Պատճառ','Փաստաթուղթը չի համապատասխանում'):'';await post(`/api/admin/partner-directions/${id}/action`,reason?{action:a,reason}:{action:a});const el=$('expand'+pid);el.style.display='none';await togglePartner(pid);await loadStats()}
+
+async function loadServiceDirectionRequests(){
+  const el=$('serviceDirectionRequestList');
+  try{
+    const d=await api('/api/admin/service-direction-requests');
+    const rows=d.requests||[];
+    el.innerHTML=rows.length?rows.map(x=>`<div class="card">
+      <div class="row"><div><b>🧭 ${esc(x.master_name_am||x.master_name_ru||x.master_name_en||'')}</b><div class="muted">${esc(x.business_name||'')} · Telegram ${esc(x.user_id||'')}</div></div><span class="badge yellow">pending</span></div>
+      <div class="detail"><b>Ծառայություն / Услуга:</b> ${esc(x.requested_service_name||'—')}</div>
+      <div class="muted">Գին՝ ${x.price==null?'—':Number(x.price).toLocaleString()+' ֏'} · ${esc(x.reason||'')}</div>
+      <div class="muted" style="margin-top:6px">ID հարցման՝ #${x.id}</div>
+    </div>`).join(''):'<div class="empty">Նոր հարցումներ չկան</div>';
+  }catch(e){el.innerHTML=`<div class="error">${esc(e.message)}</div>`}
+}
 
 async function loadSubcategoryProposals(){
   const el=$('subcategoryProposalList');
