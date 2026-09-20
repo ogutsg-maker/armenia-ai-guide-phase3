@@ -106,8 +106,18 @@ async function getApplicationCatalog(){
 function normalizeApplicationText(v){return String(v??'').trim().toLocaleLowerCase().replace(/ё/g,'е').replace(/[«»\"']/g,'').replace(/\\s+/g,' ')}
 function resolveApplicationIds(a){
   let masterId=Number(a.master_category_id||0)||0, categoryId=Number(a.category_id||0)||0;
-  if(!masterId&&a.direction_name){const n=normalizeApplicationText(a.direction_name);const m=(applicationCatalog||[]).find(x=>[x.name_am,x.name_ru,x.name_en].some(v=>normalizeApplicationText(v)===n));if(m)masterId=Number(m.id);}
-  if(masterId&&!categoryId&&a.subcategory_name){const n=normalizeApplicationText(a.subcategory_name);const m=(applicationCatalog||[]).find(x=>Number(x.id)===masterId);const sc=(m?.subcategories||[]).find(x=>[x.name_am,x.name_ru,x.name_en].some(v=>normalizeApplicationText(v)===n));if(sc)categoryId=Number(sc.id);}
+  const masterNames=[a.direction_name,a.master_name_am,a.master_name_ru,a.master_name_en];
+  const categoryNames=[a.subcategory_name,a.category_name_am,a.category_name_ru,a.category_name_en];
+  const exact=(names,values)=>{for(const raw of names){const n=normalizeApplicationText(raw);if(!n)continue;const hit=(values||[]).find(v=>normalizeApplicationText(v)===n);if(hit)return hit;}return null};
+  if(!masterId){
+    const m=(applicationCatalog||[]).find(x=>exact(masterNames,[x.name_am,x.name_ru,x.name_en]));
+    if(m)masterId=Number(m.id);
+  }
+  const master=(applicationCatalog||[]).find(x=>Number(x.id)===masterId);
+  if(!categoryId&&master){
+    const sc=(master.subcategories||[]).find(x=>exact(categoryNames,[x.name_am,x.name_ru,x.name_en]));
+    if(sc)categoryId=Number(sc.id);
+  }
   return {masterId,categoryId};
 }
 function applicationSubcats(masterId,selected){
@@ -128,7 +138,7 @@ async function openApplicationEditor(id, focusAfter=false){
     <label>Հասցե *</label><input id="appAddress" value="${esc(a.address||'')}">
     <label>Հեռախոս *</label><input id="appPhone" value="${esc(a.phone||'')}">
     <label>AI առաջարկած ուղղություն *</label><select id="appMaster"><option value="">Ընտրեք ուղղությունը</option>${masters}</select>
-    <label>Ենթաուղղություն *</label><select id="appCategory"><option value="">Ընտրեք ենթաուղղությունը</option>${applicationSubcats(a.master_category_id,a.category_id)}</select>
+    <label>Ենթաուղղություն *</label><select id="appCategory"><option value="">Ընտրեք ենթաուղղությունը</option></select>
     <label>Ծառայություն *</label><input id="appService" value="${esc(a.service_name||'')}">
     <label>Գին, AMD *</label><input id="appPrice" type="number" min="0" step="1" value="${esc(a.price??'')}">
     <label>Օբյեկտ (եթե անհրաժեշտ է)</label><input id="appObject" value="${esc(a.object_name||'')}">
@@ -142,6 +152,9 @@ async function openApplicationEditor(id, focusAfter=false){
   categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,resolved.categoryId);
   categorySelect.value=String(resolved.categoryId||'');
   masterSelect.onchange=()=>{categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,'');categorySelect.value='';};
+  if(resolved.masterId) masterSelect.value=String(resolved.masterId);
+  categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,resolved.categoryId);
+  if(resolved.categoryId) categorySelect.value=String(resolved.categoryId);
   if(focusAfter)document.getElementById('appBusiness')?.focus();
 }
 async function savePartnerApplication(id){
