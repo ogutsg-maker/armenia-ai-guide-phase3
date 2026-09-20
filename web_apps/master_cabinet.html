@@ -22,7 +22,7 @@
 </nav><main>
 <section id="dashboard" class="view on"><div class="title"><h2>📊 Գործընկերոջ սենյակ</h2><button class="secondary" onclick="loadAll()">↻</button></div><div id="dashboardNotice"></div><div class="grid" id="metrics"></div><div class="card" id="profileCard"></div></section>
 <section id="directions" class="view"><div class="title"><h2>🧭 Ուղղություններ</h2></div><div class="notice">Յուրաքանչյուր ուղղություն անցնում է առանձին ստուգում։ Նոր ուղղությունը ավելացվում է AI-ի միջոցով, ոչ թե երկար ձևով։</div><div id="directionList"></div></section>
-<section id="services" class="view"><div class="title"><h2>🛠 Ծառայություններ</h2><button type="button" class="primary" id="addServiceButton">+ Ավելացնել</button></div><div id="serviceList"></div></section>
+<section id="services" class="view"><div class="title"><h2>🛠 Ծառայություններ</h2><button type="button" class="primary" id="addServiceButton">+ Ավելացնել ծառայություն</button></div><div id="serviceList"></div></section>
 <section id="objects" class="view"><div class="title"><h2>🏢 Օբյեկտներ</h2><button class="primary" onclick="openObject()">+ Ավելացնել</button></div><div id="objectList"></div></section>
 <section id="orders" class="view"><div class="title"><h2>📥 Պատվերներ</h2></div><div id="orderList"></div></section>
 <section id="locations" class="view"><div class="title"><h2>📍 Տարածքներ</h2></div><div id="locationList"></div></section>
@@ -82,65 +82,46 @@ async function loadSettings(){const d=await api(`/api/master/${uid}/settings`),s
 async function saveSettings(){await api(`/api/master/${uid}/settings`,{method:'POST',body:JSON.stringify({business_name:sName.value,business_description:sDesc.value,contact_share_policy:sPolicy.value,lang})});alert('Պահպանվեց')}
 async function uploadDocument(){const f=document.getElementById('docUpload')?.files?.[0],s=document.getElementById('docUploadStatus');if(!f){s.textContent='Ընտրեք փաստաթուղթ';return}if(f.size>10*1024*1024){s.textContent='Ֆայլը մեծ է (մինչև 10 MB)';return}const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_verification');try{const r=await fetch('/api/master/'+uid+'/documents/upload',{method:'POST',headers:{'X-Telegram-Init-Data':init},body:fd});const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));s.textContent='✅ Փաստաթուղթը ուղարկված է';await loadDocuments()}catch(e){s.textContent='❌ '+e.message}}
 function openModal(title,body){modalTitle.textContent=title;modalBody.innerHTML=body;modal.classList.remove('hidden')}function closeModal(){modal.classList.add('hidden')}
-async function getServiceCategories(){
-  try{
-    const d=await api(`/api/master/${uid}/service-catalog`);
-    return d.categories||[];
-  }catch(e){return []}
-}
-let serviceCatalog=[];
-function renderServiceCategoryOptions(query=''){
-  const q=String(query||'').trim().toLowerCase();
-  const list=serviceCatalog.filter(c=>{
-    const hay=[c.name_am,c.name_ru,c.name_en,c.slug].filter(Boolean).join(' ').toLowerCase();
-    return !q || hay.includes(q);
-  });
-  const select=document.getElementById('mCategory');
-  if(!select)return;
-  select.innerHTML=list.length
-    ? list.map(c=>`<option value="${c.id}">${esc(c.name_am||c.name_ru||c.name_en)}</option>`).join('')
-    : '<option value="">Համապատասխան ենթակատեգորիա չկա</option>';
-}
 function modalError(message){
   const el=document.getElementById('modalError');
   if(el) el.textContent='❌ '+message;
   else alert('❌ '+message);
 }
 async function openService(){
-  serviceCatalog=await getServiceCategories();
-  const masters=[...new Map(serviceCatalog.map(c=>[c.master_category_id,c.master_name_am||c.master_name_ru||('ID '+c.master_category_id)])).entries()];
-  const masterOptions=masters.map(([id,name])=>`<option value="${id}">${esc(name)}</option>`).join('');
-  const options=serviceCatalog.map(c=>`<option value="${c.id}">${esc(c.name_am||c.name_ru||c.name_en)}</option>`).join('');
-  openModal('Նոր ծառայություն',`<label>Ուղղություն</label><select id="mMaster">${masterOptions}</select><label>Կատեգորիա</label>
-    <input id="mCategorySearch" placeholder="🔍 Որոնել բոլոր ենթակատեգորիաները..." autocomplete="off">
-    <select id="mCategory" size="6">${options||'<option value="">Հաստատված ուղղությունների ենթակատեգորիաներ չկան</option>'}</select>
-    <div class="muted" style="margin:4px 0 10px">Եթե անհրաժեշտ ենթակատեգորիան չկա, ծառայությունը պահպանելիս այն ավտոմատ կուղարկվի ադմինիստրատորին նոր ենթակատեգորիա ստեղծելու համար։</div>
-    <label>Անվանում</label><input id="mName"><label>Գին, AMD</label><input id="mPrice" type="number" min="0"><label>Նկարագրություն</label><textarea id="mDesc"></textarea>
+  openModal('Ավելացնել ծառայություն',`
+    <div class="notice">🤖 Գրեք միայն ձեր ծառայությունը։ Ուղղությունը և ենթաուղղությունը AI-ն կընտրի ինքնուրույն։</div>
+    <label>Ծառայության անվանում</label>
+    <input id="mName" placeholder="Օր․ Գել-լաք, Մազերի ներկում, Ավտոմեքենայի լվացում">
+    <label>Գին, AMD</label>
+    <input id="mPrice" type="number" min="0" step="1" placeholder="3000">
+    <label>Նկարագրություն <span class="muted">(ոչ պարտադիր)</span></label>
+    <textarea id="mDesc" placeholder="Կարճ նկարագրեք ծառայությունը, եթե անհրաժեշտ է"></textarea>
+    <div class="muted" style="margin:4px 0 10px">AI-ն կփորձի գտնել արդեն հաստատված ենթաուղղությունը։ Եթե համապատասխան ենթաուղղություն չկա, առաջարկը կուղարկվի ադմինիստրատորին։</div>
     <div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div>
-    <div class="actions"><button class="primary" onclick="createService()">Պահպանել</button></div>`);
-  const search=document.getElementById('mCategorySearch');
-  search?.addEventListener('input',e=>renderServiceCategoryOptions(e.target.value));
+    <div class="actions"><button class="primary" onclick="createService()">Ավելացնել</button></div>`);
+  document.getElementById('mName')?.focus();
 }
 async function createService(){
   const name=document.getElementById('mName').value.trim();
   const price=document.getElementById('mPrice').value;
   const desc=document.getElementById('mDesc').value.trim();
-  const category=document.getElementById('mCategory')?.value||'';
   if(!name){modalError('Անվանումը պարտադիր է');return}
   try{
-    if(!category){
-      const proposal=await api(`/api/master/${uid}/subcategory-proposals`,{method:'POST',body:JSON.stringify({
-        proposed_name:name,
-        requested_service_name:name,
-        master_category_id:Number(document.getElementById('mMaster')?.value||0),
-        description:desc,
-        price:price===''?null:Number(price)
-      })});
-      closeModal();alert(proposal.message||'Առաջարկը ուղարկվել է ադմինիստրատորին։');return;
+    const d=await api(`/api/master/${uid}/services`,{method:'POST',body:JSON.stringify({
+      name,
+      price:price===''?null:Number(price),
+      description:desc
+    })});
+    closeModal();
+    if(d.proposal_created){
+      alert(d.message||'AI-ն առաջարկը ուղարկել է ադմինիստրատորին։');
+    }else{
+      await loadServices();await loadDashboard();
+      alert(d.message||'Ծառայությունը ավելացվեց և ուղարկվեց ստուգման։');
     }
-    await api(`/api/master/${uid}/services`,{method:'POST',body:JSON.stringify({name,category_id:Number(category),price:price===''?null:Number(price),description:desc})});
-    closeModal();await loadServices();await loadDashboard();
-  }catch(e){modalError(e.message)}
+  }catch(e){
+    modalError(e.message);
+  }
 }
 function editService(id,name,price){
   openModal('Փոփոխել ծառայությունը',`<label>Անվանում</label><input id="mName" value="${esc(name)}"><label>Գին</label><input id="mPrice" type="number" min="0" value="${esc(price)}"><div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div><div class="actions"><button class="primary" onclick="updateService(${id})">Պահպանել</button></div>`)
