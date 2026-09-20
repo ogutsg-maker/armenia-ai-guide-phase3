@@ -97,6 +97,34 @@ def ensure_partner_direction_schema():
         ON partner_direction_categories(partner_direction_id);
     CREATE INDEX IF NOT EXISTS idx_partner_verification_documents_direction
         ON partner_verification_documents(partner_direction_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS service_direction_requests (
+        id BIGSERIAL PRIMARY KEY,
+        partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+        requested_master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
+        requested_master_name TEXT,
+        requested_service_name TEXT NOT NULL,
+        proposed_subcategory_name TEXT,
+        description TEXT,
+        price NUMERIC,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending_admin',
+        admin_note TEXT,
+        partner_direction_id BIGINT REFERENCES partner_directions(id) ON DELETE SET NULL,
+        document_id BIGINT REFERENCES partner_verification_documents(id) ON DELETE SET NULL,
+        reviewed_by BIGINT,
+        reviewed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS proposed_subcategory_name TEXT;
+    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS partner_direction_id BIGINT REFERENCES partner_directions(id) ON DELETE SET NULL;
+    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS document_id BIGINT REFERENCES partner_verification_documents(id) ON DELETE SET NULL;
+    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    CREATE INDEX IF NOT EXISTS idx_service_direction_requests_partner
+        ON service_direction_requests(partner_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_service_direction_requests_status
+        ON service_direction_requests(status, created_at DESC);
     """)
 
     # Backfill the current legacy master_skills into partner directions.
@@ -272,6 +300,10 @@ async def _upload_direction_document(request, partner, direction_id):
           VALUES(%s,%s,%s,%s,NULL,%s,%s,%s,'pending') RETURNING id,partner_direction_id,document_type,original_filename,mime_type,file_size,status,created_at
         """,(partner["id"],direction_id,document_type,original,bytes(data),mime,len(data)),True)
     _exec("UPDATE partner_directions SET status='pending', rejection_reason=NULL, updated_at=NOW() WHERE id=%s",(direction_id,))
+    _exec("""UPDATE service_direction_requests
+              SET status='document_under_review', document_id=%s, updated_at=NOW()
+              WHERE partner_direction_id=%s AND status='document_pending'""",
+          (doc["id"], direction_id))
     return web.json_response({"ok":True,"document":doc,"direction_id":direction_id,"status":"pending"})
 
 
@@ -305,6 +337,33 @@ def register_partner_direction_routes(app, db=None, bot=None):
         uid=int(request.match_info["id"]); partner=_partner(uid)
         if not partner: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
         return await _upload_direction_document(request,partner,int(request.match_info["direction_id"]))
+
+    async def service_direction_requests(request):
+        uid=int(request.match_info["id"]); partner=_partner(uid)
+        if not partner: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        rows=_fetchall("""SELECT r.id,r.requested_master_category_id,r.requested_master_name,
+                   r.requested_service_name,r.proposed_subcategory_name,r.description,r.price,r.reason,
+                   r.status,r.admin_note,r.partner_direction_id,r.document_id,r.created_at,r.updated_at,
+                   m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,
+                   pd.status AS direction_status
+            FROM service_direction_requests r
+            JOIN master_categories m ON m.id=r.requested_master_category_id
+            LEFT JOIN partner_directions pd ON pd.id=r.partner_direction_id
+            WHERE r.partner_id=%s AND r.status<>'approved' ORDER BY r.created_at DESC""",(partner["id"],))
+        return web.json_response({"ok":True,"requests":rows})
+
+    async def service_direction_request_upload(request):
+        uid=int(request.match_info["id"]); partner=_partner(uid)
+        if not partner: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        rid=int(request.match_info["request_id"])
+        row=_fetchone("""SELECT r.*,pd.id AS direction_id,pd.status AS direction_status
+                         FROM service_direction_requests r
+                         LEFT JOIN partner_directions pd ON pd.id=r.partner_direction_id
+                         WHERE r.id=%s AND r.partner_id=%s""",(rid,partner["id"]))
+        if not row: return web.json_response({"ok":False,"error":"direction_request_not_found"},status=404)
+        if row["status"]!="document_pending" or not row.get("direction_id"):
+            return web.json_response({"ok":False,"error":"document_upload_not_requested"},status=400)
+        return await _upload_direction_document(request,partner,int(row["direction_id"]))
 
     async def admin_partner_directions(request):
         _auth_admin(request); pid=int(request.match_info["id"])
@@ -643,6 +702,8 @@ def register_partner_direction_routes(app, db=None, bot=None):
 
     app.router.add_get("/api/admin/subcategory-proposals", admin_subcategory_proposals)
     app.router.add_post("/api/admin/subcategory-proposals/{id}/action", admin_subcategory_proposal_action)
+    app.router.add_get("/api/master/{id}/service-direction-requests", service_direction_requests)
+    app.router.add_post("/api/master/{id}/service-direction-requests/{request_id}/document", service_direction_request_upload)
     app.router.add_get("/api/master/{id}/partner-directions", directions)
     app.router.add_post("/api/master/{id}/partner-directions", add_direction)
     app.router.add_post("/api/master/{id}/partner-directions/{direction_id}/documents/upload", direction_document)
