@@ -233,11 +233,44 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         fields={k:data[k] for k in allowed if k in data}
         if not fields: return web.json_response({"ok":True,"application":row})
         sets=", ".join(f"{k}=%s" for k in fields)
-        fields["status"]="pending_admin"
-        sets+=", status=%s, updated_at=NOW()"
-        vals=[v for k,v in fields.items() if k!="status"]+[fields["status"],aid]
+        sets+=", updated_at=NOW()"
+        vals=list(fields.values())+[aid]
         updated=_exec(f"UPDATE partner_applications SET {sets} WHERE id=%s RETURNING *",vals,True)
         return web.json_response({"ok":True,"application":updated})
+
+    async def application_catalog(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        rows=_all("""SELECT m.id,m.name_am,m.name_ru,m.name_en,
+                            COALESCE(json_agg(json_build_object(
+                              'id',c.id,'name_am',c.name_am,'name_ru',c.name_ru,'name_en',c.name_en,'slug',c.slug)
+                              ORDER BY c.id) FILTER (WHERE c.id IS NOT NULL),'[]'::json) AS subcategories
+                     FROM master_categories m
+                     LEFT JOIN categories c ON c.master_category_id=m.id AND c.is_active=TRUE
+                     WHERE m.is_active=TRUE
+                     GROUP BY m.id,m.name_am,m.name_ru,m.name_en
+                     ORDER BY m.id""")
+        return web.json_response({"ok":True,"directions":rows})
+
+    async def application_submit(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        aid=int(request.match_info["application_id"])
+        a=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
+        if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
+        required=("business_name","location_marz","address","phone","master_category_id","category_id","service_name","price")
+        missing=[k for k in required if a.get(k) in (None,"")]
+        if missing:
+            return web.json_response({"ok":False,"error":"application_incomplete","fields":missing},status=422)
+        if not a.get("document_id"):
+            return web.json_response({"ok":False,"error":"document_required"},status=409)
+        doc=_one("SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(a["document_id"],p["id"]))
+        if not doc: return web.json_response({"ok":False,"error":"document_not_found"},status=404)
+        if doc["status"] not in ("pending","approved"):
+            return web.json_response({"ok":False,"error":"document_not_ready"},status=409)
+        row=_exec("""UPDATE partner_applications SET status='pending_admin',updated_at=NOW()
+                     WHERE id=%s RETURNING *""",(aid,),True)
+        return web.json_response({"ok":True,"application":row})
 
     async def application_document_upload(request):
         uid=_auth(request); p=_partner(uid)
@@ -272,7 +305,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      partner_id,business_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status)
                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending') RETURNING id""",
                   (p["id"],a.get("business_id"),document_type,original,storage_path,blob,mime,len(data)),True)
-        row=_exec("""UPDATE partner_applications SET document_id=%s,status='document_under_review',
+        row=_exec("""UPDATE partner_applications SET document_id=%s,status='pending_partner',
                      updated_at=NOW() WHERE id=%s RETURNING *""",(doc["id"],aid),True)
         return web.json_response({"ok":True,"application":row,"document_id":doc["id"]})
 
@@ -370,6 +403,8 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     app.router.add_get("/api/master/{id}/businesses",businesses)
     app.router.add_post("/api/master/{id}/businesses",create_business)
     app.router.add_post("/api/master/{id}/applications/{application_id}",application_update)
+    app.router.add_get("/api/master/{id}/application-catalog",application_catalog)
+    app.router.add_post("/api/master/{id}/applications/{application_id}/submit",application_submit)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document",application_document_upload)
     app.router.add_get("/api/master/{id}/applications",applications)
     app.router.add_get("/api/admin/universal-applications",admin_applications)
