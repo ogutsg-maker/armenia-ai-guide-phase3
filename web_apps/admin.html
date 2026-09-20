@@ -263,7 +263,7 @@ async function editApplication(id){
 async function appAction(id,action){
  const list=(await api('/api/admin/universal-applications')).applications||[]; const x=list.find(v=>Number(v.id)===Number(id))||{};
  let data={action};
- if(action==='reject')data.admin_note=prompt('Պատճառ / Причина')||'Մերժվել է ադմինիստրատորի կողմից';
+ if(action==='reject' || action==='send_to_partner')data.admin_note=prompt(action==='send_to_partner'?'Ինչը պետք է ուղղի գործընկերը? / Что партнёр должен исправить?':'Պատճառ / Причина')|| (action==='send_to_partner'?'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.':'Մերժվել է ադմինիստրատորի կողմից');
  await post('/api/admin/partner-applications/'+id+'/action',data);
  await loadApplications();
 }
