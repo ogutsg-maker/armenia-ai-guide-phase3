@@ -654,13 +654,29 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                     )
                 )
 
-            row = _exec(
-                """UPDATE partner_applications
-                   SET status='pending_admin', updated_at=NOW()
-                   WHERE id=%s RETURNING *""",
-                (aid,),
-                True
-            )
+            # A new-service proposal that was already approved by Admin as a
+            # new direction and is now waiting for the partner's document must
+            # stay in the document workflow. The partner is allowed to correct
+            # the same application and upload the document; submitting the form
+            # must not send it backwards to a fresh admin classification cycle.
+            current_status=str(a.get("status") or "")
+            source_payload=payload.get("source") if isinstance(payload,dict) else None
+            if source_payload == "partner_service" and current_status in ("document_pending","document_under_review"):
+                row = _exec(
+                    """UPDATE partner_applications
+                       SET status=%s, updated_at=NOW()
+                       WHERE id=%s RETURNING *""",
+                    (current_status,aid),
+                    True
+                )
+            else:
+                row = _exec(
+                    """UPDATE partner_applications
+                       SET status='pending_admin', updated_at=NOW()
+                       WHERE id=%s RETURNING *""",
+                    (aid,),
+                    True
+                )
             return web.json_response({"ok":True,"application":row})
 
         except web.HTTPException:
