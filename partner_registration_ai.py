@@ -862,10 +862,15 @@ Return only the supplied JSON schema."""
                 client, model, combined_text, data.get("services") or [], price_mentions
             )
 
-        # Final conservative merge: if the local parser can account for every
-        # monetary amount, prefer it over an incomplete LLM extraction.
-        if recovered and len(recovered) >= len(price_mentions) and len(recovered) >= len(data.get("services") or []):
+        # Deterministic service recovery is authoritative whenever it can
+        # account for the explicit monetary amounts. This prevents Groq from
+        # silently dropping one service from a multi-service sentence.
+        if recovered and len(recovered) == len(price_mentions):
             data["services"] = recovered
+        elif price_mentions and len(data.get("services") or []) < len(price_mentions):
+            data["services"] = await _recover_missing_services(
+                client, model, combined_text, data.get("services") or [], price_mentions
+            )
         data = _recover_obvious_facts(combined_text, data)
         # Catalogue classification is intentionally deferred to Admin Classification AI.
 
