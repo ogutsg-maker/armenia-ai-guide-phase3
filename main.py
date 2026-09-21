@@ -283,25 +283,21 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
 
     # The partner never needs to provide an internal catalogue direction.
     # AI matching/proposal handles that automatically.
-    missing = [key for key in ("business_name", "marz", "city", "address", "phone", "services") if not merged.get(key)]
+    # Only these fields are mandatory for submitting the partner application.
+    # Business name and address are intentionally optional at registration.
+    missing = [key for key in ("marz", "city", "phone", "services") if not merged.get(key)]
     merged["missing"] = missing
     merged["ready"] = not missing
 
-    # Stage 2 — internal Admin Classification AI.
-    # Partner Intake never asks for or displays catalogue choices.
-    if merged.get("services"):
-        try:
-            from partner_registration_ai import classify_profile_catalog
-            classification = await classify_profile_catalog(db, merged)
-            merged["master_category_id"] = classification.get("master_category_id")
-            merged["services"] = classification.get("services") or merged.get("services") or []
-            merged["classification_confidence"] = classification.get("confidence", 0)
-            merged["classification_ambiguities"] = classification.get("ambiguities") or []
-            merged["classification_needs_review"] = bool(classification.get("needs_review"))
-        except Exception:
-            logger.exception("Admin Classification AI failed; keeping services unclassified")
-            merged["master_category_id"] = None
-            merged["classification_needs_review"] = True
+    # Catalogue classification is NOT part of partner registration.
+    # Partner Intake only extracts business facts and services. The admin-side
+    # classification happens later, after the partner has reviewed/submitted
+    # the form. This keeps the onboarding request small and prevents the full
+    # catalogue from being sent to Groq during every registration message.
+    merged["master_category_id"] = None
+    merged["classification_confidence"] = 0
+    merged["classification_ambiguities"] = []
+    merged["classification_needs_review"] = True
 
     await state.update_data(partner_onboarding_history=history, partner_profile=merged)
     if missing:
@@ -335,7 +331,7 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         # The persistence layer may reject an incomplete profile. This is a
         # normal conversational state, not an error for the partner.
         if str(exc) == "partner_profile_not_ready":
-            required = ("business_name", "marz", "city", "address", "phone", "services")
+            required = ("marz", "city", "phone", "services")
             missing = [key for key in required if not merged.get(key)]
             merged["missing"] = missing
             merged["ready"] = not missing
