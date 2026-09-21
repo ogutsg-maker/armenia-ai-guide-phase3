@@ -535,11 +535,47 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                   "direction_name","master_category_id","subcategory_name","category_id","service_name",
                   "price","description","object_name","admin_note"):
             if k in data: fields[k]=data[k]
+
         if action=="edit":
+            payload=data.get("payload")
+            if isinstance(payload,dict):
+                current=a.get("payload_json") or {}
+                if isinstance(current,str):
+                    try: current=json.loads(current)
+                    except Exception: current={}
+                if not isinstance(current,dict): current={}
+                merged=dict(current)
+                merged.update(payload)
+                services=merged.get("services")
+                if isinstance(services,list):
+                    clean=[]
+                    for svc in services:
+                        if not isinstance(svc,dict): continue
+                        name=str(svc.get("name") or svc.get("service_name") or "").strip()
+                        if not name: continue
+                        item=dict(svc)
+                        item["name"]=name
+                        item["matched_subcategory_id"]=_safe_int(item.get("matched_subcategory_id") or item.get("subcategory_id") or item.get("category_id"))
+                        clean.append(item)
+                    merged["services"]=clean
+                    if clean:
+                        first=clean[0]
+                        fields.setdefault("master_category_id",_safe_int(first.get("direction_id") or merged.get("master_category_id") or merged.get("ai_master_category_id")))
+                        fields.setdefault("category_id",_safe_int(first.get("matched_subcategory_id")))
+                        fields.setdefault("direction_name",str(first.get("direction_name") or merged.get("direction") or "").strip() or None)
+                        fields.setdefault("subcategory_name",str(first.get("subcategory_name") or "").strip() or None)
+                        fields.setdefault("service_name",first.get("name"))
+                        fields.setdefault("price",first.get("price"))
+                fields["payload_json"]=json.dumps(merged,ensure_ascii=False)
+
             if not fields: return web.json_response({"ok":True,"application":a})
             sets=", ".join(f"{k}=%s" for k in fields)
-            row=_exec(f"UPDATE partner_applications SET {sets},updated_at=NOW() WHERE id=%s RETURNING *",
-                      (*fields.values(),aid),True)
+            sets+=",updated_at=NOW()"
+            vals=list(fields.values())+[aid]
+            if "payload_json" in fields:
+                sets=sets.replace("payload_json=%s","payload_json=%s::jsonb")
+            row=_exec(f"UPDATE partner_applications SET {sets} WHERE id=%s RETURNING *",
+                      (*vals,),True)
             return web.json_response({"ok":True,"application":row})
         if action=="send_to_partner":
             note=str(data.get("admin_note") or "").strip()[:3000] or "Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը."
