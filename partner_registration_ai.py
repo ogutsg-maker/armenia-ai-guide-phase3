@@ -236,43 +236,15 @@ def _recover_master_category(db, text: str, data: dict) -> dict:
 
 
 def _extract_price_mentions(text: str) -> list[int]:
-    """Extract only explicit monetary amounts; phone/address numbers are ignored."""
+    """Extract explicit monetary amounts; phone/address numbers are ignored."""
     raw = _norm(text)
     if not raw:
         return []
-    patterns = [
-        r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)\\b",
-        r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*֏",
+    pattern = r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)(?!\\w)"
+    return [
+        int(re.sub(r"[^0-9]", "", match.group(1)))
+        for match in re.finditer(pattern, raw, flags=re.I)
     ]
-    values: list[int] = []
-    for pattern in patterns:
-        for match in re.finditer(pattern, raw, flags=re.I):
-            try:
-                value = int(re.sub(r"[^0-9]", "", match.group(1)))
-            except (TypeError, ValueError):
-                continue
-            if 100 <= value <= 999999:
-                values.append(value)
-    # Preserve source order and duplicate prices: two different services can
-    # legitimately have the same price.
-    result: list[int] = []
-    for value in values:
-        if value not in result or values.count(value) > result.count(value):
-            result.append(value)
-    # The two regexes can see the same amount; rebuild in textual order.
-    ordered: list[tuple[int, int]] = []
-    for pattern in patterns:
-        for match in re.finditer(pattern, raw, flags=re.I):
-            try:
-                value = int(re.sub(r"[^0-9]", "", match.group(1)))
-            except (TypeError, ValueError):
-                continue
-            ordered.append((match.start(), value))
-    ordered.sort(key=lambda x: x[0])
-    final: list[int] = []
-    for _, value in ordered:
-        final.append(value)
-    return final
 
 
 async def _recover_missing_services(
@@ -463,9 +435,18 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         except ValueError:
             continue
         full = m.group(0).lower()
-        price_type = "from" if "ից" in full or re.search(
-            r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I
-        ) else "fixed"
+        is_from = bool(
+            "ից" in full or re.search(
+                r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I
+            )
+        )
+        is_per_unit = bool(
+            re.search(r"\b(?:քմ|քառակուսի\s*մետր|кв\.?\s*м|за\s+кв\.?\s*м|պարապմունք|занят(?:ие|ия)|за\s+занятие)\b", full, re.I)
+        )
+        if is_per_unit:
+            price_type = "from_per_unit" if is_from else "fixed_per_unit"
+        else:
+            price_type = "from" if is_from else "fixed"
         found.append({"name": name, "raw_sub_direction": name, "price": price, "price_type": price_type, "matched_subcategory_id": None})
     result=[]; seen=set()
     for item in found:
