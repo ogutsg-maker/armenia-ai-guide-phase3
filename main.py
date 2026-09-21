@@ -249,6 +249,38 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         if combined:
             merged["services"] = combined
 
+    # Final normalization before the profile reaches the WebApp.
+    # Keep one canonical shape regardless of which AI/recovery path produced
+    # the values. The partner form consumes this exact shape.
+    if not merged.get("city"):
+        merged["city"] = merged.get("location_city") or merged.get("settlement") or ""
+    if not merged.get("marz"):
+        merged["marz"] = merged.get("location_marz") or merged.get("region") or ""
+    if not merged.get("phone"):
+        merged["phone"] = merged.get("phone_number") or ""
+    normalized_services=[]
+    for svc in (merged.get("services") or []):
+        if not isinstance(svc,dict):
+            continue
+        name=str(svc.get("name") or svc.get("service_name") or svc.get("service") or "").strip()
+        if not name:
+            continue
+        item=dict(svc)
+        item["name"]=name
+        if item.get("price") in ("",None):
+            item["price"]=None
+        try:
+            if item.get("price") is not None:
+                item["price"]=float(item["price"])
+        except (TypeError,ValueError):
+            item["price"]=None
+        item["price_type"]=str(item.get("price_type") or "fixed").strip().lower()
+        if item["price_type"] in {"starting","starting_from","from_price"}:
+            item["price_type"]="from"
+        normalized_services.append(item)
+    if normalized_services:
+        merged["services"]=normalized_services
+
     # The partner never needs to provide an internal catalogue direction.
     # AI matching/proposal handles that automatically.
     missing = [key for key in ("business_name", "marz", "city", "address", "phone", "services") if not merged.get(key)]
