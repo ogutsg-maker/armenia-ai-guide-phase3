@@ -1122,6 +1122,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     app.router.add_get("/api/master/{id}/businesses",businesses)
     app.router.add_post("/api/master/{id}/businesses",create_business)
     app.router.add_post("/api/master/{id}/applications/{application_id}",application_update)
+    app.router.add_delete("/api/master/{id}/applications/{application_id}",application_delete)
     app.router.add_get("/api/master/{id}/application-catalog",application_catalog)
     app.router.add_post("/api/master/{id}/applications/{application_id}/submit",application_submit)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document",application_document_upload)
