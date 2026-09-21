@@ -711,9 +711,20 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                   (p["id"],a.get("business_id"),document_type,original,storage_path,blob,mime,len(data)),True)
         # Uploading the document does not submit the application. The partner
         # must explicitly press the final submit button after reviewing the form.
+        # New-direction service proposals are already structurally approved by
+        # Admin at this point, so uploading the required document is the
+        # partner's submission step. Move them directly to document_under_review
+        # so Admin gets the "approve document" action. Initial registration
+        # keeps its existing explicit final-submit behaviour.
+        source_payload=a.get("payload_json") or {}
+        if isinstance(source_payload,str):
+            try: source_payload=json.loads(source_payload)
+            except Exception: source_payload={}
+        is_service_proposal=isinstance(source_payload,dict) and source_payload.get("source")=="partner_service"
+        next_status="document_under_review" if (is_service_proposal and a.get("status")=="document_pending") else a.get("status")
         row=_exec("""UPDATE partner_applications
-                     SET document_id=%s,updated_at=NOW()
-                     WHERE id=%s RETURNING *""",(doc["id"],aid),True)
+                     SET document_id=%s,status=%s,updated_at=NOW()
+                     WHERE id=%s RETURNING *""",(doc["id"],next_status,aid),True)
         return web.json_response({"ok":True,"application":row,"document_id":doc["id"]})
 
     async def admin_application_action(request):
