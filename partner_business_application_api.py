@@ -4,13 +4,15 @@ Partner -> Business -> Direction -> Subcategory -> Service.
 Applications are reviewed before catalogue records become active.
 """
 from __future__ import annotations
-import json, os
+import json, os, logging
 from datetime import date, datetime
 from decimal import Decimal
 import psycopg
 from psycopg.rows import dict_row
 from aiohttp import web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
+
+logger = logging.getLogger(__name__)
 
 def _db_url():
     v=os.getenv("DATABASE_URL","").strip()
