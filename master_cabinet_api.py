@@ -432,6 +432,13 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
             "reason": "The service matches a real catalogue direction, but that direction is not yet approved for this partner.",
         }
 
+    # Reuse the same category scorer for the optional provider fallback.
+    def score(row):
+        return label_score([
+            row.get("category_am"), row.get("category_ru"),
+            row.get("category_en"), row.get("category_slug")
+        ])
+
     # Optional Groq semantic fallback. IMPORTANT: this classification receives
     # the COMPLETE active catalogue, not only directions already approved for
     # this partner. Otherwise a genuinely new direction can never be identified.
@@ -490,13 +497,36 @@ Return the result as valid JSON only."""
             valid = {_safe_int(x["category_id"]) for x in all_catalog}
             if cid in valid:
                 row = next(x for x in all_catalog if _safe_int(x["category_id"]) == cid)
+                groq_mid = _safe_int(row["master_category_id"])
+                with _connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """SELECT 1 FROM partner_directions
+                               WHERE partner_id=%s AND business_id=%s
+                                 AND master_category_id=%s AND status='approved'
+                               LIMIT 1""",
+                            (pid, business_id, groq_mid),
+                        )
+                        groq_approved = bool(cur.fetchone())
+                if groq_approved:
+                    return {
+                        "status": "matched",
+                        "category_id": cid,
+                        "master_category_id": groq_mid,
+                        "business_action": "same_business",
+                        "proposed_business_name": None,
+                        "reason": _norm(result.get("reason")) or "AI semantic catalogue match.",
+                    }
                 return {
-                    "status": "matched",
+                    "status": "proposal",
                     "category_id": cid,
-                    "master_category_id": _safe_int(row["master_category_id"]),
+                    "master_category_id": groq_mid,
+                    "out_of_scope_master_id": groq_mid,
+                    "out_of_scope_master_name": row.get("master_am") or row.get("master_ru") or row.get("master_en"),
+                    "proposed_name": row.get("category_am") or row.get("category_ru") or row.get("category_en"),
                     "business_action": "same_business",
                     "proposed_business_name": None,
-                    "reason": _norm(result.get("reason")) or "AI semantic catalogue match.",
+                    "reason": _norm(result.get("reason")) or "The matched catalogue direction is not yet approved for this partner.",
                 }
         except Exception as exc:
             # Rate limits and provider failures are non-fatal here.
@@ -512,9 +542,14 @@ Return the result as valid JSON only."""
         all_ranked = sorted(all_catalog, key=score, reverse=True)
         candidate = all_ranked[0] if all_ranked else None
         if candidate and score(candidate) >= 0.58:
-            approved_masters = {
-                _safe_int(x["master_category_id"]) for x in catalog
-            }
+            with _connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT master_category_id FROM partner_directions
+                           WHERE partner_id=%s AND business_id=%s AND status='approved'""",
+                        (pid, business_id),
+                    )
+                    approved_masters = {_safe_int(x["master_category_id"]) for x in cur.fetchall()}
             mid = _safe_int(candidate["master_category_id"])
             if mid not in approved_masters:
                 return {
