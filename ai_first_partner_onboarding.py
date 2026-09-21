@@ -311,13 +311,17 @@ def persist_ready_application(db, uid: int, profile: dict[str, Any]) -> dict[str
 
     # AI classification is informational at application time. Admin can edit
     # master/category IDs before activation; do not materialise them yet.
-    master_id = None
+    master_id = _safe_int(profile.get("master_category_id") or profile.get("ai_master_category_id"))
     category_id = None
-    try:
-        master_id, category_ids = _direction_match(db, profile)
-        category_id = _safe_int(category_ids[0]) if category_ids else None
-    except Exception:
-        logger.exception("Application catalogue classification failed; keeping proposal editable")
+    if services:
+        category_id = _safe_int(services[0].get("matched_subcategory_id") or services[0].get("subcategory_id") or services[0].get("category_id"))
+    if master_id is None:
+        try:
+            master_id, category_ids = _direction_match(db, profile)
+            if category_id is None:
+                category_id = _safe_int(category_ids[0]) if category_ids else None
+        except Exception:
+            logger.exception("Application catalogue classification failed; keeping proposal editable")
 
     payload = dict(profile)
     payload["services"] = services
@@ -404,20 +408,15 @@ def create_partner_application_draft(db, uid: int, profile: dict[str, Any]) -> d
     """Create/update the one initial partner application draft."""
     partner_id = _ensure_partner(db, uid, profile)
     services = [dict(x) for x in (profile.get("services") or []) if isinstance(x, dict)]
-    master_id = None
-    category_id = None
-    try:
-        master_id, category_ids = _direction_match(db, profile)
-        # Keep the AI-selected real master direction even when a particular
-        # service has no subcategory match yet; the partner can correct it in
-        # the full form.
-        if not master_id:
-            master_id = _safe_int(profile.get("master_category_id"))
-        category_id = _safe_int(category_ids[0]) if category_ids else None
-    except Exception:
-        master_id = _safe_int(profile.get("master_category_id"))
-        category_id = None
-        logger.exception("Draft catalogue classification failed")
+    master_id = _safe_int(profile.get("master_category_id") or profile.get("ai_master_category_id"))
+    category_id = _safe_int(services[0].get("matched_subcategory_id") or services[0].get("subcategory_id") or services[0].get("category_id")) if services else None
+    if master_id is None:
+        try:
+            master_id, category_ids = _direction_match(db, profile)
+            if category_id is None:
+                category_id = _safe_int(category_ids[0]) if category_ids else None
+        except Exception:
+            logger.exception("Draft catalogue classification failed")
     payload = dict(profile)
     payload["services"] = services
     payload["ai_master_category_id"] = master_id
