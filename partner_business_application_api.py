@@ -67,6 +67,16 @@ class _CatalogDB:
                        ORDER BY id""",(master_id,))
 
 def ensure_business_application_schema():
+    # The legacy services table in some existing databases has a status
+    # CHECK that predates the current activation flow and does not allow
+    # 'active'. Activation below intentionally creates/updates live services
+    # as active, so normalize the constraint before any activation can write.
+    _exec("""
+    ALTER TABLE services DROP CONSTRAINT IF EXISTS services_status_check;
+    ALTER TABLE services ADD CONSTRAINT services_status_check
+      CHECK (status IN ('draft','pending','approved','active','inactive','suspended','rejected','deleted'));
+    """)
+
     _exec("""
     CREATE TABLE IF NOT EXISTS partner_businesses(
       id BIGSERIAL PRIMARY KEY,
