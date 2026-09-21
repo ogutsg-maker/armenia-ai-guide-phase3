@@ -408,15 +408,12 @@ def create_partner_application_draft(db, uid: int, profile: dict[str, Any]) -> d
     """Create/update the one initial partner application draft."""
     partner_id = _ensure_partner(db, uid, profile)
     services = [dict(x) for x in (profile.get("services") or []) if isinstance(x, dict)]
-    master_id = _safe_int(profile.get("master_category_id") or profile.get("ai_master_category_id"))
-    category_id = _safe_int(services[0].get("matched_subcategory_id") or services[0].get("subcategory_id") or services[0].get("category_id")) if services else None
-    if master_id is None:
-        try:
-            master_id, category_ids = _direction_match(db, profile)
-            if category_id is None:
-                category_id = _safe_int(category_ids[0]) if category_ids else None
-        except Exception:
-            logger.exception("Draft catalogue classification failed")
+    # Registration draft must NOT classify the partner into a direction or
+    # subcategory. Catalogue classification belongs to Admin after submission.
+    # Do not call _direction_match() here: that used to silently create a
+    # partner_directions row while the partner was still filling the form.
+    master_id = None
+    category_id = None
     payload = dict(profile)
     payload["services"] = services
     payload["ai_master_category_id"] = master_id
