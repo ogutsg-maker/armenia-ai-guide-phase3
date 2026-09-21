@@ -406,8 +406,12 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         vals=list(fields.values())+[aid]
         if "payload_json" in fields:
             sets=sets.replace("payload_json=%s","payload_json=%s::jsonb")
-        updated=_exec(f"UPDATE partner_applications SET {sets} WHERE id=%s RETURNING *",vals,True)
-        return web.json_response({"ok":True,"application":updated})
+        try:
+            updated=_exec(f"UPDATE partner_applications SET {sets} WHERE id=%s RETURNING *",vals,True)
+            return web.json_response({"ok":True,"application":updated})
+        except Exception as exc:
+            logger.exception("Partner application update failed")
+            return web.json_response({"ok":False,"error":"application_update_failed","detail":str(exc)[:500]},status=500)
 
     async def application_get(request):
         uid=_auth(request); p=_partner(uid)
