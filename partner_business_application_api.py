@@ -500,10 +500,41 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
             services = payload.get("services") if isinstance(payload.get("services"), list) else []
 
+            # The payload is the authoritative partner profile. Older drafts may
+            # have saved these values only inside payload_json, so normalize them
+            # before validation instead of rejecting an otherwise complete form.
+            def _profile_value(column, *payload_keys):
+                value = a.get(column)
+                if value not in (None, ""):
+                    return value
+                for key in payload_keys:
+                    value = payload.get(key)
+                    if value not in (None, ""):
+                        return value
+                return None
+
+            location_marz = _profile_value("location_marz", "location_marz", "marz", "region")
+            location_city = _profile_value("location_city", "location_city", "city", "settlement")
+            phone = _profile_value("phone", "phone", "phone_number")
+            if not a.get("location_marz") and location_marz:
+                _exec("UPDATE partner_applications SET location_marz=%s WHERE id=%s",(str(location_marz).strip(),aid))
+                a["location_marz"]=str(location_marz).strip()
+            if not a.get("location_city") and location_city:
+                _exec("UPDATE partner_applications SET location_city=%s WHERE id=%s",(str(location_city).strip(),aid))
+                a["location_city"]=str(location_city).strip()
+            if not a.get("phone") and phone:
+                _exec("UPDATE partner_applications SET phone=%s WHERE id=%s",(str(phone).strip(),aid))
+                a["phone"]=str(phone).strip()
+
             # Partner-facing fields. Catalog classification remains an internal
             # admin task and must never block partner submission.
-            required = ("location_marz","location_city","phone")
-            missing = [k for k in required if a.get(k) in (None, "")]
+            missing = []
+            if not location_marz:
+                missing.append("location_marz")
+            if not location_city:
+                missing.append("location_city")
+            if not phone:
+                missing.append("phone")
             if not services and not a.get("service_name"):
                 missing.append("services")
             if missing:
