@@ -236,13 +236,16 @@ class DatabaseManager:
                            GREATEST(
                                similarity(COALESCE(name_am, ''), %s),
                                similarity(COALESCE(name_ru, ''), %s),
-                               similarity(COALESCE(name_en, ''), %s)
+                               similarity(COALESCE(name_en, ''), %s),
+                               word_similarity(%s, COALESCE(name_am, '')),
+                               word_similarity(%s, COALESCE(name_ru, '')),
+                               word_similarity(%s, COALESCE(name_en, ''))
                            ) AS match_score
                     FROM categories
                     WHERE master_category_id = %s AND is_active = TRUE
                     ORDER BY match_score DESC, id
                     LIMIT %s
-                """, (q, q, q, master_id, max(1, int(limit))))
+                """, (q, q, q, q, q, q, master_id, max(1, int(limit))))
                 return cur.fetchall()
 
     def get_category_by_name(self, name_to_find: str) -> dict | None:
