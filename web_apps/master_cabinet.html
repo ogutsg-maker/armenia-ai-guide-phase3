@@ -102,8 +102,11 @@ async function loadApplications(){
    :(x.status==='pending_partner'&&isServiceProposal
      ?'<div class="muted">⏳ Ծառայության առաջարկը գտնվում է ադմինիստրատորի ստուգման փուլում։</div>':'');
  const needsBusinessName=isServiceProposal&&x.status==='pending_partner'&&((x.payload_json||{}).requires_business_name||!String(x.business_name||'').trim());
- const editAction=(x.status==='pending_partner'&&(!isServiceProposal||needsBusinessName))
-   ?'<div class="actions"><button class="secondary" onclick="'+(needsBusinessName?'completeServiceBusiness('+x.id+')':'completeApplication('+x.id+')')+'">'+(needsBusinessName?'✎ Լրացնել կազմակերպության անվանումը':'✎ Լրացնել տվյալները')+'</button></div>':'';
+ const serviceCanEdit=isServiceProposal&&(x.status==='pending_partner'||x.status==='document_pending');
+ const editAction=serviceCanEdit
+   ?'<div class="actions"><button class="secondary" onclick="openServiceProposalEditor('+x.id+')">✎ Ուղղել այս հայտը</button></div>'
+   :(x.status==='pending_partner'&&!isServiceProposal
+     ?'<div class="actions"><button class="secondary" onclick="completeApplication('+x.id+')">✎ Լրացնել տվյալները</button></div>':'');
  const serviceNeedsVerification=isServiceProposal&&(x.status==='pending_partner'||x.status==='document_pending');
  const docAction=(x.status==='pending_partner'||x.status==='document_pending')&&!(!isServiceProposal&&!serviceNeedsVerification)
    ?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել պահանջվող փաստաթուղթը</button></div>':'';
@@ -198,6 +201,51 @@ async function savePartnerApplication(id){
     await api('/api/master/'+uid+'/applications/'+id+'/submit',{method:'POST',body:'{}'});
     closeModal();await loadAll();alert('Հայտը ամբողջությամբ լրացված է և ուղարկված է ադմինիստրատորի ստուգմանը։');
   }catch(e){document.getElementById('appFormError').textContent='❌ '+e.message}
+}
+async function openServiceProposalEditor(id){
+ const rows=(await api('/api/master/'+uid+'/applications')).applications||[];
+ const x=rows.find(v=>Number(v.id)===Number(id));
+ if(!x)return;
+ openModal('Ուղղել ծառայության հայտը',`
+   <div class="notice">✎ Դուք խմբագրում եք հենց այս նույն հայտը։ Ուղղությունը և ենթաուղղությունը ադմինը արդեն որոշել է և այստեղ չեն փոխվում։</div>
+   <label>Ընկերության / կազմակերպության անվանում</label>
+   <input id="svcEditBusiness" value="${esc(x.business_name||'')}" placeholder="Օր․ ABC ՍՊԸ">
+   <label>Ծառայություն *</label>
+   <input id="svcEditName" value="${esc(x.service_name||'')}">
+   <label>Գին, AMD</label>
+   <input id="svcEditPrice" type="number" min="0" step="1" value="${esc(x.price??'')}">
+   <label>Նկարագրություն</label>
+   <textarea id="svcEditDesc">${esc(x.description||'')}</textarea>
+   <label>📄 Նոր փաստաթուղթ <span class="muted">(պարտադիր, եթե նախորդը մերժվել/փոխարինվել է)</span></label>
+   <input id="svcEditDoc" type="file" accept="image/*,.pdf">
+   <div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div>
+   <div class="actions"><button class="primary" onclick="saveServiceProposalEdit(${id})">Պահպանել և ուղարկել</button></div>`);
+}
+async function saveServiceProposalEdit(id){
+ const business=document.getElementById('svcEditBusiness')?.value.trim()||'';
+ const name=document.getElementById('svcEditName')?.value.trim()||'';
+ const priceRaw=document.getElementById('svcEditPrice')?.value??'';
+ const desc=document.getElementById('svcEditDesc')?.value.trim()||'';
+ if(business.length<2){modalError('Կազմակերպության անվանումը պարտադիր է');return}
+ if(!name){modalError('Ծառայության անվանումը պարտադիր է');return}
+ const price=priceRaw===''?null:Number(priceRaw);
+ if(priceRaw!==''&&!Number.isFinite(price)){modalError('Գինը սխալ է');return}
+ try{
+   await api('/api/master/'+uid+'/applications/'+id,{method:'POST',body:JSON.stringify({
+     business_name:business,service_name:name,price,description:desc
+   })});
+   const f=document.getElementById('svcEditDoc')?.files?.[0];
+   if(f){
+     if(f.size>10*1024*1024){modalError('Ֆայլը մեծ է (մինչև 10 MB)');return}
+     const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_document');
+     const h={'X-Telegram-Init-Data':init};if(businessId)h['X-Business-Id']=String(businessId);
+     const r=await fetch('/api/master/'+uid+'/applications/'+id+'/document',{method:'POST',headers:h,body:fd});
+     const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));
+   }
+   closeModal();
+   await loadAll();
+   alert('Այս նույն հայտը պահպանվեց և ուղարկվեց ադմինիստրատորի ստուգմանը։');
+ }catch(e){modalError(e.message)}
 }
 async function uploadApplicationDocument(id){
  const f=document.getElementById('appDoc'+id)?.files?.[0]; if(!f)return alert('Ընտրեք փաստաթուղթ');
