@@ -240,7 +240,7 @@ def _extract_price_mentions(text: str) -> list[int]:
     raw = _norm(text)
     if not raw:
         return []
-    pattern = r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)(?!\\w)"
+    pattern = r"(?<!\d)(\d{3,6})(?:[.,]\d{1,2})?\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)(?!\w)"
     return [
         int(re.sub(r"[^0-9]", "", match.group(1)))
         for match in re.finditer(pattern, raw, flags=re.I)
@@ -282,7 +282,7 @@ async def _recover_missing_services(
     # Give the model compact source snippets around every monetary amount.
     snippets = []
     for m in re.finditer(
-        r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)\\b",
+        r"(?<!\d)(\d{3,6})(?:[.,]\d{1,2})?\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)\\b",
         partner_text,
         flags=re.I,
     ):
