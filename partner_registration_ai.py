@@ -520,11 +520,18 @@ def _parse_json(text: str) -> dict:
 
 
 async def _groq_json(client, model, system_prompt, user_content, schema_name, schema, max_tokens):
-    """Call Groq with structured JSON and recover automatically from old model settings."""
+    """Call Groq for structured JSON without turning transient/rate-limit errors into a second bad request.
+
+    GPT-OSS supports strict JSON Schema, but a schema/model/API mismatch can still
+    return HTTP 400. A 429 is a rate-limit condition and MUST NOT be immediately
+    retried as another request. The caller already has deterministic extraction
+    fallbacks, so we return control quickly in that case.
+    """
     models = []
     for candidate in (str(model or "").strip(), "openai/gpt-oss-20b"):
         if candidate and candidate not in models:
             models.append(candidate)
+
     last_error = None
     for active_model in models:
         base = {
@@ -536,23 +543,45 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
             "temperature": 0.0,
             "max_tokens": max_tokens,
         }
+
+        # 1) Preferred path: strict Structured Outputs.
         try:
-            kwargs = dict(base)
-            kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": schema_name, "schema": schema, "strict": True},
-            }
-            response = await client.chat.completions.create(**kwargs)
+            response = await client.chat.completions.create(
+                **base,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "schema": schema,
+                        "strict": True,
+                    },
+                },
+            )
             return _parse_json(response.choices[0].message.content or "{}")
         except Exception as exc:
             last_error = exc
-            try:
-                kwargs = dict(base)
-                kwargs["response_format"] = {"type": "json_object"}
-                response = await client.chat.completions.create(**kwargs)
-                return _parse_json(response.choices[0].message.content or "{}")
-            except Exception as exc2:
-                last_error = exc2
+            status = getattr(exc, "status_code", None)
+
+            # A rate limit is not a schema/model error. Do not immediately send
+            # another request and turn one 429 into a 429 + 400 sequence.
+            if status == 429:
+                raise
+
+            # 2) For a 400 caused by schema validation/support, try JSON Object
+            # Mode once. This is supported by GPT-OSS and is intentionally less
+            # strict; _parse_json validates the returned syntax.
+            if status == 400:
+                try:
+                    response = await client.chat.completions.create(
+                        **base,
+                        response_format={"type": "json_object"},
+                    )
+                    return _parse_json(response.choices[0].message.content or "{}")
+                except Exception as exc2:
+                    last_error = exc2
+                    if getattr(exc2, "status_code", None) == 429:
+                        raise
+
     raise last_error or RuntimeError("Groq request failed")
 
 async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
