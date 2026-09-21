@@ -558,6 +558,16 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             location_marz = str(location_marz).strip() if location_marz not in (None, "") else None
             location_city = str(location_city).strip() if location_city not in (None, "") else None
             phone = str(phone).strip() if phone not in (None, "") else None
+
+            # Never accept placeholder text as a real business name. The name
+            # is mandatory at final submission and must come either from AI
+            # extraction or from the partner's explicit form entry.
+            invalid_business_names = {
+                "без имени", "без названия", "не указано", "не указан",
+                "unknown", "unnamed", "n/a", "na", "нет",
+            }
+            if business_name and business_name.casefold() in invalid_business_names:
+                business_name = None
             if business_name and len(business_name) > 200:
                 business_name = business_name[:200]
             if not a.get("business_name") and business_name:
@@ -881,7 +891,22 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
         _exec("""UPDATE partner_applications SET business_id=%s,status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                  WHERE id=%s""",(bid,_auth(request),aid))
-        _exec("UPDATE partners SET status='approved',verification_status='approved',updated_at=NOW() WHERE id=%s",(a["partner_id"],))
+        # Keep the canonical partner record synchronized with the approved
+        # application. Without this, the Admin Partners list can show
+        # "Без имени" even though the application itself contains the name.
+        approved_name = str(a.get("business_name") or "").strip()[:200]
+        approved_description = str(a.get("description") or "").strip()[:5000] or None
+        _exec(
+            """UPDATE partners
+               SET business_name=%s,
+                   business_description=COALESCE(%s,business_description),
+                   status='approved',
+                   verification_status='approved',
+                   rejection_reason=NULL,
+                   updated_at=NOW()
+               WHERE id=%s""",
+            (approved_name, approved_description, a["partner_id"])
+        )
         return web.json_response({"ok":True,"application":_one("SELECT * FROM partner_applications WHERE id=%s",(aid,))})
 
 
