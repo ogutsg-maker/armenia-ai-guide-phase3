@@ -269,97 +269,213 @@ async def _load_partner_service_catalog(pid: int, business_id: int | None):
             return [dict(x) for x in cur.fetchall()]
 
 
-async def _ai_match_new_service(pid: int,name: str,description: str="",business_id: int|None=None):
-    key=__import__("os").getenv("GROQ_API_KEY","").strip()
-    if not key or AsyncGroq is None: raise RuntimeError("groq_not_configured")
-    catalog=await _load_partner_service_catalog(pid,business_id)
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id,name_am,name_ru,name_en FROM master_categories WHERE is_active=TRUE ORDER BY id")
-            masters=[dict(x) for x in cur.fetchall()]
-            cur.execute("SELECT name,description FROM partner_businesses WHERE id=%s AND partner_id=%s",(business_id,pid))
-            business=cur.fetchone() or {}
-    if not catalog: return {"status":"no_catalog","business_action":"same_business"}
-    # Classification must know the full platform taxonomy, not only this
-    # business's approved directions. An existing category that is not yet
-    # approved for this business is an admin proposal, not a clarification.
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""SELECT c.id AS category_id,c.master_category_id,c.name_am AS category_am,
-                                  c.name_ru AS category_ru,c.name_en AS category_en,c.slug AS category_slug,
-                                  m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
-                           FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-                           WHERE c.is_active=TRUE AND m.is_active=TRUE
-                           ORDER BY c.master_category_id,c.id""")
-            all_catalog=[dict(x) for x in cur.fetchall()]
-    # Keep the approved catalog for direct activation, but use the full catalog
-    # to recognize an existing platform subcategory and route it to admin.
-    full_by_id={_safe_int(x["category_id"]):x for x in all_catalog}
-    approved={int(x["master_category_id"]) for x in catalog}
-    # First resolve obvious matches locally. This prevents Groq from returning a
-    # clarification simply because the catalog is larger than the model context.
+async def _ai_match_new_service(pid: int, name: str, description: str = "", business_id: int | None = None):
+    """Classify a newly added partner service without making Groq a hard dependency.
+
+    The partner cabinet must still work when Groq is rate-limited or temporarily
+    unavailable. We first use the real active catalogue and deterministic
+    multilingual matching; Groq is only an optional semantic fallback.
+    """
+    import os
     import re
     from difflib import SequenceMatcher
-    def _norm_match(v):
-        return re.sub(r"[^a-zа-яёա-ֆ0-9]+", " ", str(v or "").lower(), flags=re.IGNORECASE).strip()
-    q=_norm_match(f"{name} {description}")
-    q_tokens=set(q.split())
-    def _score(x):
-        texts=[x.get("category_am"),x.get("category_ru"),x.get("category_en"),x.get("category_slug")]
-        best=0.0
-        for t in texts:
-            s=_norm_match(t)
-            if not s: continue
-            st=set(s.split())
-            overlap=len(q_tokens & st) / max(1,len(st))
-            ratio=SequenceMatcher(None,q,s).ratio()
-            best=max(best, overlap*0.75+ratio*0.25, ratio)
+
+    catalog = await _load_partner_service_catalog(pid, business_id)
+    if not catalog:
+        return {"status": "no_catalog", "business_action": "same_business"}
+
+    def norm_match(value):
+        return re.sub(r"[^a-zа-яёա-ֆ0-9]+", " ", str(value or "").lower(), flags=re.IGNORECASE).strip()
+
+    query = norm_match(f"{name} {description}")
+    name_norm = norm_match(name)
+    q_tokens = set(query.split())
+
+    # Common service synonyms used in the Armenian/Russian/English catalogue.
+    # These are deliberately semantic and do not create catalogue IDs.
+    synonym_groups = [
+        {"կտրում", "կտրել", "մազկտրում", "haircut", "barber", "парикмахер", "стрижка", "стрижку", "стрижки", "hair"},
+        {"ներկում", "ներկել", "մազերի ներկում", "coloring", "haircolor", "окрашивание", "окраска", "краска"},
+        {"ոճավորում", "սանրվածք", "укладка", "уклад", "styling", "hairstyling"},
+        {"մատնահարդարում", "маникюр", "manicure"},
+        {"պեդիկյուր", "ոտնահարդարում", "педикюр", "pedicure"},
+        {"դիմահարդարում", "макияж", "makeup"},
+        {"տրանսֆեր", "transfer", "трансфер"},
+        {"էքսկուրսիա", "экскурсия", "экскурсии", "tour", "excursion"},
+        {"լուսանկար", "լուսանկարիչ", "фотограф", "фотография", "photographer", "photography"},
+        {"տեսանկարահանում", "տեսագրում", "видеограф", "видеосъемка", "video", "videography"},
+    ]
+
+    def expanded_tokens(value):
+        tokens = set(norm_match(value).split())
+        joined = norm_match(value)
+        for group in synonym_groups:
+            if any(term in joined for term in group):
+                tokens.update(group)
+        return tokens
+
+    q_expanded = expanded_tokens(name_norm)
+
+    def score(row):
+        labels = [
+            row.get("category_am"), row.get("category_ru"),
+            row.get("category_en"), row.get("category_slug"),
+        ]
+        best = 0.0
+        for label in labels:
+            s = norm_match(label)
+            if not s:
+                continue
+            st = expanded_tokens(s)
+            overlap = len(q_expanded & st) / max(1, min(len(q_expanded), len(st)))
+            ratio = SequenceMatcher(None, name_norm, s).ratio()
+            # Exact label containment is strong; semantic synonym overlap is
+            # stronger than raw character similarity for Armenian/Russian.
+            containment = 1.0 if (name_norm and (name_norm in s or s in name_norm)) else 0.0
+            best = max(best, overlap * 0.72 + ratio * 0.18 + containment * 0.10)
         return best
-    ranked=sorted(catalog,key=_score,reverse=True)
-    exact=next((x for x in all_catalog if any(_norm_match(name)==_norm_match(x.get(k)) or _norm_match(name) in _norm_match(x.get(k)) or _norm_match(x.get(k)) in _norm_match(name) for k in ("category_am","category_ru","category_en","category_slug"))),None)
-    if exact:
-        cid=_safe_int(exact["category_id"]); mid=_safe_int(exact["master_category_id"])
-        if mid in approved:
-            return {"status":"matched","category_id":cid,"master_category_id":mid,
-                    "business_action":"same_business","proposed_business_name":None,"reason":"exact_catalog_match"}
-        return {"status":"out_of_scope","category_id":None,"master_category_id":None,
-                "out_of_scope_master_id":mid,
-                "out_of_scope_master_name":_norm(exact.get("master_am") or exact.get("master_ru") or exact.get("master_en")),
-                "proposed_name":_norm(exact.get("category_am") or exact.get("category_ru") or exact.get("category_en")),
-                "business_action":"same_business","proposed_business_name":None,"reason":"existing_category_not_approved_for_business"}
-    # Send only the best candidates to Groq instead of the first 80 arbitrary rows.
-    candidates=[x for x in ranked[:60] if _score(x)>=0.20] or ranked[:30]
-    schema={"type":"object","properties":{
-      "matched_category_id":{"type":["integer","null"]},"master_category_id":{"type":["integer","null"]},
-      "proposed_subcategory_name":{"type":["string","null"]},"out_of_scope_master_id":{"type":["integer","null"]},
-      "business_action":{"type":"string"},"proposed_business_name":{"type":["string","null"]},"reason":{"type":"string"}},
-      "required":["matched_category_id","master_category_id","proposed_subcategory_name","out_of_scope_master_id","business_action","proposed_business_name","reason"],"additionalProperties":False}
-    system="""Classify a partner service. The partner does not choose taxonomy manually.
-Use same_business when it belongs to the selected organization. Use new_business only when it clearly represents a separate organization/business.
-If it fits an approved subcategory return its exact category ID. If it needs an unapproved platform direction return that exact master ID. Never invent IDs."""
-    prompt=json.dumps({"current_business":dict(business),"service":{"name":name,"description":description[:800]},
-      "approved_directions":[{"id":x["master_category_id"],"hy":x["master_am"],"ru":x["master_ru"],"en":x["master_en"]} for x in catalog if x["master_category_id"] in approved],
-      "all_directions":[{"id":x["id"],"hy":x["name_am"],"ru":x["name_ru"],"en":x["name_en"]} for x in masters],
-      "subcategories":[{"id":x["category_id"],"master_id":x["master_category_id"],"hy":x["category_am"],"ru":x["category_ru"],"en":x["category_en"]} for x in candidates]},ensure_ascii=False)
-    result=await _groq_json(AsyncGroq(api_key=key),__import__("os").getenv("GROQ_MODEL","openai/gpt-oss-20b"),system,prompt,"partner_service_classification",schema,280)
-    cid=_safe_int(result.get("matched_category_id")); mid=_safe_int(result.get("master_category_id")); out=_safe_int(result.get("out_of_scope_master_id"))
-    valid={_safe_int(x["category_id"]) for x in catalog}; allids={_safe_int(x["id"]) for x in masters}
-    if cid not in valid: cid=None
-    if mid not in approved: mid=None
-    if out not in allids: out=None
-    action="new_business" if str(result.get("business_action") or "").strip().lower() in {"new_business","new business","new-business"} else "same_business"
-    proposed=_norm(result.get("proposed_business_name"))
-    if cid is not None:
-        row=next(x for x in catalog if _safe_int(x["category_id"])==cid)
-        return {"status":"matched","category_id":cid,"master_category_id":_safe_int(row["master_category_id"]),"business_action":action,"proposed_business_name":proposed,"reason":_norm(result.get("reason"))}
-    if out is not None:
-        m=next((x for x in masters if _safe_int(x["id"])==out),{})
-        return {"status":"out_of_scope","category_id":None,"master_category_id":None,"out_of_scope_master_id":out,
-                "out_of_scope_master_name":_norm(m.get("name_am") or m.get("name_ru") or m.get("name_en")),
-                "proposed_name":_norm(result.get("proposed_subcategory_name")),"business_action":action,"proposed_business_name":proposed,"reason":_norm(result.get("reason"))}
-    proposed_sub=_norm(result.get("proposed_subcategory_name"))
-    return {"status":"proposal" if mid and proposed_sub else "clarification","category_id":None,"master_category_id":mid,
-            "proposed_name":proposed_sub,"business_action":action,"proposed_business_name":proposed,"reason":_norm(result.get("reason"))}
+
+    ranked = sorted(catalog, key=score, reverse=True)
+    best = ranked[0] if ranked else None
+    best_score = score(best) if best else 0.0
+
+    # High-confidence deterministic match. This path works even during Groq 429.
+    if best and best_score >= 0.58:
+        return {
+            "status": "matched",
+            "category_id": _safe_int(best["category_id"]),
+            "master_category_id": _safe_int(best["master_category_id"]),
+            "business_action": "same_business",
+            "proposed_business_name": None,
+            "reason": "Deterministic multilingual catalogue match.",
+        }
+
+    # Optional Groq semantic fallback. A 429/400/etc. must never turn the
+    # partner's Add Service button into service_ai_failed; we simply continue
+    # with a clarification/proposal based on the real catalogue.
+    key = os.getenv("GROQ_API_KEY", "").strip()
+    if key and AsyncGroq is not None:
+        try:
+            candidates = [x for x in ranked[:50] if score(x) >= 0.20] or ranked[:30]
+            schema = {
+                "type": "object",
+                "properties": {
+                    "matched_category_id": {"type": ["integer", "null"]},
+                    "master_category_id": {"type": ["integer", "null"]},
+                    "proposed_subcategory_name": {"type": ["string", "null"]},
+                    "out_of_scope_master_id": {"type": ["integer", "null"]},
+                    "business_action": {"type": "string"},
+                    "proposed_business_name": {"type": ["string", "null"]},
+                    "reason": {"type": "string"},
+                },
+                "required": [
+                    "matched_category_id", "master_category_id",
+                    "proposed_subcategory_name", "out_of_scope_master_id",
+                    "business_action", "proposed_business_name", "reason",
+                ],
+                "additionalProperties": False,
+            }
+            system = """Classify one partner service against the supplied real catalogue.
+Understand Armenian, Russian and English semantically.
+Return an existing category ID only when it is a clear semantic match.
+Never invent an ID. If there is no clear match, return null."""
+            prompt = json.dumps({
+                "service": {"name": name, "description": description[:800]},
+                "subcategories": [
+                    {
+                        "id": _safe_int(x["category_id"]),
+                        "master_id": _safe_int(x["master_category_id"]),
+                        "hy": x.get("category_am"),
+                        "ru": x.get("category_ru"),
+                        "en": x.get("category_en"),
+                    }
+                    for x in candidates
+                ],
+            }, ensure_ascii=False)
+            result = await _groq_json(
+                AsyncGroq(api_key=key),
+                os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+                system,
+                prompt,
+                "partner_service_classification",
+                schema,
+                280,
+            )
+            cid = _safe_int(result.get("matched_category_id"))
+            valid = {_safe_int(x["category_id"]) for x in catalog}
+            if cid in valid:
+                row = next(x for x in catalog if _safe_int(x["category_id"]) == cid)
+                return {
+                    "status": "matched",
+                    "category_id": cid,
+                    "master_category_id": _safe_int(row["master_category_id"]),
+                    "business_action": "same_business",
+                    "proposed_business_name": None,
+                    "reason": _norm(result.get("reason")) or "AI semantic catalogue match.",
+                }
+        except Exception as exc:
+            # Rate limits and provider failures are non-fatal here.
+            # Log only a short diagnostic and continue to the safe fallback.
+            logging.getLogger(__name__).warning(
+                "partner_service_ai_fallback: %s", str(exc)[:240]
+            )
+
+    # Existing platform categories that are not approved for this business
+    # should become an admin proposal rather than a technical failure.
+    try:
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT c.id AS category_id, c.master_category_id,
+                              c.name_am AS category_am, c.name_ru AS category_ru,
+                              c.name_en AS category_en,
+                              m.name_am AS master_am, m.name_ru AS master_ru,
+                              m.name_en AS master_en
+                       FROM categories c
+                       JOIN master_categories m ON m.id=c.master_category_id
+                       WHERE c.is_active=TRUE AND m.is_active=TRUE"""
+                )
+                all_catalog = [dict(x) for x in cur.fetchall()]
+        all_ranked = sorted(all_catalog, key=score, reverse=True)
+        candidate = all_ranked[0] if all_ranked else None
+        if candidate and score(candidate) >= 0.58:
+            approved_masters = {
+                _safe_int(x["master_category_id"]) for x in catalog
+            }
+            mid = _safe_int(candidate["master_category_id"])
+            if mid not in approved_masters:
+                return {
+                    "status": "out_of_scope",
+                    "category_id": None,
+                    "master_category_id": None,
+                    "out_of_scope_master_id": mid,
+                    "out_of_scope_master_name": _norm(
+                        candidate.get("master_am")
+                        or candidate.get("master_ru")
+                        or candidate.get("master_en")
+                    ),
+                    "proposed_name": _norm(
+                        candidate.get("category_am")
+                        or candidate.get("category_ru")
+                        or candidate.get("category_en")
+                    ),
+                    "business_action": "same_business",
+                    "proposed_business_name": None,
+                    "reason": "Existing catalogue category is not yet approved for this business.",
+                }
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "partner_service_catalog_fallback_failed"
+        )
+
+    return {
+        "status": "clarification",
+        "category_id": None,
+        "master_category_id": None,
+        "business_action": "same_business",
+        "proposed_business_name": None,
+        "reason": "No sufficiently confident catalogue match was found.",
+    }
 
 async def api_service_create(request: web.Request):
     uid=_auth_partner(request); pid=_require_partner(uid); bid=_business_id(request,pid)
