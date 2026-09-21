@@ -1,411 +1,96 @@
 <!doctype html>
 <html lang="hy">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Armenia AI Guide — Partner Cabinet</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#687386;--line:#e5e9f0;--accent:#6d5dfc;--ok:#16834b;--warn:#a56a00;--danger:#c43d3d}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,textarea{font:inherit}button{cursor:pointer}.top{position:sticky;top:0;z-index:20;background:#111827;color:#fff;padding:14px 16px}.topin{max-width:1200px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:12px}.brand{font-size:18px;font-weight:800}.sub{font-size:11px;color:#aeb7c7;margin-top:3px}.langs{display:flex;gap:4px}.langs button{border:0;background:#ffffff18;color:#fff;border-radius:8px;padding:6px 8px}.langs .on{background:#fff;color:#111827}.layout{max-width:1200px;margin:auto;display:grid;grid-template-columns:215px 1fr;min-height:calc(100vh - 67px)}nav{background:#fff;border-right:1px solid var(--line);padding:10px;position:sticky;top:67px;height:calc(100vh - 67px)}nav button{display:block;width:100%;border:0;background:transparent;text-align:left;color:#536074;padding:11px;border-radius:10px;margin:2px 0;font-weight:700}nav button.active,nav button:hover{background:#eeeaff;color:var(--accent)}main{padding:20px;min-width:0}.view{display:none}.view.on{display:block}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}.metric{font-size:12px;color:var(--muted)}.metric b{display:block;color:var(--text);font-size:26px;margin-top:4px}.title{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:13px}.title h2{margin:0}.muted{color:var(--muted)}.badge{display:inline-block;padding:4px 8px;border-radius:99px;background:#edf0f5;color:#596579;font-size:11px;font-weight:700}.approved{background:#e7f7ef;color:var(--ok)}.pending{background:#fff3da;color:var(--warn)}.rejected{background:#fdeaea;color:var(--danger)}.row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.item{border:1px solid var(--line);border-radius:12px;padding:13px;margin:8px 0;background:#fff}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.primary,.secondary,.danger{border:0;border-radius:9px;padding:9px 13px;font-weight:750}.primary{background:var(--accent);color:#fff}.secondary{background:#edf0f5;color:#334155}.danger{background:#fdeaea;color:var(--danger)}input,textarea{width:100%;border:1px solid #d9dee8;border-radius:10px;padding:10px;margin:5px 0 10px;background:#fff}textarea{min-height:90px}.empty{padding:30px;text-align:center;color:var(--muted);border:1px dashed #d8dee8;border-radius:12px}.notice{padding:12px 14px;border-radius:12px;background:#f0efff;color:#4d43a4;margin-bottom:13px}.hidden{display:none!important}.table{overflow:auto}.table table{width:100%;border-collapse:collapse}.table th,.table td{padding:9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;font-size:13px}.modal{position:fixed;inset:0;background:#0008;display:grid;place-items:center;padding:16px;z-index:50}.modalbox{background:#fff;border-radius:18px;padding:18px;width:min(520px,100%);max-height:90vh;overflow:auto}@media(max-width:800px){.layout{display:block}nav{height:auto;position:sticky;top:67px;z-index:10;display:flex;overflow:auto;border-right:0;border-bottom:1px solid var(--line)}nav button{width:auto;min-width:max-content}.grid{grid-template-columns:1fr 1fr}main{padding:12px}}@media(max-width:500px){.grid{grid-template-columns:1fr}.topin{align-items:flex-start}.brand{font-size:16px}}
-</style></head>
+:root{--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#687386;--line:#e4e8f0;--accent:#6658e8;--ok:#16834b;--warn:#a56a00;--danger:#c43d3d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button,input,textarea,select{font:inherit}button{cursor:pointer}.top{position:sticky;top:0;z-index:30;background:#111827;color:#fff;padding:13px 16px}.topin{max-width:1180px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:12px}.brand{font-size:18px;font-weight:800}.sub{font-size:11px;color:#aeb7c7;margin-top:3px}.headtools{display:flex;align-items:center;gap:7px}.headtools select{max-width:220px;background:#ffffff12;color:#fff;border:1px solid #ffffff33;border-radius:9px;padding:7px}.langs{display:flex;gap:3px}.langs button{border:0;background:#ffffff18;color:#fff;border-radius:8px;padding:6px 8px}.langs .on{background:#fff;color:#111827}
+.layout{max-width:1180px;margin:auto;display:grid;grid-template-columns:210px 1fr;min-height:calc(100vh - 64px)}nav{background:#fff;border-right:1px solid var(--line);padding:10px;position:sticky;top:64px;height:calc(100vh - 64px)}nav button{width:100%;border:0;background:transparent;text-align:left;color:#536074;padding:11px;border-radius:10px;margin:2px 0;font-weight:750}nav button:hover,nav button.active{background:#eeeaff;color:var(--accent)}main{padding:18px;min-width:0}.room{display:none}.room.on{display:block}.title{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}.title h2{margin:0;font-size:22px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}.room-card{transition:.15s;cursor:pointer}.room-card:hover{border-color:#b8b0ff;transform:translateY(-1px)}.room-card .ico{font-size:27px}.room-card h3{margin:8px 0 5px}.metric{color:var(--muted);font-size:12px}.metric b{display:block;color:var(--text);font-size:25px;margin-top:4px}.item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;margin:9px 0;cursor:pointer}.item:hover{border-color:#b8b0ff}.row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.muted{color:var(--muted)}.badge{display:inline-block;padding:4px 8px;border-radius:99px;background:#edf0f5;color:#596579;font-size:11px;font-weight:750;white-space:nowrap}.approved{background:#e7f7ef;color:var(--ok)}.pending{background:#fff3da;color:var(--warn)}.rejected{background:#fdeaea;color:var(--danger)}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px}.primary,.secondary,.danger{border:0;border-radius:9px;padding:9px 13px;font-weight:750}.primary{background:var(--accent);color:#fff}.secondary{background:#edf0f5;color:#334155}.danger{background:#fdeaea;color:var(--danger)}.empty{padding:32px;text-align:center;color:var(--muted);border:1px dashed #d8dee8;border-radius:14px}.notice{padding:12px 14px;border-radius:12px;background:#f0efff;color:#4d43a4;margin-bottom:13px}.table{overflow:auto}.table table{width:100%;border-collapse:collapse}.table th,.table td{padding:9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}.modal{position:fixed;inset:0;background:#0008;display:grid;place-items:center;padding:14px;z-index:60}.modal.hidden{display:none}.modalbox{background:#fff;border-radius:18px;width:min(620px,100%);max-height:92vh;overflow:auto;padding:18px}.modalbox h3{margin:0}.field{margin:10px 0}.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}.field input,.field textarea,.field select{width:100%;border:1px solid #d9dee8;border-radius:10px;padding:10px;background:#fff}.field textarea{min-height:90px}.detailline{padding:10px 0;border-bottom:1px solid var(--line)}.detailline:last-child{border-bottom:0}
+@media(max-width:800px){.layout{display:block}nav{height:auto;position:sticky;top:64px;display:flex;overflow:auto;border-right:0;border-bottom:1px solid var(--line);z-index:20}nav button{width:auto;min-width:max-content}.grid{grid-template-columns:1fr 1fr}main{padding:12px}}
+@media(max-width:520px){.grid{grid-template-columns:1fr}.topin{align-items:flex-start}.brand{font-size:16px}.headtools select{max-width:130px}}
+</style>
+</head>
 <body>
-<header class="top"><div class="topin"><div><div class="brand">🤝 Armenia AI Guide</div><div class="sub" id="partnerName">Գործընկերոջ սենյակ</div></div><div style="display:flex;align-items:center;gap:8px"><select id="businessSelect" onchange="selectBusiness(this.value)" style="max-width:230px;padding:7px;border-radius:9px;border:1px solid #ffffff33;background:#ffffff12;color:#fff"></select><div class="langs"><button id="hy" onclick="setLang('hy')">AM</button><button id="ru" onclick="setLang('ru')">RU</button><button id="en" onclick="setLang('en')">EN</button></div></div></div></header>
-<div class="layout"><nav>
-<button class="active" data-view="dashboard">📊 <span data-t="dashboard">Գլխավոր</span></button>
-<button data-view="directions">🧭 <span data-t="directions">Ուղղություններ</span></button>
-<button data-view="services">🛠 <span data-t="services">Ծառայություններ</span></button>
-<button data-view="objects">🏢 <span data-t="objects">Օբյեկտներ</span></button>
-<button data-view="orders">📥 <span data-t="orders">Պատվերներ</span></button><button type="button" onclick="location.href='partner_negotiations.html'">💬 Բանակցություններ</button>
-<button data-view="locations">📍 <span data-t="locations">Տարածքներ</span></button>
-<button data-view="reviews">⭐ <span data-t="reviews">Վարկանիշ</span></button>
-<button data-view="documents">📄 <span data-t="documents">Փաստաթղթեր</span></button>
-<button data-view="settings">⚙️ <span data-t="settings">Կարգավորումներ</span></button>
-</nav><main>
-<section id="dashboard" class="view on"><div class="title"><h2>📊 Գործընկերոջ սենյակ</h2><button id="refreshButton" class="secondary" type="button" onclick="loadAll(true)">↻</button></div><div id="dashboardNotice"></div><div class="grid" id="metrics"></div><div class="card" id="profileCard"></div></section>
-<section id="directions" class="view"><div class="title"><h2>🧭 Ուղղություններ</h2></div><div class="notice">Յուրաքանչյուր ուղղություն անցնում է առանձին ստուգում։ Նոր ուղղությունը ավելացվում է AI-ի միջոցով, ոչ թե երկար ձևով։</div><div id="directionList"></div></section>
-<section id="services" class="view"><div class="title"><h2>🛠 Ծառայություններ</h2><button type="button" class="primary" id="addServiceButton">+ Ավելացնել ծառայություն</button></div><div id="serviceList"></div></section>
-<section id="objects" class="view"><div class="title"><h2>🏢 Օբյեկտներ</h2><button class="primary" onclick="openObject()">+ Ավելացնել</button></div><div id="objectList"></div></section>
-<section id="orders" class="view"><div class="title"><h2>📥 Պատվերներ</h2></div><div id="orderList"></div></section>
-<section id="locations" class="view"><div class="title"><h2>📍 Տարածքներ</h2></div><div id="locationList"></div></section>
-<section id="reviews" class="view"><div class="title"><h2>⭐ Վարկանիշ</h2></div><div id="reviewList"></div></section>
-<section id="documents" class="view"><div class="title"><h2>📄 Փաստաթղթեր և հայտեր</h2></div><div id="documentList"></div><div id="applicationList"></div></section>
-<section id="settings" class="view"><div class="title"><h2>⚙️ Կարգավորումներ</h2></div><div class="card"><label>Բիզնեսի անուն</label><input id="sName"><label>Նկարագրություն</label><textarea id="sDesc"></textarea><label>Կոնտակտների բացման քաղաքականություն</label><select id="sPolicy"><option value="after_booking">Բացումից հետո ամրագրումից</option><option value="premium">Premium</option><option value="never">Չբացել</option></select><div class="actions"><button class="primary" onclick="saveSettings()">Պահպանել</button></div></div></section>
+<header class="top"><div class="topin">
+<div><div class="brand">🤝 Armenia AI Guide</div><div class="sub" id="partnerName">Գործընկերոջ սենյակ</div></div>
+<div class="headtools"><select id="businessSelect" onchange="selectBusiness(this.value)"></select><div class="langs"><button id="hy" onclick="setLang('hy')">AM</button><button id="ru" onclick="setLang('ru')">RU</button><button id="en" onclick="setLang('en')">EN</button></div></div>
+</div></header>
+<div class="layout">
+<nav>
+<button class="active" data-room="home">📊 <span data-t="home">Գլխավոր</span></button>
+<button data-room="businesses">🏢 <span data-t="businesses">Ֆիրմաներ / Օբյեկտներ</span></button>
+<button data-room="directions">🧭 <span data-t="directions">Ուղղություններ</span></button>
+<button data-room="services">🛠 <span data-t="services">Ծառայություններ</span></button>
+<button data-room="applications">📨 <span data-t="applications">Հայտեր</span></button>
+<button data-room="orders">📥 <span data-t="orders">Պատվերներ</span></button>
+<button data-room="negotiations" onclick="location.href='partner_negotiations.html'">💬 <span data-t="negotiations">Բանակցություններ</span></button>
+<button data-room="locations">📍 <span data-t="locations">Տարածքներ</span></button>
+<button data-room="reviews">⭐ <span data-t="reviews">Վարկանիշ</span></button>
+<button data-room="documents">📄 <span data-t="documents">Փաստաթղթեր</span></button>
+<button data-room="settings">⚙️ <span data-t="settings">Կարգավորումներ</span></button>
+</nav>
+<main>
+<section id="home" class="room on"><div class="title"><h2>📊 Գործընկերոջ սենյակ</h2><button class="secondary" onclick="loadAll()">↻</button></div><div id="homeNotice"></div><div class="grid" id="roomCards"></div></section>
+<section id="businesses" class="room"><div class="title"><h2>🏢 Ֆիրմաներ / Օբյեկտներ</h2><button class="primary" onclick="openBusinessCreate()">＋</button></div><div class="notice">Յուրաքանչյուր ֆիրմա առանձին քարտ է։ Բացեք քարտը՝ տեսնելու դրա տվյալները, փաստաթղթերը, օբյեկտները և կարգավորումները։</div><div id="businessList"></div></section>
+<section id="directions" class="room"><div class="title"><h2>🧭 Ուղղություններ</h2></div><div id="directionList"></div></section>
+<section id="services" class="room"><div class="title"><h2>🛠 Ծառայություններ</h2><button class="primary" onclick="openService()">＋</button></div><div id="serviceList"></div></section>
+<section id="applications" class="room"><div class="title"><h2>📨 Հայտեր</h2></div><div class="notice">Այստեղ միայն ընթացող գործընթացներն են։ Ավարտված հայտի արդյունքը տեղափոխվում է իր համապատասխան ֆիրմա / ուղղություն / ծառայություն սենյակ։</div><div id="applicationList"></div></section>
+<section id="orders" class="room"><div class="title"><h2>📥 Պատվերներ</h2></div><div id="orderList"></div></section>
+<section id="locations" class="room"><div class="title"><h2>📍 Տարածքներ</h2></div><div id="locationList"></div></section>
+<section id="reviews" class="room"><div class="title"><h2>⭐ Վարկանիշ</h2></div><div id="reviewList"></div></section>
+<section id="documents" class="room"><div class="title"><h2>📄 Փաստաթղթեր</h2></div><div class="notice">Միայն փաստաթղթեր։ Ծառայությունների կամ հայտերի ցուցակը այստեղ չի խառնվում։</div><div id="documentList"></div></section>
+<section id="settings" class="room"><div class="title"><h2>⚙️ Կարգավորումներ</h2></div><div id="settingsBody"></div></section>
 </main></div>
 <div id="modal" class="modal hidden"><div class="modalbox"><div class="title"><h3 id="modalTitle"></h3><button class="secondary" onclick="closeModal()">×</button></div><div id="modalBody"></div></div></div>
 <script>
-const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const init=tg?.initData||'',uid=Number(tg?.initDataUnsafe?.user?.id||0);let lang=localStorage.aig_partner_lang||'hy';let businessId=Number(localStorage.aig_business_id||0);
-const tr={hy:{dashboard:'Գլխավոր',directions:'Ուղղություններ',services:'Ծառայություններ',objects:'Օբյեկտներ',orders:'Պատվերներ',locations:'Տարածքներ',reviews:'Վարկանիշ',documents:'Փաստաթղթեր',settings:'Կարգավորումներ'},ru:{dashboard:'Главная',directions:'Направления',services:'Услуги',objects:'Объекты',orders:'Заказы',locations:'Локации',reviews:'Рейтинг',documents:'Документы',settings:'Настройки'},en:{dashboard:'Dashboard',directions:'Directions',services:'Services',objects:'Objects',orders:'Orders',locations:'Locations',reviews:'Reviews',documents:'Documents',settings:'Settings'}};
-function setLang(x){lang=x;localStorage.aig_partner_lang=x;document.querySelectorAll('.langs button').forEach(b=>b.classList.toggle('on',b.id===x));document.querySelectorAll('[data-t]').forEach(e=>e.textContent=tr[x][e.dataset.t]||e.textContent)}setLang(lang);
-async function api(path,opt={}){opt.headers={...(opt.headers||{}),'X-Telegram-Init-Data':init,'Content-Type':'application/json'};if(businessId)opt.headers['X-Business-Id']=String(businessId);const method=String(opt.method||'GET').toUpperCase();const url=method==='GET'?(path+(path.includes('?')?'&':'?')+'_ts='+Date.now()):path;const r=await fetch(url,opt);const d=await r.json().catch(()=>({}));if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));return d}
-function esc(x){return String(x??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}function badge(s){let c=s==='approved'?'approved':(s==='rejected'?'rejected':'pending');return `<span class="badge ${c}">${esc(s||'—')}</span>`}function empty(el,text='Տվյալներ չկան'){el.innerHTML=`<div class="empty">${esc(text)}</div>`}
-function show(id){document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));document.getElementById(id).classList.add('on');document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===id));}
-document.querySelectorAll('nav button').forEach(b=>{if(!b.dataset.view)return;b.onclick=()=>{show(b.dataset.view);if(b.dataset.view==='dashboard'||b.dataset.view==='services'||b.dataset.view==='objects'||b.dataset.view==='orders'||b.dataset.view==='locations'||b.dataset.view==='reviews'||b.dataset.view==='documents')loadAll()}});
-async function loadBusinesses(){
- try{
-  const d=await api('/api/master/'+uid+'/businesses');
-  const list=d.businesses||[]; const sel=document.getElementById('businessSelect');
-  if(!list.length){sel.innerHTML='<option>Բիզնես չկա</option>';return}
-  if(!list.some(x=>Number(x.id)===businessId)) businessId=Number((d.current||list[0]).id);
-  localStorage.aig_business_id=String(businessId);
-  sel.innerHTML=list.map(x=>'<option value="'+Number(x.id)+'">'+esc(x.name)+(x.is_default?' ★':'')+'</option>').join('');
-  sel.value=String(businessId);
-  const current=list.find(x=>Number(x.id)===businessId); if(current) document.getElementById('partnerName').textContent=current.name;
- }catch(e){console.error('loadBusinesses',e)}
-}
+const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
+const init=tg?.initData||'',uid=Number(tg?.initDataUnsafe?.user?.id||0);
+let lang=localStorage.aig_partner_lang||'hy',businessId=Number(localStorage.aig_business_id||0),cache={businesses:[],directions:[],services:[],documents:[],applications:[]};
+const tr={hy:{home:'Գլխավոր',businesses:'Ֆիրմաներ / Օբյեկտներ',directions:'Ուղղություններ',services:'Ծառայություններ',applications:'Հայտեր',orders:'Պատվերներ',negotiations:'Բանակցություններ',locations:'Տարածքներ',reviews:'Վարկանիշ',documents:'Փաստաթղթեր',settings:'Կարգավորումներ'},ru:{home:'Главная',businesses:'Фирмы / Объекты',directions:'Направления',services:'Услуги',applications:'Заявки',orders:'Заказы',negotiations:'Переговоры',locations:'Территории',reviews:'Рейтинг',documents:'Документы',settings:'Настройки'},en:{home:'Dashboard',businesses:'Businesses / Objects',directions:'Directions',services:'Services',applications:'Applications',orders:'Orders',negotiations:'Negotiations',locations:'Territories',reviews:'Reviews',documents:'Documents',settings:'Settings'}};
+function setLang(x){lang=x;localStorage.aig_partner_lang=x;document.querySelectorAll('.langs button').forEach(b=>b.classList.toggle('on',b.id===x));document.querySelectorAll('[data-t]').forEach(e=>e.textContent=tr[x][e.dataset.t]||e.textContent)}
+setLang(lang);
+async function api(path,opt={}){opt.headers={...(opt.headers||{}),'X-Telegram-Init-Data':init,'Content-Type':'application/json'};if(businessId)opt.headers['X-Business-Id']=String(businessId);const m=String(opt.method||'GET').toUpperCase();const u=m==='GET'?path+(path.includes('?')?'&':'?')+'_ts='+Date.now():path;const r=await fetch(u,opt);const d=await r.json().catch(()=>({}));if(!r.ok||d.ok===false)throw Error(d.error||d.detail||('HTTP '+r.status));return d}
+function esc(x){return String(x??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function badge(s){const c=s==='approved'?'approved':s==='rejected'?'rejected':'pending';return '<span class="badge '+c+'">'+esc(statusText(s))+'</span>'}
+function statusText(s){const m={approved:'Ակտիվ / Հաստատված',pending:'Սպասում է ստուգման',pending_admin:'Սպասում է ադմինին',pending_partner:'Պետք է լրացնել',document_pending:'Պետք է փաստաթուղթ',document_under_review:'Փաստաթուղթը ստուգվում է',rejected:'Մերժված',active:'Ակտիվ'};return m[s]||s||'—'}
+function empty(el,t='Տվյալներ չկան'){el.innerHTML='<div class="empty">'+esc(t)+'</div>'}
+function showRoom(id){document.querySelectorAll('.room').forEach(x=>x.classList.remove('on'));document.getElementById(id).classList.add('on');document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.room===id));if(id!=='home')loadRoom(id)}
+document.querySelectorAll('nav button[data-room]').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.room!=='negotiations')showRoom(b.dataset.room)}));
 function selectBusiness(id){businessId=Number(id)||0;localStorage.aig_business_id=String(businessId);loadAll()}
-async function loadDashboard(){const d=await api(`/api/master/${uid}/dashboard`);const p=d.partner||{};document.getElementById('partnerName').textContent=p.business_name||'Գործընկերոջ սենյակ';document.getElementById('metrics').innerHTML=Object.entries({services:d.metrics.services,objects:d.metrics.objects,bookings:d.metrics.bookings,active:d.metrics.active_bookings}).map(([k,v])=>`<div class="card metric">${esc(k)}<b>${esc(v)}</b></div>`).join('');document.getElementById('profileCard').innerHTML=`<div class="row"><div><b>${esc(p.business_name||'')}</b><div class="muted">${esc(p.business_description||'')}</div></div><div>${badge(p.status)}</div></div>`;document.getElementById('dashboardNotice').innerHTML=p.status==='approved'?'<div class="notice">Ձեր գործընկերային պրոֆիլը ակտիվ է։</div>':'<div class="notice">Պրոֆիլը դեռ ստուգման փուլում է։</div>'}
-async function loadDirections(){try{const d=await api(`/api/master/${uid}/partner-directions`);const el=document.getElementById('directionList');if(!d.directions?.length)return empty(el);el.innerHTML=d.directions.filter(x=>x.status!=='not_added').map(x=>`<div class="item"><div class="row"><div><b>${esc(x.name_am||x.name_ru)}</b><div class="muted">${((x.subcategories&&x.subcategories.length)?x.subcategories:(x.status==='approved'?(x.catalog_subcategories||[]):[])).map(c=>esc(c.name_am||c.name_ru)).join(' · ')||'Ենթաուղղություններ դեռ չկան'}</div></div><div>${badge(x.status)}<div class="muted">Փաստաթղթեր՝ ${esc(x.document_count)}</div></div></div></div>`).join('')}catch(e){empty(document.getElementById('directionList'),'Չհաջողվեց բեռնել ուղղությունները') }}
-async function loadServices(){
-  try{
-    const d=await api(`/api/master/${uid}/services`);
-    const el=document.getElementById('serviceList');
-    if(!d.services?.length)return empty(el);
-    el.innerHTML=d.services.map(s=>`<div class="item">
-      <div class="row"><div><b>${esc(s.name)}</b><div class="muted">${esc(s.description||'')}</div></div>
-      <div>${esc(s.price??'—')} ֏<br>${badge(s.status)}</div></div>
-      <div class="actions">
-        <button type="button" class="secondary js-service-edit" data-id="${Number(s.id)}" data-name="${esc(s.name)}" data-price="${esc(s.price??'')}" >Փոխել</button>
-        <button type="button" class="danger js-service-delete" data-id="${Number(s.id)}">Ջնջել</button>
-      </div>
-    </div>`).join('');
-  }catch(e){
-    console.error('loadServices failed',e);
-    empty(document.getElementById('serviceList'),'Չհաջողվեց բեռնել ծառայությունները');
-  }
-}
-document.addEventListener('click',async(event)=>{
-  const edit=event.target.closest('.js-service-edit');
-  if(edit){
-    event.preventDefault();
-    editService(Number(edit.dataset.id),edit.dataset.name||'',edit.dataset.price||'');
-    return;
-  }
-  const del=event.target.closest('.js-service-delete');
-  if(del){
-    event.preventDefault();
-    await deleteService(Number(del.dataset.id));
-  }
-});
-
-async function loadObjects(){const d=await api(`/api/master/${uid}/objects`),el=document.getElementById('objectList');if(!d.objects?.length)return empty(el);el.innerHTML=d.objects.map(o=>`<div class="item"><div class="row"><div><b>${esc(o.object_name)}</b><div class="muted">${esc(o.city||'')} ${esc(o.address||'')}</div></div><button class="danger" onclick="deleteObject(${o.id})">Ջնջել</button></div></div>`).join('')}
-async function loadOrders(){const d=await api(`/api/master/${uid}/bookings`),el=document.getElementById('orderList');if(!d.bookings?.length)return empty(el,'Պատվերներ դեռ չկան');el.innerHTML=`<div class="table"><table><tr><th>ID</th><th>Status</th><th>Price</th><th>Created</th></tr>${d.bookings.map(x=>`<tr><td>${esc(x.id)}</td><td>${badge(x.status)}</td><td>${esc(x.agreed_price??'—')} ֏</td><td>${esc(String(x.created_at||'').slice(0,19))}</td></tr>`).join('')}</table></div>`}
-async function loadLocations(){const d=await api(`/api/master/${uid}/locations`),el=document.getElementById('locationList');if(!d.locations?.length)return empty(el);el.innerHTML=d.locations.map(x=>`<div class="item"><b>${esc(x.city||x.village||x.marz||'Armenia')}</b><div class="muted">${esc(x.address||'')}</div></div>`).join('')}
-async function loadReviews(){const d=await api(`/api/master/${uid}/reviews`),el=document.getElementById('reviewList');if(!d.reviews?.length)return empty(el);el.innerHTML=d.reviews.map(x=>`<div class="item"><b>⭐ ${esc(x.rating)}/5</b><div>${esc(x.comment||'')}</div></div>`).join('')}
-async function loadApplications(){
- const d=await api('/api/master/'+uid+'/applications'),rows=d.applications||[];
- const el=document.getElementById('applicationList'); if(!el)return;
- if(!rows.length){el.innerHTML='';return}
- el.innerHTML=rows.map(x=>{
-   const payload=(x.payload_json&&typeof x.payload_json==='object')?x.payload_json:{};
-   const isServiceProposal=payload.source==='partner_service';
-   const approved=x.status==='approved';
-   const title=esc(x.service_name||'Ծառայության հայտ');
-   const direction=esc(x.direction_name||x.master_name_am||x.master_name_ru||'');
-   const sub=esc(x.subcategory_name||x.category_name_am||x.category_name_ru||'');
-   const place=[x.location_marz,x.location_city,x.location_village,x.address].filter(Boolean).map(esc).join(' · ');
-   const statusMap={
-     pending_admin:'Սպասում է ադմինի ստուգմանը',
-     pending_partner:'Պետք է լրացնել / ուղղել',
-     document_pending:'Պետք է փաստաթուղթ',
-     document_under_review:'Փաստաթուղթը ստուգվում է',
-     approved:'Հաստատված',
-     rejected:'Մերժված'
-   };
-   const status=statusMap[x.status]||x.status||'—';
-   const canEdit=isServiceProposal&&!approved&&x.status!=='rejected';
-   const canDelete=!approved;
-   const canUpload=isServiceProposal&&(x.status==='pending_partner'||x.status==='document_pending');
-   return `
-     <div class="item app-card">
-       <div class="row">
-         <div style="min-width:0">
-           <div style="font-weight:800;font-size:15px">📨 Հայտ #${esc(x.id)} · ${title}</div>
-           <div class="muted" style="margin-top:5px">${direction||'Ուղղությունը դեռ չի որոշվել'}${sub?' · '+sub:''}</div>
-           ${place?'<div class="muted" style="margin-top:4px">📍 '+place+'</div>':''}
-         </div>
-         <span class="badge ${approved?'approved':(x.status==='rejected'?'rejected':'pending')}">${esc(status)}</span>
-       </div>
-       ${x.admin_note?'<div class="notice" style="margin-top:10px">💬 '+esc(x.admin_note)+'</div>':''}
-       ${canEdit?'<div class="actions"><button class="secondary" onclick="openServiceProposalEditor('+x.id+')">✎ Ուղղել այս հայտը</button></div>':''}
-       ${canUpload?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել փաստաթուղթը</button></div>':''}
-       ${canDelete?'<div class="actions"><button class="danger" onclick="deleteApplication('+x.id+')">🗑 Հեռացնել այս հայտը</button></div>':''}
-     </div>`;
- }).join('');
-}
-async function deleteApplication(id){
- if(!confirm('Հեռացնե՞լ այս չհաստատված հայտը։'))return;
- try{
-   await api('/api/master/'+uid+'/applications/'+id,{method:'DELETE'});
-   await loadAll();
- }catch(e){alert('❌ '+e.message)}
-}
-
-let applicationCatalog=null;
-async function getApplicationCatalog(){
-  if(applicationCatalog)return applicationCatalog;
-  const d=await api('/api/master/'+uid+'/application-catalog');
-  applicationCatalog=d.directions||[];
-  return applicationCatalog;
-}
-function normalizeApplicationText(v){return String(v??'').trim().toLocaleLowerCase().replace(/ё/g,'е').replace(/[«»\"']/g,'').replace(/\\s+/g,' ')}
-function resolveApplicationIds(a){
-  let masterId=Number(a.master_category_id||0)||0, categoryId=Number(a.category_id||0)||0;
-  const masterNames=[a.direction_name,a.master_name_am,a.master_name_ru,a.master_name_en];
-  const categoryNames=[a.subcategory_name,a.category_name_am,a.category_name_ru,a.category_name_en];
-  const exact=(names,values)=>{for(const raw of names){const n=normalizeApplicationText(raw);if(!n)continue;const hit=(values||[]).find(v=>normalizeApplicationText(v)===n);if(hit)return hit;}return null};
-  if(!masterId){
-    const m=(applicationCatalog||[]).find(x=>exact(masterNames,[x.name_am,x.name_ru,x.name_en]));
-    if(m)masterId=Number(m.id);
-  }
-  const master=(applicationCatalog||[]).find(x=>Number(x.id)===masterId);
-  if(!categoryId&&master){
-    const sc=(master.subcategories||[]).find(x=>exact(categoryNames,[x.name_am,x.name_ru,x.name_en]));
-    if(sc)categoryId=Number(sc.id);
-  }
-  return {masterId,categoryId};
-}
-function applicationSubcats(masterId,selected){
-  const m=(applicationCatalog||[]).find(x=>Number(x.id)===Number(masterId));
-  return (m?.subcategories||[]).map(x=>`<option value="${Number(x.id)}" ${Number(x.id)===Number(selected)?'selected':''}>${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
-}
-async function openApplicationEditor(id, focusAfter=false){
-  const d=await api('/api/master/'+uid+'/applications');
-  const a=(d.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
-  await getApplicationCatalog();
-  const resolved=resolveApplicationIds(a);
-  const masters=(applicationCatalog||[]).map(x=>`<option value="${Number(x.id)}">${esc(x.name_am||x.name_ru||x.name_en)}</option>`).join('');
-  openModal('Լրացնել նոր ուղղության հայտը',`
-    <div class="notice">🧾 Նոր ուղղություն է հայտնաբերվել։ Լրացրեք ամբողջ հայտը և պարտադիր կցեք հաստատող փաստաթուղթը։ AI-ի առաջարկած ուղղությունն ու ենթաուղղությունը կարող եք փոխել ցուցակից։</div>
-    <label>Բիզնես / կազմակերպություն *</label><input id="appBusiness" value="${esc(a.business_name||'')}">
-    <label>Մարզ *</label><input id="appMarz" value="${esc(a.location_marz||'')}">
-    <label>Քաղաք / բնակավայր</label><input id="appCity" value="${esc(a.location_city||a.location_village||'')}">
-    <label>Հասցե *</label><input id="appAddress" value="${esc(a.address||'')}">
-    <label>Հեռախոս *</label><input id="appPhone" value="${esc(a.phone||'')}">
-    <label>AI առաջարկած ուղղություն *</label><select id="appMaster"><option value="">Ընտրեք ուղղությունը</option>${masters}</select>
-    <label>Ենթաուղղություն *</label><select id="appCategory"><option value="">Ընտրեք ենթաուղղությունը</option></select>
-    <label>Ծառայություն *</label><input id="appService" value="${esc(a.service_name||'')}">
-    <label>Գին, AMD *</label><input id="appPrice" type="number" min="0" step="1" value="${esc(a.price??'')}">
-    <label>Օբյեկտ (եթե անհրաժեշտ է)</label><input id="appObject" value="${esc(a.object_name||'')}">
-    <label>Նկարագրություն</label><textarea id="appDesc">${esc(a.description||'')}</textarea>
-    <label>📄 Հաստատող փաստաթուղթ * </label><input id="appDoc" type="file" accept="image/*,.pdf">
-    <div id="appFormError" class="muted" style="color:var(--danger);margin-top:8px"></div>
-    <div class="actions"><button class="primary" onclick="savePartnerApplication(${id})">📨 Լրացնել և ուղարկել ադմինին</button></div>`);
-  const masterSelect=document.getElementById('appMaster');
-  const categorySelect=document.getElementById('appCategory');
-  masterSelect.value=String(resolved.masterId||'');
-  categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,resolved.categoryId);
-  categorySelect.value=String(resolved.categoryId||'');
-  masterSelect.onchange=()=>{categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,'');categorySelect.value='';};
-  if(resolved.masterId) masterSelect.value=String(resolved.masterId);
-  categorySelect.innerHTML='<option value="">Ընտրեք ենթաուղղությունը</option>'+applicationSubcats(masterSelect.value,resolved.categoryId);
-  if(resolved.categoryId) categorySelect.value=String(resolved.categoryId);
-  if(focusAfter)document.getElementById('appBusiness')?.focus();
-}
-async function savePartnerApplication(id){
-  const get=id=>document.getElementById(id);
-  const data={
-    business_name:get('appBusiness').value.trim(),location_marz:get('appMarz').value.trim(),
-    location_city:get('appCity').value.trim(),address:get('appAddress').value.trim(),phone:get('appPhone').value.trim(),
-    direction_name:(()=>{const s=get('appMaster');return s.options[s.selectedIndex]?.text||''})(),
-    master_category_id:Number(get('appMaster').value||0)||null,
-    subcategory_name:(()=>{const s=get('appCategory');return s.options[s.selectedIndex]?.text||''})(),
-    category_id:Number(get('appCategory').value||0)||null,
-    service_name:get('appService').value.trim(),price:get('appPrice').value===''?null:Number(get('appPrice').value),
-    object_name:get('appObject').value.trim(),description:get('appDesc').value.trim()
-  };
-  if(!data.business_name||!data.location_marz||!data.address||!data.phone||!data.master_category_id||!data.category_id||!data.service_name||data.price==null){
-    document.getElementById('appFormError').textContent='❌ Լրացրեք բոլոր պարտադիր դաշտերը։';return;
-  }
-  try{
-    await api('/api/master/'+uid+'/applications/'+id,{method:'POST',body:JSON.stringify(data)});
-    const f=get('appDoc').files?.[0];
-    if(!f){document.getElementById('appFormError').textContent='❌ Փաստաթուղթը պարտադիր է նոր ուղղության համար։';return}
-    if(f.size>10*1024*1024){document.getElementById('appFormError').textContent='❌ Ֆայլը մեծ է (մինչև 10 MB)';return}
-    const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_verification');
-    const h={'X-Telegram-Init-Data':init};if(businessId)h['X-Business-Id']=String(businessId);
-    const r=await fetch('/api/master/'+uid+'/applications/'+id+'/document',{method:'POST',headers:h,body:fd});
-    const doc=await r.json();if(!r.ok||doc.ok===false)throw Error(doc.error||('HTTP '+r.status));
-    await api('/api/master/'+uid+'/applications/'+id+'/submit',{method:'POST',body:'{}'});
-    closeModal();await loadAll();alert('Հայտը ամբողջությամբ լրացված է և ուղարկված է ադմինիստրատորի ստուգմանը։');
-  }catch(e){document.getElementById('appFormError').textContent='❌ '+e.message}
-}
-async function openServiceProposalEditor(id){
- const rows=(await api('/api/master/'+uid+'/applications')).applications||[];
- const x=rows.find(v=>Number(v.id)===Number(id));
- if(!x)return;
- openModal('Ուղղել ծառայության հայտը',`
-   <div class="notice">✎ Դուք խմբագրում եք հենց այս նույն հայտը։ Փոխեք անհրաժեշտ տվյալները, իսկ փաստաթուղթը կարող եք կցել այստեղ։ Ուղղությունը և ենթաուղղությունը համակարգը պահպանում է առանձին և դրանք ձեռքով ընտրելու կարիք չկա։</div>
-   <label>Ընկերության / կազմակերպության անվանում</label>
-   <input id="svcEditBusiness" value="${esc(x.business_name||'')}" placeholder="Օր․ ABC ՍՊԸ">
-   <label>Ծառայություն *</label>
-   <input id="svcEditName" value="${esc(x.service_name||'')}" placeholder="Օր․ սանտեխնիկ">
-   <div class="muted" style="margin:4px 0 8px">Պարզապես գրեք ճիշտ անվանումը։ Ուղղությունը և ենթաուղղությունը ձեռքով ընտրելու կարիք չկա։</div>
-   <label>Գին, AMD</label>
-   <input id="svcEditPrice" type="number" min="0" step="1" value="${esc(x.price??'')}">
-   <label>Նկարագրություն</label>
-   <textarea id="svcEditDesc">${esc(x.description||'')}</textarea>
-   <label>📄 Նոր փաստաթուղթ <span class="muted">(պարտադիր, եթե նախորդը մերժվել/փոխարինվել է)</span></label>
-   <input id="svcEditDoc" type="file" accept="image/*,.pdf">
-   <div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div>
-   <div class="actions"><button class="primary" onclick="saveServiceProposalEdit(${id})">Պահպանել և ուղարկել</button></div>`);
-}
-async function saveServiceProposalEdit(id){
- const business=document.getElementById('svcEditBusiness')?.value.trim()||'';
- const name=document.getElementById('svcEditName')?.value.trim()||'';
- const priceRaw=document.getElementById('svcEditPrice')?.value??'';
- const desc=document.getElementById('svcEditDesc')?.value.trim()||'';
- if(business.length<2){modalError('Կազմակերպության անվանումը պարտադիր է');return}
- if(!name){modalError('Ծառայության անվանումը պարտադիր է');return}
- const price=priceRaw===''?null:Number(priceRaw);
- if(priceRaw!==''&&!Number.isFinite(price)){modalError('Գինը սխալ է');return}
- try{
-   await api('/api/master/'+uid+'/applications/'+id,{method:'POST',body:JSON.stringify({
-     business_name:business,service_name:name,price,description:desc
-   })});
-   const f=document.getElementById('svcEditDoc')?.files?.[0];
-   if(f){
-     if(f.size>10*1024*1024){modalError('Ֆայլը մեծ է (մինչև 10 MB)');return}
-     const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_document');
-     const h={'X-Telegram-Init-Data':init};if(businessId)h['X-Business-Id']=String(businessId);
-     const r=await fetch('/api/master/'+uid+'/applications/'+id+'/document',{method:'POST',headers:h,body:fd});
-     const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));
-   }
-   closeModal();
-   await loadAll();
-   alert('Այս նույն հայտը պահպանվեց և ուղարկվեց ադմինիստրատորի ստուգմանը։');
- }catch(e){modalError(e.message)}
-}
-async function uploadApplicationDocument(id){
- const f=document.getElementById('appDoc'+id)?.files?.[0]; if(!f)return alert('Ընտրեք փաստաթուղթ');
- const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_document');
- const h={'X-Telegram-Init-Data':init}; if(businessId)h['X-Business-Id']=String(businessId);
- const r=await fetch('/api/master/'+uid+'/applications/'+id+'/document',{method:'POST',headers:h,body:fd});const d=await r.json();
- if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));alert('Փաստաթուղթը ուղարկված է');await loadAll();
-}
-async function loadDocuments(){const d=await api(`/api/master/${uid}/documents`),el=document.getElementById('documentList');el.innerHTML=(d.documents?.length?d.documents.map(x=>`<div class="item"><div class="row"><div><b>${esc(x.original_filename||'document')}</b><div class="muted">${esc(x.document_type)} · ${esc(x.file_size||0)} bytes</div></div>${badge(x.status)}</div>${x.rejection_reason?`<div class="muted">${esc(x.rejection_reason)}</div>`:''}</div>`).join(''):'<div class="empty">Փաստաթղթեր դեռ չկան</div>')+`<div class="card"><b>📤 Փաստաթուղթ ուղարկել / կրկին ուղարկել</b><input id="docUpload" type="file" accept="image/*,.pdf"><div class="actions"><button class="primary" onclick="uploadDocument()">Ուղարկել</button></div><div id="docUploadStatus" class="muted"></div></div>`}
-async function loadSettings(){const d=await api(`/api/master/${uid}/settings`),s=d.settings||{};sName.value=s.business_name||'';sDesc.value=s.business_description||'';sPolicy.value=s.contact_share_policy||'after_booking'}
-async function saveSettings(){await api(`/api/master/${uid}/settings`,{method:'POST',body:JSON.stringify({business_name:sName.value,business_description:sDesc.value,contact_share_policy:sPolicy.value,lang})});alert('Պահպանվեց')}
-async function uploadDocument(){const f=document.getElementById('docUpload')?.files?.[0],s=document.getElementById('docUploadStatus');if(!f){s.textContent='Ընտրեք փաստաթուղթ';return}if(f.size>10*1024*1024){s.textContent='Ֆայլը մեծ է (մինչև 10 MB)';return}const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_verification');try{const r=await fetch('/api/master/'+uid+'/documents/upload',{method:'POST',headers:{'X-Telegram-Init-Data':init},body:fd});const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));s.textContent='✅ Փաստաթուղթը ուղարկված է';await loadDocuments()}catch(e){s.textContent='❌ '+e.message}}
-async function completeServiceBusiness(id){
- const rows=(await api('/api/master/'+uid+'/applications')).applications||[];
- const x=rows.find(v=>Number(v.id)===Number(id));
- if(!x)return;
- openModal('Կազմակերպության տվյալներ',`
-   <div class="notice">Այս նոր ուղղության համար անհրաժեշտ է նշել ընկերության/կազմակերպության անվանումը։ Ուղղությունը և ենթաուղղությունը դուք չեք ընտրում։</div>
-   <label>Ընկերության / կազմակերպության անվանում</label>
-   <input id="serviceBusinessName" value="${esc(x.business_name||'')}" placeholder="Օր․ ABC ՍՊԸ">
-   <div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div>
-   <div class="actions"><button class="primary" onclick="saveServiceBusiness(${id})">Պահպանել</button></div>`);
-}
-async function saveServiceBusiness(id){
- const name=document.getElementById('serviceBusinessName')?.value.trim()||'';
- if(name.length<2){modalError('Կազմակերպության անվանումը պարտադիր է');return}
- try{
-   await api('/api/master/'+uid+'/applications/'+id,{method:'POST',body:JSON.stringify({business_name:name,payload:{business_name:name,requires_business_name:false}})});
-   closeModal();
-   await loadApplications();
-   await loadDirections();
- }catch(e){modalError(e.message)}
-}
-function openModal(title,body){modalTitle.textContent=title;modalBody.innerHTML=body;modal.classList.remove('hidden')}function closeModal(){modal.classList.add('hidden')}
-function modalError(message){
-  const el=document.getElementById('modalError');
-  if(el) el.textContent='❌ '+message;
-  else alert('❌ '+message);
-}
-async function openService(){
-  openModal('Ավելացնել ծառայություն',`
-    <div class="notice">🤖 Գրեք միայն ձեր ծառայությունը։ Ուղղությունը և ենթաուղղությունը AI-ն կընտրի ինքնուրույն։</div>
-    <label>Ծառայության անվանում</label>
-    <input id="mName" placeholder="Օր․ Գել-լաք, Մազերի ներկում, Ավտոմեքենայի լվացում">
-    <label>Գին, AMD</label>
-    <input id="mPrice" type="number" min="0" step="1" placeholder="3000">
-    <label>Նկարագրություն <span class="muted">(ոչ պարտադիր)</span></label>
-    <textarea id="mDesc" placeholder="Կարճ նկարագրեք ծառայությունը, եթե անհրաժեշտ է"></textarea>
-    <div class="muted" style="margin:4px 0 10px">AI-ն ինքնուրույն կորոշի ծառայության ճիշտ ուղղությունն ու ենթաուղղությունը։ Եթե այդ ուղղությունը դեռ հաստատված չէ ձեր համար, հայտը կուղարկվի ադմինիստրատորին։</div>
-    <div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div>
-    <div class="actions"><button class="primary" onclick="createService()">Ավելացնել</button></div>`);
-  document.getElementById('mName')?.focus();
-}
-async function createService(){
-  const name=document.getElementById('mName').value.trim();
-  const price=document.getElementById('mPrice').value;
-  const desc=document.getElementById('mDesc').value.trim();
-  if(!name){modalError('Անվանումը պարտադիր է');return}
-  try{
-    const d=await api(`/api/master/${uid}/services`,{method:'POST',body:JSON.stringify({
-      name, price:price===''?null:Number(price), description:desc
-    })});
-    closeModal();
-    await loadServices();
-    await loadDirections();
-    await loadDocuments();
-    await loadApplications();
-    await loadDashboard();
-    if(d.proposal_created){
-      alert(d.message||'Նոր ծառայության հայտը ուղարկվել է ադմինիստրատորին։');
-    }else{
-      alert(d.message||'Ծառայությունը ավելացվեց և ուղարկվեց ստուգման։');
-    }
-  }catch(e){ modalError(e.message); }
-}
-function editService(id,name,price){
-  openModal('Փոփոխել ծառայությունը',`<label>Անվանում</label><input id="mName" value="${esc(name)}"><label>Գին</label><input id="mPrice" type="number" min="0" value="${esc(price)}"><div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div><div class="actions"><button class="primary" onclick="updateService(${id})">Պահպանել</button></div>`)
-}
-async function updateService(id){
-  const name=document.getElementById('mName').value.trim();
-  const price=document.getElementById('mPrice').value;
-  if(!name){modalError('Անվանումը պարտադիր է');return}
-  try{
-    await api(`/api/master/${uid}/services/${id}`,{method:'POST',body:JSON.stringify({name,price:price===''?null:Number(price)})});
-    closeModal();await loadServices();await loadDashboard();
-  }catch(e){modalError(e.message)}
-}
-async function deleteService(id){
-  const ask=window.Telegram?.WebApp?.showConfirm;
-  const proceed=async()=>{try{
-    await api(`/api/master/${uid}/services/${id}`,{method:'DELETE'});
-    await loadServices();await loadDashboard();
-  }catch(e){alert('❌ '+e.message)}};
-  if(ask) ask('Ջնջե՞լ այս ծառայությունը',ok=>{if(ok)proceed()});
-  else if(confirm('Ջնջե՞լ այս ծառայությունը')) await proceed();
-}
-function openObject(){openModal('Նոր օբյեկտ',`<label>Անվանում</label><input id="oName"><label>Քաղաք</label><input id="oCity"><label>Հասցե</label><input id="oAddress"><div class="actions"><button class="primary" onclick="createObject()">Պահպանել</button></div>`)}
-async function createObject(){await api(`/api/master/${uid}/objects`,{method:'POST',body:JSON.stringify({object_name:oName.value,city:oCity.value,address:oAddress.value})});closeModal();loadObjects()}
-async function deleteObject(id){if(!confirm('Ջնջե՞լ օբյեկտը'))return;await api(`/api/master/${uid}/objects/${id}`,{method:'DELETE'});loadObjects()}
-async function loadDirections(){
- try{
-  const d=await api(`/api/master/${uid}/partner-directions`),el=document.getElementById('directionList');
-  el.innerHTML=(d.directions||[]).filter(x=>x.status!=='not_added').map(x=>`<div class="item"><div class="row"><div><b>${esc(x.name_am||x.name_ru)}</b><div class="muted">${(x.subcategories||[]).map(c=>esc(c.name_am||c.name_ru)).join(' · ')||'Ենթաուղղություններ դեռ չկան'}</div></div><div>${badge(x.status)}<div class="muted">Փաստաթղթեր՝ ${esc(x.document_count)}</div></div></div></div>`).join('')||'<div class="empty">Ուղղություններ դեռ չկան</div>';
-  const r=await api(`/api/master/${uid}/service-direction-requests`),rows=r.requests||[];
-  if(rows.length)el.innerHTML+=(rows.map(x=>`<div class="item" style="border-color:#9d8cff55"><div class="row"><div><b>🧭 ${esc(x.master_name_am||x.master_name_ru||'Նոր ուղղություն')}</b><div class="muted">Ենթաուղղություն՝ ${esc(x.proposed_subcategory_name||'—')} · ${esc(x.requested_service_name||'—')}</div></div>${badge(x.status)}</div><div class="muted">${x.price==null?'':Number(x.price).toLocaleString()+' ֏'} ${esc(x.admin_note||'')}</div>${x.status==='document_pending'&&x.partner_direction_id?`<div class="actions"><input id="dirDoc${x.id}" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadDirectionRequestDocument(${x.id})">📄 Ուղարկել փաստաթուղթը</button></div>`:''}${x.status==='document_under_review'?'<div class="muted">⏳ Փաստաթուղթը ուղարկված է։ Սպասեք ստուգմանը։</div>':''}</div>`).join(''));
- }catch(e){empty(document.getElementById('directionList'),'Չհաջողվեց բեռնել ուղղությունները')}
-}
-async function uploadDirectionRequestDocument(id){
- const f=document.getElementById('dirDoc'+id)?.files?.[0];
- if(!f)return alert('Ընտրեք փաստաթուղթ');
- if(f.size>10*1024*1024)return alert('Ֆայլը մեծ է (մինչև 10 MB)');
- const fd=new FormData();fd.append('file',f,f.name);
- const r=await fetch('/api/master/'+uid+'/service-direction-requests/'+id+'/document',{method:'POST',headers:{'X-Telegram-Init-Data':init},body:fd});
- const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));
- alert('Փաստաթուղթը ուղարկված է ադմինիստրատորի ստուգմանը');await loadDirections();await loadDocuments();
-}
-async function loadAll(fromRefresh=false){if(!init){document.body.innerHTML='<div style="padding:30px">Բացեք գործընկերոջ սենյակը Telegram հավելվածում։</div>';return}
- const btn=document.getElementById('refreshButton');
- if(fromRefresh&&btn){btn.disabled=true;btn.textContent='⟳';}
- try{
-  await loadBusinesses();
-  const tasks=[loadDashboard(),loadDirections(),loadServices(),loadObjects(),loadOrders(),loadLocations(),loadReviews(),loadDocuments(),loadApplications(),loadSettings()];
-  const results=await Promise.allSettled(tasks);
-  const failed=results.filter(x=>x.status==='rejected');
-  if(failed.length){console.error('Partner cabinet refresh errors',failed.map(x=>x.reason));}
-  if(fromRefresh){const n=document.getElementById('dashboardNotice');if(n&&!failed.length)n.innerHTML='<div class="notice">✅ Տվյալները թարմացվեցին։</div>';else if(n&&failed.length)n.innerHTML='<div class="notice">⚠️ Որոշ բաժիններ չհաջողվեց թարմացնել։</div>';}
- }catch(e){
-  console.error('Partner cabinet refresh failed',e);
-  const n=document.getElementById('dashboardNotice');if(n)n.innerHTML='<div class="notice">❌ Չհաջողվեց թարմացնել տվյալները։</div>';
- }finally{
-  if(fromRefresh&&btn){btn.disabled=false;btn.textContent='↻';}
- }
-}
-document.getElementById('addServiceButton')?.addEventListener('click',()=>openService());
+async function loadBusinesses(){const d=await api('/api/master/'+uid+'/businesses');cache.businesses=d.businesses||[];if(!cache.businesses.length){document.getElementById('businessSelect').innerHTML='<option>Ֆիրմա չկա</option>';return}if(!cache.businesses.some(x=>Number(x.id)===businessId))businessId=Number((d.current||cache.businesses[0]).id);localStorage.aig_business_id=String(businessId);document.getElementById('businessSelect').innerHTML=cache.businesses.map(x=>'<option value="'+x.id+'">'+esc(x.name)+(x.is_default?' ★':'')+'</option>').join('');document.getElementById('businessSelect').value=String(businessId);const cur=cache.businesses.find(x=>Number(x.id)===businessId);if(cur)document.getElementById('partnerName').textContent=cur.name}
+async function loadHome(){const d=await api('/api/master/'+uid+'/dashboard'),m=d.metrics||{},p=d.partner||{};document.getElementById('partnerName').textContent=p.business_name||document.getElementById('partnerName').textContent;document.getElementById('homeNotice').innerHTML=p.status==='approved'?'<div class="notice">Ձեր գործընկերային պրոֆիլը ակտիվ է։</div>':'<div class="notice">Պրոֆիլը դեռ ստուգման փուլում է։</div>';document.getElementById('roomCards').innerHTML=[['🏢','Ֆիրմաներ / Օբյեկտներ',cache.businesses.length,'businesses'],['🧭','Ուղղություններ',cache.directions.filter(x=>x.status!=='not_added').length,'directions'],['🛠','Ծառայություններ',m.services||0,'services'],['📨','Ընթացիկ հայտեր',cache.applications.filter(x=>!['approved','rejected'].includes(x.status)).length,'applications'],['📥','Պատվերներ',m.bookings||0,'orders'],['📄','Փաստաթղթեր',cache.documents.length,'documents']].map(x=>'<div class="card room-card" onclick="showRoom(\''+x[3]+'\')"><div class="ico">'+x[0]+'</div><h3>'+x[1]+'</h3><div class="metric">'+x[2]+'</div><div class="muted" style="margin-top:8px">Բացել →</div></div>').join('')}
+async function loadBusinessesRoom(){const el=document.getElementById('businessList');if(!cache.businesses.length)return empty(el,'Ֆիրմաներ դեռ չկան');el.innerHTML=cache.businesses.map(b=>'<div class="item" onclick="openBusiness('+Number(b.id)+')"><div class="row"><div><b>'+esc(b.name||'Առանց անվանման')+(b.is_default?' ★':'')+'</b><div class="muted">'+esc(b.description||b.business_description||'')+'</div></div>'+badge(b.status||'active')+'</div><div class="muted" style="margin-top:8px">Բացել ֆիրման →</div></div>').join('')}
+async function loadDirections(){const d=await api('/api/master/'+uid+'/partner-directions');cache.directions=d.directions||[];const el=document.getElementById('directionList');const rows=cache.directions.filter(x=>x.status!=='not_added');if(!rows.length)return empty(el,'Ուղղություններ դեռ չկան');el.innerHTML=rows.map((x,i)=>'<div class="item" onclick="openDirection('+i+')"><div class="row"><div><b>🧭 '+esc(x.name_am||x.name_ru||x.name_en||'Ուղղություն')+'</b><div class="muted">'+((x.subcategories||x.catalog_subcategories||[]).map(c=>esc(c.name_am||c.name_ru||c.name_en)).join(' · ')||'Ենթաուղղություններ դեռ չկան')+'</div></div>'+badge(x.status)+'</div><div class="muted" style="margin-top:8px">Բացել ուղղությունը →</div></div>').join('')}
+async function loadServices(){const d=await api('/api/master/'+uid+'/services');cache.services=d.services||[];const el=document.getElementById('serviceList');if(!cache.services.length)return empty(el,'Ծառայություններ դեռ չկան');el.innerHTML=cache.services.map((s,i)=>'<div class="item" onclick="openServiceDetail('+i+')"><div class="row"><div><b>🛠 '+esc(s.name)+'</b><div class="muted">'+esc(s.description||'')+'</div></div><div><b>'+esc(s.price??'—')+' ֏</b><br>'+badge(s.status)+'</div></div><div class="muted" style="margin-top:8px">Բացել ծառայությունը →</div></div>').join('')}
+async function loadApplications(){const d=await api('/api/master/'+uid+'/applications');cache.applications=d.applications||[];const el=document.getElementById('applicationList');const rows=cache.applications.filter(x=>!['approved','rejected'].includes(x.status));if(!rows.length)return empty(el,'Ընթացիկ հայտեր չկան');el.innerHTML=rows.map(x=>'<div class="item" onclick="openApplication('+Number(x.id)+')"><div class="row"><div><b>📨 Հայտ #'+esc(x.id)+' · '+esc(x.service_name||'Ծառայության հայտ')+'</b><div class="muted">'+esc(x.direction_name||x.master_name_am||x.master_name_ru||'Ուղղությունը դեռ չի որոշվել')+'</div></div>'+badge(x.status)+'</div><div class="muted" style="margin-top:8px">'+esc(x.admin_note||'Բացել հայտը →')+'</div></div>').join('')}
+async function loadOrders(){const d=await api('/api/master/'+uid+'/bookings'),el=document.getElementById('orderList');if(!d.bookings?.length)return empty(el,'Պատվերներ դեռ չկան');el.innerHTML=d.bookings.map(x=>'<div class="item" onclick="openModal(\'Պատվեր #'+esc(x.id)+'\',\'<div class=detailline>Կարգավիճակ: '+esc(statusText(x.status))+'</div><div class=detailline>Գին: '+esc(x.agreed_price??'—')+' ֏</div>\')"><div class="row"><b>📥 Պատվեր #'+esc(x.id)+'</b>'+badge(x.status)+'</div><div class="muted">'+esc(x.agreed_price??'—')+' ֏</div></div>').join('')}
+async function loadLocations(){const d=await api('/api/master/'+uid+'/locations'),el=document.getElementById('locationList');if(!d.locations?.length)return empty(el);el.innerHTML=d.locations.map(x=>'<div class="item"><b>📍 '+esc(x.city||x.village||x.marz||'Armenia')+'</b><div class="muted">'+esc(x.address||'')+'</div></div>').join('')}
+async function loadReviews(){const d=await api('/api/master/'+uid+'/reviews'),el=document.getElementById('reviewList');if(!d.reviews?.length)return empty(el);el.innerHTML=d.reviews.map(x=>'<div class="item"><b>⭐ '+esc(x.rating)+'/5</b><div>'+esc(x.comment||'')+'</div></div>').join('')}
+async function loadDocuments(){const d=await api('/api/master/'+uid+'/documents'),rows=d.documents||[];cache.documents=rows;const el=document.getElementById('documentList');el.innerHTML=(rows.length?rows.map((x,i)=>'<div class="item" onclick="openDocument('+i+')"><div class="row"><div><b>📄 '+esc(x.original_filename||'document')+'</b><div class="muted">'+esc(x.document_type||'business document')+'</div></div>'+badge(x.status)+'</div></div>').join(''):'<div class="empty">Փաստաթղթեր դեռ չկան</div>')+'<div class="card"><b>＋ Ավելացնել փաստաթուղթ</b><input id="docUpload" type="file" accept="image/*,.pdf"><div class="actions"><button class="primary" onclick="uploadDocument(event)">Ուղարկել</button></div><div id="docUploadStatus" class="muted"></div></div>'}
+async function loadSettings(){const d=await api('/api/master/'+uid+'/settings'),s=d.settings||{};document.getElementById('settingsBody').innerHTML='<div class="card"><div class="field"><label>Բիզնեսի անուն</label><input id="sName" value="'+esc(s.business_name||'')+'"></div><div class="field"><label>Նկարագրություն</label><textarea id="sDesc">'+esc(s.business_description||'')+'</textarea></div><div class="field"><label>Կոնտակտների բացման քաղաքականություն</label><select id="sPolicy"><option value="after_booking">Ամրագրումից հետո</option><option value="premium">Premium</option><option value="never">Չբացել</option></select></div><button class="primary" onclick="saveSettings()">Պահպանել</button></div>';document.getElementById('sPolicy').value=s.contact_share_policy||'after_booking'}
+async function loadRoom(id){try{if(id==='businesses')await loadBusinessesRoom();else if(id==='directions')await loadDirections();else if(id==='services')await loadServices();else if(id==='applications')await loadApplications();else if(id==='orders')await loadOrders();else if(id==='locations')await loadLocations();else if(id==='reviews')await loadReviews();else if(id==='documents')await loadDocuments();else if(id==='settings')await loadSettings()}catch(e){console.error(e)}}
+async function loadAll(){if(!init){document.body.innerHTML='<div style="padding:30px">Բացեք գործընկերոջ սենյակը Telegram հավելվածում։</div>';return}try{await loadBusinesses();await Promise.allSettled([loadDirections(),loadServices(),loadDocuments(),loadApplications()]);await loadHome()}catch(e){document.getElementById('homeNotice').innerHTML='<div class="notice">❌ Չհաջողվեց թարմացնել տվյալները։</div>'}}
+function openModal(title,body){document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=body;document.getElementById('modal').classList.remove('hidden')}function closeModal(){document.getElementById('modal').classList.add('hidden')}
+function openBusiness(id){const b=cache.businesses.find(x=>Number(x.id)===Number(id));if(!b)return;openModal('🏢 '+(b.name||'Ֆիրմա'),'<div class="notice">'+esc(statusText(b.status||'active'))+'</div><div class="detailline"><b>Անվանում</b><br>'+esc(b.name||'')+'</div><div class="detailline"><b>Նկարագրություն</b><br>'+esc(b.description||b.business_description||'')+'</div><div class="detailline"><b>Այս ֆիրմայի օբյեկտներ</b><br>Բացեք «Օբյեկտներ» տվյալ ֆիրմայի կոնտեքստում։</div><div class="actions"><button class="primary" onclick="showRoom(\'documents\');closeModal()">📄 Փաստաթղթեր</button><button class="secondary" onclick="showRoom(\'settings\');closeModal()">⚙️ Կարգավորումներ</button></div>')}
+function openBusinessCreate(){openModal('🏢 Նոր ֆիրմա','<div class="notice">Նոր ֆիրման ավելացվում է որպես առանձին բիզնես։ Դրա փաստաթղթերը, ուղղությունները և ծառայությունները չեն խառնվում մյուս ֆիրմաների հետ։</div><div class="field"><label>Ֆիրմայի անուն</label><input id="newBizName"></div><div class="field"><label>Նկարագրություն</label><textarea id="newBizDesc"></textarea></div><div id="modalError" class="muted"></div><div class="actions"><button class="primary" onclick="createBusiness()">Պահպանել</button></div>')}
+async function createBusiness(){const name=document.getElementById('newBizName').value.trim();if(!name)return modalError('Նշեք ֆիրմայի անունը');try{await api('/api/master/'+uid+'/businesses',{method:'POST',body:JSON.stringify({name,description:document.getElementById('newBizDesc').value.trim()})});closeModal();await loadAll();showRoom('businesses')}catch(e){modalError(e.message)}}
+function openDirection(i){const x=cache.directions[i];if(!x)return;const subs=(x.subcategories||x.catalog_subcategories||[]);openModal('🧭 '+(x.name_am||x.name_ru||x.name_en||'Ուղղություն'),'<div class="notice">'+statusText(x.status)+'</div><div class="detailline"><b>Ենթաուղղություններ</b><br>'+esc(subs.map(c=>c.name_am||c.name_ru||c.name_en).join(', ')||'—')+'</div><div class="detailline"><b>Փաստաթղթեր</b><br>'+esc(x.document_count||0)+'</div><div class="actions"><button class="primary" onclick="showRoom(\'services\');closeModal()">🛠 Ծառայություններ</button><button class="secondary" onclick="showRoom(\'applications\');closeModal()">📨 Հայտեր</button></div>')}
+function openServiceDetail(i){const s=cache.services[i];if(!s)return;openModal('🛠 '+s.name,'<div class="detailline"><b>Անվանում</b><br>'+esc(s.name)+'</div><div class="detailline"><b>Գին</b><br>'+esc(s.price??'—')+' ֏</div><div class="detailline"><b>Կարգավիճակ</b><br>'+statusText(s.status)+'</div><div class="detailline"><b>Նկարագրություն</b><br>'+esc(s.description||'—')+'</div><div class="actions"><button class="primary" onclick="editService('+Number(s.id)+')">✎ Խմբագրել</button><button class="danger" onclick="deleteService('+Number(s.id)+')">Ջնջել</button></div>')}
+function editService(id){const s=cache.services.find(x=>Number(x.id)===Number(id));if(!s)return;openModal('✎ Ծառայություն','<div class="field"><label>Անվանում</label><input id="editName" value="'+esc(s.name)+'"></div><div class="field"><label>Գին, AMD</label><input id="editPrice" type="number" value="'+esc(s.price??'')+'"></div><div class="field"><label>Նկարագրություն</label><textarea id="editDesc">'+esc(s.description||'')+'</textarea></div><div id="modalError" class="muted"></div><button class="primary" onclick="saveServiceEdit('+id+')">Պահպանել</button>')}
+async function saveServiceEdit(id){try{await api('/api/master/'+uid+'/services/'+id,{method:'POST',body:JSON.stringify({name:document.getElementById('editName').value.trim(),price:document.getElementById('editPrice').value===''?null:Number(document.getElementById('editPrice').value),description:document.getElementById('editDesc').value.trim()})});closeModal();await loadAll();showRoom('services')}catch(e){modalError(e.message)}}
+async function deleteService(id){if(!confirm('Ջնջե՞լ ծառայությունը։'))return;try{await api('/api/master/'+uid+'/services/'+id,{method:'DELETE'});closeModal();await loadAll();showRoom('services')}catch(e){alert(e.message)}}
+function openService(){openModal('＋ Նոր ծառայություն','<div class="notice">Գրեք միայն ծառայությունը։ AI-ը դասակարգում է այն իրական ակտիվ կատալոգով։ Եթե ուղղությունը դեռ հաստատված չէ, այն կգնա որպես հայտ։</div><div class="field"><label>Ծառայության անվանում</label><input id="newServiceName"></div><div class="field"><label>Գին, AMD</label><input id="newServicePrice" type="number"></div><div class="field"><label>Նկարագրություն</label><textarea id="newServiceDesc"></textarea></div><div id="modalError" class="muted"></div><button class="primary" onclick="createService()">Ավելացնել</button>')}
+async function createService(){const name=document.getElementById('newServiceName').value.trim();if(!name)return modalError('Նշեք ծառայության անունը');try{const d=await api('/api/master/'+uid+'/services',{method:'POST',body:JSON.stringify({name,price:document.getElementById('newServicePrice').value===''?null:Number(document.getElementById('newServicePrice').value),description:document.getElementById('newServiceDesc').value.trim()})});closeModal();await loadAll();showRoom(d.proposal_created?'applications':'services');if(d.message)alert(d.message)}catch(e){modalError(e.message)}}
+function openApplication(id){const x=cache.applications.find(v=>Number(v.id)===Number(id));if(!x)return;openModal('📨 Հայտ #'+id,'<div class="notice">'+statusText(x.status)+'</div><div class="detailline"><b>Ծառայություն</b><br>'+esc(x.service_name||'—')+'</div><div class="detailline"><b>Ուղղություն</b><br>'+esc(x.direction_name||x.master_name_am||x.master_name_ru||'—')+'</div><div class="detailline"><b>Գին</b><br>'+esc(x.price??'—')+' ֏</div><div class="detailline"><b>Վերջին նշում</b><br>'+esc(x.admin_note||'—')+'</div>')}
+function openDocument(i){const x=cache.documents[i];if(!x)return;openModal('📄 '+(x.original_filename||'Փաստաթուղթ'),'<div class="detailline"><b>Տեսակ</b><br>'+esc(x.document_type||'—')+'</div><div class="detailline"><b>Կարգավիճակ</b><br>'+statusText(x.status)+'</div><div class="detailline"><b>Չափ</b><br>'+esc(x.file_size||0)+' bytes</div>'+(x.rejection_reason?'<div class="notice">'+esc(x.rejection_reason)+'</div>':'') )}
+async function uploadDocument(event){event.stopPropagation();const f=document.getElementById('docUpload')?.files?.[0],s=document.getElementById('docUploadStatus');if(!f){s.textContent='Ընտրեք փաստաթուղթ';return}if(f.size>10*1024*1024){s.textContent='Ֆայլը մեծ է (մինչև 10 MB)';return}const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_verification');try{const r=await fetch('/api/master/'+uid+'/documents/upload',{method:'POST',headers:{'X-Telegram-Init-Data':init},body:fd});const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));s.textContent='✅ Ուղարկված է';await loadDocuments()}catch(e){s.textContent='❌ '+e.message}}
+async function saveSettings(){try{await api('/api/master/'+uid+'/settings',{method:'POST',body:JSON.stringify({business_name:document.getElementById('sName').value,business_description:document.getElementById('sDesc').value,contact_share_policy:document.getElementById('sPolicy').value,lang})});alert('Պահպանվեց');await loadAll()}catch(e){alert(e.message)}}
+function modalError(x){const e=document.getElementById('modalError');if(e)e.textContent='❌ '+x;else alert('❌ '+x)}
 loadAll();
-</script></body></html>
+</script>
+</body>
+</html>
