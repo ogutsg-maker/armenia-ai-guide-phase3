@@ -721,7 +721,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         action=str(data.get("action") or "").strip()
         a=_one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
         if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        allowed={"edit","send_to_partner","reject","approve","approve_document","activate"}
+        allowed={"edit","send_to_partner","reject","approve","approve_document","approve_service_proposal","activate"}
         if action not in allowed: return web.json_response({"ok":False,"error":"invalid_action"},status=400)
         fields={}
         for k in ("business_name","location_marz","location_city","location_village","address","phone",
