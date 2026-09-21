@@ -470,13 +470,18 @@ Return the result as valid JSON only."""
             "partner_service_catalog_fallback_failed"
         )
 
+    # A new service must never fail just because the catalogue match is
+    # uncertain. The product contract says unmatched services become an
+    # administrator proposal. Keep the partner's service data intact and let
+    # the admin classify it.
     return {
-        "status": "clarification",
+        "status": "proposal",
         "category_id": None,
         "master_category_id": None,
         "business_action": "same_business",
         "proposed_business_name": None,
-        "reason": "No sufficiently confident catalogue match was found.",
+        "proposed_name": name,
+        "reason": "No sufficiently confident approved catalogue match was found; sent to administrator for classification.",
     }
 
 async def api_service_create(request: web.Request):
