@@ -43,6 +43,18 @@ def _exec(sql,p=(),ret=False):
             cur.execute(sql,p); row=cur.fetchone() if ret else None
         c.commit(); return _safe(row)
 
+class _CatalogDB:
+    """Minimal catalog adapter for Admin Classification AI.
+    It intentionally exposes read-only catalog methods only.
+    """
+    def get_all_master_categories(self):
+        return _all("""SELECT id,name_am,name_ru,name_en,slug FROM master_categories
+                       WHERE is_active=TRUE ORDER BY id""")
+    def get_subcategories_by_master(self, master_id):
+        return _all("""SELECT id,master_category_id,name_am,name_ru,name_en,slug
+                       FROM categories WHERE master_category_id=%s AND is_active=TRUE
+                       ORDER BY id""",(master_id,))
+
 def ensure_business_application_schema():
     _exec("""
     CREATE TABLE IF NOT EXISTS partner_businesses(
@@ -343,6 +355,37 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                         fields["service_name"]=first["name"]
                     if fields.get("price") in (None,"") and first.get("price") not in (None,""):
                         fields["price"]=first.get("price")
+
+            # If the partner changed a service name in the visible form,
+            # re-run internal catalogue classification before saving. The
+            # partner still never sees catalogue IDs or choices.
+            if isinstance(merged.get("services"),list):
+                needs_reclass=any(
+                    isinstance(s,dict) and _safe_int(s.get("matched_subcategory_id")) is None
+                    for s in merged.get("services")
+                )
+                if needs_reclass:
+                    try:
+                        from partner_registration_ai import classify_profile_catalog
+                        classification=await classify_profile_catalog(_CatalogDB(), {
+                            "business_name": merged.get("business_name") or row.get("business_name") or "",
+                            "description": merged.get("description") or row.get("description") or "",
+                            "marz": merged.get("marz") or row.get("location_marz") or "",
+                            "city": merged.get("city") or row.get("location_city") or "",
+                            "address": merged.get("address") or row.get("address") or "",
+                            "services": merged.get("services") or [],
+                        })
+                        classified=classification.get("services") or []
+                        if classified:
+                            merged["services"]=classified
+                            merged["master_category_id"]=classification.get("master_category_id") or merged.get("master_category_id")
+                            merged["ai_master_category_id"]=merged.get("master_category_id")
+                            merged["classification_confidence"]=classification.get("confidence",0)
+                            merged["classification_ambiguities"]=classification.get("ambiguities") or []
+                            merged["classification_needs_review"]=bool(classification.get("needs_review"))
+                            fields["payload_json"]=json.dumps(merged,ensure_ascii=False)
+                    except Exception:
+                        logger.exception("Application service reclassification failed")
 
             # Preserve the internal master classification from the AI profile.
             internal_mid=_safe_int(merged.get("master_category_id") or merged.get("ai_master_category_id"))
