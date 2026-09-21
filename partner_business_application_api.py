@@ -337,6 +337,16 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             merged=dict(current)
             merged.update(payload)
 
+            # The visible partner form submits the canonical profile fields
+            # outside payload. Mirror them into payload_json as well, so the
+            # application has one consistent source of truth at submit time.
+            for key in (
+                "business_name","location_marz","location_city",
+                "location_village","address","phone","description"
+            ):
+                if key in data:
+                    merged[key]=data.get(key)
+
             # Keep the full multi-service list exactly as edited by the partner.
             services=merged.get("services")
             if isinstance(services,list):
@@ -516,6 +526,13 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             location_marz = _profile_value("location_marz", "location_marz", "marz", "region")
             location_city = _profile_value("location_city", "location_city", "city", "settlement")
             phone = _profile_value("phone", "phone", "phone_number")
+
+            # Also accept the exact canonical values saved by the visible form.
+            # This makes submit resilient if an older draft has stale legacy
+            # columns while payload_json contains the current edited profile.
+            location_marz = str(location_marz).strip() if location_marz not in (None, "") else None
+            location_city = str(location_city).strip() if location_city not in (None, "") else None
+            phone = str(phone).strip() if phone not in (None, "") else None
             if not a.get("location_marz") and location_marz:
                 _exec("UPDATE partner_applications SET location_marz=%s WHERE id=%s",(str(location_marz).strip(),aid))
                 a["location_marz"]=str(location_marz).strip()
