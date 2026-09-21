@@ -442,6 +442,17 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             logger.exception("Partner application update failed")
             return web.json_response({"ok":False,"error":"application_update_failed","detail":str(exc)[:500]},status=500)
 
+    async def application_delete(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        aid=int(request.match_info["application_id"])
+        row=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
+        if not row: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
+        if str(row.get("status") or "")=="approved":
+            return web.json_response({"ok":False,"error":"approved_application_cannot_be_deleted"},status=409)
+        _exec("DELETE FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
+        return web.json_response({"ok":True,"deleted":True,"application_id":aid})
+
     async def application_get(request):
         uid=_auth(request); p=_partner(uid)
         if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
