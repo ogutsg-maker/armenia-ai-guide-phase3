@@ -400,6 +400,110 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
                 last_error = exc2
     raise last_error or RuntimeError("Groq request failed")
 
+async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
+    """Use Groq for semantic service -> real catalogue matching inside one direction.
+    The model receives only the active subcategories of the already selected
+    direction and may return only IDs supplied in that catalogue.
+    """
+    if not services or not catalog:
+        return services
+
+    unresolved = []
+    for index, item in enumerate(services):
+        if not isinstance(item, dict):
+            continue
+        if _safe_int(item.get("matched_subcategory_id")) is not None:
+            continue
+        unresolved.append({
+            "index": index,
+            "service": _norm(item.get("name")),
+            "specialization": _norm(item.get("raw_sub_direction") or item.get("name")),
+        })
+    if not unresolved:
+        return services
+
+    catalogue = [
+        {
+            "id": _safe_int(row.get("category_id")),
+            "am": _norm(row.get("category_am")),
+            "ru": _norm(row.get("category_ru")),
+            "en": _norm(row.get("category_en")),
+        }
+        for row in catalog
+        if _safe_int(row.get("category_id")) is not None
+    ]
+    valid_ids = {x["id"] for x in catalogue}
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "matches": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "service_index": {"type": "integer"},
+                        "matched_subcategory_id": {"type": ["integer", "null"]},
+                        "confidence": {"type": "number"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["service_index", "matched_subcategory_id", "confidence", "reason"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["matches"],
+        "additionalProperties": False,
+    }
+
+    system = """You classify partner services against a real catalogue.
+Understand Armenian, Russian and English semantically, including inflected forms,
+synonyms and ordinary service wording.
+
+IMPORTANT:
+- The catalogue below belongs to ONE already selected top-level direction.
+- Match each service by meaning, not literal spelling.
+- Armenian/Russian/English names are equivalent labels for the same catalogue item.
+- A service phrase may be very different from the catalogue wording.
+- Example: "տրանսֆեր դեպի Ծաղկաձոր" means the catalogue item "Թրանսֆեր".
+- Example: "յոգայի դասեր" means the catalogue item for Yoga.
+- Example: "գիպսաստվարաթղթի աշխատանքներ" means the catalogue item for drywall/plasterboard work.
+- Example: "տեսանկարահանում" means the catalogue item for video filming/video recording.
+- Example: "տորթերի պատվերներ" means the catalogue item for cakes/cake orders.
+- Never invent an ID.
+- matched_subcategory_id MUST be one of the IDs in the supplied catalogue or null.
+- If one catalogue item is clearly the semantic match, select it.
+- Do not choose a merely similar but different service.
+- Return one result for every supplied service index."""
+
+    user = "SERVICES:\n" + json.dumps(unresolved, ensure_ascii=False) +            "\n\nACTIVE SUBCATEGORIES OF THIS DIRECTION:\n" + json.dumps(catalogue, ensure_ascii=False)
+
+    try:
+        result = await _groq_json(
+            client, model, system, user,
+            "partner_service_catalog_match", schema, 900
+        )
+    except Exception:
+        return services
+
+    out = [dict(x) for x in services]
+    for match in result.get("matches") or []:
+        try:
+            idx = int(match.get("service_index"))
+        except (TypeError, ValueError):
+            continue
+        if idx < 0 or idx >= len(out):
+            continue
+        cid = _safe_int(match.get("matched_subcategory_id"))
+        if cid is None or cid not in valid_ids:
+            continue
+        confidence = float(match.get("confidence") or 0)
+        if confidence >= 0.55:
+            out[idx]["matched_subcategory_id"] = cid
+            out[idx]["match_confidence"] = min(1.0, max(0.0, confidence))
+            out[idx]["match_reason"] = _norm(match.get("reason")) or "Semantic catalogue match."
+    return out
+
 
 def _match_services_universal(db, services, master_id):
     """Resolve each AI service phrase to a real active subcategory in PostgreSQL.
@@ -629,6 +733,12 @@ Return only the supplied JSON schema."""
 
         direction_catalog = get_catalog_for_master(db, master_id)
         if direction_catalog:
+            # First let Groq perform semantic classification against ONLY the
+            # active subcategories of the selected direction. PostgreSQL then
+            # acts as a safety/fallback layer and never invents IDs.
+            data["services"] = await _ai_match_services(
+                client, model, data.get("services") or [], direction_catalog
+            )
             data["services"] = _match_services_universal(
                 db, data.get("services") or [], master_id
             )
