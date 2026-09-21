@@ -300,9 +300,9 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
 
     # The partner never needs to provide an internal catalogue direction.
     # AI matching/proposal handles that automatically.
-    # Only these fields are mandatory for submitting the partner application.
-    # Business name and address are intentionally optional at registration.
-    missing = [key for key in ("marz", "city", "phone", "services") if not merged.get(key)]
+    # Business name is a required partner-facing registration field.
+    # Direction/subcategory remain admin-side classification fields.
+    missing = [key for key in ("business_name", "marz", "city", "phone", "services") if not merged.get(key)]
     merged["missing"] = missing
     merged["ready"] = not missing
 
