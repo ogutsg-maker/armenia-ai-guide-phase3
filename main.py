@@ -490,7 +490,11 @@ async def telegram_partner_auth_middleware(request: web.Request, handler):
         route_uid = int(request.path.split("/")[3])
     except (TelegramWebAppAuthError, KeyError, TypeError, ValueError) as exc:
         return web.json_response({"ok": False, "error": str(exc) or "invalid_telegram_init_data"}, status=401)
-    if uid != route_uid:
+    # Current partner cabinet uses /api/master/0/... as a user-scoped
+    # route. The authenticated Telegram user is resolved from initData and
+    # the business/partner API performs the real ownership checks. Keep the
+    # old /api/master/<telegram_id>/... form compatible as well.
+    if route_uid != 0 and uid != route_uid:
         return web.json_response({"ok": False, "error": "telegram_user_mismatch"}, status=403)
     request["telegram_user_id"] = uid
     return await handler(request)
