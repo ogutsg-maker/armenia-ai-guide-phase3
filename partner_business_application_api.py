@@ -463,64 +463,115 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
     async def application_submit(request):
         try:
-            uid=_auth(request); p=_partner(uid)
-            if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
-            aid=int(request.match_info["application_id"])
-            a=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
-            if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
+            uid = _auth(request)
+            p = _partner(uid)
+            if not p:
+                return web.json_response({"ok":False,"error":"partner_not_found"}, status=404)
 
-            payload=a.get("payload_json") or {}
-            if isinstance(payload,str):
-                try: payload=json.loads(payload)
-                except Exception: payload={}
-            if not isinstance(payload,dict): payload={}
-            services=payload.get("services") if isinstance(payload.get("services"),list) else []
+            aid = int(request.match_info["application_id"])
+            a = _one(
+                "SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",
+                (aid, p["id"])
+            )
+            if not a:
+                return web.json_response({"ok":False,"error":"application_not_found"}, status=404)
 
-            # Visible partner fields must be complete. Catalogue fields are
-        # internal and are recovered from the AI classification stored in the
-        # payload instead of being demanded from the partner UI.
-            required=("business_name","location_marz","location_city","address","phone")
-            missing=[k for k in required if a.get(k) in (None,"")]
+            payload = a.get("payload_json") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            services = payload.get("services") if isinstance(payload.get("services"), list) else []
+
+            # Partner-facing fields. Catalog classification remains an internal
+            # admin task and must never block partner submission.
+            required = ("business_name","location_marz","location_city","address","phone")
+            missing = [k for k in required if a.get(k) in (None, "")]
             if not services and not a.get("service_name"):
                 missing.append("services")
             if missing:
-                return web.json_response({"ok":False,"error":"application_incomplete","fields":missing},status=422)
+                return web.json_response(
+                    {"ok":False,"error":"application_incomplete","fields":missing},
+                    status=422
+                )
 
-            internal_mid=_safe_int(a.get("master_category_id") or payload.get("master_category_id") or payload.get("ai_master_category_id"))
-            # Classification is an internal admin concern. Never block the partner
-        # because AI could not confidently map one service; the admin receives
-        # the complete service list and can correct the mapping before activation.
+            internal_mid = _safe_int(
+                a.get("master_category_id")
+                or payload.get("master_category_id")
+                or payload.get("ai_master_category_id")
+            )
 
-        if not a.get("document_id"):
-                return web.json_response({"ok":False,"error":"document_required"},status=409)
-            doc=_one("SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(a["document_id"],p["id"]))
-            if not doc: return web.json_response({"ok":False,"error":"document_not_found"},status=404)
+            if not a.get("document_id"):
+                return web.json_response({"ok":False,"error":"document_required"}, status=409)
+
+            doc = _one(
+                "SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",
+                (a["document_id"], p["id"])
+            )
+            if not doc:
+                return web.json_response({"ok":False,"error":"document_not_found"}, status=404)
             if doc["status"] not in ("pending","approved"):
-            return web.json_response({"ok":False,"error":"document_not_ready"},status=409)
+                return web.json_response({"ok":False,"error":"document_not_ready"}, status=409)
 
-            # Keep legacy first-service columns synchronized for compatibility,
-        # while payload_json remains the authoritative multi-service record.
-            first=next((x for x in services if isinstance(x,dict) and str(x.get("name") or x.get("service_name") or "").strip()),None)
+            # Keep legacy first-service columns synchronized while payload_json
+            # remains the authoritative multi-service record.
+            first = next(
+                (
+                    x for x in services
+                    if isinstance(x, dict)
+                    and str(x.get("name") or x.get("service_name") or "").strip()
+                ),
+                None
+            )
             if first:
-                cid=_safe_int(first.get("matched_subcategory_id") or first.get("subcategory_id") or first.get("category_id"))
-                _exec("""UPDATE partner_applications
-                     SET master_category_id=%s,category_id=%s,subcategory_name=%s,
-                         service_name=%s,price=%s,direction_name=COALESCE(direction_name,%s),
-                         updated_at=NOW()
-                     WHERE id=%s""",
-                  (internal_mid,cid,
-                   str(first.get("subcategory_name") or "").strip() or None,
-                   str(first.get("name") or first.get("service_name") or "").strip()[:300],
-                   first.get("price"),str(payload.get("direction") or "").strip() or None,aid))
+                cid = _safe_int(
+                    first.get("matched_subcategory_id")
+                    or first.get("subcategory_id")
+                    or first.get("category_id")
+                )
+                _exec(
+                    """UPDATE partner_applications
+                       SET master_category_id=%s, category_id=%s,
+                           subcategory_name=%s, service_name=%s, price=%s,
+                           direction_name=COALESCE(direction_name,%s),
+                           updated_at=NOW()
+                       WHERE id=%s""",
+                    (
+                        internal_mid,
+                        cid,
+                        str(first.get("subcategory_name") or "").strip() or None,
+                        str(first.get("name") or first.get("service_name") or "").strip()[:300],
+                        first.get("price"),
+                        str(payload.get("direction") or "").strip() or None,
+                        aid,
+                    )
+                )
 
-            row=_exec("""UPDATE partner_applications SET status='pending_admin',updated_at=NOW()
-                     WHERE id=%s RETURNING *""",(aid,),True)
+            row = _exec(
+                """UPDATE partner_applications
+                   SET status='pending_admin', updated_at=NOW()
+                   WHERE id=%s RETURNING *""",
+                (aid,),
+                True
+            )
             return web.json_response({"ok":True,"application":row})
+
         except web.HTTPException:
             raise
         except Exception as exc:
             logger.exception("Partner application submit failed")
-            return web.json_response({"ok":False,"error":"application_submit_failed","detail":str(exc)[:500]},status=500)
+            return web.json_response(
+                {
+                    "ok":False,
+                    "error":"application_submit_failed",
+                    "detail":str(exc)[:500]
+                },
+                status=500
+            )
 
     async def application_document_upload(request):
         uid=_auth(request); p=_partner(uid)
