@@ -787,51 +787,175 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             return web.json_response({"ok":True,"application":row})
 
         if action=="approve_service_proposal":
+            # A service that introduces a direction outside the partner's
+            # currently approved catalogue is NOT activated immediately.
+            # Admin first confirms the catalogue classification; then the
+            # partner must provide the business/organisation identity when it
+            # is missing and upload the verification document before the
+            # direction and service can become live.
             payload=a.get("payload_json") or {}
             if isinstance(payload,str):
                 try: payload=json.loads(payload)
                 except Exception: payload={}
             if not isinstance(payload,dict): payload={}
+
             app_services=payload.get("services") if isinstance(payload.get("services"),list) else []
             if not app_services and a.get("service_name"):
-                app_services=[{"name":a.get("service_name"),"price":a.get("price"),"matched_subcategory_id":a.get("category_id")}]
-            app_services=[x for x in app_services if isinstance(x,dict) and str(x.get("name") or x.get("service_name") or "").strip()]
+                app_services=[{
+                    "name":a.get("service_name"),
+                    "price":a.get("price"),
+                    "matched_subcategory_id":a.get("category_id"),
+                }]
+            app_services=[
+                x for x in app_services
+                if isinstance(x,dict) and str(x.get("name") or x.get("service_name") or "").strip()
+            ]
             mid=_safe_int(a.get("master_category_id") or payload.get("master_category_id"))
-            if not app_services: return web.json_response({"ok":False,"error":"service_required"},status=409)
-            if mid is None: return web.json_response({"ok":False,"error":"direction_required"},status=409)
+            if not app_services:
+                return web.json_response({"ok":False,"error":"service_required"},status=409)
+            if mid is None:
+                return web.json_response({"ok":False,"error":"direction_required"},status=409)
+
             category_ids=[]
             for svc in app_services:
-                cid=_safe_int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
-                if cid is None: return web.json_response({"ok":False,"error":"services_need_classification"},status=409)
+                cid=_safe_int(
+                    svc.get("matched_subcategory_id")
+                    or svc.get("subcategory_id")
+                    or svc.get("category_id")
+                )
+                if cid is None:
+                    return web.json_response({"ok":False,"error":"services_need_classification"},status=409)
                 category_ids.append(cid)
-            valid=_all("SELECT id FROM categories WHERE master_category_id=%s AND id=ANY(%s::int[])",(mid,list(set(category_ids))))
+
+            valid=_all(
+                "SELECT id FROM categories WHERE master_category_id=%s AND id=ANY(%s::int[])",
+                (mid,list(set(category_ids)))
+            )
             valid_ids={_safe_int(x.get("id")) for x in valid}
-            if any(cid not in valid_ids for cid in category_ids): return web.json_response({"ok":False,"error":"invalid_subcategory_for_direction"},status=409)
+            if any(cid not in valid_ids for cid in category_ids):
+                return web.json_response(
+                    {"ok":False,"error":"invalid_subcategory_for_direction","category_ids":category_ids},
+                    status=409
+                )
+
             bid=a.get("business_id")
-            if not bid: return web.json_response({"ok":False,"error":"business_required"},status=409)
-            pd=_one("SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND master_category_id=%s ORDER BY id LIMIT 1",(a["partner_id"],bid,mid))
-            if pd:
-                direction_id=pd["id"]
-                _exec("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(direction_id,))
-            else:
-                pd=_exec("INSERT INTO partner_directions(partner_id,business_id,master_category_id,status) VALUES(%s,%s,%s,'approved') RETURNING id",(a["partner_id"],bid,mid),True)
-                direction_id=pd["id"]
-            for cid in sorted(set(category_ids)):
-                _exec("INSERT INTO partner_direction_categories(partner_direction_id,category_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(direction_id,cid))
-            for svc in app_services:
-                name=str(svc.get("name") or svc.get("service_name") or "").strip()[:300]
-                cid=_safe_int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
-                price=svc.get("price")
-                try: price=float(price) if price not in (None,"") else None
-                except (TypeError,ValueError): price=None
-                existing=_one("SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted' ORDER BY id DESC LIMIT 1",(a["partner_id"],bid,name))
-                data_json=json.dumps({"application_id":aid,"ai_source":True,"matched_subcategory_id":cid,"direction_id":direction_id},ensure_ascii=False)
-                if existing:
-                    _exec("UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",(cid,name,a.get("description"),price,data_json,existing["id"]))
-                else:
-                    _exec("INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json) VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s::jsonb)",(a["partner_id"],bid,cid,name,a.get("description"),price,data_json))
-            row=_exec("UPDATE partner_applications SET status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s RETURNING *",(_auth(request),aid),True)
-            return web.json_response({"ok":True,"application":row})
+            if not bid:
+                return web.json_response({"ok":False,"error":"business_required"},status=409)
+
+            business=_one(
+                "SELECT * FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",
+                (bid,a["partner_id"])
+            )
+            if not business:
+                return web.json_response({"ok":False,"error":"business_required"},status=409)
+
+            business_name=str(
+                a.get("business_name")
+                or business.get("name")
+                or ""
+            ).strip()
+
+            # Do not allow the generic bootstrap name to become the legal/
+            # organisation name for a new regulated direction.
+            missing_business_name=(
+                not business_name
+                or business_name.lower() in {"իմ բիզնեսը","my business","мой бизнес"}
+            )
+            if missing_business_name:
+                merged=dict(payload)
+                merged["source"]="partner_service"
+                merged["requires_new_direction"]=True
+                merged["requires_business_name"]=True
+                merged["required_document_type"]="business_document"
+                merged["services"]=app_services
+                merged["master_category_id"]=mid
+                merged["ai_master_category_id"]=mid
+                merged["category_id"]=category_ids[0]
+                merged["ai_category_id"]=category_ids[0]
+                _exec(
+                    """UPDATE partner_applications
+                       SET status='pending_partner',
+                           business_name=NULL,
+                           master_category_id=%s,
+                           category_id=%s,
+                           direction_name=COALESCE(NULLIF(direction_name,''),%s),
+                           subcategory_name=COALESCE(NULLIF(subcategory_name,''),%s),
+                           payload_json=%s::jsonb,
+                           admin_note=%s,
+                           reviewed_by=%s,
+                           reviewed_at=NOW(),
+                           updated_at=NOW()
+                       WHERE id=%s
+                       RETURNING id""",
+                    (
+                        mid,
+                        category_ids[0],
+                        a.get("direction_name") or "",
+                        a.get("subcategory_name") or "",
+                        json.dumps(merged,ensure_ascii=False),
+                        "Խնդրում ենք լրացնել կազմակերպության/ընկերության անվանումը և ուղարկել պահանջվող փաստաթուղթը։",
+                        _auth(request),
+                        aid,
+                    ),
+                    True,
+                )
+                return web.json_response({
+                    "ok":True,
+                    "status":"pending_partner",
+                    "application_id":aid,
+                    "business_name_required":True,
+                    "document_required":True,
+                })
+
+            # The existing business already has its identity. Store it in the
+            # application, but still require the verification document for the
+            # genuinely new direction before creating the live direction/service.
+            merged=dict(payload)
+            merged["source"]="partner_service"
+            merged["requires_new_direction"]=True
+            merged["requires_business_name"]=False
+            merged["required_document_type"]="business_document"
+            merged["services"]=app_services
+            merged["master_category_id"]=mid
+            merged["ai_master_category_id"]=mid
+            merged["category_id"]=category_ids[0]
+            merged["ai_category_id"]=category_ids[0]
+
+            _exec(
+                """UPDATE partner_applications
+                   SET business_id=%s,
+                       business_name=%s,
+                       master_category_id=%s,
+                       category_id=%s,
+                       direction_name=COALESCE(NULLIF(direction_name,''),%s),
+                       subcategory_name=COALESCE(NULLIF(subcategory_name,''),%s),
+                       payload_json=%s::jsonb,
+                       status='document_pending',
+                       admin_note=%s,
+                       reviewed_by=%s,
+                       reviewed_at=NOW(),
+                       updated_at=NOW()
+                   WHERE id=%s""",
+                (
+                    bid,
+                    business_name,
+                    mid,
+                    category_ids[0],
+                    a.get("direction_name") or "",
+                    a.get("subcategory_name") or "",
+                    json.dumps(merged,ensure_ascii=False),
+                    "Ուղղությունը հաստատված է դասակարգման տեսանկյունից։ Գործընկերը պետք է ուղարկի պահանջվող փաստաթուղթը, որից հետո հնարավոր կլինի ակտիվացնել ծառայությունը։",
+                    _auth(request),
+                    aid,
+                )
+            )
+            return web.json_response({
+                "ok":True,
+                "status":"document_pending",
+                "application_id":aid,
+                "business_name_required":False,
+                "document_required":True,
+            })
 
         if action=="approve_document":
             if not a.get("document_id"):
