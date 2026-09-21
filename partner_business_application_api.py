@@ -344,6 +344,31 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                     if fields.get("price") in (None,"") and first.get("price") not in (None,""):
                         fields["price"]=first.get("price")
 
+            # Re-run the internal Admin Classification AI after the partner
+            # changes service names/prices. Catalogue fields remain invisible
+            # in the partner form, but the stored application must stay correct.
+            try:
+                from partner_registration_ai import classify_profile_catalog
+                classification=await classify_profile_catalog(db, {
+                    "business_name": merged.get("business_name") or row.get("business_name"),
+                    "description": merged.get("description") or row.get("description") or "",
+                    "marz": merged.get("marz") or row.get("location_marz") or "",
+                    "city": merged.get("city") or row.get("location_city") or "",
+                    "address": merged.get("address") or row.get("address") or "",
+                    "services": merged.get("services") or [],
+                })
+                classified_services=classification.get("services") or []
+                if classified_services:
+                    merged["services"]=classified_services
+                    merged["master_category_id"]=classification.get("master_category_id")
+                    merged["ai_master_category_id"]=classification.get("master_category_id")
+                    merged["classification_confidence"]=classification.get("confidence",0)
+                    merged["classification_ambiguities"]=classification.get("ambiguities") or []
+                    merged["classification_needs_review"]=bool(classification.get("needs_review"))
+                    fields["payload_json"]=json.dumps(merged,ensure_ascii=False)
+            except Exception:
+                logger.exception("Could not reclassify edited partner application")
+
             # Preserve the internal master classification from the AI profile.
             internal_mid=_safe_int(merged.get("master_category_id") or merged.get("ai_master_category_id"))
             if internal_mid is not None and not fields.get("master_category_id"):
