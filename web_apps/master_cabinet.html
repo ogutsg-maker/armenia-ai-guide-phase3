@@ -226,10 +226,14 @@ async function createService(){
       name, price:price===''?null:Number(price), description:desc
     })});
     closeModal();
+    await loadServices();
+    await loadDirections();
+    await loadDocuments();
+    await loadApplications();
+    await loadDashboard();
     if(d.proposal_created){
-      await openApplicationEditor(Number(d.application_id), true);
+      alert(d.message||'Նոր ծառայության հայտը ուղարկվել է ադմինիստրատորին։');
     }else{
-      await loadServices();await loadDashboard();
       alert(d.message||'Ծառայությունը ավելացվեց և ուղարկվեց ստուգման։');
     }
   }catch(e){ modalError(e.message); }
