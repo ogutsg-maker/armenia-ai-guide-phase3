@@ -20,7 +20,7 @@
 <button data-view="documents">📄 <span data-t="documents">Փաստաթղթեր</span></button>
 <button data-view="settings">⚙️ <span data-t="settings">Կարգավորումներ</span></button>
 </nav><main>
-<section id="dashboard" class="view on"><div class="title"><h2>📊 Գործընկերոջ սենյակ</h2><button class="secondary" onclick="loadAll()">↻</button></div><div id="dashboardNotice"></div><div class="grid" id="metrics"></div><div class="card" id="profileCard"></div></section>
+<section id="dashboard" class="view on"><div class="title"><h2>📊 Գործընկերոջ սենյակ</h2><button id="refreshButton" class="secondary" type="button" onclick="loadAll(true)">↻</button></div><div id="dashboardNotice"></div><div class="grid" id="metrics"></div><div class="card" id="profileCard"></div></section>
 <section id="directions" class="view"><div class="title"><h2>🧭 Ուղղություններ</h2></div><div class="notice">Յուրաքանչյուր ուղղություն անցնում է առանձին ստուգում։ Նոր ուղղությունը ավելացվում է AI-ի միջոցով, ոչ թե երկար ձևով։</div><div id="directionList"></div></section>
 <section id="services" class="view"><div class="title"><h2>🛠 Ծառայություններ</h2><button type="button" class="primary" id="addServiceButton">+ Ավելացնել ծառայություն</button></div><div id="serviceList"></div></section>
 <section id="objects" class="view"><div class="title"><h2>🏢 Օբյեկտներ</h2><button class="primary" onclick="openObject()">+ Ավելացնել</button></div><div id="objectList"></div></section>
@@ -35,10 +35,10 @@
 const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const init=tg?.initData||'',uid=Number(tg?.initDataUnsafe?.user?.id||0);let lang=localStorage.aig_partner_lang||'hy';let businessId=Number(localStorage.aig_business_id||0);
 const tr={hy:{dashboard:'Գլխավոր',directions:'Ուղղություններ',services:'Ծառայություններ',objects:'Օբյեկտներ',orders:'Պատվերներ',locations:'Տարածքներ',reviews:'Վարկանիշ',documents:'Փաստաթղթեր',settings:'Կարգավորումներ'},ru:{dashboard:'Главная',directions:'Направления',services:'Услуги',objects:'Объекты',orders:'Заказы',locations:'Локации',reviews:'Рейтинг',documents:'Документы',settings:'Настройки'},en:{dashboard:'Dashboard',directions:'Directions',services:'Services',objects:'Objects',orders:'Orders',locations:'Locations',reviews:'Reviews',documents:'Documents',settings:'Settings'}};
 function setLang(x){lang=x;localStorage.aig_partner_lang=x;document.querySelectorAll('.langs button').forEach(b=>b.classList.toggle('on',b.id===x));document.querySelectorAll('[data-t]').forEach(e=>e.textContent=tr[x][e.dataset.t]||e.textContent)}setLang(lang);
-async function api(path,opt={}){opt.headers={...(opt.headers||{}),'X-Telegram-Init-Data':init,'Content-Type':'application/json'};if(businessId)opt.headers['X-Business-Id']=String(businessId);const r=await fetch(path,opt);const d=await r.json().catch(()=>({}));if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));return d}
+async function api(path,opt={}){opt.headers={...(opt.headers||{}),'X-Telegram-Init-Data':init,'Content-Type':'application/json'};if(businessId)opt.headers['X-Business-Id']=String(businessId);const method=String(opt.method||'GET').toUpperCase();const url=method==='GET'?(path+(path.includes('?')?'&':'?')+'_ts='+Date.now()):path;const r=await fetch(url,opt);const d=await r.json().catch(()=>({}));if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));return d}
 function esc(x){return String(x??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}function badge(s){let c=s==='approved'?'approved':(s==='rejected'?'rejected':'pending');return `<span class="badge ${c}">${esc(s||'—')}</span>`}function empty(el,text='Տվյալներ չկան'){el.innerHTML=`<div class="empty">${esc(text)}</div>`}
 function show(id){document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));document.getElementById(id).classList.add('on');document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===id));}
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{show(b.dataset.view);if(b.dataset.view==='dashboard'||b.dataset.view==='services'||b.dataset.view==='objects'||b.dataset.view==='orders'||b.dataset.view==='locations'||b.dataset.view==='reviews'||b.dataset.view==='documents')loadAll()});
+document.querySelectorAll('nav button').forEach(b=>{if(!b.dataset.view)return;b.onclick=()=>{show(b.dataset.view);if(b.dataset.view==='dashboard'||b.dataset.view==='services'||b.dataset.view==='objects'||b.dataset.view==='orders'||b.dataset.view==='locations'||b.dataset.view==='reviews'||b.dataset.view==='documents')loadAll()}});
 async function loadBusinesses(){
  try{
   const d=await api('/api/master/'+uid+'/businesses');
@@ -290,7 +290,23 @@ async function uploadDirectionRequestDocument(id){
  const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));
  alert('Փաստաթուղթը ուղարկված է ադմինիստրատորի ստուգմանը');await loadDirections();await loadDocuments();
 }
-async function loadAll(){if(!init){document.body.innerHTML='<div style="padding:30px">Բացեք գործընկերոջ սենյակը Telegram հավելվածում։</div>';return}try{await loadBusinesses();await Promise.all([loadDashboard(),loadDirections(),loadServices(),loadObjects(),loadOrders(),loadLocations(),loadReviews(),loadDocuments(),loadApplications(),loadSettings()])}catch(e){console.error(e)}}
+async function loadAll(fromRefresh=false){if(!init){document.body.innerHTML='<div style="padding:30px">Բացեք գործընկերոջ սենյակը Telegram հավելվածում։</div>';return}
+ const btn=document.getElementById('refreshButton');
+ if(fromRefresh&&btn){btn.disabled=true;btn.textContent='⟳';}
+ try{
+  await loadBusinesses();
+  const tasks=[loadDashboard(),loadDirections(),loadServices(),loadObjects(),loadOrders(),loadLocations(),loadReviews(),loadDocuments(),loadApplications(),loadSettings()];
+  const results=await Promise.allSettled(tasks);
+  const failed=results.filter(x=>x.status==='rejected');
+  if(failed.length){console.error('Partner cabinet refresh errors',failed.map(x=>x.reason));}
+  if(fromRefresh){const n=document.getElementById('dashboardNotice');if(n&&!failed.length)n.innerHTML='<div class="notice">✅ Տվյալները թարմացվեցին։</div>';else if(n&&failed.length)n.innerHTML='<div class="notice">⚠️ Որոշ բաժիններ չհաջողվեց թարմացնել։</div>';}
+ }catch(e){
+  console.error('Partner cabinet refresh failed',e);
+  const n=document.getElementById('dashboardNotice');if(n)n.innerHTML='<div class="notice">❌ Չհաջողվեց թարմացնել տվյալները։</div>';
+ }finally{
+  if(fromRefresh&&btn){btn.disabled=false;btn.textContent='↻';}
+ }
+}
 document.getElementById('addServiceButton')?.addEventListener('click',()=>openService());
 loadAll();
 </script></body></html>
