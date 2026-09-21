@@ -28,8 +28,8 @@ const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const initData=tg?.ini
 const chat=document.getElementById('chat'),input=document.getElementById('input'),send=document.getElementById('send'),status=document.getElementById('status'),composer=document.getElementById('composer'),formWrap=document.getElementById('formWrap');let busy=false,application=null,draftApplication=null;
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function add(role,text){const d=document.createElement('div');d.className='msg '+role;d.textContent=String(text??'');chat.appendChild(d);chat.scrollTop=chat.scrollHeight}
-async function jsonResponse(r){const text=await r.text();try{return JSON.parse(text)}catch(e){throw new Error('Սերվերը չվերադարձավ JSON')}}
-async function api(path,body,method='POST'){const opt={method,headers:{'X-Telegram-Init-Data':initData}};if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body)}const r=await fetch(path,opt);const d=await jsonResponse(r);if(!r.ok||d.ok===false)throw new Error(d.detail||d.message||d.error||('HTTP '+r.status));return d}
+async function jsonResponse(r){const text=await r.text();try{return JSON.parse(text)}catch(e){const clean=text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();throw new Error('HTTP '+r.status+(clean?' — '+clean.slice(0,300):' — Սերվերը չվերադարձավ JSON'))}}
+async function api(path,body,method='POST'){const opt={method,headers:{'X-Telegram-Init-Data':initData}};if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body)}const r=await fetch(path,opt);const d=await jsonResponse(r);if(!r.ok||d.ok===false)throw new Error(d.detail||d.message||d.error||((d.fields&&d.fields.length)?d.fields.join(', '):'HTTP '+r.status));return d}
 function payload(){let p={};try{p=typeof application.payload_json==='string'?JSON.parse(application.payload_json||'{}'):(application.payload_json||{})}catch(e){}return p}
 function renderForm(){
  const p=payload();
