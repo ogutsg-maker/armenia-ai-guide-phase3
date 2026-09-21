@@ -320,7 +320,7 @@ async function openService(){
     <input id="mPrice" type="number" min="0" step="1" placeholder="3000">
     <label>Նկարագրություն <span class="muted">(ոչ պարտադիր)</span></label>
     <textarea id="mDesc" placeholder="Կարճ նկարագրեք ծառայությունը, եթե անհրաժեշտ է"></textarea>
-    <div class="muted" style="margin:4px 0 10px">AI-ն կփորձի գտնել արդեն հաստատված ենթաուղղությունը։ Եթե համապատասխան ենթաուղղություն չկա, առաջարկը կուղարկվի ադմինիստրատորին։</div>
+    <div class="muted" style="margin:4px 0 10px">AI-ն ինքնուրույն կորոշի ծառայության ճիշտ ուղղությունն ու ենթաուղղությունը։ Եթե այդ ուղղությունը դեռ հաստատված չէ ձեր համար, հայտը կուղարկվի ադմինիստրատորին։</div>
     <div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div>
     <div class="actions"><button class="primary" onclick="createService()">Ավելացնել</button></div>`);
   document.getElementById('mName')?.focus();
