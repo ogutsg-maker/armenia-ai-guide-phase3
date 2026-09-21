@@ -761,7 +761,12 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         recovered = _recover_services_from_history(history + [{"role": "user", "content": text}])
         if recovered:
             data["services"] = recovered
-        data["ready"] = bool(data.get("business_name") and data.get("city") and data.get("services"))
+        # Business name is mandatory even when Groq is unavailable.
+        data["missing"] = [
+            key for key in ("business_name", "marz", "city", "phone", "services")
+            if not data.get(key)
+        ]
+        data["ready"] = not data["missing"]
         return data
 
     model = os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")).strip() or "openai/gpt-oss-20b"
@@ -1009,8 +1014,10 @@ Return only the supplied JSON schema."""
         data["services"] = normalized
         data["master_category_id"] = None
         data["classification_needs_review"] = True
+        # Business name is mandatory for a valid partner application.
+        # Never silently treat an unnamed business as ready.
         data["missing"] = [
-            key for key in ("marz", "city", "phone", "services")
+            key for key in ("business_name", "marz", "city", "phone", "services")
             if not data.get(key)
         ]
         data["ready"] = not data["missing"]
