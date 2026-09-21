@@ -786,6 +786,53 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                          updated_at=NOW() WHERE id=%s RETURNING *""",(aid,),True)
             return web.json_response({"ok":True,"application":row})
 
+        if action=="approve_service_proposal":
+            payload=a.get("payload_json") or {}
+            if isinstance(payload,str):
+                try: payload=json.loads(payload)
+                except Exception: payload={}
+            if not isinstance(payload,dict): payload={}
+            app_services=payload.get("services") if isinstance(payload.get("services"),list) else []
+            if not app_services and a.get("service_name"):
+                app_services=[{"name":a.get("service_name"),"price":a.get("price"),"matched_subcategory_id":a.get("category_id")}]
+            app_services=[x for x in app_services if isinstance(x,dict) and str(x.get("name") or x.get("service_name") or "").strip()]
+            mid=_safe_int(a.get("master_category_id") or payload.get("master_category_id"))
+            if not app_services: return web.json_response({"ok":False,"error":"service_required"},status=409)
+            if mid is None: return web.json_response({"ok":False,"error":"direction_required"},status=409)
+            category_ids=[]
+            for svc in app_services:
+                cid=_safe_int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
+                if cid is None: return web.json_response({"ok":False,"error":"services_need_classification"},status=409)
+                category_ids.append(cid)
+            valid=_all("SELECT id FROM categories WHERE master_category_id=%s AND id=ANY(%s::int[])",(mid,list(set(category_ids))))
+            valid_ids={_safe_int(x.get("id")) for x in valid}
+            if any(cid not in valid_ids for cid in category_ids): return web.json_response({"ok":False,"error":"invalid_subcategory_for_direction"},status=409)
+            bid=a.get("business_id")
+            if not bid: return web.json_response({"ok":False,"error":"business_required"},status=409)
+            pd=_one("SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND master_category_id=%s ORDER BY id LIMIT 1",(a["partner_id"],bid,mid))
+            if pd:
+                direction_id=pd["id"]
+                _exec("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(direction_id,))
+            else:
+                pd=_exec("INSERT INTO partner_directions(partner_id,business_id,master_category_id,status) VALUES(%s,%s,%s,'approved') RETURNING id",(a["partner_id"],bid,mid),True)
+                direction_id=pd["id"]
+            for cid in sorted(set(category_ids)):
+                _exec("INSERT INTO partner_direction_categories(partner_direction_id,category_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(direction_id,cid))
+            for svc in app_services:
+                name=str(svc.get("name") or svc.get("service_name") or "").strip()[:300]
+                cid=_safe_int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
+                price=svc.get("price")
+                try: price=float(price) if price not in (None,"") else None
+                except (TypeError,ValueError): price=None
+                existing=_one("SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted' ORDER BY id DESC LIMIT 1",(a["partner_id"],bid,name))
+                data_json=json.dumps({"application_id":aid,"ai_source":True,"matched_subcategory_id":cid,"direction_id":direction_id},ensure_ascii=False)
+                if existing:
+                    _exec("UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",(cid,name,a.get("description"),price,data_json,existing["id"]))
+                else:
+                    _exec("INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json) VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s::jsonb)",(a["partner_id"],bid,cid,name,a.get("description"),price,data_json))
+            row=_exec("UPDATE partner_applications SET status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s RETURNING *",(_auth(request),aid),True)
+            return web.json_response({"ok":True,"application":row})
+
         if action=="approve_document":
             if not a.get("document_id"):
                 return web.json_response({"ok":False,"error":"document_required"},status=409)
