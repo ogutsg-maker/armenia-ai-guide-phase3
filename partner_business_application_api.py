@@ -486,21 +486,9 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             return web.json_response({"ok":False,"error":"application_incomplete","fields":missing},status=422)
 
         internal_mid=_safe_int(a.get("master_category_id") or payload.get("master_category_id") or payload.get("ai_master_category_id"))
-        if internal_mid is None:
-            return web.json_response({"ok":False,"error":"direction_not_classified","detail":"AI did not determine a catalogue direction yet."},status=422)
-
-        # The admin must receive every service and its exact subdirection.
-        # Do not silently assign service #2/#3 to service #1's category.
-        unresolved=[]
-        for svc in services:
-            if not isinstance(svc,dict): continue
-            name=str(svc.get("name") or svc.get("service_name") or "").strip()
-            if not name: continue
-            cid=_safe_int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
-            if cid is None:
-                unresolved.append(name)
-        if unresolved:
-            return web.json_response({"ok":False,"error":"services_need_classification","services":unresolved},status=422)
+        # Classification is an internal admin concern. Never block the partner
+        # because AI could not confidently map one service; the admin receives
+        # the complete service list and can correct the mapping before activation.
 
         if not a.get("document_id"):
             return web.json_response({"ok":False,"error":"document_required"},status=409)
