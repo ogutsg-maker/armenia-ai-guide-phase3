@@ -270,6 +270,26 @@ async def _load_partner_service_catalog(pid: int, business_id: int | None):
             return [dict(x) for x in cur.fetchall()]
 
 
+async def _load_full_service_catalog():
+    """Return the complete active catalogue for new-service classification.
+
+    Unlike the partner-facing service catalog, this intentionally includes
+    directions that are not yet approved for the current partner. The AI must
+    first determine what the service actually is; only after that do we decide
+    whether the partner already has that direction approved.
+    """
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT c.id AS category_id,c.master_category_id,
+                                  c.name_am AS category_am,c.name_ru AS category_ru,c.name_en AS category_en,c.slug AS category_slug,
+                                  m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en,m.slug AS master_slug
+                           FROM categories c
+                           JOIN master_categories m ON m.id=c.master_category_id
+                           WHERE c.is_active=TRUE AND m.is_active=TRUE
+                           ORDER BY c.master_category_id,c.id""")
+            return [dict(x) for x in cur.fetchall()]
+
+
 async def _ai_match_new_service(pid: int, name: str, description: str = "", business_id: int | None = None):
     """Classify a newly added partner service without making Groq a hard dependency.
 
@@ -362,13 +382,15 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
             "reason": "Deterministic multilingual catalogue match.",
         }
 
-    # Optional Groq semantic fallback. A 429/400/etc. must never turn the
-    # partner's Add Service button into service_ai_failed; we simply continue
-    # with a clarification/proposal based on the real catalogue.
+    # Optional Groq semantic fallback. IMPORTANT: this classification receives
+    # the COMPLETE active catalogue, not only directions already approved for
+    # this partner. Otherwise a genuinely new direction can never be identified.
     key = os.getenv("GROQ_API_KEY", "").strip()
     if key and AsyncGroq is not None:
         try:
-            candidates = [x for x in ranked[:50] if score(x) >= 0.20] or ranked[:30]
+            all_catalog = await _load_full_service_catalog()
+            all_ranked = sorted(all_catalog, key=score, reverse=True)
+            candidates = [x for x in all_ranked[:80] if score(x) >= 0.10] or all_ranked[:80]
             schema = {
                 "type": "object",
                 "properties": {
@@ -415,9 +437,9 @@ Return the result as valid JSON only."""
                 280,
             )
             cid = _safe_int(result.get("matched_category_id"))
-            valid = {_safe_int(x["category_id"]) for x in catalog}
+            valid = {_safe_int(x["category_id"]) for x in all_catalog}
             if cid in valid:
-                row = next(x for x in catalog if _safe_int(x["category_id"]) == cid)
+                row = next(x for x in all_catalog if _safe_int(x["category_id"]) == cid)
                 return {
                     "status": "matched",
                     "category_id": cid,
@@ -436,19 +458,7 @@ Return the result as valid JSON only."""
     # Existing platform categories that are not approved for this business
     # should become an admin proposal rather than a technical failure.
     try:
-        with _connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT c.id AS category_id, c.master_category_id,
-                              c.name_am AS category_am, c.name_ru AS category_ru,
-                              c.name_en AS category_en,
-                              m.name_am AS master_am, m.name_ru AS master_ru,
-                              m.name_en AS master_en
-                       FROM categories c
-                       JOIN master_categories m ON m.id=c.master_category_id
-                       WHERE c.is_active=TRUE AND m.is_active=TRUE"""
-                )
-                all_catalog = [dict(x) for x in cur.fetchall()]
+        all_catalog = await _load_full_service_catalog()
         all_ranked = sorted(all_catalog, key=score, reverse=True)
         candidate = all_ranked[0] if all_ranked else None
         if candidate and score(candidate) >= 0.58:
