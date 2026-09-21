@@ -254,6 +254,23 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     missing = [key for key in ("business_name", "marz", "city", "address", "phone", "services") if not merged.get(key)]
     merged["missing"] = missing
     merged["ready"] = not missing
+
+    # Stage 2 — internal Admin Classification AI.
+    # Partner Intake never asks for or displays catalogue choices.
+    if merged.get("services"):
+        try:
+            from partner_registration_ai import classify_profile_catalog
+            classification = await classify_profile_catalog(db, merged)
+            merged["master_category_id"] = classification.get("master_category_id")
+            merged["services"] = classification.get("services") or merged.get("services") or []
+            merged["classification_confidence"] = classification.get("confidence", 0)
+            merged["classification_ambiguities"] = classification.get("ambiguities") or []
+            merged["classification_needs_review"] = bool(classification.get("needs_review"))
+        except Exception:
+            logger.exception("Admin Classification AI failed; keeping services unclassified")
+            merged["master_category_id"] = None
+            merged["classification_needs_review"] = True
+
     await state.update_data(partner_onboarding_history=history, partner_profile=merged)
     if missing:
         # IMPORTANT: the AI result is shown immediately in the universal form.
