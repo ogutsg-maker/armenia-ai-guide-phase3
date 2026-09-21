@@ -498,12 +498,23 @@ async def api_service_create(request: web.Request):
         app_bid=None if match.get("business_action")=="new_business" else bid
         with _connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("""INSERT INTO partner_applications(partner_id,business_id,status,business_name,direction_name,master_category_id,subcategory_name,service_name,price,description,ai_reason,payload_json)
-                               VALUES(%s,%s,'pending_partner',%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
-                            (pid,app_bid,match.get("proposed_business_name") if app_bid is None else None,
-                             match.get("out_of_scope_master_name") or "",match.get("out_of_scope_master_id") or match.get("master_category_id"),
+                cur.execute("""SELECT name FROM partner_businesses WHERE id=%s AND partner_id=%s""",(bid,pid))
+                business_row=cur.fetchone() or {}
+                cur.execute("""SELECT u.phone FROM users u WHERE u.telegram_id=%s""",(uid,))
+                user_row=cur.fetchone() or {}
+                cur.execute("""INSERT INTO partner_applications(
+                                  partner_id,business_id,status,business_name,phone,direction_name,
+                                  master_category_id,subcategory_name,service_name,price,description,ai_reason,payload_json)
+                               VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                               RETURNING id""",
+                            (pid,app_bid,business_row.get("name") if app_bid is not None else match.get("proposed_business_name"),
+                             user_row.get("phone"),match.get("out_of_scope_master_name") or "",
+                             match.get("out_of_scope_master_id") or match.get("master_category_id"),
                              match.get("proposed_name") or None,name,price,description,match.get("reason") or "",
-                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None},ensure_ascii=False)))
+                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None,
+                                         "services":[{"name":name,"price":price,"description":description,
+                                                      "matched_subcategory_id":match.get("category_id"),
+                                                      "direction_id":match.get("master_category_id")}]},ensure_ascii=False)))
                 aid=int(cur.fetchone()["id"])
             conn.commit()
         return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,"new_business":app_bid is None,
