@@ -235,6 +235,180 @@ def _recover_master_category(db, text: str, data: dict) -> dict:
     return out
 
 
+def _extract_price_mentions(text: str) -> list[int]:
+    """Extract only explicit monetary amounts; phone/address numbers are ignored."""
+    raw = _norm(text)
+    if not raw:
+        return []
+    patterns = [
+        r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)\\b",
+        r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*֏",
+    ]
+    values: list[int] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, raw, flags=re.I):
+            try:
+                value = int(re.sub(r"[^0-9]", "", match.group(1)))
+            except (TypeError, ValueError):
+                continue
+            if 100 <= value <= 999999:
+                values.append(value)
+    # Preserve source order and duplicate prices: two different services can
+    # legitimately have the same price.
+    result: list[int] = []
+    for value in values:
+        if value not in result or values.count(value) > result.count(value):
+            result.append(value)
+    # The two regexes can see the same amount; rebuild in textual order.
+    ordered: list[tuple[int, int]] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, raw, flags=re.I):
+            try:
+                value = int(re.sub(r"[^0-9]", "", match.group(1)))
+            except (TypeError, ValueError):
+                continue
+            ordered.append((match.start(), value))
+    ordered.sort(key=lambda x: x[0])
+    final: list[int] = []
+    for _, value in ordered:
+        final.append(value)
+    return final
+
+
+async def _recover_missing_services(
+    client,
+    model: str,
+    partner_text: str,
+    services: list[dict],
+    expected_prices: list[int],
+) -> list[dict]:
+    """Recover only price-bearing services that the first extraction missed.
+
+    Existing services are treated as authoritative. Groq is asked only to map
+    missing monetary amounts to the service phrase immediately associated with
+    each amount; Python validates the returned prices before accepting them.
+    """
+    if not expected_prices:
+        return services
+
+    existing = [dict(x) for x in services if isinstance(x, dict)]
+    existing_prices = []
+    for item in existing:
+        try:
+            if item.get("price") is not None:
+                existing_prices.append(int(float(item["price"])))
+        except (TypeError, ValueError):
+            pass
+
+    missing_prices = list(expected_prices)
+    for price in existing_prices:
+        if price in missing_prices:
+            missing_prices.remove(price)
+    if not missing_prices:
+        return existing
+
+    # Give the model compact source snippets around every monetary amount.
+    snippets = []
+    for m in re.finditer(
+        r"(?<!\\d)(\\d{3,6})(?:[.,]\\d{1,2})?\\s*(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)\\b",
+        partner_text,
+        flags=re.I,
+    ):
+        start = max(0, m.start() - 140)
+        end = min(len(partner_text), m.end() + 80)
+        snippets.append({
+            "price": int(re.sub(r"[^0-9]", "", m.group(1))),
+            "context": partner_text[start:end].strip(),
+        })
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "services": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "service_name": {"type": "string"},
+                        "price": {"type": "integer"},
+                        "price_type": {"type": "string"},
+                    },
+                    "required": ["service_name", "price", "price_type"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["services"],
+        "additionalProperties": False,
+    }
+    system = """You are a recovery extractor for a business registration form.
+Recover ONLY services that are explicitly connected to a monetary amount in the
+supplied source snippets.
+
+Rules:
+- Every missing price must correspond to exactly one service.
+- Never invent a service or a price.
+- Do not return an existing service again if it is already represented in the
+  EXISTING SERVICES list.
+- Keep the complete service phrase, including meaningful modifiers.
+- Understand Armenian, Russian and English.
+- Normalize the recovered service name to clean Armenian when possible.
+- "և", "ու", "նաև", "and", "also", "и", "а" are connectors only; never delete
+  the service itself.
+- "3500 դրամ քմ-ից" means price=3500 and price_type="from_per_unit".
+- "5000 դրամ մեկ պարապմունքից" means price=5000 and price_type="from_per_unit".
+- "5000 դրամից" means price_type="from".
+- Exact "5000 դրամ" means price_type="fixed".
+Return ONLY genuinely missing services."""
+
+    user = (
+        "EXISTING SERVICES:\n" + json.dumps(existing, ensure_ascii=False)
+        + "\n\nMISSING PRICES:\n" + json.dumps(missing_prices, ensure_ascii=False)
+        + "\n\nSOURCE SNIPPETS:\n" + json.dumps(snippets, ensure_ascii=False)
+        + "\n\nORIGINAL TEXT:\n" + _norm(partner_text)[:5000]
+    )
+    try:
+        result = await _groq_json(
+            client, model, system, user,
+            "partner_missing_service_recovery", schema, 700
+        )
+    except Exception:
+        return existing
+
+    recovered = []
+    for item in result.get("services") or []:
+        if not isinstance(item, dict):
+            continue
+        name = _norm(item.get("service_name"))
+        try:
+            price = int(float(item.get("price")))
+        except (TypeError, ValueError):
+            continue
+        if not name or price not in missing_prices:
+            continue
+        # Never accept a duplicate of an already extracted service+price.
+        duplicate = any(
+            _norm(x.get("name") or x.get("service_name")).lower() == name.lower()
+            and int(float(x.get("price"))) == price
+            for x in existing + recovered
+            if x.get("price") not in (None, "")
+        )
+        if duplicate:
+            continue
+        ptype = _norm(item.get("price_type") or "fixed")
+        if "per_unit" not in ptype and ptype not in {"from", "fixed"}:
+            ptype = "fixed"
+        recovered.append({
+            "name": name,
+            "raw_sub_direction": name,
+            "price": price,
+            "price_type": ptype,
+            "matched_subcategory_id": None,
+        })
+        missing_prices.remove(price)
+    return existing + recovered
+
+
 def _recover_services_from_history(history: list[dict]) -> list[dict]:
     """Recover explicit service/price facts without depending on the LLM."""
     text = " ".join(
@@ -629,6 +803,7 @@ You are doing strict Named Entity Recognition (NER) and classification, not free
 Never copy a complete sentence into a field.
 BUSINESS NAME: extract only the proper business/organization name. For "BYUTI անունով սրահ" return "BYUTI", never "սրահ BYUTI" and never surrounding context.
 LOCATION: normalize Armenian/Russian/English inflected place names to the canonical city name. For example "Հրազդանում" -> "Հրազդան". Derive marz only from a known city-to-marz relationship or an explicitly stated marz; never invent an address.
+SERVICE EXTRACTION IS STRICT AND COUNTED: every explicit monetary amount in the source must correspond to exactly one atomic service object. Count price-bearing services, not arbitrary numbers. Phone numbers, house numbers and district numbers are NOT prices. If a service is introduced by "և", "ու", "նաև", "and", "also", "и", or "а", remove only the connector and preserve the complete service phrase and its price.
 SERVICE NAMES: every price-bearing service is a separate atomic entity. One complete service + its price = ONE object. Never split a complete service phrase into fragments. For example, "կանացի մազերի կտրում՝ 3000 դրամից" is exactly ONE service; do NOT also create "կտրում" with 3000. Likewise "մազերի ներկում՝ 5000 դրամից" is ONE service; do NOT also create "ներկում". Strip only introductions, conjunctions, location text, business context, punctuation and grammatical endings; preserve meaningful modifiers such as "կանացի", "երեկոյան", "հարսանեկան" when they distinguish the service. Use a clean noun phrase suitable for a price list: "կանացի մազերի կտրում" -> "կանացի մազերի կտրում"; "մազերի ներկում" -> "մազերի ներկում"; "սանրվածք" -> "սանրվածք"; "մատնահարդարում" -> "մատնահարդարում"; "պեդիկյուր" -> "պեդիկյուր"; "երեկոյան դիմահարդարում" -> "երեկոյան դիմահարդարում". Never put words such as "սկսվում է", "դրամից", "սրահում", "ունեմ", "անունով", a city, or the business name into service_name.
 ARMENIAN FEW-SHOT SERVICE EXAMPLES:
 Input: "կանացի մազերի կտրում՝ 3000 դրամից"
@@ -686,19 +861,29 @@ Return only the supplied JSON schema."""
         elif "services" not in data:
             data["services"] = []
 
+        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
+
+        # Deterministic price counting is a guard against lost services. It
+        # recognizes monetary amounts only, so phone/address numbers are not
+        # counted as services.
+        price_mentions = _extract_price_mentions(combined_text)
         recovered = _recover_services_from_history(
             history + [{"role": "user", "content": text}]
         )
-        if recovered:
-            # Explicit price-bearing facts recovered from the partner's own
-            # text are authoritative. Do not merge them with LLM-generated
-            # fragments: that can turn one atomic service such as
-            # "կանացի մազերի կտրում" into both the full service and a second
-            # fragment such as "կտրում". The catalogue matcher may enrich these
-            # records with IDs, but it must never create additional services.
+        if recovered and (not data.get("services") or len(recovered) >= len(data.get("services") or [])):
+            # The history parser is authoritative when it can account for all
+            # explicit price-bearing services. It does not invent catalogue IDs.
             data["services"] = recovered
 
-        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
+        if price_mentions and len(data.get("services") or []) < len(price_mentions):
+            data["services"] = await _recover_missing_services(
+                client, model, combined_text, data.get("services") or [], price_mentions
+            )
+
+        # Final conservative merge: if the local parser can account for every
+        # monetary amount, prefer it over an incomplete LLM extraction.
+        if recovered and len(recovered) >= len(price_mentions) and len(recovered) >= len(data.get("services") or []):
+            data["services"] = recovered
         data = _recover_obvious_facts(combined_text, data)
         data = _recover_master_category(db, combined_text, data)
 
