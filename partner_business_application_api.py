@@ -546,6 +546,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                         return value
                 return None
 
+            business_name = _profile_value("business_name", "business_name", "name")
             location_marz = _profile_value("location_marz", "location_marz", "marz", "region")
             location_city = _profile_value("location_city", "location_city", "city", "settlement")
             phone = _profile_value("phone", "phone", "phone_number")
@@ -553,9 +554,15 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # Also accept the exact canonical values saved by the visible form.
             # This makes submit resilient if an older draft has stale legacy
             # columns while payload_json contains the current edited profile.
+            business_name = str(business_name).strip() if business_name not in (None, "") else None
             location_marz = str(location_marz).strip() if location_marz not in (None, "") else None
             location_city = str(location_city).strip() if location_city not in (None, "") else None
             phone = str(phone).strip() if phone not in (None, "") else None
+            if business_name and len(business_name) > 200:
+                business_name = business_name[:200]
+            if not a.get("business_name") and business_name:
+                _exec("UPDATE partner_applications SET business_name=%s WHERE id=%s",(business_name,aid))
+                a["business_name"]=business_name
             if not a.get("location_marz") and location_marz:
                 _exec("UPDATE partner_applications SET location_marz=%s WHERE id=%s",(str(location_marz).strip(),aid))
                 a["location_marz"]=str(location_marz).strip()
@@ -569,6 +576,8 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # Partner-facing fields. Catalog classification remains an internal
             # admin task and must never block partner submission.
             missing = []
+            if not business_name:
+                missing.append("business_name")
             if not location_marz:
                 missing.append("location_marz")
             if not location_city:
