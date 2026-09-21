@@ -243,8 +243,8 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         _admin(request)
         rows=_all("""SELECT a.*,p.business_name AS partner_legacy_name,p.user_id,
                             b.name AS business_name_db,
-                            m.name_am AS master_name_am,m.name_ru AS master_name_ru,
-                            c.name_am AS category_name_am,c.name_ru AS category_name_ru,
+                            m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,
+                            c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,
                             d.original_filename AS document_filename,d.status AS document_status
                      FROM partner_applications a
                      JOIN partners p ON p.id=a.partner_id
@@ -254,6 +254,41 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      LEFT JOIN partner_verification_documents d ON d.id=a.document_id
                      WHERE a.status NOT IN ('approved','pending_partner')
                      ORDER BY a.created_at DESC""")
+
+        # The application payload is the authoritative multi-service list.
+        # Build a catalogue lookup once and enrich every service with the
+        # REAL direction/subdirection names selected by Admin Classification AI.
+        catalog_rows=_all("""SELECT c.id AS category_id,c.master_category_id,
+                                    m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,
+                                    c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en
+                             FROM categories c
+                             JOIN master_categories m ON m.id=c.master_category_id""")
+        catalog_by_id={int(x["category_id"]):x for x in catalog_rows if x.get("category_id") is not None}
+
+        for row in rows:
+            payload=row.get("payload_json") or {}
+            if isinstance(payload,str):
+                try: payload=json.loads(payload)
+                except Exception: payload={}
+            if not isinstance(payload,dict): payload={}
+            raw_services=payload.get("services") if isinstance(payload.get("services"),list) else []
+            enriched=[]
+            for svc in raw_services:
+                if not isinstance(svc,dict) or not str(svc.get("name") or svc.get("service_name") or "").strip():
+                    continue
+                item=dict(svc)
+                cid=_safe_int(item.get("matched_subcategory_id") or item.get("subcategory_id") or item.get("category_id"))
+                cat=catalog_by_id.get(cid) if cid is not None else None
+                item["matched_subcategory_id"]=cid
+                item["direction_id"]=_safe_int((cat or {}).get("master_category_id")) or _safe_int(row.get("master_category_id"))
+                item["direction_name"]=(cat or {}).get("master_name_am") or (cat or {}).get("master_name_ru") or row.get("master_name_am") or row.get("master_name_ru")
+                item["subcategory_name"]=(cat or {}).get("category_name_am") or (cat or {}).get("category_name_ru") or ("" if cid is None else None)
+                item["needs_admin_classification"]=cid is None
+                enriched.append(item)
+            row["payload_json"]=payload
+            row["services"]=enriched
+            row["catalog_services"]=enriched
+
         return web.json_response({"ok":True,"applications":rows})
 
     async def application_update(request):
@@ -262,23 +297,69 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         aid=int(request.match_info["application_id"]); data=await request.json()
         row=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
         if not row: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        allowed=("business_name","location_marz","location_city","location_village","address","phone","direction_name","master_category_id","subcategory_name","category_id","service_name","price","description","object_name")
+
+        allowed=("business_name","location_marz","location_city","location_village","address","phone",
+                 "direction_name","master_category_id","subcategory_name","category_id",
+                 "service_name","price","description","object_name")
         fields={k:data[k] for k in allowed if k in data}
+
         payload=data.get("payload")
+        merged=None
         if isinstance(payload,dict):
             current=row.get("payload_json") or {}
             if isinstance(current,str):
                 try: current=json.loads(current)
                 except Exception: current={}
-            merged=dict(current or {})
+            if not isinstance(current,dict): current={}
+            merged=dict(current)
             merged.update(payload)
+
+            # Keep the full multi-service list exactly as edited by the partner.
+            services=merged.get("services")
+            if isinstance(services,list):
+                clean=[]
+                for svc in services:
+                    if not isinstance(svc,dict): continue
+                    name=str(svc.get("name") or svc.get("service_name") or "").strip()
+                    if not name: continue
+                    item=dict(svc)
+                    item["name"]=name
+                    item["price_type"]=str(item.get("price_type") or "fixed")
+                    cid=_safe_int(item.get("matched_subcategory_id") or item.get("subcategory_id") or item.get("category_id"))
+                    item["matched_subcategory_id"]=cid
+                    clean.append(item)
+                merged["services"]=clean
+                # The partner UI does not expose catalogue fields, so never
+                # erase the AI's internal classification just because the form
+                # submitted visible fields with null catalogue IDs.
+                if clean:
+                    first=clean[0]
+                    first_cid=_safe_int(first.get("matched_subcategory_id"))
+                    if not fields.get("category_id") and first_cid is not None:
+                        fields["category_id"]=first_cid
+                    if not fields.get("subcategory_name") and first.get("subcategory_name"):
+                        fields["subcategory_name"]=first.get("subcategory_name")
+                    if not fields.get("service_name"):
+                        fields["service_name"]=first["name"]
+                    if fields.get("price") in (None,"") and first.get("price") not in (None,""):
+                        fields["price"]=first.get("price")
+
+            # Preserve the internal master classification from the AI profile.
+            internal_mid=_safe_int(merged.get("master_category_id") or merged.get("ai_master_category_id"))
+            if internal_mid is not None and not fields.get("master_category_id"):
+                fields["master_category_id"]=internal_mid
+            if not fields.get("direction_name"):
+                fields["direction_name"]=str(merged.get("direction") or merged.get("master_category_name") or "").strip() or None
+
             fields["payload_json"]=json.dumps(merged,ensure_ascii=False)
-        if not fields: return web.json_response({"ok":True,"application":row})
+
+        if not fields:
+            return web.json_response({"ok":True,"application":row})
+
         sets=", ".join(f"{k}=%s" for k in fields)
         sets+=", updated_at=NOW()"
         vals=list(fields.values())+[aid]
         if "payload_json" in fields:
-            vals=[v if k!="payload_json" else v for k,v in zip(fields.keys(),vals[:-1])]+[aid]
             sets=sets.replace("payload_json=%s","payload_json=%s::jsonb")
         updated=_exec(f"UPDATE partner_applications SET {sets} WHERE id=%s RETURNING *",vals,True)
         return web.json_response({"ok":True,"application":updated})
@@ -341,16 +422,63 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         aid=int(request.match_info["application_id"])
         a=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
         if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        required=("business_name","location_marz","address","phone","master_category_id","category_id","service_name","price")
+
+        payload=a.get("payload_json") or {}
+        if isinstance(payload,str):
+            try: payload=json.loads(payload)
+            except Exception: payload={}
+        if not isinstance(payload,dict): payload={}
+        services=payload.get("services") if isinstance(payload.get("services"),list) else []
+
+        # Visible partner fields must be complete. Catalogue fields are
+        # internal and are recovered from the AI classification stored in the
+        # payload instead of being demanded from the partner UI.
+        required=("business_name","location_marz","location_city","address","phone")
         missing=[k for k in required if a.get(k) in (None,"")]
+        if not services and not a.get("service_name"):
+            missing.append("services")
         if missing:
             return web.json_response({"ok":False,"error":"application_incomplete","fields":missing},status=422)
+
+        internal_mid=_safe_int(a.get("master_category_id") or payload.get("master_category_id") or payload.get("ai_master_category_id"))
+        if internal_mid is None:
+            return web.json_response({"ok":False,"error":"direction_not_classified","detail":"AI did not determine a catalogue direction yet."},status=422)
+
+        # The admin must receive every service and its exact subdirection.
+        # Do not silently assign service #2/#3 to service #1's category.
+        unresolved=[]
+        for svc in services:
+            if not isinstance(svc,dict): continue
+            name=str(svc.get("name") or svc.get("service_name") or "").strip()
+            if not name: continue
+            cid=_safe_int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
+            if cid is None:
+                unresolved.append(name)
+        if unresolved:
+            return web.json_response({"ok":False,"error":"services_need_classification","services":unresolved},status=422)
+
         if not a.get("document_id"):
             return web.json_response({"ok":False,"error":"document_required"},status=409)
         doc=_one("SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(a["document_id"],p["id"]))
         if not doc: return web.json_response({"ok":False,"error":"document_not_found"},status=404)
         if doc["status"] not in ("pending","approved"):
             return web.json_response({"ok":False,"error":"document_not_ready"},status=409)
+
+        # Keep legacy first-service columns synchronized for compatibility,
+        # while payload_json remains the authoritative multi-service record.
+        first=next((x for x in services if isinstance(x,dict) and str(x.get("name") or x.get("service_name") or "").strip()),None)
+        if first:
+            cid=_safe_int(first.get("matched_subcategory_id") or first.get("subcategory_id") or first.get("category_id"))
+            _exec("""UPDATE partner_applications
+                     SET master_category_id=%s,category_id=%s,subcategory_name=%s,
+                         service_name=%s,price=%s,direction_name=COALESCE(direction_name,%s),
+                         updated_at=NOW()
+                     WHERE id=%s""",
+                  (internal_mid,cid,
+                   str(first.get("subcategory_name") or "").strip() or None,
+                   str(first.get("name") or first.get("service_name") or "").strip()[:300],
+                   first.get("price"),str(payload.get("direction") or "").strip() or None,aid))
+
         row=_exec("""UPDATE partner_applications SET status='pending_admin',updated_at=NOW()
                      WHERE id=%s RETURNING *""",(aid,),True)
         return web.json_response({"ok":True,"application":row})
