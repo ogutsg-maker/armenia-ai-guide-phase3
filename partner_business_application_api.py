@@ -22,6 +22,15 @@ def _db_url():
 def _connect():
     return psycopg.connect(_db_url(), prepare_threshold=None, row_factory=dict_row)
 
+def _safe_int(value):
+    """Return an integer ID when value is a valid integer-like value; otherwise None."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 def _safe(v):
     if isinstance(v,(datetime,date)): return v.isoformat()
     if isinstance(v,Decimal): return float(v)
@@ -493,7 +502,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
             # Partner-facing fields. Catalog classification remains an internal
             # admin task and must never block partner submission.
-            required = ("business_name","location_marz","location_city","address","phone")
+            required = ("location_marz","location_city","phone")
             missing = [k for k in required if a.get(k) in (None, "")]
             if not services and not a.get("service_name"):
                 missing.append("services")
