@@ -233,11 +233,12 @@ async function openServiceProposalEditor(id){
  const x=rows.find(v=>Number(v.id)===Number(id));
  if(!x)return;
  openModal('Ուղղել ծառայության հայտը',`
-   <div class="notice">✎ Դուք խմբագրում եք հենց այս նույն հայտը։ Ուղղությունը և ենթաուղղությունը ադմինը արդեն որոշել է և այստեղ չեն փոխվում։</div>
+   <div class="notice">✎ Դուք խմբագրում եք հենց այս նույն հայտը։ Փոխեք անհրաժեշտ տվյալները, իսկ փաստաթուղթը կարող եք կցել այստեղ։ Ուղղությունը և ենթաուղղությունը համակարգը պահպանում է առանձին և դրանք ձեռքով ընտրելու կարիք չկա։</div>
    <label>Ընկերության / կազմակերպության անվանում</label>
    <input id="svcEditBusiness" value="${esc(x.business_name||'')}" placeholder="Օր․ ABC ՍՊԸ">
    <label>Ծառայություն *</label>
-   <input id="svcEditName" value="${esc(x.service_name||'')}">
+   <input id="svcEditName" value="${esc(x.service_name||'')}" placeholder="Օր․ սանտեխնիկ">
+   <div class="muted" style="margin:4px 0 8px">Պարզապես գրեք ճիշտ անվանումը։ Ուղղությունը և ենթաուղղությունը ձեռքով ընտրելու կարիք չկա։</div>
    <label>Գին, AMD</label>
    <input id="svcEditPrice" type="number" min="0" step="1" value="${esc(x.price??'')}">
    <label>Նկարագրություն</label>
