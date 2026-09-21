@@ -285,7 +285,7 @@ async function loadApplications(){
    '<div id="appEditor'+x.id+'"></div>'+
    '<div class="actions">'+
    '<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել ամբողջ հայտը</button>'+
-   (x.status==='pending_admin'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Ստուգել և հաստատել հայտը</button><button class="btn soft" onclick="appAction('+x.id+',\'send_to_partner\')">↩ Գործընկերոջը լրացման</button>':'')+
+   (x.status==='pending_admin'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել ծառայությունը</button><button class="btn soft" onclick="appAction('+x.id+',\'send_to_partner\')">↩ Գործընկերոջը լրացման</button>':'')+
    (x.status==='pending_partner'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել տվյալները → փաստաթուղթ</button>':'')+
    (x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':'')+
    (x.status==='document_under_review'&&x.document_status==='approved'?'<button class="btn ok" onclick="appAction('+x.id+',\'activate\')">▶ Ակտիվացնել</button>':'')+
