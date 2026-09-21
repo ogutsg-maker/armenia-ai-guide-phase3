@@ -434,7 +434,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             price = float(m.group("price").replace(" ", "").replace(",", "."))
         except ValueError:
             continue
-        full = m.group(0).lower()
+        full = clause.lower()
         is_from = bool(
             "ից" in full or re.search(
                 r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I
