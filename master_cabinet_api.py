@@ -301,20 +301,20 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
     import re
     from difflib import SequenceMatcher
 
-    catalog = await _load_partner_service_catalog(pid, business_id)
+    # New services are classified against the COMPLETE active catalogue.
+    # We deliberately do not start from the partner's approved directions:
+    # otherwise an unrelated approved subcategory can win before AI ever sees
+    # the real catalogue.
+    catalog = await _load_full_service_catalog()
 
     def norm_match(value):
         return re.sub(r"[^a-zа-яёա-ֆ0-9]+", " ", str(value or "").lower(), flags=re.IGNORECASE).strip()
 
     query = norm_match(f"{name} {description}")
     name_norm = norm_match(name)
-    q_tokens = set(query.split())
 
-    # Common service synonyms used in the Armenian/Russian/English catalogue.
-    # These are deliberately semantic and do not create catalogue IDs.
-    # Concept groups are scored as concepts, not by expanding one matched
-    # synonym into every word in the group. This prevents cross-matching such
-    # as "hair coloring" -> haircut just because both contain "hair".
+    # Multilingual semantic groups for services whose short name is often too
+    # small for character similarity alone. They never create catalogue IDs.
     synonym_groups = [
         {"կտրում", "կտրել", "մազերի կտրում", "մազկտրում", "վարսավիր", "haircut", "barber", "парикмахер", "стрижка", "стрижку", "стрижки"},
         {"ներկում", "ներկել", "մազերի ներկում", "մազերի ներկել", "coloring", "hair coloring", "haircolor", "окрашивание", "окраска", "краска"},
@@ -326,6 +326,7 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
         {"էքսկուրսիա", "экскурсия", "экскурсии", "tour", "excursion"},
         {"լուսանկար", "լուսանկարիչ", "ֆոտո", "фотограф", "фотография", "photographer", "photography"},
         {"տեսանկարահանում", "տեսագրում", "վիդեո", "видеограф", "видеосъемка", "video", "videography"},
+        {"սանտեխնիկ", "սանտեխնիկա", "սանտեխնիկական", "սանտեխնիկական աշխատանքներ", "ջրամատակարարում", "ջրահեռացում", "водопровод", "сантехника", "сантехник", "сантехнические работы", "plumbing", "plumber"},
     ]
 
     def concepts(value):
@@ -336,14 +337,10 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
                 found.add(index)
         return found
 
-    q_concepts = concepts(name_norm)
     q_tokens = set(query.split())
+    q_concepts = concepts(name_norm)
 
-    def score(row):
-        labels = [
-            row.get("category_am"), row.get("category_ru"),
-            row.get("category_en"), row.get("category_slug"),
-        ]
+    def label_score(labels):
         best = 0.0
         for label in labels:
             s = norm_match(label)
@@ -357,29 +354,82 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
             token_score = len(q_tokens & label_tokens) / max(1, min(len(q_tokens), len(label_tokens)))
             ratio = SequenceMatcher(None, name_norm, s).ratio()
             containment = 1.0 if (name_norm and (name_norm in s or s in name_norm)) else 0.0
-            # Semantic concept match dominates. Raw token/character similarity
-            # is only a secondary signal for labels without an explicit concept.
-            value = concept_score * 0.70 + token_score * 0.15 + ratio * 0.10 + containment * 0.05
-            best = max(best, value)
+            best = max(best, concept_score * 0.70 + token_score * 0.15 + ratio * 0.10 + containment * 0.05)
         return best
 
-    ranked = sorted(catalog, key=score, reverse=True)
-    best = ranked[0] if ranked else None
-    best_score = score(best) if best else 0.0
+    def master_score(master_rows):
+        # Direction is selected FIRST. A direction gets the strongest signal
+        # from its own translated names and also a bounded signal from the
+        # services/subcategories that belong to it.
+        direct = label_score([
+            master_rows[0].get("master_am"),
+            master_rows[0].get("master_ru"),
+            master_rows[0].get("master_en"),
+            master_rows[0].get("master_slug"),
+        ])
+        child = max((label_score([
+            r.get("category_am"), r.get("category_ru"),
+            r.get("category_en"), r.get("category_slug")
+        ]) for r in master_rows), default=0.0)
+        return max(direct, child * 0.90)
 
-    # If the partner has no approved direction yet, do not block service entry.
-    # We will use the full active catalogue below and create an admin proposal
-    # when the service cannot be safely attached to an approved direction.
+    grouped = {}
+    for row in catalog:
+        grouped.setdefault(_safe_int(row["master_category_id"]), []).append(row)
 
-    # High-confidence deterministic match. This path works even during Groq 429.
-    if best and best_score >= 0.58:
+    ranked_masters = sorted(grouped.values(), key=master_score, reverse=True)
+    selected_rows = ranked_masters[0] if ranked_masters else []
+    selected_master_score = master_score(selected_rows) if selected_rows else 0.0
+    ranked_categories = sorted(
+        selected_rows,
+        key=lambda r: label_score([
+            r.get("category_am"), r.get("category_ru"),
+            r.get("category_en"), r.get("category_slug")
+        ]),
+        reverse=True,
+    )
+    best = ranked_categories[0] if ranked_categories else None
+    best_score = label_score([
+        best.get("category_am"), best.get("category_ru"),
+        best.get("category_en"), best.get("category_slug")
+    ]) if best else 0.0
+
+    # Never accept a weak hierarchical match. In particular, a word such as
+    # "սանտեխնիկ" must not fall into an unrelated category such as apartment
+    # cleaning merely because that direction happens to be approved.
+    if best and selected_master_score >= 0.55 and best_score >= 0.55:
+        master_id = _safe_int(best["master_category_id"])
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT 1 FROM partner_directions
+                       WHERE partner_id=%s AND business_id=%s
+                         AND master_category_id=%s AND status='approved'
+                       LIMIT 1""",
+                    (pid, business_id, master_id),
+                )
+                approved = bool(cur.fetchone())
+
+        if approved:
+            return {
+                "status": "matched",
+                "category_id": _safe_int(best["category_id"]),
+                "master_category_id": master_id,
+                "business_action": "same_business",
+                "proposed_business_name": None,
+                "reason": "Hierarchical multilingual catalogue match: direction first, subcategory second.",
+            }
+
         return {
-            "status": "matched",
+            "status": "proposal",
             "category_id": _safe_int(best["category_id"]),
-            "master_category_id": _safe_int(best["master_category_id"]),
+            "master_category_id": master_id,
+            "out_of_scope_master_id": master_id,
+            "out_of_scope_master_name": best.get("master_am") or best.get("master_ru") or best.get("master_en"),
+            "proposed_name": best.get("category_am") or best.get("category_ru") or best.get("category_en"),
             "business_action": "same_business",
             "proposed_business_name": None,
-            "reason": "Deterministic multilingual catalogue match.",
+            "reason": "The service matches a real catalogue direction, but that direction is not yet approved for this partner.",
         }
 
     # Optional Groq semantic fallback. IMPORTANT: this classification receives
