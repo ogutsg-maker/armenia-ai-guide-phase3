@@ -101,8 +101,9 @@ async function loadApplications(){
    ?'<div class="muted">⏳ AI-ի առաջարկը ուղարկված է ադմինիստրատորին։ Դուք լրացուցիչ ձև լրացնելու կարիք չունեք։</div>'
    :(x.status==='pending_partner'&&isServiceProposal
      ?'<div class="muted">⏳ Ծառայության առաջարկը գտնվում է ադմինիստրատորի ստուգման փուլում։</div>':'');
- const editAction=(x.status==='pending_partner'&&!isServiceProposal)
-   ?'<div class="actions"><button class="secondary" onclick="completeApplication('+x.id+')">✎ Լրացնել տվյալները</button></div>':'';
+ const needsBusinessName=isServiceProposal&&x.status==='pending_partner'&&((x.payload_json||{}).requires_business_name||!String(x.business_name||'').trim());
+ const editAction=(x.status==='pending_partner'&&(!isServiceProposal||needsBusinessName))
+   ?'<div class="actions"><button class="secondary" onclick="'+(needsBusinessName?'completeServiceBusiness('+x.id+')':'completeApplication('+x.id+')')+'">'+(needsBusinessName?'✎ Լրացնել կազմակերպության անվանումը':'✎ Լրացնել տվյալները')+'</button></div>':'';
  const serviceNeedsVerification=isServiceProposal&&(x.status==='pending_partner'||x.status==='document_pending');
  const docAction=(x.status==='pending_partner'||x.status==='document_pending')&&!(!isServiceProposal&&!serviceNeedsVerification)
    ?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել պահանջվող փաստաթուղթը</button></div>':'';
@@ -209,6 +210,27 @@ async function loadDocuments(){const d=await api(`/api/master/${uid}/documents`)
 async function loadSettings(){const d=await api(`/api/master/${uid}/settings`),s=d.settings||{};sName.value=s.business_name||'';sDesc.value=s.business_description||'';sPolicy.value=s.contact_share_policy||'after_booking'}
 async function saveSettings(){await api(`/api/master/${uid}/settings`,{method:'POST',body:JSON.stringify({business_name:sName.value,business_description:sDesc.value,contact_share_policy:sPolicy.value,lang})});alert('Պահպանվեց')}
 async function uploadDocument(){const f=document.getElementById('docUpload')?.files?.[0],s=document.getElementById('docUploadStatus');if(!f){s.textContent='Ընտրեք փաստաթուղթ';return}if(f.size>10*1024*1024){s.textContent='Ֆայլը մեծ է (մինչև 10 MB)';return}const fd=new FormData();fd.append('file',f,f.name);fd.append('document_type','business_verification');try{const r=await fetch('/api/master/'+uid+'/documents/upload',{method:'POST',headers:{'X-Telegram-Init-Data':init},body:fd});const d=await r.json();if(!r.ok||d.ok===false)throw Error(d.error||('HTTP '+r.status));s.textContent='✅ Փաստաթուղթը ուղարկված է';await loadDocuments()}catch(e){s.textContent='❌ '+e.message}}
+async function completeServiceBusiness(id){
+ const rows=(await api('/api/master/'+uid+'/applications')).applications||[];
+ const x=rows.find(v=>Number(v.id)===Number(id));
+ if(!x)return;
+ openModal('Կազմակերպության տվյալներ',`
+   <div class="notice">Այս նոր ուղղության համար անհրաժեշտ է նշել ընկերության/կազմակերպության անվանումը։ Ուղղությունը և ենթաուղղությունը դուք չեք ընտրում։</div>
+   <label>Ընկերության / կազմակերպության անվանում</label>
+   <input id="serviceBusinessName" value="${esc(x.business_name||'')}" placeholder="Օր․ ABC ՍՊԸ">
+   <div id="modalError" class="muted" style="color:var(--danger);margin-top:8px"></div>
+   <div class="actions"><button class="primary" onclick="saveServiceBusiness(${id})">Պահպանել</button></div>`);
+}
+async function saveServiceBusiness(id){
+ const name=document.getElementById('serviceBusinessName')?.value.trim()||'';
+ if(name.length<2){modalError('Կազմակերպության անվանումը պարտադիր է');return}
+ try{
+   await api('/api/master/'+uid+'/applications/'+id,{method:'POST',body:JSON.stringify({business_name:name,payload:{business_name:name,requires_business_name:false}})});
+   closeModal();
+   await loadApplications();
+   await loadDirections();
+ }catch(e){modalError(e.message)}
+}
 function openModal(title,body){modalTitle.textContent=title;modalBody.innerHTML=body;modal.classList.remove('hidden')}function closeModal(){modal.classList.add('hidden')}
 function modalError(message){
   const el=document.getElementById('modalError');
