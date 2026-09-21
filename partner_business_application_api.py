@@ -492,6 +492,13 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                 return web.json_response({"ok":False,"error":"partner_not_found"}, status=404)
 
             aid = int(request.match_info["application_id"])
+            submit_data = {}
+            try:
+                submit_data = await request.json()
+                if not isinstance(submit_data, dict):
+                    submit_data = {}
+            except Exception:
+                submit_data = {}
             a = _one(
                 "SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",
                 (aid, p["id"])
@@ -514,6 +521,12 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # have saved these values only inside payload_json, so normalize them
             # before validation instead of rejecting an otherwise complete form.
             def _profile_value(column, *payload_keys):
+                # Prefer the values currently visible in the partner form when
+                # submit explicitly sends them, then application columns, then
+                # payload_json legacy aliases.
+                value = submit_data.get(column)
+                if value not in (None, ""):
+                    return value
                 value = a.get(column)
                 if value not in (None, ""):
                     return value
