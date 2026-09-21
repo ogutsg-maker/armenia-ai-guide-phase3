@@ -107,6 +107,7 @@ async function loadApplications(){
    ?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել փաստաթուղթը</button></div>':'';
  return `<div class="item"><div class="row"><div><b>📨 Հայտ #${esc(x.id)}</b><div class="muted">${esc(x.business_name||x.business_name_db||'')} · ${esc(x.direction_name||x.master_name_am||x.master_name_ru||'')} · ${esc(x.service_name||'')}</div><div class="muted">${esc(x.location_marz||'')} ${esc(x.location_city||'')} ${esc(x.address||'')}</div></div>${badge(x.status)}</div>${statusText}${editAction}${docAction}${x.status==='document_under_review'?'<div class="muted">⏳ Փաստաթուղթը ուղարկված է ստուգման։</div>':''}</div>`
 }).join('');
+}
 let applicationCatalog=null;
 async function getApplicationCatalog(){
   if(applicationCatalog)return applicationCatalog;
