@@ -932,6 +932,9 @@ Return only the supplied JSON schema."""
             )
         except Exception:
             pass
+        # Groq can fail because of transient 429s or structured-output validation
+        # errors. The partner form must still receive a complete deterministic
+        # extraction from the text already supplied by the partner.
         data = _heuristic(text)
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
         data = _recover_obvious_facts(combined_text, data)
@@ -941,9 +944,47 @@ Return only the supplied JSON schema."""
         )
         if recovered:
             data["services"] = recovered
-        if pending_field in {"business_name", "city", "district"}:
+        if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
             data[pending_field] = _norm(text)
-        data["ready"] = bool(data.get("business_name") and data.get("city") and data.get("services"))
+
+        # Return the same canonical shape as the successful Groq path. This is
+        # critical for the WebApp: it prevents a Groq failure from producing
+        # an application object with empty service rows while the real facts
+        # are already present in the partner's message.
+        data["marz"] = _norm(data.get("marz") or data.get("region"))
+        data["city"] = _norm(data.get("city") or data.get("location_city") or data.get("settlement"))
+        data["phone"] = _norm(data.get("phone") or data.get("phone_number"))
+        normalized = []
+        for item in data.get("services") or []:
+            if not isinstance(item, dict):
+                continue
+            name = _norm(item.get("name") or item.get("service_name") or item.get("service"))
+            if not name:
+                continue
+            price = item.get("price")
+            try:
+                price = float(price) if price not in (None, "") else None
+            except (TypeError, ValueError):
+                price = None
+            price_type = _norm(item.get("price_type") or "fixed").lower()
+            if price_type in {"starting", "starting_from", "from_price"}:
+                price_type = "from"
+            normalized.append({
+                **item,
+                "name": name,
+                "raw_sub_direction": _norm(item.get("raw_sub_direction") or name),
+                "price": price,
+                "price_type": price_type,
+                "matched_subcategory_id": None,
+            })
+        data["services"] = normalized
+        data["master_category_id"] = None
+        data["classification_needs_review"] = True
+        data["missing"] = [
+            key for key in ("marz", "city", "phone", "services")
+            if not data.get(key)
+        ]
+        data["ready"] = not data["missing"]
         return data
 
 async def classify_profile_catalog(db, profile: dict) -> dict:
