@@ -120,7 +120,8 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
         # Armenian locative forms: "Հրազդանում", "Երևանում", "Գյումրիում".
         # Use the Armenian Unicode block instead of a hand-written character
         # range; this avoids regex parser errors such as "bad character range".
-        r"(?:Ես\s+)?([\u0531-\u058F]+?)(?:անում|ենում|ում)(?=\s+(?:գեղեցկության|սրահ|աշխատ|գործ|ունեմ|ենք|է|եմ))",
+        r"(?:Ես\s+)?([\u0531-\u058F]+?)(?:անում|ենում|ում)(?=\s+(?:գեղեցկության|սրահ|աշխատ|գործ|ունեմ|ենք|է|եմ|առաջարկ|կազմակերպ|զբաղ|ծառայ|ուն|աշխատանք))",
+        r"\b([\u0531-\u058F]{3,})(?:անում|ենում|ում)\b",
         r"քաղաք\s+([\u0531-\u058F]+?)(?:անում|ենում|ում)\b",
     ]
     if not out.get("city"):
