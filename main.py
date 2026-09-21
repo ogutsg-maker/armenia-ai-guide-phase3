@@ -212,6 +212,23 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     from partner_registration_ai import extract, missing_question
     from ai_first_partner_onboarding import persist_ready_application, create_partner_application_draft
     profile = await extract(text, history, db, previous_profile=previous, pending_field=pending)
+
+    # Final deterministic safety net for the WebApp. The partner's original
+    # message is authoritative for obvious facts and explicitly priced
+    # services. This runs even when Groq returns 400/429 or malformed JSON.
+    try:
+        from partner_registration_ai import _recover_obvious_facts, _recover_services_from_history
+        source_history = history + [{"role": "user", "content": text}]
+        profile = _recover_obvious_facts(
+            " ".join(str(x.get("content") or "") for x in source_history),
+            dict(profile or {}),
+        )
+        recovered_services = _recover_services_from_history(source_history)
+        if recovered_services:
+            profile["services"] = recovered_services
+    except Exception:
+        logger.exception("Partner deterministic extraction fallback failed")
+
     merged = dict(previous)
 
     for key, value in (profile or {}).items():
