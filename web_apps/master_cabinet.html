@@ -95,24 +95,50 @@ async function loadApplications(){
  const el=document.getElementById('applicationList'); if(!el)return;
  if(!rows.length){el.innerHTML='';return}
  el.innerHTML=rows.map(x=>{
- const payload=(x.payload_json&&typeof x.payload_json==='object')?x.payload_json:{};
- const isServiceProposal=payload.source==='partner_service';
- const statusText=x.status==='pending_admin'
-   ?'<div class="muted">⏳ AI-ի առաջարկը ուղարկված է ադմինիստրատորին։ Դուք լրացուցիչ ձև լրացնելու կարիք չունեք։</div>'
-   :(x.status==='pending_partner'&&isServiceProposal
-     ?'<div class="muted">⏳ Ծառայության առաջարկը գտնվում է ադմինիստրատորի ստուգման փուլում։</div>':'');
- const needsBusinessName=isServiceProposal&&x.status==='pending_partner'&&((x.payload_json||{}).requires_business_name||!String(x.business_name||'').trim());
- const serviceCanEdit=isServiceProposal&&(x.status==='pending_partner'||x.status==='document_pending');
- const editAction=serviceCanEdit
-   ?'<div class="actions"><button class="secondary" onclick="openServiceProposalEditor('+x.id+')">✎ Ուղղել այս հայտը</button></div>'
-   :(x.status==='pending_partner'&&!isServiceProposal
-     ?'<div class="actions"><button class="secondary" onclick="completeApplication('+x.id+')">✎ Լրացնել տվյալները</button></div>':'');
- const serviceNeedsVerification=isServiceProposal&&(x.status==='pending_partner'||x.status==='document_pending');
- const docAction=(x.status==='pending_partner'||x.status==='document_pending')&&!(!isServiceProposal&&!serviceNeedsVerification)
-   ?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել պահանջվող փաստաթուղթը</button></div>':'';
- return `<div class="item"><div class="row"><div><b>📨 Հայտ #${esc(x.id)}</b><div class="muted">${esc(x.business_name||x.business_name_db||'')} · ${esc(x.direction_name||x.master_name_am||x.master_name_ru||'')} · ${esc(x.service_name||'')}</div><div class="muted">${esc(x.location_marz||'')} ${esc(x.location_city||'')} ${esc(x.address||'')}</div></div>${badge(x.status)}</div>${statusText}${editAction}${docAction}${x.status==='document_under_review'?'<div class="muted">⏳ Փաստաթուղթը ուղարկված է ստուգման։</div>':''}</div>`
-}).join('');
+   const payload=(x.payload_json&&typeof x.payload_json==='object')?x.payload_json:{};
+   const isServiceProposal=payload.source==='partner_service';
+   const approved=x.status==='approved';
+   const title=esc(x.service_name||'Ծառայության հայտ');
+   const direction=esc(x.direction_name||x.master_name_am||x.master_name_ru||'');
+   const sub=esc(x.subcategory_name||x.category_name_am||x.category_name_ru||'');
+   const place=[x.location_marz,x.location_city,x.location_village,x.address].filter(Boolean).map(esc).join(' · ');
+   const statusMap={
+     pending_admin:'Սպասում է ադմինի ստուգմանը',
+     pending_partner:'Պետք է լրացնել / ուղղել',
+     document_pending:'Պետք է փաստաթուղթ',
+     document_under_review:'Փաստաթուղթը ստուգվում է',
+     approved:'Հաստատված',
+     rejected:'Մերժված'
+   };
+   const status=statusMap[x.status]||x.status||'—';
+   const canEdit=isServiceProposal&&!approved&&x.status!=='rejected';
+   const canDelete=!approved;
+   const canUpload=isServiceProposal&&(x.status==='pending_partner'||x.status==='document_pending');
+   return `
+     <div class="item app-card">
+       <div class="row">
+         <div style="min-width:0">
+           <div style="font-weight:800;font-size:15px">📨 Հայտ #${esc(x.id)} · ${title}</div>
+           <div class="muted" style="margin-top:5px">${direction||'Ուղղությունը դեռ չի որոշվել'}${sub?' · '+sub:''}</div>
+           ${place?'<div class="muted" style="margin-top:4px">📍 '+place+'</div>':''}
+         </div>
+         <span class="badge ${approved?'approved':(x.status==='rejected'?'rejected':'pending')}">${esc(status)}</span>
+       </div>
+       ${x.admin_note?'<div class="notice" style="margin-top:10px">💬 '+esc(x.admin_note)+'</div>':''}
+       ${canEdit?'<div class="actions"><button class="secondary" onclick="openServiceProposalEditor('+x.id+')">✎ Ուղղել այս հայտը</button></div>':''}
+       ${canUpload?'<div class="actions"><input id="appDoc'+x.id+'" type="file" accept="image/*,.pdf"><button class="primary" onclick="uploadApplicationDocument('+x.id+')">📄 Ուղարկել փաստաթուղթը</button></div>':''}
+       ${canDelete?'<div class="actions"><button class="danger" onclick="deleteApplication('+x.id+')">🗑 Հեռացնել այս հայտը</button></div>':''}
+     </div>`;
+ }).join('');
 }
+async function deleteApplication(id){
+ if(!confirm('Հեռացնե՞լ այս չհաստատված հայտը։'))return;
+ try{
+   await api('/api/master/'+uid+'/applications/'+id,{method:'DELETE'});
+   await loadAll();
+ }catch(e){alert('❌ '+e.message)}
+}
+
 let applicationCatalog=null;
 async function getApplicationCatalog(){
   if(applicationCatalog)return applicationCatalog;
