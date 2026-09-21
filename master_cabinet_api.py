@@ -379,7 +379,8 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
             system = """Classify one partner service against the supplied real catalogue.
 Understand Armenian, Russian and English semantically.
 Return an existing category ID only when it is a clear semantic match.
-Never invent an ID. If there is no clear match, return null."""
+Never invent an ID. If there is no clear match, return null.
+Return the result as valid JSON only."""
             prompt = json.dumps({
                 "service": {"name": name, "description": description[:800]},
                 "subcategories": [
