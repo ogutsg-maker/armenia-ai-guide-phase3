@@ -462,7 +462,8 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         return web.json_response({"ok":True,"directions":rows})
 
     async def application_submit(request):
-        uid=_auth(request); p=_partner(uid)
+        try:
+            uid=_auth(request); p=_partner(uid)
         if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
         aid=int(request.match_info["application_id"])
         a=_one("SELECT * FROM partner_applications WHERE id=%s AND partner_id=%s",(aid,p["id"]))
@@ -514,7 +515,12 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
         row=_exec("""UPDATE partner_applications SET status='pending_admin',updated_at=NOW()
                      WHERE id=%s RETURNING *""",(aid,),True)
-        return web.json_response({"ok":True,"application":row})
+            return web.json_response({"ok":True,"application":row})
+        except web.HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Partner application submit failed")
+            return web.json_response({"ok":False,"error":"application_submit_failed","detail":str(exc)[:500]},status=500)
 
     async def application_document_upload(request):
         uid=_auth(request); p=_partner(uid)
