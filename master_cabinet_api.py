@@ -282,8 +282,6 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
     from difflib import SequenceMatcher
 
     catalog = await _load_partner_service_catalog(pid, business_id)
-    if not catalog:
-        return {"status": "no_catalog", "business_action": "same_business"}
 
     def norm_match(value):
         return re.sub(r"[^a-zа-яёա-ֆ0-9]+", " ", str(value or "").lower(), flags=re.IGNORECASE).strip()
@@ -294,28 +292,32 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
 
     # Common service synonyms used in the Armenian/Russian/English catalogue.
     # These are deliberately semantic and do not create catalogue IDs.
+    # Concept groups are scored as concepts, not by expanding one matched
+    # synonym into every word in the group. This prevents cross-matching such
+    # as "hair coloring" -> haircut just because both contain "hair".
     synonym_groups = [
-        {"կտրում", "կտրել", "մազկտրում", "haircut", "barber", "парикмахер", "стрижка", "стрижку", "стрижки", "hair"},
-        {"ներկում", "ներկել", "մազերի ներկում", "coloring", "haircolor", "окрашивание", "окраска", "краска"},
-        {"ոճավորում", "սանրվածք", "укладка", "уклад", "styling", "hairstyling"},
+        {"կտրում", "կտրել", "մազերի կտրում", "մազկտրում", "վարսավիր", "haircut", "barber", "парикмахер", "стрижка", "стрижку", "стрижки"},
+        {"ներկում", "ներկել", "մազերի ներկում", "մազերի ներկել", "coloring", "hair coloring", "haircolor", "окрашивание", "окраска", "краска"},
+        {"ոճավորում", "սանրվածք", "մազերի սանրվածք", "укладка", "уклад", "styling", "hairstyling"},
         {"մատնահարդարում", "маникюр", "manicure"},
         {"պեդիկյուր", "ոտնահարդարում", "педикюр", "pedicure"},
         {"դիմահարդարում", "макияж", "makeup"},
         {"տրանսֆեր", "transfer", "трансфер"},
         {"էքսկուրսիա", "экскурсия", "экскурсии", "tour", "excursion"},
-        {"լուսանկար", "լուսանկարիչ", "фотограф", "фотография", "photographer", "photography"},
-        {"տեսանկարահանում", "տեսագրում", "видеограф", "видеосъемка", "video", "videography"},
+        {"լուսանկար", "լուսանկարիչ", "ֆոտո", "фотограф", "фотография", "photographer", "photography"},
+        {"տեսանկարահանում", "տեսագրում", "վիդեո", "видеограф", "видеосъемка", "video", "videography"},
     ]
 
-    def expanded_tokens(value):
-        tokens = set(norm_match(value).split())
-        joined = norm_match(value)
-        for group in synonym_groups:
-            if any(term in joined for term in group):
-                tokens.update(group)
-        return tokens
+    def concepts(value):
+        text = norm_match(value)
+        found = set()
+        for index, group in enumerate(synonym_groups):
+            if any(norm_match(term) and norm_match(term) in text for term in group):
+                found.add(index)
+        return found
 
-    q_expanded = expanded_tokens(name_norm)
+    q_concepts = concepts(name_norm)
+    q_tokens = set(query.split())
 
     def score(row):
         labels = [
@@ -327,18 +329,27 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
             s = norm_match(label)
             if not s:
                 continue
-            st = expanded_tokens(s)
-            overlap = len(q_expanded & st) / max(1, min(len(q_expanded), len(st)))
+            label_concepts = concepts(s)
+            concept_score = 0.0
+            if q_concepts and label_concepts:
+                concept_score = len(q_concepts & label_concepts) / max(len(q_concepts), len(label_concepts))
+            label_tokens = set(s.split())
+            token_score = len(q_tokens & label_tokens) / max(1, min(len(q_tokens), len(label_tokens)))
             ratio = SequenceMatcher(None, name_norm, s).ratio()
-            # Exact label containment is strong; semantic synonym overlap is
-            # stronger than raw character similarity for Armenian/Russian.
             containment = 1.0 if (name_norm and (name_norm in s or s in name_norm)) else 0.0
-            best = max(best, overlap * 0.72 + ratio * 0.18 + containment * 0.10)
+            # Semantic concept match dominates. Raw token/character similarity
+            # is only a secondary signal for labels without an explicit concept.
+            value = concept_score * 0.70 + token_score * 0.15 + ratio * 0.10 + containment * 0.05
+            best = max(best, value)
         return best
 
     ranked = sorted(catalog, key=score, reverse=True)
     best = ranked[0] if ranked else None
     best_score = score(best) if best else 0.0
+
+    # If the partner has no approved direction yet, do not block service entry.
+    # We will use the full active catalogue below and create an admin proposal
+    # when the service cannot be safely attached to an approved direction.
 
     # High-confidence deterministic match. This path works even during Groq 429.
     if best and best_score >= 0.58:
@@ -519,7 +530,12 @@ async def api_service_create(request: web.Request):
             conn.commit()
         return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,"new_business":app_bid is None,
                                   "message":"AI-ն կազմեց ամբողջական հայտ և ուղարկեց ադմինիստրատորին։"})
-    if match["status"]=="no_catalog": return web.json_response({"ok":False,"error":"no_approved_catalog","message":"Նախ պետք է ունենաք հաստատված ուղղություն։"},status=409)
+    if match["status"]=="no_catalog":
+        # Kept only for defensive compatibility. The matcher now converts an
+        # empty approved catalogue into an admin proposal instead of blocking
+        # the partner with a technical 409.
+        return web.json_response({"ok":True,"proposal_created":True,
+                                  "message":"Ծառայությունն ուղարկվել է ադմինիստրատորին դասակարգման համար։"})
     if match["status"]=="clarification": return web.json_response({"ok":False,"error":"service_needs_clarification","message":"Գրեք ծառայության մասին մի փոքր ավելի մանրամասն։"},status=422)
     payload=json.dumps({"ai_source":True,"matched_subcategory_id":match["category_id"],"master_category_id":match["master_category_id"],"business_id":bid},ensure_ascii=False)
     with _connect() as conn:
