@@ -262,6 +262,8 @@ async function loadApplications(){
   await getApplicationCatalog();
   const d=await api('/api/admin/universal-applications'),rows=d.applications||[];
   el.innerHTML=rows.length?rows.map(x=>{
+   const payload=(x.payload_json&&typeof x.payload_json==='object')?x.payload_json:{};
+   const isServiceProposal=payload.source==='partner_service';
    const svcs=Array.isArray(x.catalog_services)?x.catalog_services:[];
    const svcHtml=svcs.length
     ?'<div class="detail"><b>🛠 Ծառայություններ և կատալոգ</b>'+svcs.map((s,i)=>{
@@ -275,7 +277,7 @@ async function loadApplications(){
       }).join('')+'</div>'
     :'<div class="detail"><b>🛠 Ծառայություններ</b> '+esc(x.service_name||'—')+' · '+(x.price==null?'—':Number(x.price).toLocaleString()+' ֏')+'</div>';
    return '<div class="card">'+
-   '<div class="row"><div><b>📨 Հայտ #'+esc(x.id)+' · '+esc(x.business_name||x.partner_legacy_name||'Առանց անվան')+'</b><div class="muted">Telegram '+esc(x.user_id||'—')+' · '+esc(x.created_at||'')+'</div></div>'+badge(x.status)+'</div>'+
+   '<div class="row"><div><b>'+(isServiceProposal?'🛠 Ծառայության առաջարկ #':'📨 Հայտ #')+esc(x.id)+' · '+esc(x.business_name||x.partner_legacy_name||'Առանց անվան')+'</b><div class="muted">Telegram '+esc(x.user_id||'—')+' · '+esc(x.created_at||'')+'</div></div>'+badge(x.status)+'</div>'+
    '<div class="detail"><b>🏢 Բիզնես</b> '+esc(x.business_name||x.partner_legacy_name||'—')+' · <b>📍 Տեղադրություն</b> '+esc([x.location_marz,x.location_city,x.location_village,x.address].filter(Boolean).join(', ')||'—')+'</div>'+
    '<div class="detail"><b>☎ Հեռախոս</b> '+esc(x.phone||'—')+'</div>'+
    svcHtml+
@@ -285,7 +287,7 @@ async function loadApplications(){
    '<div id="appEditor'+x.id+'"></div>'+
    '<div class="actions">'+
    '<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել ամբողջ հայտը</button>'+
-   (x.status==='pending_admin'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել ծառայությունը</button><button class="btn soft" onclick="appAction('+x.id+',\'send_to_partner\')">↩ Գործընկերոջը լրացման</button>':'')+
+   (x.status==='pending_admin'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել ծառայությունը</button>'+(!isServiceProposal?'<button class="btn soft" onclick="appAction('+x.id+',\'send_to_partner\')">↩ Գործընկերոջը լրացման</button>':''):'')+
    (x.status==='pending_partner'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել տվյալները → փաստաթուղթ</button>':'')+
    (x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':'')+
    (x.status==='document_under_review'&&x.document_status==='approved'?'<button class="btn ok" onclick="appAction('+x.id+',\'activate\')">▶ Ակտիվացնել</button>':'')+
