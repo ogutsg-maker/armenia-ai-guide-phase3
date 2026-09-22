@@ -603,8 +603,9 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                 missing.append("location_marz")
             if not location_city:
                 missing.append("location_city")
-            if not phone:
-                missing.append("phone")
+            # Phone is optional at initial partner registration. It can be
+            # added later from the firm settings; do not block a complete
+            # application when the partner did not mention a phone number.
             if not services and not a.get("service_name"):
                 missing.append("services")
             if missing:
