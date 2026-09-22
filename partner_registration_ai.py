@@ -146,7 +146,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
             r"(?:salon|салон|studio|студия)\s+([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})",
         ]
         name_patterns.extend([
-            r"(?:ունեմ|ունենք)\s+\*{0,2}([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'\- ]{1,80})\*{0,2}\s+(?=(?:ավտոսպասարկման|ավտոսպասարկման կենտրոն|սրահ|բիզնես|կազմակերպություն|կենտրոն|ծառայություն))",
+            r"(?:ունեմ|ունենք)\s+\*{0,2}([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'\- ]{1,80})\*{0,2}\s*\*{0,2}\s+(?=(?:ավտոսպասարկման|ավտոսպասարկման կենտրոն|սրահ|բիզնես|կազմակերպություն|կենտրոն|ծառայություն))",
             r"(?:բիզնես(?:ի)?\s+անուն(?:ը)?|անվանում(?:ը)?)\s*[:՝-]\s*\*{0,2}([^\n,;.!?]{2,100})\*{0,2}"
         ])
         for pattern in name_patterns:
@@ -427,6 +427,18 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         if not m:
             continue
         name = _norm(m.group("name")).strip(" —–-:;")
+        # Remove an introductory list label before the actual service, e.g.
+        # «Հիմնական ծառայություններն են՝ ավտոմեքենայի ախտորոշում».
+        low_name = name.lower()
+        intro_markers = (
+            "հիմնական ծառայություններն են", "ծառայություններն են",
+            "հիմնական ծառայություններ", "մեր ծառայություններն են",
+            "основные услуги", "услуги:", "main services", "our services"
+        )
+        if any(marker in low_name for marker in intro_markers):
+            parts = re.split(r"[՝:]", name, maxsplit=1)
+            if len(parts) == 2:
+                name = _norm(parts[1]).strip(" —–-:;")
         # Remove conversational wrappers so a whole sentence can never become
         # the service name (e.g. "Ռազդանում ունեմ BYUTI անունով սրահ").
         name = re.sub(
