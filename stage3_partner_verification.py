@@ -601,11 +601,23 @@ async def api_admin_partner_detail(request):
                     start, end = clocks[-2], clocks[-1]
                     for day in ("mon", "tue", "wed", "thu", "fri", "sat"):
                         hours[day] = {"from": start, "to": end}
-            if re.search(
-                r"(?:կիրակի|воскресенье|sunday).{0,120}"
-                r"(?:հանգստյան|հանգստ|выходн|выходной|closed|off|չենք աշխատում|չի աշխատում|աշխատանքային չէ)",
-                text_value, re.IGNORECASE | re.DOTALL,
-            ):
+            normalized_hours_text = re.sub(r"\s+", " ", text_value).strip().lower()
+            sunday_closed = (
+                re.search(
+                    r"(?:կիրակի|воскресенье|sunday).{0,200}"
+                    r"(?:հանգստյան(?:\s+օր)?|հանգստ|չենք\s+աշխատում|չի\s+աշխատում|աշխատանքային\s+չէ|փակ|выходн|не\s+работ|закрыт|closed|off)",
+                    normalized_hours_text,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                or
+                re.search(
+                    r"(?:հանգստյան(?:\s+օր)?|հանգստ|չենք\s+աշխատում|չի\s+աշխատում|աշխատանքային\s+չէ|փակ|выходн|не\s+работ|закрыт|closed|off).{0,200}"
+                    r"(?:կիրակի|воскресенье|sunday)",
+                    normalized_hours_text,
+                    re.IGNORECASE | re.DOTALL,
+                )
+            )
+            if sunday_closed:
                 hours["sun"] = {"closed": True}
             if isinstance(payload_hours, dict) and payload_hours:
                 # Keep complete hours recovered from the original text, while
