@@ -1291,7 +1291,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             },ensure_ascii=False)
             # Keep descriptions service-specific. The original
             # free-form registration text belongs to the company/application.
-            service_description=str(svc.get("description") or "").strip()[:5000] or None
+            service_description=str(svc.get("description") or "").strip()[:5000] or ""
             if existing:
                 _exec("""UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',
                          data_json=%s::jsonb,updated_at=NOW() WHERE id=%s""",
@@ -1360,3 +1360,5 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     app.router.add_get("/api/master/{id}/applications/{application_id}",application_get)
     app.router.add_get("/api/admin/universal-applications",admin_applications)
     app.router.add_post("/api/admin/partner-applications/{application_id}/action",admin_application_action)
+
+
