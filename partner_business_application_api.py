@@ -177,7 +177,7 @@ def ensure_business_application_schema():
     # Old registration services inherited the whole free-form company profile
     # as their description. Remove only that duplicated profile text.
     _exec("""UPDATE services s
-             SET description=NULL, updated_at=NOW()
+             SET description='', updated_at=NOW()
              FROM partner_businesses b
              JOIN partners p ON p.id=b.partner_id
              WHERE s.business_id=b.id
