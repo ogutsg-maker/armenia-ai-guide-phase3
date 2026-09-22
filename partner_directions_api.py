@@ -12,6 +12,7 @@ import psycopg
 from aiohttp import web
 
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
+from config import BOT_TOKEN
 
 
 def _db_url():
@@ -387,7 +388,7 @@ def register_partner_direction_routes(app, db=None, bot=None):
                 try:
                     user = validate_telegram_webapp_init_data(
                         raw_init,
-                        os.getenv("BOT_TOKEN", "").strip(),
+                        BOT_TOKEN,
                     )
                     uid = int(user["id"])
                 except (TelegramWebAppAuthError, KeyError, TypeError, ValueError):
