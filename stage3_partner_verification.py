@@ -602,8 +602,8 @@ async def api_admin_partner_detail(request):
                     for day in ("mon", "tue", "wed", "thu", "fri", "sat"):
                         hours[day] = {"from": start, "to": end}
             if re.search(
-                r"(?:կիրակի|воскресенье|sunday).{0,50}"
-                r"(?:հանգստյան|выходн|closed|off)",
+                r"(?:կիրակի|воскресенье|sunday).{0,120}"
+                r"(?:հանգստյան|հանգստ|выходн|выходной|closed|off|չենք աշխատում|չի աշխատում|աշխատանքային չէ)",
                 text_value, re.IGNORECASE | re.DOTALL,
             ):
                 hours["sun"] = {"closed": True}
