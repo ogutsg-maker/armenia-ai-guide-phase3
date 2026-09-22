@@ -510,7 +510,17 @@ async def api_admin_partner_detail(request):
                     data_json = {}
             if not isinstance(data_json, dict):
                 data_json = {}
-            if data_json.get("working_hours"):
+            existing_hours = data_json.get("working_hours")
+            complete_week = (
+                isinstance(existing_hours, dict)
+                and all(
+                    isinstance(existing_hours.get(day), dict)
+                    and existing_hours[day].get("from")
+                    and existing_hours[day].get("to")
+                    for day in ("mon", "tue", "wed", "thu", "fri", "sat")
+                )
+            )
+            if complete_week:
                 obj["data_json"] = data_json
                 continue
             app_row = _db_fetchone(
