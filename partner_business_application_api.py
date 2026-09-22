@@ -396,14 +396,14 @@ def _partner(uid):
 
 def _extract_registration_working_hours(payload, description=""):
     """Return normalized object-level working hours from registration data."""
-    if isinstance(payload, dict):
-        raw = payload.get("working_hours")
-        if isinstance(raw, dict) and raw:
-            return raw
-    text = str(description or "")
     import re
     hours = {}
-    # Common Armenian/Russian/English form: Mon-Sat 09:00-18:00, Sunday off.
+    if isinstance(payload, dict):
+        raw = payload.get("working_hours")
+        if isinstance(raw, dict):
+            hours.update(raw)
+    text = str(description or "")
+    # Fill only missing days from the original registration text.
     m = re.search(
         r"(?:երկուշաբթի(?:ից|ից մինչև)?\\s*(?:շաբաթ|շաբաթվա)|"
         r"понедельник(?:а)?\\s*(?:по|до)\\s*(?:суббота|субботы)|"
@@ -414,8 +414,11 @@ def _extract_registration_working_hours(payload, description=""):
     if m:
         start,end=m.group(1),m.group(2)
         for day in ("mon","tue","wed","thu","fri","sat"):
-            hours[day]={"from":start,"to":end}
-    if re.search(r"(?:կիրակի|воскресенье|sunday).{0,50}(?:հանգստյան|выходн|closed|off)", text, re.IGNORECASE | re.DOTALL):
+            hours.setdefault(day, {"from":start,"to":end})
+    if "sun" not in hours and re.search(
+        r"(?:կիրակի|воскресенье|sunday).{0,50}(?:հանգստյան|выходн|closed|off)",
+        text, re.IGNORECASE | re.DOTALL
+    ):
         hours["sun"]={"closed":True}
     return hours
 
