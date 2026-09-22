@@ -616,10 +616,14 @@ async def api_admin_partner_detail(request):
             ):
                 hours["sun"] = {"closed": True}
             if isinstance(payload_hours, dict) and payload_hours:
-                # Keep complete hours recovered from the original text, while
-                # allowing explicit payload values to override individual days.
+                # Payload values are authoritative only when they actually
+                # contain a usable day definition. Do not let empty legacy
+                # values such as sun={} erase a recovered closed Sunday.
                 for day, value in payload_hours.items():
-                    hours[day] = value
+                    if not isinstance(value, dict):
+                        continue
+                    if value.get("closed") or (value.get("from") and value.get("to")):
+                        hours[day] = value
             data_json["working_hours"] = hours
             obj["data_json"] = data_json
         business["objects"] = objects
