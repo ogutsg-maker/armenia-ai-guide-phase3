@@ -83,6 +83,7 @@ def ensure_business_application_schema():
       partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       description TEXT,
+      phone TEXT,
       status TEXT NOT NULL DEFAULT 'active'
         CHECK(status IN ('active','pending','suspended','archived')),
       is_default BOOLEAN NOT NULL DEFAULT FALSE,
@@ -417,11 +418,12 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         data=await request.json()
         name=str(data.get("name") or "").strip()
         description=str(data.get("description") or "").strip()
+        phone=str(data.get("phone") or "").strip()[:100]
         if len(name)<2: return web.json_response({"ok":False,"error":"business_name_required"},status=400)
         row=_exec("""UPDATE partner_businesses
-                     SET name=%s, description=%s, updated_at=NOW()
+                     SET name=%s, description=%s, phone=%s, updated_at=NOW()
                      WHERE id=%s AND partner_id=%s AND status='active'
-                     RETURNING *""",(name,description or None,bid,p["id"]),True)
+                     RETURNING *""",(name,description or None,phone or None,bid,p["id"]),True)
         if not row: return web.json_response({"ok":False,"error":"business_not_found"},status=404)
         return web.json_response({"ok":True,"business":row})
 
