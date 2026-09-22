@@ -477,6 +477,7 @@ async def api_admin_partner_applications(request):
         """
         SELECT p.id, p.user_id, p.business_name, p.business_description, p.status,
                p.verification_status, p.rejection_reason, p.created_at,
+               (SELECT po.city FROM partner_objects po JOIN partner_businesses pb ON pb.id=po.business_id WHERE po.partner_id=p.id ORDER BY pb.is_default DESC,po.id LIMIT 1) AS city,
                COALESCE((SELECT COUNT(*) FROM partner_verification_documents d WHERE d.partner_id=p.id),0) AS document_count,
                (SELECT MAX(d.created_at) FROM partner_verification_documents d WHERE d.partner_id=p.id) AS last_document_at
         FROM partners p
