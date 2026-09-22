@@ -264,6 +264,29 @@ def _catalog_for_partner(partner_id, business_id=None):
         WHERE pd.partner_id=%s AND pd.status<>'deleted' AND (%s IS NULL OR pd.business_id=%s)
         ORDER BY m.id
     """, (partner_id,business_id,business_id))
+    # Canonical fallback: services already prove which catalogue directions
+    # belong to this firm. Do not let a stale/missing partner_directions row
+    # hide a real approved direction from the cabinet.
+    if business_id is not None:
+        service_masters = _fetchall("""
+            SELECT DISTINCT c.master_category_id
+            FROM services s
+            JOIN categories c ON c.id=s.category_id
+            WHERE s.partner_id=%s AND s.business_id=%s
+              AND (s.status IS NULL OR s.status IN ('active','approved'))
+              AND c.master_category_id IS NOT NULL
+        """, (partner_id,business_id))
+        existing_masters = {int(x["master_category_id"]) for x in rows if x.get("master_category_id") is not None}
+        for x in service_masters:
+            mid=int(x["master_category_id"])
+            if mid in existing_masters:
+                continue
+            m=_fetchone("SELECT id,name_am,name_ru,slug,is_active FROM master_categories WHERE id=%s",(mid,))
+            if m:
+                rows.append({"direction_id":None,"master_category_id":mid,"status":"approved","rejection_reason":None,
+                             "name_am":m["name_am"],"name_ru":m["name_ru"],"slug":m["slug"],"document_count":0})
+        rows.sort(key=lambda x:int(x.get("master_category_id") or 0))
+
     selected = _fetchall("""
         SELECT pdc.partner_direction_id, c.id,c.master_category_id,c.name_am,c.name_ru,c.slug,c.is_active
         FROM partner_direction_categories pdc
