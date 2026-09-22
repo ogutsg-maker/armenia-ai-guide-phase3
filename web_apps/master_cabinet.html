@@ -140,7 +140,7 @@ function editService(id){
   const s=state.services.find(x=>String(x.id)===String(id));if(!s)return;
   const d=state.directions.find(x=>(x.subcategories||[]).some(c=>String(c.id)===String(s.category_id)));
   const back=d?'openDirection('+d.direction_id+')':'openBusiness('+state.current.id+')';
-  document.getElementById('service').innerHTML='<button class="back" onclick="'+back+'">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h2>✎ '+tr('services')+'</h2><p>'+esc(s.name||'')+'</p></div></div>'+
+  document.getElementById('service').innerHTML='<button class="back" onclick="'+back+'">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h2>✎ '+tr('serviceEdit')+'</h2><p>'+esc(s.name||'')+'</p></div></div>'+
     '<div class="field"><label>'+tr('name')+'</label><input id="editServiceName" value="'+esc(s.name||'')+'"></div>'+
     '<div class="field"><label>'+tr('price')+'</label><input id="editServicePrice" type="number" min="0" step="1" value="'+esc(s.price??'')+'"></div>'+
     '<div class="field"><label>'+tr('description')+'</label><textarea id="editServiceDescription">'+esc(s.description||'')+'</textarea></div>'+
