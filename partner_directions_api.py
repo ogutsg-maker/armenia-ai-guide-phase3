@@ -13,6 +13,7 @@ from aiohttp import web
 
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
 from config import BOT_TOKEN
+from master_cabinet_api import _auth_partner as _cabinet_auth_partner
 
 
 def _db_url():
@@ -383,16 +384,12 @@ def register_partner_direction_routes(app, db=None, bot=None):
         # exactly like the main cabinet API does.
         uid=int(request.match_info["id"])
         if uid == 0:
-            raw_init = request.headers.get("X-Telegram-Init-Data", "").strip()
-            if raw_init:
-                try:
-                    user = validate_telegram_webapp_init_data(
-                        raw_init,
-                        BOT_TOKEN,
-                    )
-                    uid = int(user["id"])
-                except (TelegramWebAppAuthError, KeyError, TypeError, ValueError):
-                    return web.json_response({"ok":False,"error":"telegram_init_data_invalid"},status=401)
+            # Use the exact same authentication implementation as the
+            # working partner cabinet endpoints (/services, /objects).
+            try:
+                uid = _cabinet_auth_partner(request)
+            except web.HTTPException as exc:
+                return web.json_response({"ok":False,"error":"telegram_init_data_invalid"},status=exc.status)
         partner=_partner(uid)
         if not partner:
             return web.json_response({"ok":False,"error":"partner_registration_required"},status=404)
