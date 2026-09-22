@@ -268,18 +268,29 @@ async def api_object_update(request: web.Request):
     # backward-compatible.
     hours = data.get("working_hours")
     if hours is not None:
-        try:
-            existing = fields.get("data_json")
-            if isinstance(existing, str):
-                existing = json.loads(existing or "{}")
-            elif not isinstance(existing, dict):
-                existing = dict(existing or {})
-        except Exception:
-            existing = {}
+        # Read the current JSON from the database first. The previous version
+        # built this from request fields only, which could silently replace
+        # existing object metadata when the hours editor was saved.
+        with _connect() as read_conn:
+            with read_conn.cursor() as read_cur:
+                read_cur.execute(
+                    "SELECT data_json FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s",
+                    (oid, pid, bid),
+                )
+                current_row = read_cur.fetchone()
+        existing = {}
+        if current_row:
+            current_json = current_row.get("data_json") if isinstance(current_row, dict) else None
+            if isinstance(current_json, str):
+                try:
+                    current_json = json.loads(current_json or "{}")
+                except Exception:
+                    current_json = {}
+            if isinstance(current_json, dict):
+                existing = dict(current_json)
 
-        # Always persist the complete weekly schedule. A checked "day off"
-        # must become an explicit {closed:true} record, including Saturday
-        # and Sunday; never drop those days because their time fields are empty.
+        # Persist every weekday explicitly. A checked day off is always
+        # stored as {closed:true}, including Saturday and Sunday.
         normalized_hours = {}
         if isinstance(hours, dict):
             for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun"):
@@ -294,8 +305,6 @@ async def api_object_update(request: web.Request):
                         item["from"] = str(value.get("from")).strip()
                     if str(value.get("to") or "").strip():
                         item["to"] = str(value.get("to")).strip()
-                    # An empty day is kept explicitly instead of being
-                    # mistaken for a missing schedule on the next load.
                     normalized_hours[day] = item
         existing["working_hours"] = normalized_hours
         fields["data_json"] = json.dumps(existing, ensure_ascii=False)
