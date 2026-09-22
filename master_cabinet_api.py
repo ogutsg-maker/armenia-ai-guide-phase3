@@ -211,6 +211,32 @@ async def api_object_create(request: web.Request):
     return web.json_response({"ok": True, "object": _json(row)})
 
 
+async def api_object_update(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    bid = _business_id(request,pid)
+    oid = int(request.match_info["object_id"])
+    data = await request.json()
+    allowed = {"object_name", "name", "address", "city", "marz", "data_json"}
+    fields = {k:data[k] for k in allowed if k in data}
+    if "name" in fields and "object_name" not in fields:
+        fields["object_name"] = fields.pop("name")
+    if "data_json" in fields and not isinstance(fields["data_json"], str):
+        fields["data_json"] = json.dumps(fields["data_json"])
+    if not fields:
+        return web.json_response({"ok":True})
+    sets = ", ".join(f"{k}=%s" for k in fields)
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE partner_objects SET {sets} WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",
+                        (*fields.values(), oid, pid, bid))
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        return web.json_response({"ok":False,"error":"object_not_found"},status=404)
+    return web.json_response({"ok":True,"object":_json(row)})
+
+
 async def api_object_delete(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -765,6 +791,7 @@ async def api_bookings(request: web.Request):
 async def api_locations(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM partner_locations WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid,bid))
@@ -927,6 +954,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_get("/api/master/{id}/objects", api_objects)
     app.router.add_post("/api/master/{id}/objects", api_object_create)
     app.router.add_delete("/api/master/{id}/objects/{object_id}", api_object_delete)
+    app.router.add_post("/api/master/{id}/objects/{object_id}", api_object_update)
     app.router.add_get("/api/master/{id}/services", api_services)
     app.router.add_get("/api/master/{id}/service-catalog", api_service_catalog)
     app.router.add_post("/api/master/{id}/subcategory-proposals", api_subcategory_proposal)
