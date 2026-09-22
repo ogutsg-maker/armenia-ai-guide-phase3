@@ -531,6 +531,16 @@ async def api_admin_partner_detail(request):
                 (pid, business["id"]),
             )
             if not app_row:
+                # Some legacy applications were created before business_id was
+                # attached. Fall back to the partner's latest approved application.
+                app_row = _db_fetchone(
+                    """SELECT description, payload_json
+                       FROM partner_applications
+                       WHERE partner_id=%s AND status='approved'
+                       ORDER BY created_at DESC,id DESC LIMIT 1""",
+                    (pid,),
+                )
+            if not app_row:
                 obj["data_json"] = data_json
                 continue
             payload = app_row.get("payload_json") if isinstance(app_row, dict) else {}
@@ -550,6 +560,24 @@ async def api_admin_partner_detail(request):
                 str(payload.get("text") or ""),
                 str(payload_hours or "") if isinstance(payload_hours, str) else "",
             ]
+            # Legacy payloads may keep the original partner message under a
+            # different field. Include every nested string value when recovering
+            # facts, without changing or persisting the payload itself.
+            def _payload_strings(value):
+                if isinstance(value, str):
+                    return [value]
+                if isinstance(value, dict):
+                    out = []
+                    for item in value.values():
+                        out.extend(_payload_strings(item))
+                    return out
+                if isinstance(value, list):
+                    out = []
+                    for item in value:
+                        out.extend(_payload_strings(item))
+                    return out
+                return []
+            payload_text_parts.extend(_payload_strings(payload))
             text_value = " ".join(x for x in payload_text_parts if x).strip()
             hours = {}
             mm = re.search(
