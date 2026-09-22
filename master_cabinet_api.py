@@ -276,7 +276,28 @@ async def api_object_update(request: web.Request):
                 existing = dict(existing or {})
         except Exception:
             existing = {}
-        existing["working_hours"] = hours if isinstance(hours, dict) else {}
+
+        # Always persist the complete weekly schedule. A checked "day off"
+        # must become an explicit {closed:true} record, including Saturday
+        # and Sunday; never drop those days because their time fields are empty.
+        normalized_hours = {}
+        if isinstance(hours, dict):
+            for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun"):
+                value = hours.get(day)
+                if not isinstance(value, dict):
+                    value = {}
+                if bool(value.get("closed")):
+                    normalized_hours[day] = {"closed": True}
+                else:
+                    item = {}
+                    if str(value.get("from") or "").strip():
+                        item["from"] = str(value.get("from")).strip()
+                    if str(value.get("to") or "").strip():
+                        item["to"] = str(value.get("to")).strip()
+                    # An empty day is kept explicitly instead of being
+                    # mistaken for a missing schedule on the next load.
+                    normalized_hours[day] = item
+        existing["working_hours"] = normalized_hours
         fields["data_json"] = json.dumps(existing, ensure_ascii=False)
     if "data_json" in fields and not isinstance(fields["data_json"], str):
         fields["data_json"] = json.dumps(fields["data_json"], ensure_ascii=False)
