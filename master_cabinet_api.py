@@ -230,6 +230,14 @@ async def api_objects(request: web.Request):
                 if hours:
                     data_json["working_hours"]=hours
                     row["data_json"]=data_json
+                    # Canonicalize legacy/missing hours in the database immediately.
+                    # This prevents a later cabinet reload from reverting to an
+                    # older registration schedule.
+                    cur.execute(
+                        "UPDATE partner_objects SET data_json=COALESCE(data_json,'{}'::jsonb) || %s::jsonb WHERE id=%s AND partner_id=%s AND business_id=%s",
+                        (json.dumps({"working_hours": hours}, ensure_ascii=False), row["id"], pid, bid),
+                    )
+            conn.commit()
     return web.json_response({"ok": True, "objects": _json(rows)})
 
 
