@@ -767,7 +767,7 @@ async def api_locations(request: web.Request):
     pid = _require_partner(uid)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM partner_locations WHERE partner_id=%s ORDER BY id", (pid,))
+            cur.execute("SELECT * FROM partner_locations WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid,bid))
             rows = cur.fetchall()
     return web.json_response({"ok": True, "locations": _json(rows)})
 
@@ -787,9 +787,10 @@ async def api_documents(request: web.Request):
     pid = _require_partner(uid)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("""SELECT id,partner_id,document_type,original_filename,mime_type,file_size,status,
+            cur.execute("""SELECT id,partner_id,business_id,document_type,original_filename,mime_type,file_size,status,
                                   rejection_reason,partner_direction_id,created_at,reviewed_at
-                           FROM partner_verification_documents WHERE partner_id=%s ORDER BY id DESC""", (pid,))
+                           FROM partner_verification_documents
+                           WHERE partner_id=%s AND business_id=%s ORDER BY id DESC""", (pid,bid))
             rows = cur.fetchall()
     return web.json_response({"ok": True, "documents": _json(rows)})
 
