@@ -552,7 +552,10 @@ async def api_admin_partner_detail(request):
             ):
                 hours["sun"] = {"closed": True}
             if isinstance(payload.get("working_hours"), dict) and payload["working_hours"]:
-                hours = payload["working_hours"]
+                # Keep complete hours recovered from the original text, while
+                # allowing explicit payload values to override individual days.
+                for day, value in payload["working_hours"].items():
+                    hours[day] = value
             data_json["working_hours"] = hours
             obj["data_json"] = data_json
         business["objects"] = objects
