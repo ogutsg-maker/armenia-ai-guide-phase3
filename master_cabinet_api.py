@@ -186,58 +186,24 @@ async def api_objects(request: web.Request):
     bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid,bid))
+            cur.execute(
+                "SELECT * FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id",
+                (pid,bid),
+            )
             rows = cur.fetchall()
-
-            # Legacy approved registrations may predate object-level working-hours
-            # storage. Derive the hours once from the approved application so the
-            # cabinet can display them; saving the object persists them in data_json.
-            for row in rows:
-                data_json=row.get("data_json") if isinstance(row,dict) else None
-                if isinstance(data_json,str):
-                    try: data_json=json.loads(data_json or "{}")
-                    except Exception: data_json={}
-                if not isinstance(data_json,dict): data_json={}
-                if data_json.get("working_hours"): 
-                    row["data_json"]=data_json
-                    continue
-                cur.execute(
-                    """SELECT description,payload_json
-                       FROM partner_applications
-                       WHERE partner_id=%s AND business_id=%s AND status='approved'
-                       ORDER BY created_at DESC,id DESC LIMIT 1""",
-                    (pid,bid)
-                )
-                app_row=cur.fetchone()
-                if not app_row:
-                    continue
-                payload=app_row.get("payload_json") if isinstance(app_row,dict) else {}
-                if isinstance(payload,str):
-                    try: payload=json.loads(payload or "{}")
-                    except Exception: payload={}
-                if not isinstance(payload,dict): payload={}
-                text_value=str(app_row.get("description") or "")
-                import re
-                hours={}
-                mm=re.search(r"(?:երկուշաբթի(?:ից|ից մինչև)?\\s*(?:շաբաթ|շաբաթվա)|понедельник(?:а)?\\s*(?:по|до)\\s*(?:суббота|субботы)|monday\\s*(?:to|through|- )\\s*saturday).{0,80}?(\\d{1,2}:\\d{2}).{0,40}?(?:մինչև|до|to|-)\\s*(\\d{1,2}:\\d{2})",text_value,re.IGNORECASE|re.DOTALL)
-                if mm:
-                    for day in ("mon","tue","wed","thu","fri","sat"):
-                        hours[day]={"from":mm.group(1),"to":mm.group(2)}
-                if re.search(r"(?:կիրակի|воскресенье|sunday).{0,50}(?:հանգստյան|выходн|closed|off)",text_value,re.IGNORECASE|re.DOTALL):
-                    hours["sun"]={"closed":True}
-                if isinstance(payload.get("working_hours"),dict) and payload["working_hours"]:
-                    hours=payload["working_hours"]
-                if hours:
-                    data_json["working_hours"]=hours
-                    row["data_json"]=data_json
-                    # Canonicalize legacy/missing hours in the database immediately.
-                    # This prevents a later cabinet reload from reverting to an
-                    # older registration schedule.
-                    cur.execute(
-                        "UPDATE partner_objects SET data_json=COALESCE(data_json,'{}'::jsonb) || %s::jsonb WHERE id=%s AND partner_id=%s AND business_id=%s",
-                        (json.dumps({"working_hours": hours}, ensure_ascii=False), row["id"], pid, bid),
-                    )
-            conn.commit()
+    # Object working_hours is canonical data. Do not reconstruct or overwrite
+    # it from the registration application when the object already has a
+    # schedule; otherwise a later cabinet reload can undo a partner's edit.
+    for row in rows:
+        data_json = row.get("data_json") if isinstance(row,dict) else None
+        if isinstance(data_json,str):
+            try:
+                data_json=json.loads(data_json or "{}")
+            except Exception:
+                data_json={}
+        if not isinstance(data_json,dict):
+            data_json={}
+        row["data_json"]=data_json
     return web.json_response({"ok": True, "objects": _json(rows)})
 
 
