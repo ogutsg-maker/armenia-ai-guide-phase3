@@ -497,7 +497,65 @@ async def api_admin_partner_detail(request):
     docs = _db_fetchall("SELECT id, partner_direction_id, document_type, original_filename, mime_type, file_size, status, rejection_reason, storage_path, created_at, reviewed_at FROM partner_verification_documents WHERE partner_id=%s ORDER BY created_at DESC", (pid,))
     businesses = _db_fetchall("SELECT id, name, description, phone, status, is_default FROM partner_businesses WHERE partner_id=%s ORDER BY is_default DESC,id", (pid,))
     for business in businesses:
-        business["objects"] = _db_fetchall("SELECT id, object_name, address, city, marz, data_json FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid, business["id"]))
+        objects = _db_fetchall("SELECT id, object_name, address, city, marz, data_json FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid, business["id"]))
+        # Legacy approved registrations may predate object-level working-hours storage.
+        # Recover the original hours from the approved application so admin sees
+        # the complete schedule just like the partner cabinet.
+        for obj in objects:
+            data_json = obj.get("data_json") if isinstance(obj, dict) else None
+            if isinstance(data_json, str):
+                try:
+                    data_json = json.loads(data_json or "{}")
+                except Exception:
+                    data_json = {}
+            if not isinstance(data_json, dict):
+                data_json = {}
+            if data_json.get("working_hours"):
+                obj["data_json"] = data_json
+                continue
+            app_row = _db_fetchone(
+                """SELECT description, payload_json
+                   FROM partner_applications
+                   WHERE partner_id=%s AND business_id=%s AND status='approved'
+                   ORDER BY created_at DESC,id DESC LIMIT 1""",
+                (pid, business["id"]),
+            )
+            if not app_row:
+                obj["data_json"] = data_json
+                continue
+            payload = app_row.get("payload_json") if isinstance(app_row, dict) else {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload or "{}")
+                except Exception:
+                    payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            text_value = str(app_row.get("description") or "")
+            import re
+            hours = {}
+            mm = re.search(
+                r"(?:երկուշաբթի(?:ից|ից մինչև)?\s*(?:շաբաթ|շաբաթվա)|"
+                r"понедельник(?:а)?\s*(?:по|до)\s*(?:суббота|субботы)|"
+                r"monday\s*(?:to|through|- )\s*saturday).{0,80}?"
+                r"(\d{1,2}:\d{2}).{0,40}?"
+                r"(?:մինչև|до|to|-)\s*(\d{1,2}:\d{2})",
+                text_value, re.IGNORECASE | re.DOTALL,
+            )
+            if mm:
+                for day in ("mon", "tue", "wed", "thu", "fri", "sat"):
+                    hours[day] = {"from": mm.group(1), "to": mm.group(2)}
+            if re.search(
+                r"(?:կիրակի|воскресенье|sunday).{0,50}"
+                r"(?:հանգստյան|выходн|closed|off)",
+                text_value, re.IGNORECASE | re.DOTALL,
+            ):
+                hours["sun"] = {"closed": True}
+            if isinstance(payload.get("working_hours"), dict) and payload["working_hours"]:
+                hours = payload["working_hours"]
+            data_json["working_hours"] = hours
+            obj["data_json"] = data_json
+        business["objects"] = objects
     return web.json_response({"ok": True, "admin_id": admin_id, "partner": partner, "documents": docs, "businesses": businesses})
 
 
