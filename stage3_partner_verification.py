@@ -541,8 +541,16 @@ async def api_admin_partner_detail(request):
                     payload = {}
             if not isinstance(payload, dict):
                 payload = {}
-            text_value = str(app_row.get("description") or "")
             import re
+            payload_hours = payload.get("working_hours")
+            payload_text_parts = [
+                str(app_row.get("description") or ""),
+                str(payload.get("raw_text") or ""),
+                str(payload.get("free_text") or ""),
+                str(payload.get("text") or ""),
+                str(payload_hours or "") if isinstance(payload_hours, str) else "",
+            ]
+            text_value = " ".join(x for x in payload_text_parts if x).strip()
             hours = {}
             mm = re.search(
                 r"(?:երկուշաբթի(?:ից|ից մինչև)?\s*(?:շաբաթ|շաբաթվա)|"
@@ -561,10 +569,10 @@ async def api_admin_partner_detail(request):
                 text_value, re.IGNORECASE | re.DOTALL,
             ):
                 hours["sun"] = {"closed": True}
-            if isinstance(payload.get("working_hours"), dict) and payload["working_hours"]:
+            if isinstance(payload_hours, dict) and payload_hours:
                 # Keep complete hours recovered from the original text, while
                 # allowing explicit payload values to override individual days.
-                for day, value in payload["working_hours"].items():
+                for day, value in payload_hours.items():
                     hours[day] = value
             data_json["working_hours"] = hours
             obj["data_json"] = data_json
