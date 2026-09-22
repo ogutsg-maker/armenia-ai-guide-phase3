@@ -494,7 +494,10 @@ async def api_admin_partner_detail(request):
     if not partner:
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
     docs = _db_fetchall("SELECT id, partner_direction_id, document_type, original_filename, mime_type, file_size, status, rejection_reason, storage_path, created_at, reviewed_at FROM partner_verification_documents WHERE partner_id=%s ORDER BY created_at DESC", (pid,))
-    return web.json_response({"ok": True, "admin_id": admin_id, "partner": partner, "documents": docs})
+    businesses = _db_fetchall("SELECT id, name, description, phone, status, is_default FROM partner_businesses WHERE partner_id=%s ORDER BY is_default DESC,id", (pid,))
+    for business in businesses:
+        business["objects"] = _db_fetchall("SELECT id, object_name, address, city, marz, data_json FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid, business["id"]))
+    return web.json_response({"ok": True, "admin_id": admin_id, "partner": partner, "documents": docs, "businesses": businesses})
 
 
 async def api_admin_partner_document_url(request):
