@@ -259,7 +259,9 @@ async def api_object_update(request: web.Request):
         # Use a PostgreSQL JSON expression below; mark the presence so the
         # update always writes the normalized schedule.
         fields.pop("data_json", None)
-        fields["data_json"] = json.dumps({"working_hours": normalized_hours}, ensure_ascii=False)
+        fields.pop("working_hours", None)
+    if normalized_hours is not None:
+        fields["working_hours"] = json.dumps(normalized_hours, ensure_ascii=False)
     if not fields:
         return web.json_response({"ok":True})
 
@@ -268,16 +270,15 @@ async def api_object_update(request: web.Request):
     values = []
     set_parts = []
     for key, value in fields.items():
-        if key == "data_json" and hours is not None:
-            set_parts.append("data_json = COALESCE(data_json, '{}'::jsonb) || %s::jsonb")
+        if key == "working_hours":
+            set_parts.append("working_hours = %s::jsonb")
             values.append(value)
+        elif key == "data_json":
+            set_parts.append("data_json = COALESCE(data_json, '{}'::jsonb) || %s::jsonb")
+            values.append(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
         else:
-            if key == "data_json":
-                set_parts.append("data_json = COALESCE(data_json, '{}'::jsonb) || %s::jsonb")
-                values.append(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
-            else:
-                set_parts.append(f"{key}=%s")
-                values.append(value)
+            set_parts.append(f"{key}=%s")
+            values.append(value)
 
     sets = ", ".join(set_parts)
     with _connect() as conn:
