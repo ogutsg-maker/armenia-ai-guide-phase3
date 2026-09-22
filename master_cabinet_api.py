@@ -221,8 +221,23 @@ async def api_object_update(request: web.Request):
     fields = {k:data[k] for k in allowed if k in data}
     if "name" in fields and "object_name" not in fields:
         fields["object_name"] = fields.pop("name")
+    # Working hours belong to the physical object, not the company.
+    # Keep them inside data_json so existing partner_objects schemas remain
+    # backward-compatible.
+    hours = data.get("working_hours")
+    if hours is not None:
+        try:
+            existing = fields.get("data_json")
+            if isinstance(existing, str):
+                existing = json.loads(existing or "{}")
+            elif not isinstance(existing, dict):
+                existing = dict(existing or {})
+        except Exception:
+            existing = {}
+        existing["working_hours"] = hours if isinstance(hours, dict) else {}
+        fields["data_json"] = json.dumps(existing, ensure_ascii=False)
     if "data_json" in fields and not isinstance(fields["data_json"], str):
-        fields["data_json"] = json.dumps(fields["data_json"])
+        fields["data_json"] = json.dumps(fields["data_json"], ensure_ascii=False)
     if not fields:
         return web.json_response({"ok":True})
     sets = ", ".join(f"{k}=%s" for k in fields)
