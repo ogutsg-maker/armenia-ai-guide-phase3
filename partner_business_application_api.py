@@ -349,7 +349,9 @@ def ensure_business_application_schema():
                  substring(a.description from 'Мы занимаемся ([^\\.]+)'),
                  substring(a.description from 'We provide ([^\\.]+)'),
                  b.description
-             ), updated_at=NOW()
+             ),
+                 phone=COALESCE(NULLIF(a.phone,''), b.phone),
+                 updated_at=NOW()
              FROM partner_applications a
              WHERE a.id=(
                  SELECT aa.id FROM partner_applications aa
@@ -1369,8 +1371,11 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         if not approved_description:
             approved_description = raw_description.split(".",1)[0].strip()[:500] or None
         _exec("""UPDATE partner_businesses
-                 SET name=%s, description=%s, updated_at=NOW()
-                 WHERE id=%s""",(approved_name or "Նոր բիզնես",approved_description,bid))
+                 SET name=%s,
+                     description=%s,
+                     phone=COALESCE(NULLIF(%s,''),phone),
+                     updated_at=NOW()
+                 WHERE id=%s""",(approved_name or "Նոր բիզնես",approved_description,str(a.get("phone") or "").strip()[:100],bid))
         _exec(
             """UPDATE partners
                SET business_name=%s,
