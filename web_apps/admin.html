@@ -305,11 +305,34 @@ async function editApplication(id){
  $('appEditor'+id).innerHTML=renderApplicationEditor(x);
 }
 async function appAction(id,action){
- const list=(await api('/api/admin/universal-applications')).applications||[]; const x=list.find(v=>Number(v.id)===Number(id))||{};
- let data={action};
- if(action==='reject' || action==='send_to_partner')data.admin_note=prompt(action==='send_to_partner'?'Ինչը պետք է ուղղի գործընկերը? / Что партнёр должен исправить?':'Պատճառ / Причина')|| (action==='send_to_partner'?'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.':'Մերժվել է ադմինիստրատորի կողմից');
- await post('/api/admin/partner-applications/'+id+'/action',data);
- await loadApplications();
+ const list=(await api('/api/admin/universal-applications')).applications||[];
+ const x=list.find(v=>Number(v.id)===Number(id))||{};
+ try{
+   // Initial partner registration: one admin click completes the existing
+   // three-stage backend flow (approve -> approve document -> activate).
+   // A new service proposal for an already existing business keeps its
+   // dedicated approve_service_proposal flow.
+   const payload=(x.payload_json&&typeof x.payload_json==='object')?x.payload_json:{};
+   const isServiceProposal=payload.source==='partner_service';
+   const isInitialRegistration=!isServiceProposal && x.status==='pending_admin';
+   if(action==='approve_service_proposal' && isInitialRegistration){
+     await post('/api/admin/partner-applications/'+id+'/action',{action:'approve'});
+     const afterApprove=(await api('/api/admin/universal-applications')).applications||[];
+     const a1=afterApprove.find(v=>Number(v.id)===Number(id))||{};
+     if(!a1.document_id) throw Error('document_required');
+     await post('/api/admin/partner-applications/'+id+'/action',{action:'approve_document'});
+     await post('/api/admin/partner-applications/'+id+'/action',{action:'activate'});
+   }else{
+     let data={action};
+     if(action==='reject' || action==='send_to_partner')
+       data.admin_note=prompt(action==='send_to_partner'?'Ինչը պետք է ուղղի գործընկերը? / Что партнёр должен исправить?':'Պատճառ / Причина')||
+         (action==='send_to_partner'?'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.':'Մերժվել է ադմինիստրատորի կողմից');
+     await post('/api/admin/partner-applications/'+id+'/action',data);
+   }
+   await loadApplications();
+ }catch(e){
+   alert(e.message||'Չհաջողվեց կատարել գործողությունը');
+ }
 }
 async function loadPage(p){if(p==='overview'){await Promise.all([loadStats(),loadPartners()])}else if(p==='partners')await loadPartners();else if(p==='cats')await loadCats();else if(p==='orders')await loadOrders();else if(p==='disputes')await loadDisputes();else if(p==='potential')await loadPotential();else if(p==='proposals'){await loadProposals();await loadSubcategoryProposals();await loadServiceDirectionRequests()}else if(p==='applications')await loadApplications()}
 (async()=>{if(await auth())await loadPage('overview').catch(showError)})();
