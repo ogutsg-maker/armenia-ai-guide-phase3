@@ -160,6 +160,8 @@ def ensure_business_application_schema():
     )
     """)
     # Attach legacy records to the existing/default business.
+    # Old records predate the multi-company model, so legacy rows without a
+    # business are safely attached only to the partner's default company.
     _exec("""UPDATE partner_directions pd SET business_id=b.id
              FROM partner_businesses b
              WHERE b.partner_id=pd.partner_id AND b.is_default=TRUE
@@ -168,6 +170,21 @@ def ensure_business_application_schema():
              FROM partner_businesses b
              WHERE b.partner_id=s.partner_id AND b.is_default=TRUE
                AND s.business_id IS NULL""")
+    _exec("""UPDATE partner_verification_documents d SET business_id=b.id
+             FROM partner_businesses b
+             WHERE b.partner_id=d.partner_id AND b.is_default=TRUE
+               AND d.business_id IS NULL""")
+    # Old registration services inherited the whole free-form company profile
+    # as their description. Remove only that duplicated profile text.
+    _exec("""UPDATE services s
+             SET description=NULL, updated_at=NOW()
+             FROM partner_businesses b
+             JOIN partners p ON p.id=b.partner_id
+             WHERE s.business_id=b.id
+               AND b.is_default=TRUE
+               AND s.description IS NOT NULL
+               AND p.business_description IS NOT NULL
+               AND trim(s.description)=trim(p.business_description)""")
     _exec("""UPDATE partner_verification_documents d SET business_id=b.id
              FROM partner_businesses b
              WHERE b.partner_id=d.partner_id AND b.is_default=TRUE
@@ -239,7 +256,9 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      LEFT JOIN partner_businesses b ON b.id=a.business_id
                      LEFT JOIN master_categories m ON m.id=a.master_category_id
                      LEFT JOIN categories c ON c.id=a.category_id
-                     WHERE a.partner_id=%s ORDER BY a.created_at DESC""",(p["id"],))
+                     WHERE a.partner_id=%s
+                       AND a.status NOT IN ('approved')
+                     ORDER BY a.created_at DESC""",(p["id"],))
         # The editable form is driven by the full JSON profile, not only the
         # legacy one-service columns. Normalize every draft here too, because
         # the WebApp may open a saved draft directly from this endpoint.
@@ -1090,14 +1109,17 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                 "matched_subcategory_id":cid,
                 "direction_id":direction_id
             },ensure_ascii=False)
+            # Keep descriptions service-specific. The original
+            # free-form registration text belongs to the company/application.
+            service_description=str(svc.get("description") or "").strip()[:5000] or None
             if existing:
                 _exec("""UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',
                          data_json=%s::jsonb,updated_at=NOW() WHERE id=%s""",
-                      (cid,name,a.get("description"),price,data_json,existing["id"]))
+                      (cid,name,service_description,price,data_json,existing["id"]))
             else:
                 _exec("""INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json)
                          VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s::jsonb)""",
-                      (a["partner_id"],bid,cid,name,a.get("description"),price,data_json))
+                      (a["partner_id"],bid,cid,name,service_description,price,data_json))
 
         _exec("""UPDATE partner_applications SET business_id=%s,status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                  WHERE id=%s""",(bid,_auth(request),aid))
