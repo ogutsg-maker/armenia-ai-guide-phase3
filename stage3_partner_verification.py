@@ -315,21 +315,32 @@ def _audit(admin_id, action, entity_id, details=None):
 
 
 async def api_partner_documents(request):
-    uid = int(request.match_info["id"])
-    partner = _partner_for_user(uid)
-    if not partner:
-        return web.json_response({"ok": False, "error": "partner_registration_required"}, status=404)
+    # The partner cabinet uses the same Telegram WebApp authentication and
+    # firm scoping as the rest of the current cabinet API.  This endpoint
+    # used to trust the numeric URL id and returned partner-wide documents,
+    # which made the firm room show 0 documents even when an approved
+    # document already belonged to the selected firm.
+    from master_cabinet_api import _auth_partner, _business_id, _require_partner
+
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    bid = _business_id(request, pid)
+
     docs = _db_fetchall(
-        "SELECT id, partner_direction_id, document_type, original_filename, mime_type, file_size, status, rejection_reason, created_at, reviewed_at FROM partner_verification_documents WHERE partner_id=%s ORDER BY created_at DESC",
-        (partner["id"],),
+        """SELECT id, partner_id, business_id, partner_direction_id,
+                  document_type, original_filename, mime_type, file_size,
+                  status, rejection_reason, created_at, reviewed_at
+           FROM partner_verification_documents
+           WHERE partner_id=%s AND business_id=%s
+           ORDER BY id DESC""",
+        (pid, bid),
     )
     return web.json_response({
         "ok": True,
         "partner": {
-            "id": partner["id"],
-            "status": partner.get("status"),
-            "verification_status": partner.get("verification_status"),
-            "rejection_reason": partner.get("rejection_reason") or "",
+            "id": pid,
+            "status": "approved",
+            "verification_status": "approved",
         },
         "documents": docs,
     })
