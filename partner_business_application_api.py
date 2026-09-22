@@ -228,7 +228,7 @@ def ensure_business_application_schema():
                AND d.business_id IS DISTINCT FROM a.business_id""")
     _exec("""UPDATE partner_businesses b
              SET description=COALESCE(
-                 substring(a.description from 'Մենք զբաղվում ենք ([^։]+)'),
+                 COALESCE(substring(a.description from 'Մենք զբաղվում ենք ([^։]+)'), substring(a.description from '^(.+?)։[[:space:]]*Հիմնական ծառայություններն')),
                  substring(a.description from 'Мы занимаемся ([^\.]+)'),
                  substring(a.description from 'We provide ([^\.]+)'),
                  b.description
@@ -241,6 +241,28 @@ def ensure_business_application_schema():
              )
              AND a.description IS NOT NULL
              AND trim(a.description)<>''""")
+
+    # First repair existing direction rows that were created before the
+    # business_id migration. Match them to the firm's real active services.
+    _exec("""
+    UPDATE partner_directions pd
+       SET business_id=s.business_id,
+           status=CASE WHEN pd.status='deleted' THEN 'approved' ELSE pd.status END,
+           updated_at=NOW()
+    FROM (
+        SELECT DISTINCT ON (partner_id,master_category_id)
+               partner_id,business_id,c.master_category_id
+        FROM services s
+        JOIN categories c ON c.id=s.category_id
+        WHERE s.business_id IS NOT NULL
+          AND s.status IN ('active','approved')
+          AND c.master_category_id IS NOT NULL
+        ORDER BY partner_id,master_category_id,s.id DESC
+    ) s
+    WHERE pd.partner_id=s.partner_id
+      AND pd.master_category_id=s.master_category_id
+      AND (pd.business_id IS DISTINCT FROM s.business_id)
+    """)
 
     # Reconcile live services into their firm's direction tree. Older approvals can
     # have active services with business_id while the direction row was created
