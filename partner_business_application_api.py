@@ -427,6 +427,28 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     async def businesses(request):
         uid=_auth(request); p=_partner(uid)
         if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        # Keep the firm profile synchronized with the latest approved registration.
+        _exec("""UPDATE partner_businesses b
+                 SET phone=COALESCE(
+                     NULLIF(b.phone,''),
+                     NULLIF(a.phone,''),
+                     NULLIF(a.payload_json->>'phone',''),
+                     b.phone
+                 ),
+                 updated_at=CASE
+                     WHEN COALESCE(NULLIF(b.phone,''),NULLIF(a.phone,''),NULLIF(a.payload_json->>'phone','')) IS NOT NULL
+                     THEN NOW() ELSE b.updated_at END
+                 FROM partner_applications a
+                 WHERE a.id=(
+                     SELECT aa.id
+                     FROM partner_applications aa
+                     WHERE aa.business_id=b.id
+                       AND aa.partner_id=%s
+                       AND aa.status='approved'
+                     ORDER BY aa.created_at DESC,aa.id DESC
+                     LIMIT 1
+                 )
+                 AND b.partner_id=%s""",(p["id"],p["id"]))
         rows=_all("""SELECT * FROM partner_businesses WHERE partner_id=%s
                      ORDER BY is_default DESC,id""",(p["id"],))
         return web.json_response({"ok":True,"businesses":rows,"current":default_business(p["id"])})
