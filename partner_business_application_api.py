@@ -395,31 +395,70 @@ def _partner(uid):
     return _one("SELECT * FROM partners WHERE user_id=%s LIMIT 1",(uid,))
 
 def _extract_registration_working_hours(payload, description=""):
-    """Return normalized object-level working hours from registration data."""
+    """Return normalized object-level working hours from registration data.
+
+    Registration text is free-form, so keep the parser tolerant of Armenian,
+    Russian and English wording. Prefer explicit structured AI hours, then
+    recover missing days from every textual field stored in the application.
+    """
     import re
+
     hours = {}
     if isinstance(payload, dict):
         raw = payload.get("working_hours")
         if isinstance(raw, dict):
             hours.update(raw)
-    text = str(description or "")
-    # Fill only missing days from the original registration text.
+
+    texts = [str(description or "")]
+
+    def collect_strings(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                collect_strings(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                collect_strings(item)
+        elif isinstance(value, str) and value.strip():
+            texts.append(value.strip())
+
+    if isinstance(payload, dict):
+        collect_strings(payload)
+
+    text = "\n".join(dict.fromkeys(texts))
+
+    # Fill missing Mon-Sat from common free-form registration wording.
     m = re.search(
-        r"(?:երկուշաբթի(?:ից|ից մինչև)?\\s*(?:շաբաթ|շաբաթվա)|"
-        r"понедельник(?:а)?\\s*(?:по|до)\\s*(?:суббота|субботы)|"
-        r"monday\\s*(?:to|through|- )\\s*saturday)"
-        r".{0,80}?(\\d{1,2}:\\d{2}).{0,40}?(?:մինչև|до|to|-)\\s*(\\d{1,2}:\\d{2})",
+        r"(?:երկուշաբթի(?:ից|ից մինչև)?\s*(?:շաբաթ|շաբաթվա)|"
+        r"понедельник(?:а)?\s*(?:по|до)\s*(?:суббота|субботы)|"
+        r"monday\s*(?:to|through|-|–)\s*saturday)"
+        r".{0,120}?(\d{1,2}:\d{2}).{0,60}?"
+        r"(?:մինչև|до|to|[-–])\s*(\d{1,2}:\d{2})",
         text, re.IGNORECASE | re.DOTALL
     )
     if m:
-        start,end=m.group(1),m.group(2)
-        for day in ("mon","tue","wed","thu","fri","sat"):
-            hours.setdefault(day, {"from":start,"to":end})
-    if "sun" not in hours and re.search(
-        r"(?:կիրակի|воскресенье|sunday).{0,50}(?:հանգստյան|выходн|closed|off)",
-        text, re.IGNORECASE | re.DOTALL
-    ):
-        hours["sun"]={"closed":True}
+        start, end = m.group(1), m.group(2)
+        for day in ("mon", "tue", "wed", "thu", "fri", "sat"):
+            hours.setdefault(day, {"from": start, "to": end})
+
+    # Explicit Sunday-closed wording. Support both orders:
+    # "Կիրակի հանգստյան օր է" and "Հանգստյան օր է՝ կիրակի".
+    sunday_closed = (
+        re.search(
+            r"(?:կիրակի|воскресенье|sunday).{0,120}?"
+            r"(?:հանգստյան(?:\s+օր)?|հանգստի|փակ|չի\s+աշխատ|չենք\s+աշխատ|"
+            r"выходн|не\s+работ|закрыт|closed|off)",
+            text, re.IGNORECASE | re.DOTALL,
+        )
+        or re.search(
+            r"(?:հանգստյան(?:\s+օր)?|հանգստի|փակ|չի\s+աշխատ|չենք\s+աշխատ|"
+            r"выходн|не\s+работ|закрыт|closed|off).{0,120}?"
+            r"(?:կիրակի|воскресенье|sunday)",
+            text, re.IGNORECASE | re.DOTALL,
+        )
+    )
+    if "sun" not in hours and sunday_closed:
+        hours["sun"] = {"closed": True}
+
     return hours
 
 def register_business_application_routes(app, bot_token=None, admin_id=None):
