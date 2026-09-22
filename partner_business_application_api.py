@@ -358,6 +358,12 @@ def ensure_business_application_schema():
              AND a.description IS NOT NULL
              AND trim(a.description)<>''""")
 
+    # Final guard: Armenian registration text uses "։", not a normal
+    # period, so older cleanup could retain the entire paragraph.
+    _exec("""UPDATE partner_businesses
+             SET description=trim(substring(description from '^(.+?)։[[:space:]]*Հիմնական ծառայություններն'))
+             WHERE description ~ '։[[:space:]]*Հիմնական ծառայություններն'""")
+ 
 def default_business(partner_id:int):
     return _one("""SELECT * FROM partner_businesses
                    WHERE partner_id=%s AND status='active'
