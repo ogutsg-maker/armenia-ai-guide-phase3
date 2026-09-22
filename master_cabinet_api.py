@@ -298,8 +298,12 @@ async def api_object_update(request: web.Request):
             set_parts.append("data_json = COALESCE(data_json, '{}'::jsonb) || %s::jsonb")
             values.append(value)
         else:
-            set_parts.append(f"{key}=%s")
-            values.append(value)
+            if key == "data_json":
+                set_parts.append("data_json = COALESCE(data_json, '{}'::jsonb) || %s::jsonb")
+                values.append(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
+            else:
+                set_parts.append(f"{key}=%s")
+                values.append(value)
 
     sets = ", ".join(set_parts)
     with _connect() as conn:
