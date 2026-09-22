@@ -128,7 +128,7 @@ async function saveObjectEdit(id){
   const address=document.getElementById('editObjectAddress')?.value.trim()||'';
   const marz=document.getElementById('editObjectMarz')?.value.trim()||'';
   const working_hours={};
-  ['mon','tue','wed','thu','fri','sat','sun'].forEach(function(k){const from=document.getElementById('hour_'+k+'_from')?.value||'';const to=document.getElementById('hour_'+k+'_to')?.value||'';const closed=!!document.getElementById('hour_'+k+'_closed')?.checked;working_hours[k]=closed?{closed:true}:{from,to}});
+  ['mon','tue','wed','thu','fri','sat','sun'].forEach(function(k){const closedEl=document.getElementById('hour_'+k+'_closed');const fromEl=document.getElementById('hour_'+k+'_from');const toEl=document.getElementById('hour_'+k+'_to');const closed=!!closedEl?.checked;const from=String(fromEl?.value||'').trim();const to=String(toEl?.value||'').trim();working_hours[k]=closed?{closed:true}:{from,to};if(closed){if(fromEl)fromEl.value='';if(toEl)toEl.value='';}});
   if(name.length<2){toast(tr('name'));return}
   try{
     const d=await api('/api/master/0/objects/'+id,{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{object_name:name,city,address,marz,working_hours}});
