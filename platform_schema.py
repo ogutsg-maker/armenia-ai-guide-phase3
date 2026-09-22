@@ -89,6 +89,16 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Canonical object-level weekly schedule. Kept separate from data_json so
+    -- partner edits cannot be overwritten by legacy registration metadata.
+    ALTER TABLE partner_objects
+        ADD COLUMN IF NOT EXISTS working_hours JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+    UPDATE partner_objects
+       SET working_hours = COALESCE(data_json->'working_hours', '{}'::jsonb)
+     WHERE working_hours = '{}'::jsonb
+       AND COALESCE(data_json->'working_hours', '{}'::jsonb) <> '{}'::jsonb;
+
     CREATE TABLE IF NOT EXISTS services (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
