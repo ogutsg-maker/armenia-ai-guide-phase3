@@ -125,6 +125,11 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
         r"քաղաք\s+([\u0531-\u058F]+?)(?:անում|ենում|ում)\b",
     ]
     if not out.get("city"):
+        # Explicit Armenian city wording: «Հրազդան քաղաքում», «Երևան քաղաքում».
+        m_city = re.search(r"([\u0531-\u058F]{3,})\s+քաղաք(?:ում|ում\b)", raw, flags=re.I)
+        if m_city:
+            out["city"] = m_city.group(1).strip()
+    if not out.get("city"):
         for pattern in city_patterns:
             m = re.search(pattern, raw, flags=re.I)
             if not m:
@@ -161,6 +166,21 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
         m = re.search(r"(?:հասցեն|հասցե|адрес|address)\s*[:՝-]?\s*([^.!?։\n]+)", raw, flags=re.I)
         if m:
             out["address"] = _norm(m.group(1)).strip(" .,;")
+    if not out.get("working_hours"):
+        hour_patterns = [
+            r"(?:աշխատում\s+ենք|աշխատանքային\s+ժամ(?:երը|եր)?|ժամերը)\s*(?:՝|:|-)?\s*([^.!?։\n]+)",
+            r"(?:ամեն\s+օր)\s*(?:՝|:|-)?\s*ժամ(?:ը|ը)?\s*(\d{1,2}:\d{2})\s*(?:-ից|ից)?\s*(?:մինչև|[-–—])\s*(\d{1,2}:\d{2})\s*(?:-ը|ը)?",
+            r"(?:daily|every\s+day|ежедневно)\s*[:\-]?\s*(\d{1,2}:\d{2})\s*(?:-|до|to)\s*(\d{1,2}:\d{2})"
+        ]
+        for pattern in hour_patterns:
+            hm = re.search(pattern, raw, flags=re.I)
+            if hm:
+                if len(hm.groups()) >= 2 and hm.group(2):
+                    out["working_hours"] = f"Ամեն օր՝ {hm.group(1)}–{hm.group(2)}"
+                else:
+                    out["working_hours"] = _norm(hm.group(1))
+                break
+
     if not out.get("direction") and re.search(
         r"ֆոտոստուդ|լուսանկար|ֆոտոսեսիա|տեսանկարահանում|տեսանյութ|фотостуд|фотосес|видеосъём|видеосъем|photograph|video",
         low, flags=re.I
@@ -781,6 +801,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
             "marz": {"type": ["string", "null"]},
             "address": {"type": ["string", "null"]},
             "phone": {"type": ["string", "null"]},
+            "working_hours": {"type": ["string", "null"]},
             "business_action": {"type": "string"},
             "proposed_business_name": {"type": ["string", "null"]},
             "city": {"type": ["string", "null"]},
@@ -805,7 +826,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                 "additionalProperties": False,
             }},
                     },
-        "required": ["business_name", "marz", "city", "address", "phone", "business_action", "proposed_business_name", "district", "direction",
+        "required": ["business_name", "marz", "city", "address", "phone", "working_hours", "business_action", "proposed_business_name", "district", "direction",
                      "master_category_id", "subcategory_names", "description",
                      "confidence", "ambiguities", "needs_review", "services"],
         "additionalProperties": False,
@@ -814,7 +835,8 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
     system = """You are the AI registration concierge for Armenia AI Guide.
 Understand Armenian, Russian and English.
 Extract facts from the partner's current message and accumulated history.
-Extract marz/region, exact address, and business phone when stated. Never invent them.
+Extract marz/region, exact address, business phone, and working hours when stated. Never invent them.
+WORKING HOURS: preserve the stated schedule. For «ամեն օր՝ ժամը 09:00-ից մինչև 19:00-ը» return «Ամեն օր՝ 09:00–19:00». Never leave working_hours null when an explicit schedule is present.
 You are doing strict Named Entity Recognition (NER) and classification, not free-form form filling.
 Never copy a complete sentence into a field.
 BUSINESS NAME: extract only the proper business/organization name. For "BYUTI անունով սրահ" return "BYUTI", never "սրահ BYUTI" and never surrounding context.
@@ -865,7 +887,7 @@ Return only the supplied JSON schema."""
                                    "partner_onboarding_extract", schema, 1100)
         data = dict(previous_profile)
 
-        for field in ("business_name", "marz", "address", "phone", "business_action", "proposed_business_name", "city", "district", "direction",
+        for field in ("business_name", "marz", "address", "phone", "working_hours", "business_action", "proposed_business_name", "city", "district", "direction",
                       "master_category_id", "description", "confidence", "ambiguities", "needs_review"):
             value = ai_data.get(field)
             if value not in (None, ""):
