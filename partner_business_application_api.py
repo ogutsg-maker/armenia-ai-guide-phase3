@@ -242,6 +242,14 @@ def ensure_business_application_schema():
              AND a.description IS NOT NULL
              AND trim(a.description)<>''""")
 
+    # Keep the firm description short and business-focused. The registration
+    # text may contain the full service list, location and working hours;
+    # those belong to structured firm/object/service fields.
+    _exec("""UPDATE partner_businesses
+             SET description=trim(substring(description from 'Մենք զբաղվում ենք ([^։]+)'))
+             WHERE description ~ 'Մենք զբաղվում ենք [^։]+'
+               AND description ~ 'Հիմնական ծառայություններն'""")
+ 
     # First repair existing direction rows that were created before the
     # business_id migration. Match them to the firm's real active services.
     _exec("""
