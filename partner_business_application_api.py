@@ -387,6 +387,31 @@ def _admin(request):
 def _partner(uid):
     return _one("SELECT * FROM partners WHERE user_id=%s LIMIT 1",(uid,))
 
+def _extract_registration_working_hours(payload, description=""):
+    """Return normalized object-level working hours from registration data."""
+    if isinstance(payload, dict):
+        raw = payload.get("working_hours")
+        if isinstance(raw, dict) and raw:
+            return raw
+    text = str(description or "")
+    import re
+    hours = {}
+    # Common Armenian/Russian/English form: Mon-Sat 09:00-18:00, Sunday off.
+    m = re.search(
+        r"(?:երկուշաբթի(?:ից|ից մինչև)?\\s*(?:շաբաթ|շաբաթվա)|"
+        r"понедельник(?:а)?\\s*(?:по|до)\\s*(?:суббота|субботы)|"
+        r"monday\\s*(?:to|through|- )\\s*saturday)"
+        r".{0,80}?(\\d{1,2}:\\d{2}).{0,40}?(?:մինչև|до|to|-)\\s*(\\d{1,2}:\\d{2})",
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        start,end=m.group(1),m.group(2)
+        for day in ("mon","tue","wed","thu","fri","sat"):
+            hours[day]={"from":start,"to":end}
+    if re.search(r"(?:կիրակի|воскресенье|sunday).{0,50}(?:հանգստյան|выходн|closed|off)", text, re.IGNORECASE | re.DOTALL):
+        hours["sun"]={"closed":True}
+    return hours
+
 def register_business_application_routes(app, bot_token=None, admin_id=None):
     app["business_bot_token"]=bot_token
     app["business_admin_id"]=admin_id
@@ -1312,10 +1337,22 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                                       WHERE partner_id=%s AND business_id=%s
                                       ORDER BY id LIMIT 1""",(a["partner_id"],bid))
             if not existing_object:
+                object_data={"source":"partner_application","application_id":aid}
+                registration_hours=_extract_registration_working_hours(payload,a.get("description") or "")
+                if registration_hours:
+                    object_data["working_hours"]=registration_hours
                 _exec("""INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,data_json)
                          VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb)""",
                       (a["partner_id"],bid,object_name,object_address,object_city,object_marz,
-                       json.dumps({"source":"partner_application","application_id":aid},ensure_ascii=False)))
+                       json.dumps(object_data,ensure_ascii=False)))
+            else:
+                registration_hours=_extract_registration_working_hours(payload,a.get("description") or "")
+                if registration_hours:
+                    _exec("""UPDATE partner_objects
+                             SET data_json=COALESCE(data_json,'{}'::jsonb) || %s::jsonb
+                             WHERE id=%s AND partner_id=%s AND business_id=%s""",
+                          (json.dumps({"working_hours":registration_hours},ensure_ascii=False),
+                           existing_object["id"],a["partner_id"],bid))
 
         _exec("""UPDATE partner_applications SET business_id=%s,status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                  WHERE id=%s""",(bid,_auth(request),aid))
