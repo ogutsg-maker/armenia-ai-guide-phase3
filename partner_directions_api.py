@@ -220,6 +220,40 @@ def _direction_payload(pd):
 
 
 def _catalog_for_partner(partner_id, business_id=None):
+    # Runtime reconciliation: the cabinet must derive a firm's direction tree
+    # from the same active services that it already displays. This also repairs
+    # old records whose business_id was not populated during migration.
+    if business_id is not None:
+        _exec("""
+        UPDATE partner_directions pd
+           SET business_id=%s, updated_at=NOW()
+        WHERE pd.partner_id=%s
+          AND pd.business_id IS NULL
+          AND EXISTS (
+              SELECT 1
+              FROM services s
+              JOIN categories c ON c.id=s.category_id
+              WHERE s.partner_id=pd.partner_id
+                AND s.business_id=%s
+                AND s.status IN ('active','approved')
+                AND c.master_category_id=pd.master_category_id
+          )
+        """, (business_id,partner_id,business_id))
+        _exec("""
+        INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+        SELECT DISTINCT s.partner_id,s.business_id,c.master_category_id,'approved'
+        FROM services s
+        JOIN categories c ON c.id=s.category_id
+        WHERE s.partner_id=%s AND s.business_id=%s
+          AND s.status IN ('active','approved')
+          AND c.master_category_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM partner_directions pd
+              WHERE pd.partner_id=s.partner_id
+                AND pd.business_id=s.business_id
+                AND pd.master_category_id=c.master_category_id
+          )
+        """,(partner_id,business_id))
     masters = _fetchall("SELECT id,name_am,name_ru,slug,is_active FROM master_categories ORDER BY id")
     rows = _fetchall("""
         SELECT pd.id direction_id,pd.master_category_id,pd.status,pd.rejection_reason,
