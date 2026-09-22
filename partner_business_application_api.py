@@ -206,7 +206,7 @@ def ensure_business_application_schema():
     # important for records approved before the multi-company migration, where
     # the direction/document may have been created without business_id.
     _exec("""UPDATE partner_directions pd
-             SET business_id=a.business_id, updated_at=NOW()
+             SET business_id=a.business_id
              FROM partner_applications a
              WHERE a.status='approved'
                AND a.business_id IS NOT NULL
