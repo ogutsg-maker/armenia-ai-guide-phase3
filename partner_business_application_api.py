@@ -214,7 +214,7 @@ def ensure_business_application_schema():
                AND pd.master_category_id=a.master_category_id
                AND pd.business_id IS DISTINCT FROM a.business_id""")
     _exec("""UPDATE partner_verification_documents d
-             SET business_id=a.business_id, updated_at=NOW()
+             SET business_id=a.business_id
              FROM partner_applications a
              WHERE a.status='approved'
                AND a.business_id IS NOT NULL
