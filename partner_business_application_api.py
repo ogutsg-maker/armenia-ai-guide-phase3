@@ -409,6 +409,22 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      RETURNING *""",(p["id"],name,str(data.get("description") or "").strip() or None),True)
         return web.json_response({"ok":True,"business":row})
 
+    async def update_business(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        bid=_safe_int(request.match_info.get("business_id"))
+        if not bid: return web.json_response({"ok":False,"error":"business_id_required"},status=400)
+        data=await request.json()
+        name=str(data.get("name") or "").strip()
+        description=str(data.get("description") or "").strip()
+        if len(name)<2: return web.json_response({"ok":False,"error":"business_name_required"},status=400)
+        row=_exec("""UPDATE partner_businesses
+                     SET name=%s, description=%s, updated_at=NOW()
+                     WHERE id=%s AND partner_id=%s AND status='active'
+                     RETURNING *""",(name,description or None,bid,p["id"]),True)
+        if not row: return web.json_response({"ok":False,"error":"business_not_found"},status=404)
+        return web.json_response({"ok":True,"business":row})
+
     async def applications(request):
         uid=_auth(request); p=_partner(uid)
         if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
@@ -1332,6 +1348,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
     app.router.add_get("/api/master/{id}/businesses",businesses)
     app.router.add_post("/api/master/{id}/businesses",create_business)
+    app.router.add_post("/api/master/{id}/businesses/{business_id}",update_business)
     app.router.add_post("/api/master/{id}/applications/{application_id}",application_update)
     app.router.add_delete("/api/master/{id}/applications/{application_id}",application_delete)
     app.router.add_get("/api/master/{id}/application-catalog",application_catalog)
