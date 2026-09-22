@@ -1121,13 +1121,39 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                          VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s::jsonb)""",
                       (a["partner_id"],bid,cid,name,service_description,price,data_json))
 
+        # Create the firm's first physical object from the approved registration
+        # when no object exists yet. A firm can add more objects later.
+        object_name = str(a.get("object_name") or a.get("business_name") or "").strip()[:200]
+        object_city = str(a.get("location_city") or "").strip()[:120] or None
+        object_marz = str(a.get("location_marz") or "").strip()[:120] or None
+        object_address = str(a.get("address") or "").strip()[:500] or None
+        if object_name:
+            existing_object = _one("""SELECT id FROM partner_objects
+                                      WHERE partner_id=%s AND business_id=%s
+                                      ORDER BY id LIMIT 1""",(a["partner_id"],bid))
+            if not existing_object:
+                _exec("""INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,data_json)
+                         VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                      (a["partner_id"],bid,object_name,object_address,object_city,object_marz,
+                       json.dumps({"source":"partner_application","application_id":aid},ensure_ascii=False)))
+
         _exec("""UPDATE partner_applications SET business_id=%s,status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                  WHERE id=%s""",(bid,_auth(request),aid))
-        # Keep the canonical partner record synchronized with the approved
-        # application. Without this, the Admin Partners list can show
-        # "Без имени" even though the application itself contains the name.
+        # Keep the canonical partner record and firm profile synchronized.
+        # The original free-form registration remains in the application; the
+        # firm profile gets a short business description instead.
         approved_name = str(a.get("business_name") or "").strip()[:200]
-        approved_description = str(a.get("description") or "").strip()[:5000] or None
+        raw_description = str(a.get("description") or "").strip()
+        approved_description = None
+        for marker in ("Մենք զբաղվում ենք ", "Мы занимаемся ", "We provide "):
+            if marker in raw_description:
+                approved_description = raw_description.split(marker,1)[1].split(".",1)[0].strip()
+                break
+        if not approved_description:
+            approved_description = raw_description.split(".",1)[0].strip()[:500] or None
+        _exec("""UPDATE partner_businesses
+                 SET name=%s, description=%s, updated_at=NOW()
+                 WHERE id=%s""",(approved_name or "Նոր բիզնես",approved_description,bid))
         _exec(
             """UPDATE partners
                SET business_name=%s,
