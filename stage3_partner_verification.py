@@ -591,6 +591,16 @@ async def api_admin_partner_detail(request):
             if mm:
                 for day in ("mon", "tue", "wed", "thu", "fri", "sat"):
                     hours[day] = {"from": mm.group(1), "to": mm.group(2)}
+            # Registration text can contain extra words such as "ժամը" or
+            # punctuation between the weekday range and the time. If the
+            # strict pattern above misses it, recover the same Mon-Sat range
+            # from the presence of "շաբաթ" plus two clock times.
+            if not hours and re.search(r"(?:երկուշաբթի|понедельник|monday).*?(?:շաբաթ|суббот|saturday)", text_value, re.IGNORECASE | re.DOTALL):
+                clocks = re.findall(r"\b(\d{1,2}:\d{2})\b", text_value)
+                if len(clocks) >= 2:
+                    start, end = clocks[-2], clocks[-1]
+                    for day in ("mon", "tue", "wed", "thu", "fri", "sat"):
+                        hours[day] = {"from": start, "to": end}
             if re.search(
                 r"(?:կիրակի|воскресенье|sunday).{0,50}"
                 r"(?:հանգստյան|выходн|closed|off)",
