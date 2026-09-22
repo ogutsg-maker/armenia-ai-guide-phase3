@@ -202,6 +202,43 @@ def ensure_business_application_schema():
              WHERE b.partner_id=r.partner_id AND b.is_default=TRUE
                AND r.business_id IS NULL""")
 
+    # Complete legacy approved firms created before the multi-company cabinet:
+    # create their first physical object from the approved application data and
+    # replace the raw registration transcript used as the firm description.
+    _exec("""INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,data_json)
+             SELECT a.partner_id,a.business_id,
+                    COALESCE(NULLIF(a.object_name,''),NULLIF(a.business_name,''),b.name),
+                    NULLIF(a.address,''),NULLIF(a.location_city,''),NULLIF(a.location_marz,''),
+                    jsonb_build_object('source','approved_partner_application','application_id',a.id)
+             FROM partner_applications a
+             JOIN partner_businesses b ON b.id=a.business_id
+             WHERE a.status='approved'
+               AND a.business_id IS NOT NULL
+               AND NOT EXISTS(
+                 SELECT 1 FROM partner_objects o
+                 WHERE o.partner_id=a.partner_id AND o.business_id=a.business_id
+               )
+             AND a.id=(
+                 SELECT aa.id FROM partner_applications aa
+                 WHERE aa.partner_id=a.partner_id AND aa.business_id=a.business_id AND aa.status='approved'
+                 ORDER BY aa.created_at DESC,aa.id DESC LIMIT 1
+             )""")
+    _exec("""UPDATE partner_businesses b
+             SET description=COALESCE(
+                 substring(a.description from 'Մենք զբաղվում ենք ([^\\.]+)'),
+                 substring(a.description from 'Мы занимаемся ([^\\.]+)'),
+                 substring(a.description from 'We provide ([^\\.]+)'),
+                 b.description
+             ), updated_at=NOW()
+             FROM partner_applications a
+             WHERE a.id=(
+                 SELECT aa.id FROM partner_applications aa
+                 WHERE aa.business_id=b.id AND aa.status='approved'
+                 ORDER BY aa.created_at DESC,aa.id DESC LIMIT 1
+             )
+             AND a.description IS NOT NULL
+             AND trim(a.description)<>''""")
+
 def default_business(partner_id:int):
     return _one("""SELECT * FROM partner_businesses
                    WHERE partner_id=%s AND status='active'
