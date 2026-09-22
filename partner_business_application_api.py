@@ -202,6 +202,46 @@ def ensure_business_application_schema():
              WHERE b.partner_id=r.partner_id AND b.is_default=TRUE
                AND r.business_id IS NULL""")
 
+    # Reconcile approved applications with their firm container. This is
+    # important for records approved before the multi-company migration, where
+    # the direction/document may have been created without business_id.
+    _exec("""UPDATE partner_directions pd
+             SET business_id=a.business_id, updated_at=NOW()
+             FROM partner_applications a
+             WHERE a.status='approved'
+               AND a.business_id IS NOT NULL
+               AND pd.partner_id=a.partner_id
+               AND pd.master_category_id=a.master_category_id
+               AND pd.business_id IS DISTINCT FROM a.business_id""")
+    _exec("""UPDATE partner_verification_documents d
+             SET business_id=a.business_id, updated_at=NOW()
+             FROM partner_applications a
+             WHERE a.status='approved'
+               AND a.business_id IS NOT NULL
+               AND d.partner_id=a.partner_id
+               AND (d.id=a.document_id OR d.partner_direction_id IN (
+                   SELECT pd.id FROM partner_directions pd
+                   WHERE pd.partner_id=a.partner_id
+                     AND pd.master_category_id=a.master_category_id
+                     AND pd.business_id=a.business_id
+               ))
+               AND d.business_id IS DISTINCT FROM a.business_id""")
+    _exec("""UPDATE partner_businesses b
+             SET description=COALESCE(
+                 substring(a.description from 'Մենք զբաղվում ենք ([^։]+)'),
+                 substring(a.description from 'Мы занимаемся ([^\.]+)'),
+                 substring(a.description from 'We provide ([^\.]+)'),
+                 b.description
+             ), updated_at=NOW()
+             FROM partner_applications a
+             WHERE a.id=(
+                 SELECT aa.id FROM partner_applications aa
+                 WHERE aa.business_id=b.id AND aa.status='approved'
+                 ORDER BY aa.created_at DESC,aa.id DESC LIMIT 1
+             )
+             AND a.description IS NOT NULL
+             AND trim(a.description)<>''""")
+
     # Complete legacy approved firms created before the multi-company cabinet:
     # create their first physical object from the approved application data and
     # replace the raw registration transcript used as the firm description.
