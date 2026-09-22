@@ -288,11 +288,26 @@ async def api_object_update(request: web.Request):
         fields["data_json"] = json.dumps({"working_hours": normalized_hours}, ensure_ascii=False)
     if not fields:
         return web.json_response({"ok":True})
-    sets = ", ".join(f"{k}=%s" for k in fields)
+
+    # Merge working_hours into the existing JSONB instead of replacing the
+    # whole object metadata stored in data_json.
+    values = []
+    set_parts = []
+    for key, value in fields.items():
+        if key == "data_json" and hours is not None:
+            set_parts.append("data_json = COALESCE(data_json, '{}'::jsonb) || %s::jsonb")
+            values.append(value)
+        else:
+            set_parts.append(f"{key}=%s")
+            values.append(value)
+
+    sets = ", ".join(set_parts)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"UPDATE partner_objects SET {sets} WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",
-                        (*fields.values(), oid, pid, bid))
+            cur.execute(
+                f"UPDATE partner_objects SET {sets} WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",
+                (*values, oid, pid, bid),
+            )
             row = cur.fetchone()
         conn.commit()
     if not row:
