@@ -263,53 +263,29 @@ async def api_object_update(request: web.Request):
     fields = {k:data[k] for k in allowed if k in data}
     if "name" in fields and "object_name" not in fields:
         fields["object_name"] = fields.pop("name")
-    # Working hours belong to the physical object, not the company.
-    # Keep them inside data_json so existing partner_objects schemas remain
-    # backward-compatible.
+    # Working hours belong to the physical object.
+    # Normalize every day explicitly so checked weekend days are never lost.
     hours = data.get("working_hours")
     if hours is not None:
-        # Read the current JSON from the database first. The previous version
-        # built this from request fields only, which could silently replace
-        # existing object metadata when the hours editor was saved.
-        with _connect() as read_conn:
-            with read_conn.cursor() as read_cur:
-                read_cur.execute(
-                    "SELECT data_json FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s",
-                    (oid, pid, bid),
-                )
-                current_row = read_cur.fetchone()
-        existing = {}
-        if current_row:
-            current_json = current_row.get("data_json") if isinstance(current_row, dict) else None
-            if isinstance(current_json, str):
-                try:
-                    current_json = json.loads(current_json or "{}")
-                except Exception:
-                    current_json = {}
-            if isinstance(current_json, dict):
-                existing = dict(current_json)
-
-        # Persist every weekday explicitly. A checked day off is always
-        # stored as {closed:true}, including Saturday and Sunday.
         normalized_hours = {}
         if isinstance(hours, dict):
             for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun"):
                 value = hours.get(day)
-                if not isinstance(value, dict):
-                    value = {}
-                if bool(value.get("closed")):
+                if isinstance(value, dict) and bool(value.get("closed")):
                     normalized_hours[day] = {"closed": True}
-                else:
+                elif isinstance(value, dict):
                     item = {}
-                    if str(value.get("from") or "").strip():
-                        item["from"] = str(value.get("from")).strip()
-                    if str(value.get("to") or "").strip():
-                        item["to"] = str(value.get("to")).strip()
+                    from_value = str(value.get("from") or "").strip()
+                    to_value = str(value.get("to") or "").strip()
+                    if from_value: item["from"] = from_value
+                    if to_value: item["to"] = to_value
                     normalized_hours[day] = item
-        existing["working_hours"] = normalized_hours
-        fields["data_json"] = json.dumps(existing, ensure_ascii=False)
-    if "data_json" in fields and not isinstance(fields["data_json"], str):
-        fields["data_json"] = json.dumps(fields["data_json"], ensure_ascii=False)
+                else:
+                    normalized_hours[day] = {}
+        # Use a PostgreSQL JSON expression below; mark the presence so the
+        # update always writes the normalized schedule.
+        fields.pop("data_json", None)
+        fields["data_json"] = json.dumps({"working_hours": normalized_hours}, ensure_ascii=False)
     if not fields:
         return web.json_response({"ok":True})
     sets = ", ".join(f"{k}=%s" for k in fields)
