@@ -242,6 +242,55 @@ def ensure_business_application_schema():
              AND a.description IS NOT NULL
              AND trim(a.description)<>''""")
 
+    # Reconcile live services into their firm's direction tree. Older approvals can
+    # have active services with business_id while the direction row was created
+    # before the business migration. The cabinet must never show Services > 0
+    # while Directions is 0, so rebuild the missing association from the real
+    # catalogue category already attached to each active service.
+    _exec("""
+    INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+    SELECT DISTINCT s.partner_id,s.business_id,c.master_category_id,'approved'
+    FROM services s
+    JOIN categories c ON c.id=s.category_id
+    JOIN partner_businesses b ON b.id=s.business_id AND b.partner_id=s.partner_id
+    WHERE s.business_id IS NOT NULL
+      AND s.status IN ('active','approved')
+      AND c.master_category_id IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM partner_directions pd
+          WHERE pd.partner_id=s.partner_id
+            AND pd.business_id=s.business_id
+            AND pd.master_category_id=c.master_category_id
+      )
+    """)
+    _exec("""
+    INSERT INTO partner_direction_categories(partner_direction_id,category_id)
+    SELECT pd.id,s.category_id
+    FROM services s
+    JOIN partner_directions pd
+      ON pd.partner_id=s.partner_id
+     AND pd.business_id=s.business_id
+    JOIN categories c
+      ON c.id=s.category_id
+     AND c.master_category_id=pd.master_category_id
+    WHERE s.business_id IS NOT NULL
+      AND s.status IN ('active','approved')
+    ON CONFLICT(partner_direction_id,category_id) DO NOTHING
+    """)
+    _exec("""
+    UPDATE partner_verification_documents d
+       SET partner_direction_id=pd.id
+    FROM partner_directions pd
+    WHERE d.business_id=pd.business_id
+      AND d.partner_id=pd.partner_id
+      AND d.partner_direction_id IS NULL
+      AND pd.status IN ('approved','pending')
+      AND EXISTS (
+          SELECT 1 FROM partner_direction_categories pdc
+          WHERE pdc.partner_direction_id=pd.id
+      )
+    """)
+
     # Complete legacy approved firms created before the multi-company cabinet:
     # create their first physical object from the approved application data and
     # replace the raw registration transcript used as the firm description.
