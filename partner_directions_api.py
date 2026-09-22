@@ -234,9 +234,12 @@ def _catalog_for_partner(partner_id, business_id=None):
         SELECT pdc.partner_direction_id, c.id,c.master_category_id,c.name_am,c.name_ru,c.slug,c.is_active
         FROM partner_direction_categories pdc
         JOIN categories c ON c.id=pdc.category_id
-        WHERE pdc.partner_direction_id IN (SELECT id FROM partner_directions WHERE partner_id=%s)
+        WHERE pdc.partner_direction_id IN (
+            SELECT id FROM partner_directions
+            WHERE partner_id=%s AND (%s IS NULL OR business_id=%s)
+        )
         ORDER BY c.id
-    """, (partner_id,))
+    """, (partner_id,business_id,business_id))
     by_direction = {}
     for c in selected:
         by_direction.setdefault(c["partner_direction_id"], []).append(c)
