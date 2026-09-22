@@ -350,7 +350,12 @@ def ensure_business_application_schema():
                  substring(a.description from 'We provide ([^\\.]+)'),
                  b.description
              ),
-                 phone=COALESCE(NULLIF(a.phone,''), b.phone),
+                 phone=COALESCE(
+                 NULLIF(a.phone,''),
+                 NULLIF(a.payload_json->>'phone',''),
+                 NULLIF(substring(a.description from '(?:Հեռախոս|Телефон|Phone)[[:space:]]*[:\\-]?[[:space:]]*([+0-9][0-9 ()-]{7,})'),'') ,
+                 b.phone
+             ),
                  updated_at=NOW()
              FROM partner_applications a
              WHERE a.id=(
@@ -1363,6 +1368,14 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         # firm profile gets a short business description instead.
         approved_name = str(a.get("business_name") or "").strip()[:200]
         raw_description = str(a.get("description") or "").strip()
+        approved_phone = str(a.get("phone") or "").strip()[:100]
+        if not approved_phone:
+            payload_phone = (a.get("payload_json") or {}).get("phone") if isinstance(a.get("payload_json"), dict) else None
+            approved_phone = str(payload_phone or "").strip()[:100]
+        if not approved_phone and raw_description:
+            m = re.search(r"(?:Հեռախոս|Телефон|Phone)\\s*[:\\-]?\\s*([+0-9][0-9 ()-]{7,})", raw_description, re.I)
+            if m:
+                approved_phone = m.group(1).strip()[:100]
         approved_description = None
         for marker in ("Մենք զբաղվում ենք ", "Мы занимаемся ", "We provide "):
             if marker in raw_description:
@@ -1375,7 +1388,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      description=%s,
                      phone=COALESCE(NULLIF(%s,''),phone),
                      updated_at=NOW()
-                 WHERE id=%s""",(approved_name or "Նոր բիզնես",approved_description,str(a.get("phone") or "").strip()[:100],bid))
+                 WHERE id=%s""",(approved_name or "Նոր բիզնես",approved_description,approved_phone,bid))
         _exec(
             """UPDATE partners
                SET business_name=%s,
