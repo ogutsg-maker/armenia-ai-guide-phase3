@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import time
+import json
 import uuid
 from datetime import datetime, date, timezone
 from decimal import Decimal
@@ -563,6 +564,8 @@ async def api_admin_partner_detail(request):
             payload_hours = payload.get("working_hours")
             payload_text_parts = [
                 str(app_row.get("description") or ""),
+                str(partner.get("business_description") or ""),
+                str(partner.get("description") or ""),
                 str(payload.get("raw_text") or ""),
                 str(payload.get("free_text") or ""),
                 str(payload.get("text") or ""),
@@ -610,8 +613,14 @@ async def api_admin_partner_detail(request):
                     for day in ("mon", "tue", "wed", "thu", "fri", "sat"):
                         hours[day] = {"from": start, "to": end}
             if re.search(
-                r"(?:կիրակի|воскресенье|sunday).{0,50}"
-                r"(?:հանգստյան|выходн|closed|off)",
+                r"(?:կիրակի|воскресенье|sunday).{0,120}"
+                r"(?:հանգստյան(?:\s+օր)?|հանգստի|փակ|չի\s+աշխատ|չենք\s+աշխատ|"
+                r"выходн|не\s+работ|закрыт|closed|off)",
+                text_value, re.IGNORECASE | re.DOTALL,
+            ) or re.search(
+                r"(?:հանգստյան(?:\s+օր)?|հանգստի|փակ|չի\s+աշխատ|չենք\s+աշխատ|"
+                r"выходн|не\s+работ|закрыт|closed|off).{0,120}"
+                r"(?:կիրակի|воскресенье|sunday)",
                 text_value, re.IGNORECASE | re.DOTALL,
             ):
                 hours["sun"] = {"closed": True}
@@ -624,7 +633,19 @@ async def api_admin_partner_detail(request):
                         continue
                     if value.get("closed") or (value.get("from") and value.get("to")):
                         hours[day] = value
-            data_json["working_hours"] = hours
+            if hours:
+                data_json["working_hours"] = hours
+                # Persist recovered legacy hours so the admin view and every
+                # later request use one canonical object-level schedule.
+                _db_execute(
+                    """UPDATE partner_objects
+                       SET data_json=COALESCE(data_json,'{}'::jsonb) || %s::jsonb
+                       WHERE id=%s AND partner_id=%s AND business_id=%s""",
+                    (
+                        json.dumps({"working_hours": hours}, ensure_ascii=False),
+                        obj["id"], pid, business["id"],
+                    ),
+                )
             obj["data_json"] = data_json
         business["objects"] = objects
     return web.json_response({"ok": True, "admin_id": admin_id, "partner": partner, "documents": docs, "businesses": businesses})
