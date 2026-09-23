@@ -876,15 +876,38 @@ async def api_bookings(request: web.Request):
 async def api_businesses(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
-    from partner_business_application_api import ensure_business_application_schema
-    ensure_business_application_schema()
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("""SELECT id,partner_id,name,description,phone,status,is_default,created_at,updated_at
+            # Always repair the default company for existing partners.
+            cur.execute("""CREATE TABLE IF NOT EXISTS partner_businesses(
+                id BIGSERIAL PRIMARY KEY,
+                partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                phone TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )""")
+            cur.execute("""SELECT id,name,description,phone,status,is_default,created_at,updated_at
                            FROM partner_businesses
                            WHERE partner_id=%s AND status <> 'archived'
                            ORDER BY is_default DESC,id""",(pid,))
             rows=cur.fetchall()
+            if not rows:
+                cur.execute("""SELECT business_name,business_description,phone
+                               FROM partners WHERE id=%s""",(pid,))
+                p=cur.fetchone()
+                if p:
+                    name=(p["business_name"] or "").strip() or "Իմ ընկերությունը"
+                    cur.execute("""INSERT INTO partner_businesses
+                                   (partner_id,name,description,phone,is_default,status)
+                                   VALUES(%s,%s,%s,%s,TRUE,'active')
+                                   RETURNING id,name,description,phone,status,is_default,created_at,updated_at""",
+                                (pid,name,p["business_description"],p["phone"]))
+                    rows=[cur.fetchone()]
+            conn.commit()
     return web.json_response({"ok":True,"businesses":_json(rows),"current":_json(rows[0]) if rows else None})
 
 
