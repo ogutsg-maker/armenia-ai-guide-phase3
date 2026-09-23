@@ -238,7 +238,8 @@ _ADMIN_QUERY_TARGETS={
  "applications":{"table":"partner_applications a","select":"a.id,a.business_name,a.status,a.service_name,a.price,a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,a.location_marz,a.location_city,a.location_village,a.address,a.phone,a.description,a.created_at,a.updated_at","order":"a.created_at DESC","limit":50,"aliases":{"application","applications","requests","заявки","հայտեր"},"fields":{"status":"a.status","business_name":"a.business_name","service_name":"a.service_name","price":"a.price","direction_name":"a.direction_name","subcategory_name":"a.subcategory_name","location_marz":"a.location_marz","location_city":"a.location_city","location_village":"a.location_village","address":"a.address","phone":"a.phone","description":"a.description","category_id":"a.category_id","master_category_id":"a.master_category_id"}},
  "partners":{"table":"partners p","select":"p.id,p.user_id,p.business_name,p.business_description,p.status,p.verification_status,p.contact_share_policy,p.created_at,p.updated_at","order":"p.created_at DESC","limit":50,"aliases":{"partner","partners","партнеры","գործընկերներ"},"fields":{"status":"p.status","verification_status":"p.verification_status","business_name":"p.business_name","business_description":"p.business_description","location_marz":"__PARTNER_LOCATION_MARZ__","location_city":"__PARTNER_LOCATION_CITY__"}},
  "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
- "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}}
+ "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"},
+ "services":{"table":"services s","select":"s.id,s.name,s.category_id,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id"}}}
 _ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
 _ADMIN_STATUS_ALIASES={"applications":{"pending":["pending_admin","pending_partner","document_pending"],"moderation":["pending_admin"]},"partners":{"pending":["pending"],"moderation":["pending","pending_verification"]},"businesses":{}}
 def _admin_normalize_location(field,value):
@@ -338,7 +339,7 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
 
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
- labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог"}
+ labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","services":"🛠 Услуги"}
  lines=[labels.get(target,"🔎 Результат")+" ("+str(len(rows))+"):"]
  for x in rows[:20]:
   if target=="applications":
@@ -668,7 +669,16 @@ Understand Armenian, Russian, English, mixed-language messages, typos, colloquia
 Do not expose hidden chain-of-thought. Return only a concise reasoning_summary.
 Identity, IDs, permissions and database execution belong to Python.
 
-The administrator speaks naturally. Do not require command phrases.
+The administrator speaks naturally. Do not require command phrases or exact keywords.
+Treat meaning, not wording, as primary. The following semantic examples are mandatory:
+- "իսկ նրա փաստաթղթերը?", "նրա փաստաթղթերը", "а его документы?", "покажи документы", "what about its documents?" => show_documents for the currently focused application.
+- "իսկ կատեգորիան ճիշտ է?", "կատեգորիան ճիշտ է՞", "правильная ли категория?", "категория верная?", "is the category correct?" => inspect_application for the focused application, with field=subcategory when the question concerns category/subcategory. This is a read-only verification, not an edit.
+- "ամբողջությամբ ցույց տուր", "покажи полностью", "show the whole one" => show_full_application for the focused application.
+- "հաջորդը", "следующая", "next one" => navigate to the next item; Python resolves navigation.
+- "a kakie est uslugi?", "какие есть услуги?", "ինչ ծառայություններ կան?", "what services are available?" => understand this as a request for a service list/query, not an unknown request. If the available database target is not explicit in context, use target=services and intent=query_database.
+- Pronouns and elliptical follow-ups ("իսկ", "նրա", "այս", "это", "его", "ее", "this", "that", "what about...") inherit the currently focused entity unless the message explicitly names another entity.
+- Armenian/Russian/English mixed transliteration is valid input; infer the intended meaning from the whole message.
+
 Armenian "ինչ հայտեր ունենք?", "ինչ հայտ ունենք?", "ինչ հայտեր կան?", "ցույց տուր հայտերը", "որ հայտերն ունենք?", Russian "какие заявки у нас?", "что по заявкам?", and English "what applications do we have?" all mean listing applications unless a count or filter is explicit.
 
 Return ONLY one JSON ActionPlan with exactly these logical fields:
@@ -721,7 +731,15 @@ def _admin_fallback_intent(message,focused_id=None):
     asks_count=bool(re.search(r"(քանի|сколько|how many|count|количеств)",text,re.I|re.U))
     asks_list=bool(re.search(r"(ինչ|որ|какие|какая|что|what|which|ցույց|show|list|ցուցակ)",text,re.I|re.U))
     asks_category=bool(re.search(r"(կատեգոր|ենթակատեգոր|category|subcategory|подкатегор)",text,re.I|re.U))
-    asks_inspect=bool(re.search(r"(ստուգ|провер|check|ճիշտ|правильно|correct|ошибк|սխալ)",text,re.I|re.U))
+    asks_documents=bool(re.search(r"(փաստաթուղ|փաստաթուղթ|документ|документы|document|documents)",text,re.I|re.U))
+    asks_services=bool(re.search(r"(ծառայ|услуг|service|services|uslugi)",text,re.I|re.U))
+    asks_inspect=bool(re.search(r"(ստուգ|провер|check|ճիշտ|правильно|correct|ошибк|սխալ|верн)",text,re.I|re.U))
+    if focused_id and asks_documents:
+        return _admin_normalize_plan({"intent":"show_documents","target":"application","entity_id":focused_id,"field":"documents","reasoning_summary":"Փաստաթղթերի մասին հարց՝ ընթացիկ հայտի համատեքստում։","confidence":0.93},message)
+    if focused_id and asks_category and asks_inspect:
+        return _admin_normalize_plan({"intent":"inspect_application","target":"application","entity_id":focused_id,"field":"subcategory","reasoning_summary":"Ընթացիկ հայտի կատեգորիայի ճիշտ լինելը պետք է ստուգել՝ առանց փոփոխության։","confidence":0.93},message)
+    if asks_services:
+        return _admin_normalize_plan({"intent":"query_database","target":"services","reasoning_summary":"Ծառայությունների ցանկի հարցում։","confidence":0.82},message)
     if has_application and asks_count:
         return _admin_normalize_plan({"intent":"show_application_count","target":"applications","reasoning_summary":"Вопрос о количестве заявок.","confidence":0.88},message)
     if has_application and asks_category and (asks_inspect or "ինչ" in text or "какая" in text):
@@ -970,6 +988,21 @@ async def admin_ai_message(admin_id,message):
         try: c=await _admin_ai_json(message,ctx)
         except Exception: c=_admin_fallback_intent(message,focused_id)
     c=_admin_normalize_plan(c,message)
+
+    # Semantic safety-net: if the model is uncertain/returns unknown, recover only
+    # high-confidence concepts from the full sentence and the active context.
+    # This is not the primary parser; it prevents a good semantic model response
+    # from collapsing into the generic "I didn't understand" screen.
+    if str(c.get("intent") or "unknown")=="unknown":
+        semantic_text=_norm(message)
+        focused_now=state.get("last_focused_application_id") or state.get("last_focused_entity_id")
+        if focused_now and re.search(r"(փաստաթուղ|փաստաթուղթ|документ|документы|document|documents)",semantic_text,re.I|re.U):
+            c=_admin_normalize_plan({"intent":"show_documents","target":"application","entity_id":focused_now,"field":"documents","reasoning_summary":"Հարցը վերաբերում է ընթացիկ հայտի փաստաթղթերին։","confidence":0.92},message)
+        elif focused_now and re.search(r"(կատեգոր|ենթակատեգոր|category|subcategory|подкатегор)",semantic_text,re.I|re.U) and re.search(r"(ճիշտ|արդյոք|правиль|верн|correct|right)",semantic_text,re.I|re.U):
+            c=_admin_normalize_plan({"intent":"inspect_application","target":"application","entity_id":focused_now,"field":"subcategory","reasoning_summary":"Ստուգվում է ընթացիկ հայտի կատեգորիայի ճիշտ լինելը՝ առանց փոփոխության։","confidence":0.92},message)
+        elif re.search(r"(ծառայություններ|ծառայություն|услуг|услуги|service|services|uslugi)",semantic_text,re.I|re.U):
+            c=_admin_normalize_plan({"intent":"query_database","target":"services","reasoning_summary":"Հարցը վերաբերում է ծառայությունների ցանկին։","confidence":0.82},message)
+
     state["last_action"]={"intent":c.get("intent"),"target":c.get("target"),"reasoning_summary":c.get("reasoning_summary"),"confidence":c.get("confidence")}
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
 
