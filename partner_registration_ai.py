@@ -28,6 +28,64 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
+# Armenian place-name normalization used only for extracting facts from free text.
+# The partner never has to choose a marz or city manually.
+def _normalize_place_name(value: Any) -> str:
+    text = _norm(value)
+    if not text:
+        return ""
+    text = (
+        text.replace("օ", "ո")
+            .replace("Օ", "Ո")
+            .replace("ւ", "ու")
+    )
+    # Common Armenian locative endings.
+    m = re.fullmatch(r"([\u0531-\u058F]{3,})(?:անում|ենում|ում)", text, flags=re.I)
+    if m:
+        text = m.group(1)
+    return text.strip(" .,;:()«»\"'")
+
+# Administrative mapping for common Armenian cities/towns. This is a
+# deterministic safety net; explicit AI extraction still has priority.
+_ARMENIA_CITY_TO_MARZ = {
+    # Kotayk
+    "հրազդան":"Կոտայք","աբովյան":"Կոտայք","չարենցավան":"Կոտայք",
+    "բյուրեղավան":"Կոտայք","նոր հաճն":"Կոտայք","նոր հաճըն":"Կոտայք",
+    "բալահովիտ":"Կոտայք","ծաղկաձոր":"Կոտայք","գառնի":"Կոտայք",
+    "բյուրական":"Կոտայք","մարմարիկ":"Կոտայք",
+    # Shirak
+    "գյումրի":"Շիրակ","մարալիկ":"Շիրակ","արթիկ":"Շիրակ",
+    "ամասիա":"Շիրակ","մեծ մանթաշ":"Շիրակ",
+    # Lori
+    "վանաձոր":"Լոռի","սպիտակ":"Լոռի","ստեփանավան":"Լոռի",
+    "տաշիր":"Լոռի","ալավերդի":"Լոռի","թումանյան":"Լոռի",
+    # Tavush
+    "իջևան":"Տավուշ","դիլիջան":"Տավուշ","բերդ":"Տավուշ",
+    "նոյեմբերյան":"Տավուշ","թումանյան":"Լոռի",
+    # Gegharkunik
+    "գավառ":"Գեղարքունիք","սևան":"Գեղարքունիք","մարտունի":"Գեղարքունիք",
+    "վարդենիս":"Գեղարքունիք","ճամբարակ":"Գեղարքունիք",
+    # Aragatsotn
+    "աշտարակ":"Արագածոտն","ապարան":"Արագածոտն","թալին":"Արագածոտն",
+    "արարատ":"Արարատ","արտաշատ":"Արարատ","վեդի":"Արարատ","մասիս":"Արարատ",
+    # Armavir
+    "արմավիր":"Արմավիր","վաղարշապատ":"Արմավիր","մեծամոր":"Արմավիր",
+    # Syunik
+    "կապան":"Սյունիք","գորիս":"Սյունիք","քաջարան":"Սյունիք",
+    "սիսիան":"Սյունիք","մեղրի":"Սյունիք","ագարակ":"Սյունիք",
+    # Vayots Dzor
+    "եղեգնաձոր":"Վայոց ձոր","ջերմուկ":"Վայոց ձոր","վայք":"Վայոց ձոր",
+    # Yerevan
+    "երևան":"Երևան","yerevan":"Երևան","erevan":"Երևան",
+    # common Latin/Russian spellings
+    "hrazdan":"Կոտայք","razdan":"Կոտայք","abovyan":"Կոտայք",
+    "charentsavan":"Կոտայք","gyumri":"Շիրակ","vanadzor":"Լոռի",
+    "dilijan":"Տավուշ","ijevan":"Տավուշ","gavar":"Գեղարքունիք",
+    "sevan":"Գեղարքունիք","ashtarak":"Արագածոտն","aparan":"Արագածոտն",
+    "artashat":"Արարատ","armavir":"Արմավիր","kapan":"Սյունիք",
+    "goris":"Սյունիք","sisian":"Սյունիք","jermuk":"Վայոց ձոր",
+}
+ 
 def get_catalog(db) -> list[dict]:
     rows = []
     try:
@@ -191,35 +249,26 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
     ):
         out["direction"] = "📸 Ֆոտո և տեսանյութ"
 
-    if not out.get("marz") and out.get("city"):
-        city_key = _norm(out["city"]).lower()
-        marz_by_city = {
-            "հրազդան": "Կոտայք", "ռազդան": "Կոտայք", "hrazdan": "Կոտայք",
-            "աբովյան": "Կոտայք", "abovyan": "Կոտայք",
-            "չարենցավան": "Կոտայք", "charentsavan": "Կոտայք",
-            "գյումրի": "Շիրակ", "gyumri": "Շիրակ",
-            "վանաձոր": "Լոռի", "vanadzor": "Լոռի",
-            "արմավիր": "Արմավիր", "armavir": "Արմավիր",
-            "էջմիածին": "Արմավիր", "ejmiatsin": "Արմավիր",
-            "արտաշատ": "Արարատ", "artashat": "Արարատ",
-            "գավառ": "Գեղարքունիք", "gavar": "Գեղարքունիք",
-            "դիլիջան": "Տավուշ", "dilijan": "Տավուշ",
-            "իջևան": "Տավուշ", "ijevan": "Տավուշ",
-            "ապարան": "Արագածոտն", "aparan": "Արագածոտն",
-            "աշտարակ": "Արագածոտն", "ashtarak": "Արագածոտն",
-            "կապան": "Սյունիք", "kapan": "Սյունիք",
-            "գորիս": "Սյունիք", "goris": "Սյունիք",
-            "ջերմուկ": "Վայոց ձոր", "jermuk": "Վայոց ձոր",
-            "վայք": "Վայոց ձոր", "vayk": "Վայոց ձոր",
-        }
-        if city_key in marz_by_city:
-            out["marz"] = marz_by_city[city_key]
-
     if out.get("city"):
-        city = _norm(out["city"])
-        m = re.fullmatch(r"([\u0531-\u058F]+?)(?:անում|ենում|ում)", city, flags=re.I)
-        if m and len(m.group(1)) >= 3:
-            out["city"] = m.group(1)
+        out["city"] = _normalize_place_name(out.get("city"))
+
+    if out.get("marz"):
+        out["marz"] = _norm(out.get("marz"))
+
+    if not out.get("marz") and out.get("city"):
+        city_key = _normalize_place_name(out["city"]).lower()
+        if city_key in _ARMENIA_CITY_TO_MARZ:
+            out["marz"] = _ARMENIA_CITY_TO_MARZ[city_key]
+
+    # Explicit region wording always wins over the city safety map.
+    if not out.get("marz"):
+        m_marz = re.search(
+            r"(?:մարզ(?:ում|ը)?|марз|область|region)\s*[:՝-]?\s*([\u0531-\u058FА-Яа-яЁёA-Za-z -]{2,60})",
+            raw, flags=re.I
+        )
+        if m_marz:
+            out["marz"] = _norm(m_marz.group(1)).strip(" .,;:()")
+
 
     return out
 
@@ -1319,25 +1368,25 @@ def missing_question(data: dict, lang: str) -> str:
     labels = {
         "hy": {
             "business_name": "բիզնեսի անունը",
-            "marz": "մարզը",
-            "city": "քաղաքը/բնակավայրը",
-            "address": "ամբողջական հասցեն",
+            "marz": "տեղադրությունը",
+            "city": "քաղաքը կամ բնակավայրը",
+            "address": "հասցեն",
             "phone": "հեռախոսահամարը",
             "services": "ծառայությունները և, եթե հայտնի է, դրանց գները",
         },
         "ru": {
             "business_name": "название бизнеса",
-            "marz": "марз",
-            "city": "город/населённый пункт",
-            "address": "полный адрес",
+            "marz": "местоположение",
+            "city": "город или населённый пункт",
+            "address": "адрес",
             "phone": "телефон",
             "services": "услуги и, если известны, их цены",
         },
         "en": {
             "business_name": "business name",
-            "marz": "region/marz",
-            "city": "city/locality",
-            "address": "full address",
+            "marz": "location",
+            "city": "city or locality",
+            "address": "address",
             "phone": "phone number",
             "services": "services and, if known, their prices",
         },
