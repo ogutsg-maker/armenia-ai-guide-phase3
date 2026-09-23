@@ -1040,7 +1040,14 @@ async def api_admin_partner_business_delete(request):
     ) or {}
 
     transactional = int(counts.get("bookings") or 0) > 0
-    historical = transactional or int(counts.get("approved_applications") or 0) > 0
+    historical = (
+        transactional
+        or int(counts.get("approved_applications") or 0) > 0
+        or int(counts.get("services") or 0) > 0
+        or int(counts.get("documents") or 0) > 0
+        or int(counts.get("objects") or 0) > 0
+        or int(counts.get("locations") or 0) > 0
+    )
 
     if historical:
         _db_execute(
