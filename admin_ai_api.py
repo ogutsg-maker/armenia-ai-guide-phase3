@@ -225,7 +225,17 @@ STRICT RULES:
 7. Understand Armenian, Russian and English, including mixed-language messages.
 
 Return exactly:
-{"intent":"edit_application|show_applications|show_application|show_application_field|inspect_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","action_required":"suggest_alternatives|request_value|execute","value_raw":null,"reason":null,"confidence":0.0}
+{"intent":"show_applications|show_application_count|show_application|show_application_field|inspect_application|suggest_application_correction|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","action_required":"suggest_alternatives|request_value|execute|read_only","value_raw":null,"reason":null,"confidence":0.0}
+
+INTENT RULES:
+- "сколько заявок", "քանի հայտ", "how many applications" -> show_application_count.
+- "покажи/проверь заявки" -> show_applications.
+- "открой/покажи заявку" -> show_application.
+- "проверь ... и исправь ошибки", "նայիր հայտերը և ուղղիր սխալները" -> suggest_application_correction. This means inspect first and prepare a proposal; NEVER mutate directly.
+- Questions about a field are read_only and use show_application_field or inspect_application.
+- A correction without a value is edit_application with value_raw=null and action_required=suggest_alternatives.
+- An explicit replacement value is edit_application with action_required=execute.
+- Never invent IDs or catalog values. Python resolves all IDs and catalog values.
 
 FIELD RULES:
 - ենթակատեգորիա / подкатегория / subcategory -> subcategory
@@ -268,26 +278,28 @@ Never return a catalog ID. Never invent a value not present in the administrator
     if not isinstance(data,dict):
         raise RuntimeError("Groq returned a non-object intent")
     return data
-def _admin_fallback_intent(message, focused_id=None):
+def _admin_fallback_intent(message,focused_id=None):
     text=_norm(message)
+    # Deterministic fallback is deliberately semantic, not a list of UI commands.
+    if re.search(r"(сколько|քանի)\s+.*(заяв|հայտ)|how many applications",text):
+        return {"intent":"show_application_count","target":"application","confidence":0.9}
+    if any(x in text for x in ("նայիր հայտերը և ուղղիր սխալները","проверь заявки и исправь ошибки","проверь заявки и исправь","ստուգիր հայտերը և ուղղիր","check applications and fix")):
+        return {"intent":"suggest_application_correction","target":"application","confidence":0.9}
     if any(x in text for x in ("ստուգիր հայտերը","ցույց տուր հայտերը","проверь заявки","покажи заявки","show applications")):
-        return {"intent":"show_applications","target":"application","confidence":0.5}
+        return {"intent":"show_applications","target":"application","confidence":0.8}
     if any(x in text for x in ("ինչ կատեգոր","ինչ ենթակատեգոր","какая категория","какая подкатегория","под какой категор","what category","which category")):
-        return {"intent":"show_application_field","target":"application","field":"category","application_id":focused_id,"confidence":0.5}
+        return {"intent":"show_application_field","target":"application","field":"subcategory","application_id":focused_id,"confidence":0.8}
     if any(x in text for x in ("հայտը ճիշտ է լրացված","հայտը ճիշտ է լրացված՞","проверь заявку","заявка заполнена правильно")):
-        return {"intent":"inspect_application","target":"application","application_id":focused_id,"confidence":0.5}
-    if any(x in text for x in ("ինձ ցույց տուր","ցույց տուր","покажи мне","покажи","show it")):
-        return {"intent":"show_application","target":"application","application_id":focused_id,"confidence":0.5}
-    if any(x in text for x in ("ուղղիր ենթակատեգորիան","շտկիր ենթակատեգորիան","փոխիր ենթակատեգորիան","կատեգորիան ճիշտ չէ","ուղղիր կատեգորիան","ուղղիր ենթակատեգորիան սխալ է","ենթակատեգորիան սխալ է","ուղղիր","исправь подкатегорию","исправить подкатегорию","исправь категорию")):
-        return {"intent":"edit_application","target":"application","application_id":focused_id,"field":"subcategory","value_raw":"","confidence":0.7}
-    if any(x in text for x in ("ստուգիր","ստուգել","ցույց տուր","ցուցադրիր","պատմիր","проверь","покажи","открой","show","check","inspect")):
-        if "հայտ" in text or "заяв" in text or "application" in text:
-            return {"intent":"show_applications","target":"application","confidence":0.4}
+        return {"intent":"inspect_application","target":"application","application_id":focused_id,"confidence":0.8}
+    if any(x in text for x in ("ուղղիր","исправь","շտկիր")) and focused_id:
+        return {"intent":"edit_application","target":"application","application_id":focused_id,
+                "field":"subcategory","value_raw":None,"action_required":"suggest_alternatives","confidence":0.7}
     m=re.search(r"(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*#?\s*(\d+)",text)
     aid=int(m.group(1)) if m else focused_id
-    if any(x in text for x in ("открой","բացիր","open")) and aid:
-        return {"intent":"show_application","target":"application","application_id":aid,"confidence":0.5}
+    if any(x in text for x in ("открой","բացիր","open","покажи")) and aid:
+        return {"intent":"show_application","target":"application","application_id":aid,"confidence":0.8}
     return {"intent":"unknown","confidence":0.0}
+
 
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
