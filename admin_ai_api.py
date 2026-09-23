@@ -190,6 +190,8 @@ def _admin_hydrate_context(state,limit=12):
         "last_focused_field":state.get("last_focused_field"),
         "last_query":state.get("last_query"),
         "last_shown_query_rows":state.get("last_shown_query_rows",[])[:10],
+        "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
+        "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
         "query_capabilities":{"targets":["applications","partners","businesses","catalog"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
         "history":state.get("history",[])[-6:]})
 
