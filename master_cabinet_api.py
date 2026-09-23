@@ -683,14 +683,22 @@ Return the result as valid JSON only."""
 
 async def api_service_create(request: web.Request):
     uid=_auth_partner(request); pid=_require_partner(uid); bid=_business_id(request,pid)
-    data=await request.json(); name=str(data.get("name") or data.get("service_name") or "").strip(); description=str(data.get("description") or "").strip(); object_id=_safe_int(data.get("object_id")); contact_phone=str(data.get("contact_phone") or "").strip() or None
+    data=await request.json(); name=str(data.get("name") or data.get("service_name") or "").strip(); description=str(data.get("description") or "").strip(); location_id=_safe_int(data.get("location_id")); object_id=_safe_int(data.get("object_id")); contact_phone=str(data.get("contact_phone") or "").strip() or None
     if not name: return web.json_response({"ok":False,"error":"service_name_required"},status=400)
-    if not object_id: return web.json_response({"ok":False,"error":"service_object_required","message":"Ընտրեք օբյեկտ կամ ստեղծեք նորը։"},status=400)
+    if not location_id and object_id:
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM partner_locations WHERE partner_id=%s AND business_id=%s AND address=(SELECT address FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s) LIMIT 1",(pid,bid,object_id,pid,bid))
+                lr=cur.fetchone()
+                if lr: location_id=int(lr["id"])
+    if not location_id:
+        return web.json_response({"ok":False,"error":"service_location_required","message":"Ընտրեք հասցեն ընկերությունից։"},status=400)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,object_name,address,city,marz,phone FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s",(object_id,pid,bid))
-            object_row=cur.fetchone()
-    if not object_row: return web.json_response({"ok":False,"error":"service_object_not_found"},status=404)
+            cur.execute("SELECT * FROM partner_locations WHERE id=%s AND partner_id=%s AND business_id=%s",(location_id,pid,bid))
+            location_row=cur.fetchone()
+    if not location_row: return web.json_response({"ok":False,"error":"service_location_not_found"},status=404)
+    object_id = None
     try: price=float(data.get("price")) if data.get("price") not in (None,"") else None
     except (TypeError,ValueError): return web.json_response({"ok":False,"error":"invalid_price"},status=400)
     try: match=await _ai_match_new_service(pid,name,description,bid)
@@ -714,7 +722,7 @@ async def api_service_create(request: web.Request):
                              user_row.get("phone"),match.get("out_of_scope_master_name") or "",
                              match.get("out_of_scope_master_id") or match.get("master_category_id"),
                              match.get("proposed_name") or None,name,price,description,match.get("reason") or "",
-                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None,"object_id":object_id,"contact_phone":contact_phone,
+                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None,"object_id":object_id,"location_id":location_id,"contact_phone":contact_phone,
                                          "services":[{"name":name,"price":price,"description":description,"object_id":object_id,"contact_phone":contact_phone,
                                                       "matched_subcategory_id":match.get("category_id"),
                                                       "direction_id":match.get("master_category_id")}]},ensure_ascii=False)))
@@ -754,7 +762,7 @@ async def api_service_update(request: web.Request):
     bid = _business_id(request,pid)
     sid = int(request.match_info["service_id"])
     data = await request.json()
-    allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json", "object_id", "contact_phone"}
+    allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json", "object_id", "location_id", "contact_phone"}
     fields = {k: data[k] for k in allowed if k in data}
     if not fields:
         return web.json_response({"ok": True})
