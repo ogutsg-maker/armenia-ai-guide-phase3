@@ -502,9 +502,9 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         data=await request.json()
         name=str(data.get("name") or "").strip()
         if len(name)<2: return web.json_response({"ok":False,"error":"business_name_required"},status=400)
-        row=_exec("""INSERT INTO partner_businesses(partner_id,name,description,is_default)
-                     VALUES(%s,%s,%s,FALSE)
-                     RETURNING *""",(p["id"],name,str(data.get("description") or "").strip() or None),True)
+        row=_exec("""INSERT INTO partner_businesses(partner_id,name,description,phone,is_default)
+                     VALUES(%s,%s,%s,%s,FALSE)
+                     RETURNING *""",(p["id"],name,str(data.get("description") or "").strip() or None,str(data.get("phone") or "").strip()[:100] or None),True)
         return web.json_response({"ok":True,"business":row})
 
     async def update_business(request):
