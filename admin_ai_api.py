@@ -328,6 +328,8 @@ def _admin_fallback_intent(message, focused_id=None):
         return {"intent":"inspect_application","target":"application","application_id":focused_id,"confidence":0.5}
     if any(x in text for x in ("ինձ ցույց տուր","ցույց տուր","покажи мне","покажи","show it")):
         return {"intent":"show_application","target":"application","application_id":focused_id,"confidence":0.5}
+    if any(x in text for x in ("ուղղիր ենթակատեգորիան","շտկիր ենթակատեգորիան","փոխիր ենթակատեգորիան","կատեգորիան ճիշտ չէ","ուղղիր կատեգորիան","исправь подкатегорию","исправить подкатегорию","исправь категорию")):
+        return {"intent":"edit_application","target":"application","application_id":focused_id,"field":"subcategory","value_raw":"","confidence":0.5}
     m=re.search(r"(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*#?\s*(\d+)",text)
     aid=int(m.group(1)) if m else focused_id
     if any(x in text for x in ("открой","բացիր","open")) and aid:
@@ -420,7 +422,7 @@ async def admin_ai_message(admin_id,message):
     action={"intent":intent,"application_id":int(aid)}
     if intent=="edit_application":
         field=str(c.get("field") or "").lower()
-        value=str(c.get("value_text") or "").strip()
+        value=str(c.get("value_raw") or c.get("value_text") or "").strip()
         if field in {"category","subcategory"}:
             if not value:
                 return "Текущая подкатегория «"+str(app.get("subcategory_name") or "—")+"». Укажите новую, например: «այստեղ պետք է Հոնքեր լինի»."
