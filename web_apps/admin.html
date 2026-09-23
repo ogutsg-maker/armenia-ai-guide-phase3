@@ -151,6 +151,7 @@ async function togglePartner(id){
          <span class="badge">${esc(b.status||'—')}</span>
        </div>
        ${b.phone?`<div class="muted">☎ ${esc(b.phone)}</div>`:''}
+       ${b.objects&&b.objects.length?`<div class="muted">📍 ${esc([b.objects[0].city,b.objects[0].address].filter(Boolean).join(', ')||b.objects[0].object_name||'')}</div>`:''}
        <div id="company${b.id}" class="detail" style="display:none"></div>
      </div>`).join(''):'<div class="empty">Ընկերություններ չկան</div>';
    el.style.display='block';
