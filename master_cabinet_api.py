@@ -23,6 +23,7 @@ except Exception:
     AsyncGroq = None
 
 from partner_registration_ai import _groq_json, _norm, _safe_int
+from partner_ai_assistant_api import api_ai_command, api_ai_command_confirm
 
 
 def _json(value: Any):
@@ -1113,6 +1114,8 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     """
     app["partner_db"] = db
     app.router.add_get("/api/master/{id}/dashboard", api_dashboard)
+    app.router.add_post("/api/master/{id}/ai-command", api_ai_command)
+    app.router.add_post("/api/master/{id}/ai-command/confirm", api_ai_command_confirm)
     app.router.add_get("/api/master/{id}/settings", api_settings)
     app.router.add_post("/api/master/{id}/settings", api_settings_update)
     app.router.add_get("/api/master/{id}/objects", api_objects)
