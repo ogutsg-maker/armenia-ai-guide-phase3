@@ -498,6 +498,8 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
                 "status": "matched",
                 "category_id": _safe_int(best["category_id"]),
                 "master_category_id": master_id,
+                "direction_name": best.get("master_am") or best.get("master_ru") or best.get("master_en"),
+                "subcategory_name": best.get("category_am") or best.get("category_ru") or best.get("category_en"),
                 "business_action": "same_business",
                 "proposed_business_name": None,
                 "reason": "Hierarchical multilingual catalogue match: direction first, subcategory second.",
@@ -596,6 +598,8 @@ Return the result as valid JSON only."""
                         "status": "matched",
                         "category_id": cid,
                         "master_category_id": groq_mid,
+                        "direction_name": row.get("master_am") or row.get("master_ru") or row.get("master_en"),
+                        "subcategory_name": row.get("category_am") or row.get("category_ru") or row.get("category_en"),
                         "business_action": "same_business",
                         "proposed_business_name": None,
                         "reason": _norm(result.get("reason")) or "AI semantic catalogue match.",
@@ -715,10 +719,24 @@ async def api_service_create(request: web.Request):
         return web.json_response({"ok":True,"proposal_created":True,
                                   "message":"Ծառայությունն ուղարկվել է ադմինիստրատորին դասակարգման համար։"})
     if match["status"]=="clarification": return web.json_response({"ok":False,"error":"service_needs_clarification","message":"Գրեք ծառայության մասին մի փոքր ավելի մանրամասն։"},status=422)
-    payload=json.dumps({"ai_source":True,"matched_subcategory_id":match["category_id"],"master_category_id":match["master_category_id"],"business_id":bid},ensure_ascii=False)
+    payload=json.dumps({"ai_source":True,"matched_subcategory_id":match["category_id"],"master_category_id":match["master_category_id"],"business_id":bid,"direction_name":match.get("direction_name") or "","subcategory_name":match.get("subcategory_name") or "","services":[{"name":name,"price":price,"description":description,"matched_subcategory_id":match["category_id"],"direction_id":match["master_category_id"],"direction_name":match.get("direction_name") or "","subcategory_name":match.get("subcategory_name") or ""}]},ensure_ascii=False)
+    from partner_business_application_api import ensure_business_application_schema
+    ensure_business_application_schema()
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted' ORDER BY id DESC LIMIT 1",(pid,bid,name))
+            cur.execute("""INSERT INTO partner_applications(
+                              partner_id,business_id,status,business_name,phone,direction_name,
+                              master_category_id,subcategory_name,category_id,service_name,price,description,ai_reason,payload_json)
+                           VALUES(%s,%s,'pending_admin',%s,(SELECT phone FROM partner_businesses WHERE id=%s),%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                           RETURNING id""",
+                        (pid,bid,None,bid,match.get("direction_name") or "",match["master_category_id"],
+                         match.get("subcategory_name") or "",match["category_id"],name,price,description,
+                         match.get("reason") or "AI catalogue match.",payload))
+            aid=int(cur.fetchone()["id"])
+        conn.commit()
+    return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,"ai_classified":True,
+                              "matched_category_id":match["category_id"],"master_category_id":match["master_category_id"],
+                              "message":"Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ադմինիստրատորին հաստատման։"}) WHERE partner_id=%s AND business_id=%s AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted' ORDER BY id DESC LIMIT 1",(pid,bid,name))
             old=cur.fetchone()
             if old:
                 cur.execute("UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,description=%s,status='pending',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",(match["category_id"],price,description,payload,old["id"],pid,bid))
