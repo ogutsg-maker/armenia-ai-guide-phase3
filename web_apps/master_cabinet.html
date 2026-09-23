@@ -341,7 +341,7 @@ async function submitNewService(){
     const contactPhone=phone || company?.phone || '';
     const d=await api('/api/master/0/services',{method:'POST',headers:{'X-Business-Id':String(businessId)},body:{
       name:serviceName,description,price:priceRaw===''?null:Number(priceRaw),
-      object_id:objectId,contact_phone:contactPhone
+      object_id:objectId,contact_phone:contactPhone,new_business:newBusiness
     }});
     closeServiceCreate();
     await loadBusinesses();
