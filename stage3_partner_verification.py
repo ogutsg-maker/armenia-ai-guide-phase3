@@ -510,6 +510,25 @@ async def api_admin_partner_detail(request):
     if not partner:
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
     docs = _db_fetchall("SELECT id, partner_direction_id, document_type, original_filename, mime_type, file_size, status, rejection_reason, storage_path, created_at, reviewed_at FROM partner_verification_documents WHERE partner_id=%s ORDER BY created_at DESC", (pid,))
+    # Self-heal an accidental deletion of a partner's only company.  The admin
+    # delete action archives companies that already contain services/documents/
+    # addresses/history.  If that leaves the partner with zero active companies
+    # and exactly one archived company, restore that company automatically so a
+    # mistaken deletion cannot make the entire partner profile appear empty.
+    archived_only = _db_fetchall(
+        "SELECT id FROM partner_businesses WHERE partner_id=%s AND status='archived' ORDER BY id DESC",
+        (pid,),
+    )
+    active_now = _db_fetchone(
+        "SELECT COUNT(*) AS n FROM partner_businesses WHERE partner_id=%s AND status<>'archived'",
+        (pid,),
+    )
+    if int((active_now or {}).get("n") or 0) == 0 and len(archived_only) == 1:
+        restore_id = int(archived_only[0]["id"])
+        _db_execute(
+            "UPDATE partner_businesses SET status='active', is_default=TRUE, updated_at=NOW() WHERE id=%s AND partner_id=%s AND status='archived'",
+            (restore_id, pid),
+        )
     businesses = _db_fetchall("SELECT id, name, description, phone, status, is_default FROM partner_businesses WHERE partner_id=%s AND status<>'archived' ORDER BY is_default DESC,id", (pid,))
     for business in businesses:
         objects = _db_fetchall("SELECT id, object_name, address, city, marz, data_json, working_hours FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid, business["id"]))
