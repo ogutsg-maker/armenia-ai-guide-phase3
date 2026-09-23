@@ -1199,7 +1199,9 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                     try: price=float(price) if price not in (None,"") else None
                     except (TypeError,ValueError): price=None
                     service_description=str(svc.get("description") or "").strip()[:5000]
-                    data_json=json.dumps({"application_id":aid,"ai_source":True,"matched_subcategory_id":cid,"direction_id":approved_direction["id"]},ensure_ascii=False)
+                    object_id=_safe_int(svc.get("object_id") or payload.get("object_id"))
+                    contact_phone=str(svc.get("contact_phone") or payload.get("contact_phone") or "").strip() or None
+                    data_json=json.dumps({"application_id":aid,"ai_source":True,"matched_subcategory_id":cid,"direction_id":approved_direction["id"],"object_id":object_id,"contact_phone":contact_phone},ensure_ascii=False)
                     existing=_one("SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND name=%s AND status<>'deleted' ORDER BY id DESC LIMIT 1",(a["partner_id"],bid,name))
                     if existing:
                         _exec("UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",
