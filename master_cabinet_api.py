@@ -873,6 +873,21 @@ async def api_bookings(request: web.Request):
     return web.json_response({"ok": True, "bookings": _json(rows)})
 
 
+async def api_businesses(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    from partner_business_application_api import ensure_business_application_schema
+    ensure_business_application_schema()
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id,partner_id,name,description,phone,status,is_default,created_at,updated_at
+                           FROM partner_businesses
+                           WHERE partner_id=%s AND status <> 'archived'
+                           ORDER BY is_default DESC,id""",(pid,))
+            rows=cur.fetchall()
+    return web.json_response({"ok":True,"businesses":_json(rows),"current":_json(rows[0]) if rows else None})
+
+
 async def api_locations(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -1096,6 +1111,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     """
     app["partner_db"] = db
     app.router.add_get("/api/master/{id}/dashboard", api_dashboard)
+    app.router.add_get("/api/master/{id}/businesses", api_businesses)
     app.router.add_get("/api/master/{id}/settings", api_settings)
     app.router.add_post("/api/master/{id}/settings", api_settings_update)
     app.router.add_get("/api/master/{id}/objects", api_objects)
