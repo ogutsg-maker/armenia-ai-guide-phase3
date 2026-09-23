@@ -282,11 +282,30 @@ async def admin_ai_message(admin_id,message):
     )) and not re.search(r"(?:#|(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*)\d+",normalized):
         message=message+f" (Контекст: продолжение работы с заявкой #{last_aid}. Используй application_id={last_aid}.)"
 
-    include_catalog=any(x in normalized for x in (
-        "категор","подкатегор","направлен","ենթակատեգոր","կատեգոր","ուղղություն",
-        "ուղղիր","շտկիր","подкатегорию"
+    # Small, targeted catalog context for category corrections. Sending the full
+    # catalog to Groq is unnecessarily large and can cause request failures.
+    category_followup=any(x in normalized for x in (
+        "ուղղիր","շտկիր","փոխիր","ենթակատեգոր","կատեգոր","ուղղություն",
+        "подкатегор","категор","направлен","исправь","измени",
+        "edit","change","category","subcategory"
     ))
-    ctx=_admin_context(limit=30,include_catalog=include_catalog)
+    if category_followup and last_aid:
+        app=platform_db.one("""SELECT id,master_category_id,category_id,direction_name,subcategory_name
+            FROM partner_applications WHERE id=%s""",(last_aid,))
+        ctx=_admin_context(limit=30,include_catalog=False)
+        ctx["target_application"]=app or {"id":last_aid}
+        # Give Groq only a compact active catalog with IDs and all language labels.
+        ctx["catalog"]=platform_db.rows("""SELECT c.id,c.master_category_id,
+            c.name_am,c.name_ru,c.name_en,
+            m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
+            FROM categories c JOIN master_categories m ON m.id=c.master_category_id
+            WHERE c.is_active=TRUE AND m.is_active=TRUE
+            ORDER BY c.master_category_id,c.id""")
+    else:
+        include_catalog=any(x in normalized for x in (
+            "категор","подкатегор","направлен","ենթակատեգոր","կատեգոր","ուղղություն"
+        ))
+        ctx=_admin_context(limit=30,include_catalog=include_catalog)
     c=await _admin_ai_json(message,ctx)
     if not c.get("application_id") and last_aid and c.get("intent") in {"edit_application","approve_application","reject_application","clarify_application"}:
         c["application_id"]=last_aid
