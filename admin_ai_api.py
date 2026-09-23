@@ -239,23 +239,50 @@ async def _admin_execute(c):
     return str(c.get("reply") or "Уточните команду.")
 
 async def admin_ai_message(admin_id,message):
-    normalized=re.sub(r"[\s.!?,;:]+"," ",message.lower()).strip()
-    if normalized in {"да","da","yes","y","ok","okay","подтверждаю","подтвердить","այո","հա","հաստատել","հաստատում եմ"}:
-        pending=[(ts,tok,c) for tok,(ts,c) in _ADMIN_PENDING.items() if time.time()-ts<=_ADMIN_PENDING_TTL]
-        if pending:
-            _,tok,c=max(pending,key=lambda x:x[0]);_ADMIN_PENDING.pop(tok,None)
-            return await _admin_execute(c)
-    if normalized in {"нет","no","n","cancel","отмена","отменить","ոչ","չեղարկել"}:
-        pending=[(ts,tok) for tok,(ts,c) in _ADMIN_PENDING.items() if time.time()-ts<=_ADMIN_PENDING_TTL]
-        if pending:
-            _,tok=max(pending,key=lambda x:x[0]);_ADMIN_PENDING.pop(tok,None)
-            return "Операция отменена."
-    ctx=_admin_context()
+    message=str(message or "").strip()
+    if not message:
+        return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
+
+    # Deterministic read-only routing for natural commands in Armenian/Russian/English.
+    # These commands must NEVER create a confirmation request.
+    normalized=message.lower().strip()
+    read_markers=(
+        "проверь","покажи","открой","посмотри","что с","статус","расскажи",
+        "ստուգիր","ցույց տուր","բացիր","նայիր","ինչ վիճակում","կարգավիճակ",
+        "show","open","check","status","tell me"
+    )
+    mutation_markers=(
+        "измени","поставь","добавь","удали","одобри","подтверди","отклони",
+        "отправь","замени","перенеси","исправь","փոխիր","դիր","ավելացրու",
+        "ջնջիր","հաստատիր","մերժիր","ուղարկիր","փոխարինիր","edit","approve",
+        "reject","delete","add","change"
+    )
+    if any(x in normalized for x in read_markers) and not any(x in normalized for x in mutation_markers):
+        ids=re.findall(r"(?:#|(?:заявк[ауеи]?|հայտ(?:ը|ի|ը)?|application)\s*)(\d+)",normalized)
+        ctx=_admin_context(limit=30,include_catalog=False)
+        if ids:
+            return await _admin_execute({"intent":"open_application","application_id":int(ids[0])})
+        rows=ctx.get("applications") or []
+        # A singular read-only command with one actionable application opens it directly.
+        if len(rows)==1:
+            return await _admin_execute({"intent":"open_application","application_id":int(rows[0]["id"])})
+        return await _admin_execute({"intent":"show_applications"})
+
+    include_catalog=any(x in normalized for x in (
+        "категор","подкатегор","направлен","ենթակատեգոր","կատեգոր","ուղղություն"
+    ))
+    ctx=_admin_context(limit=30,include_catalog=include_catalog)
     c=await _admin_ai_json(message,ctx)
-    if c.get("intent") in {"show_applications","open_application","show_partners","show_businesses","clarify"}:
+    intent=c.get("intent")
+    if intent in {"show_applications","open_application","show_partners","show_businesses"}:
         return await _admin_execute(c)
-    _admin_pending_add(c)
-    return "🤖 Подготовил действие:\n\n"+_admin_ai_preview(c,ctx)+"\n\nПодтвердить? Напишите «да» или «нет»."
+    if intent not in {"edit_application","approve_application","reject_application","clarify_application"}:
+        return str(c.get("reply") or "Не понял команду. Укажите номер заявки и действие.")
+    aid=c.get("application_id")
+    if not aid:
+        return "Укажите номер заявки."
+    token=_admin_pending_add(c)
+    return "🤖 Подготовил действие:\n\n"+_admin_ai_preview(c,ctx)+"\n\nПодтвердить? Напишите «да» или «нет».\n\n__PENDING__:"+token
 
 async def api_admin_assistant(request):
     _admin(request)
