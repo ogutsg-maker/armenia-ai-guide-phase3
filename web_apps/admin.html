@@ -67,10 +67,10 @@ function renderPartners(){
      </div>
      <div class="actions">
        <button class="btn soft" onclick="togglePartner(${p.id})">▼ Компании</button>
-       ${p.status!=='approved'?'<button class="btn ok" onclick="decision('+p.id+',\\'approve\\')">✓ Հաստատել</button>':''}
-       ${!['blocked','approved'].includes(p.status)?'<button class="btn danger" onclick="decision('+p.id+',\\'reject\\')">✕ Մերժել</button>':''}
-       ${p.status!=='suspended'&&p.status!=='blocked'?'<button class="btn warn" onclick="decision('+p.id+',\\'suspend\\')">Կասեցնել</button>':''}
-       ${p.status!=='blocked'?'<button class="btn danger" onclick="decision('+p.id+',\\'block\\')">Արգելափակել</button>':''}
+       ${p.status!=='approved'?'<button class="btn ok" onclick="decision('+p.id+',\'approve\')">✓ Հաստատել</button>':''}
+       ${!['blocked','approved'].includes(p.status)?'<button class="btn danger" onclick="decision('+p.id+',\'reject\')">✕ Մերժել</button>':''}
+       ${p.status!=='suspended'&&p.status!=='blocked'?'<button class="btn warn" onclick="decision('+p.id+',\'suspend\')">Կասեցնել</button>':''}
+       ${p.status!=='blocked'?'<button class="btn danger" onclick="decision('+p.id+',\'block\')">Արգելափակել</button>':''}
      </div>
      <div id="expand${p.id}" class="detail" style="display:none"></div>
    </div>`).join(''):'<div class="empty">Գործընկերներ չկան։</div>';
