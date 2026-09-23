@@ -181,7 +181,7 @@ def _admin_session(admin_id):
     sid=int(admin_id); now=time.time(); state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
         state={"last_focused_application_id":None,"last_focused_field":None,"last_focused_entity_type":None,"last_focused_entity_id":None,"last_shown_applications":[],"current_list":[],"current_position":None,
-               "last_query":None,"last_shown_query_rows":[],"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"last_error_context":None,"retry_count":0,"updated_at":now}
+               "last_query":None,"last_query_target":None,"last_shown_query_rows":[],"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"last_error_context":None,"retry_count":0,"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
     return state
@@ -213,7 +213,8 @@ def _admin_hydrate_context(state,limit=12):
         "applications":applications,"waiting_for_input":state.get("waiting_for_input"),
         "last_focused_field":state.get("last_focused_field"),
         "last_query":state.get("last_query"),
-        "last_shown_query_rows":state.get("last_shown_query_rows",[])[:10],
+        "last_query_target":state.get("last_query_target"),
+        "last_shown_query_rows":state.get("last_shown_query_rows",[])[:20],
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
         "query_capabilities":{"targets":["applications","partners","businesses","catalog","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
@@ -685,7 +686,10 @@ async def _admin_ai_json(message,ctx):
     system="""You are the universal semantic planner for the Armenia AI Guide administrator.
 Understand what the administrator means, not predefined command phrases. Input can be Armenian,
 Russian, English, mixed language, transliteration, typos, colloquial wording, elliptical follow-ups
-or broad natural questions. Use the supplied conversation context.
+or broad natural questions. Use the supplied conversation context. A short follow-up may refer to the immediately previous
+database result by position, ID, field, name, or property (for example asking for "names" after a list
+of IDs). Resolve that reference from last_shown_query_rows and last_query_target before choosing a
+new target. This is semantic context resolution, not a predefined command list.
 
 Decide the goal, subject/entity, context reference, factual data needed, and whether the request is
 read-only or a mutation. Python is the source of truth: it resolves IDs, permissions and executes
@@ -1026,6 +1030,11 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
 
 async def _admin_semantic_answer(question,plan,state):
     entity_type,entity_id=_admin_resolve_semantic_entity(plan,state)
+    # A follow-up can naturally refer to the immediately previous query result.
+    previous_rows=state.get("last_shown_query_rows") or []
+    previous_target=state.get("last_query_target")
+    if str(plan.get("intent") or "")=="query_database" and not plan.get("target") and previous_target:
+        plan["target"]=previous_target
     if entity_id:
         state["last_focused_entity_type"]=entity_type
         state["last_focused_entity_id"]=entity_id
@@ -1034,11 +1043,30 @@ async def _admin_semantic_answer(question,plan,state):
     target=_admin_query_target(plan.get("target"))
     facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state) if entity_id else {}
     if not facts and target:
-        rows,error=_admin_query_rows(target,plan.get("filters") or {},plan.get("limit") or 20,plan.get("sort"))
+        # If the user is asking a follow-up about the previous result, reuse those exact
+        # rows instead of issuing a broader unrelated query.
+        followup_rows=previous_rows if previous_target==target and previous_rows else None
+        if followup_rows is not None:
+            rows=followup_rows
+            error=None
+        else:
+            rows,error=_admin_query_rows(target,plan.get("filters") or {},plan.get("limit") or 20,plan.get("sort"))
         facts={"target":target,"rows":rows or []}
         if error: facts={"error":error}
+    if not facts and previous_rows:
+        facts={"target":previous_target or target or "query_result","rows":previous_rows}
+        state["last_query_target"]=previous_target
+        state["last_shown_query_rows"]=_admin_safe(previous_rows[:20])
+        state["last_query"]=question[:500]
     if not facts:
         return _admin_localized(plan.get("response_language","ru"),"unknown")
+
+    # Persist the factual rows that generated this answer. They become the context
+    # for the next natural-language follow-up.
+    if isinstance(facts,dict) and isinstance(facts.get("rows"),list):
+        state["last_query_target"]=target or plan.get("target")
+        state["last_shown_query_rows"]=_admin_safe(facts.get("rows")[:20])
+        state["last_query"]=question[:500]
     fallback=json.dumps(facts,ensure_ascii=False,default=str)
     if isinstance(facts,dict) and "rows" in facts:
         fallback=_admin_query_result_text(target or entity_type,facts.get("rows") or [],plan.get("filters") or {},question)
@@ -1051,8 +1079,10 @@ async def _admin_semantic_answer(question,plan,state):
             "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
         resp=await client.chat.completions.create(model=model,messages=[
             {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
-Answer naturally, directly and humanly in the same language as the question. Use ONLY the supplied
-database facts and the supplied truth/check results. The truth/check results are authoritative for
+Answer naturally, directly and humanly in the same language as the question. The question may
+be a short follow-up to the previous result. In that case, answer from the supplied rows and identify
+the requested property (such as names, IDs, categories, prices, statuses) from those rows.
+Use ONLY the supplied database facts and the supplied truth/check results. The truth/check results are authoritative for
 whether something is actually wrong. Do NOT turn an empty field into an error, mandatory field, or
 approval problem unless the supplied facts explicitly prove that rule. Do not invent business rules,
 approval consequences, currency, prices, categories, or document status.
