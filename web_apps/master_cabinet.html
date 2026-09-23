@@ -189,12 +189,16 @@ function closeServiceCreate(){document.getElementById('serviceCreateModal')?.rem
 async function refreshServiceBusinessObjects(businessId){
   return (await api('/api/master/0/objects',{headers:{'X-Business-Id':String(businessId)}})).objects||[];
 }
-function addService(){
+async function addService(){
   closeServiceCreate();
-  const modal=document.createElement('div'); modal.id='serviceCreateModal'; modal.className='modal';
   const firms=state.businesses||[];
   const current=state.current||firms[0]||null;
-  const objects=state.objects||[];
+  let objects=[];
+  if(current){
+    try{ objects=await refreshServiceBusinessObjects(current.id); state.objects=objects; }
+    catch(e){ objects=[]; state.objects=[]; toast(e.message); }
+  }
+  const modal=document.createElement('div'); modal.id='serviceCreateModal'; modal.className='modal';
   const firmOptions=firms.map(b=>'<option value="'+b.id+'" '+(current&&String(b.id)===String(current.id)?'selected':'')+'>'+esc(b.name)+'</option>').join('');
   const objectOptions=objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name||'')+(o.address?' · '+esc(o.address):'')+(o.city?' · '+esc(o.city):'')+'</option>').join('');
   modal.innerHTML='<div class="modal-card">'+
@@ -207,7 +211,9 @@ function addService(){
       '</div>'+
     '</div>'+
     '<div class="section"><h3>📍 Адрес</h3>'+
-      '<div class="field"><label>Адрес оказания услуги</label><select id="svcObject">'+(objectOptions?'<option value="">Выберите адрес</option>':'<option value="">Адресов пока нет</option>')+objectOptions+'<option value="__new__">＋ Новый адрес</option></select></div>'+
+      '<div class="field"><label>Адрес оказания услуги</label><select id="svcObject">'+
+        (objectOptions?'<option value="">Выберите адрес</option>':'<option value="">Адресов у '+esc(current?.name||'этой компании')+' пока нет</option>')+
+        objectOptions+'<option value="__new__">＋ Новый адрес</option></select></div>'+
       '<div id="svcNewObject" style="display:none">'+
         '<div class="grid2"><div class="field"><label>Название адреса</label><input id="svcObjectName"></div><div class="field"><label>Телефон адреса</label><input id="svcObjectPhone" inputmode="tel"></div></div>'+
         '<div class="grid2"><div class="field"><label>Город</label><input id="svcObjectCity"></div><div class="field"><label>Марз</label><input id="svcObjectMarz"></div></div>'+
@@ -233,34 +239,44 @@ function addService(){
     if(phone.value.trim())return;
     if(os.value && os.value!=='__new__'){
       const o=state.objects.find(x=>String(x.id)===String(os.value));
-      phone.value=o?.phone||state.current?.phone||'';
+      phone.value=o?.phone||state.businesses.find(x=>String(x.id)===String(bs.value))?.phone||'';
     }else if(bs.value && bs.value!=='__new__'){
       const b=state.businesses.find(x=>String(x.id)===String(bs.value));
       phone.value=b?.phone||'';
     }
   }
+  function showNewObject(show){ newObject.style.display=show?'block':'none'; }
+
   bs.onchange=async()=>{
     const isNew=bs.value==='__new__';
     newBusiness.style.display=isNew?'block':'none';
-    if(!isNew){
-      const b=state.businesses.find(x=>String(x.id)===String(bs.value));
-      state.current=b||state.current;
-      try{
-        state.objects=await refreshServiceBusinessObjects(bs.value);
-        os.innerHTML=(state.objects.length?'<option value="">Выберите адрес</option>':'<option value="">Адресов пока нет</option>')+
-          state.objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name||'')+(o.address?' · '+esc(o.address):'')+(o.city?' · '+esc(o.city):'')+'</option>').join('')+
-          '<option value="__new__">＋ Новый адрес</option>';
-        newObject.style.display='none'; setDefaultPhone();
-      }catch(err){toast(err.message)}
-    }else{
-      state.objects=[]; os.innerHTML='<option value="">Сначала создайте компанию</option>'; os.value='';
-      newObject.style.display='block';
+    if(isNew){
+      state.objects=[];
+      os.innerHTML='<option value="__new__">＋ Новый адрес</option>';
+      os.value='__new__';
+      showNewObject(true);
       phone.value='';
+      return;
     }
+    const b=state.businesses.find(x=>String(x.id)===String(bs.value));
+    state.current=b||state.current;
+    try{
+      state.objects=await refreshServiceBusinessObjects(bs.value);
+      os.innerHTML=(state.objects.length?'<option value="">Выберите адрес</option>':'<option value="">Адресов у '+esc(b?.name||'этой компании')+' пока нет</option>')+
+        state.objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name||'')+(o.address?' · '+esc(o.address):'')+(o.city?' · '+esc(o.city):'')+'</option>').join('')+
+        '<option value="__new__">＋ Новый адрес</option>';
+      showNewObject(false);
+      phone.value='';
+      setDefaultPhone();
+    }catch(err){toast(err.message)}
   };
+
   os.onchange=()=>{
-    newObject.style.display=os.value==='__new__'?'block':'none';
-    if(os.value==='__new__'){document.getElementById('svcPhone').value=document.getElementById('svcObjectPhone').value||document.getElementById('svcBusinessPhone').value||'';return}
+    showNewObject(os.value==='__new__');
+    if(os.value==='__new__'){
+      phone.value=document.getElementById('svcObjectPhone').value||document.getElementById('svcBusinessPhone').value||'';
+      return;
+    }
     setDefaultPhone();
   };
   document.getElementById('svcObjectPhone').oninput=e=>{if(!phone.value.trim())phone.value=e.target.value};
