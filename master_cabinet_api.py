@@ -736,16 +736,7 @@ async def api_service_create(request: web.Request):
         conn.commit()
     return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,"ai_classified":True,
                               "matched_category_id":match["category_id"],"master_category_id":match["master_category_id"],
-                              "message":"Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ադմինիստրատորին հաստատման։"}) WHERE partner_id=%s AND business_id=%s AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted' ORDER BY id DESC LIMIT 1",(pid,bid,name))
-            old=cur.fetchone()
-            if old:
-                cur.execute("UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,description=%s,status='pending',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",(match["category_id"],price,description,payload,old["id"],pid,bid))
-            else:
-                cur.execute("INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json) VALUES(%s,%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb) RETURNING *",(pid,bid,match["category_id"],name,description,price,payload))
-            row=cur.fetchone()
-        conn.commit()
-    return web.json_response({"ok":True,"service":_json(row),"matched_category_id":match["category_id"],"master_category_id":match["master_category_id"],"message":"Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ստուգման։"})
-
+                              "message":"Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ադմինիստրատորին հաստատման։"
 async def api_service_update(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
