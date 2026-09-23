@@ -1251,16 +1251,27 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # A pending company becomes active together with its first
             # approved service. It was created only to hold this proposal.
             if str(business.get("status") or "") == "pending":
-                # A brand-new company cannot become live without its verification
-                # document. Keep the application pending and ask the partner to
-                # upload the document first.
+                # A new company is reviewed together with its first service.
+                # If a verification document was uploaded by the partner, the
+                # admin's single approval action also approves that document.
+                # The partner is never sent through a separate request loop.
                 if not a.get("document_id"):
                     _exec("""UPDATE partner_applications
                              SET status='document_pending',updated_at=NOW(),
                                  admin_note=%s
                              WHERE id=%s""",
-                          ("Նոր ընկերության հաստատման համար անհրաժեշտ է փաստաթուղթ։",aid))
+                          ("Նոր ընկերության համար փաստաթուղթը դեռ չի կցվել։ Գործընկերը կարող է ավելացնել այն прямо в заявке.",aid))
                     return web.json_response({"ok":True,"status":"document_pending","document_required":True,"application_id":aid})
+                doc=_one("""SELECT id,status FROM partner_verification_documents
+                            WHERE id=%s AND partner_id=%s""",(a["document_id"],a["partner_id"]))
+                if not doc:
+                    return web.json_response({"ok":False,"error":"document_not_found"},status=404)
+                if doc.get("status") not in ("pending","approved"):
+                    return web.json_response({"ok":False,"error":"document_not_ready"},status=409)
+                if doc.get("status")=="pending":
+                    _exec("""UPDATE partner_verification_documents
+                             SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL
+                             WHERE id=%s""",(_admin(request),doc["id"]))
                 _exec("""UPDATE partner_businesses
                          SET status='active', updated_at=NOW()
                          WHERE id=%s AND partner_id=%s""",(bid,a["partner_id"]))
