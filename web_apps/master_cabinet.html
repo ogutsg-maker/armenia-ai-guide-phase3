@@ -186,111 +186,150 @@ async function saveServiceEdit(id){
 }
 async function deleteService(id){const s=state.services.find(x=>String(x.id)===String(id));if(!s)return;if(!confirm((state.lang==='hy'?'Ջնջե՞լ ծառայությունը՝ ':state.lang==='ru'?'Удалить услугу: ':'Delete service: ')+String(s.name||'')+'?'))return;try{await api('/api/master/0/services/'+id,{method:'DELETE',headers:{'X-Business-Id':String(state.current.id)}});await openBusiness(state.current.id);showCompanySection('services')}catch(e){toast(e.message)}}
 function closeServiceCreate(){document.getElementById('serviceCreateModal')?.remove()}
-async function loadBusinessObjects(businessId){
-  const d=await api('/api/master/0/objects',{headers:{'X-Business-Id':String(businessId)}});
-  return d.objects||[];
+async function refreshServiceBusinessObjects(businessId){
+  return (await api('/api/master/0/objects',{headers:{'X-Business-Id':String(businessId)}})).objects||[];
 }
 function addService(){
   closeServiceCreate();
-  const modal=document.createElement('div');
-  modal.id='serviceCreateModal'; modal.className='modal';
-  const firms=state.businesses.map(x=>'<option value="'+x.id+'" '+(String(x.id)===String(state.current?.id)?'selected':'')+'>'+esc(x.name)+'</option>').join('');
-  const objects=state.objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name)+' · '+esc([o.city,o.address].filter(Boolean).join(', '))+'</option>').join('');
-  const firmPhone=state.current?.phone||'';
+  const modal=document.createElement('div'); modal.id='serviceCreateModal'; modal.className='modal';
+  const firms=state.businesses||[];
+  const current=state.current||firms[0]||null;
+  const objects=state.objects||[];
+  const firmOptions=firms.map(b=>'<option value="'+b.id+'" '+(current&&String(b.id)===String(current.id)?'selected':'')+'>'+esc(b.name)+'</option>').join('');
+  const objectOptions=objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name||'')+(o.address?' · '+esc(o.address):'')+(o.city?' · '+esc(o.city):'')+'</option>').join('');
   modal.innerHTML='<div class="modal-card">'+
-    '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Выберите компанию и адрес, где оказывается услуга.</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
-    '<div class="field"><label>🏢 '+tr('company')+'</label><div style="display:flex;gap:7px"><select id="newServiceBusiness" style="flex:1">'+firms+'</select><button class="btn secondary" onclick="createBusinessFromService()">＋</button></div></div>'+
-    '<div class="field"><label>📍 '+tr('object')+'</label><div style="display:flex;gap:7px"><select id="newServiceObject" style="flex:1"><option value="">'+tr('selectObject')+'</option>'+objects+'</select><button class="btn secondary" onclick="createAddressFromService()">＋</button></div></div>'+
-    '<div id="newServiceNoAddress" class="notice" style="display:'+(objects?'none':'block')+'">Адресов пока нет. Нажмите «＋», чтобы добавить адрес этой компании.</div>'+
-    '<div class="field"><label>🛠 '+tr('name')+'</label><input id="newServiceName" autocomplete="off"></div>'+
-    '<div class="field"><label>'+tr('description')+'</label><textarea id="newServiceDescription" rows="4"></textarea></div>'+
-    '<div class="field"><label>💰 '+tr('price')+'</label><input id="newServicePrice" type="number" min="0" step="1" inputmode="numeric"></div>'+
-    '<div class="notice">AI-ը ինքն է ընտրում գործող կատալոգի դասակարգումը։ Կատալոգի ուղղությունը և ենթակատեգորիան գործընկերը այստեղ չի լրացնում։</div>'+
-    '<div class="actions"><button class="btn secondary" onclick="closeServiceCreate()">'+tr('back')+'</button><button class="btn" onclick="submitNewService()">✓ '+tr('save')+'</button></div>'+
+    '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Укажите компанию, место и контакт именно для этой услуги.</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
+    '<div class="section"><h3>🏢 Компания</h3>'+
+      '<div class="field"><label>Компания</label><select id="svcBusiness">'+firmOptions+'<option value="__new__">＋ Новая компания</option></select></div>'+
+      '<div id="svcNewBusiness" style="display:none">'+
+        '<div class="grid2"><div class="field"><label>Название компании</label><input id="svcBusinessName"></div><div class="field"><label>Телефон компании</label><input id="svcBusinessPhone" inputmode="tel"></div></div>'+
+        '<div class="field"><label>Описание компании</label><textarea id="svcBusinessDescription" rows="3"></textarea></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="section"><h3>📍 Адрес</h3>'+
+      '<div class="field"><label>Адрес оказания услуги</label><select id="svcObject">'+(objectOptions?'<option value="">Выберите адрес</option>':'<option value="">Адресов пока нет</option>')+objectOptions+'<option value="__new__">＋ Новый адрес</option></select></div>'+
+      '<div id="svcNewObject" style="display:none">'+
+        '<div class="grid2"><div class="field"><label>Название адреса</label><input id="svcObjectName"></div><div class="field"><label>Телефон адреса</label><input id="svcObjectPhone" inputmode="tel"></div></div>'+
+        '<div class="grid2"><div class="field"><label>Город</label><input id="svcObjectCity"></div><div class="field"><label>Марз</label><input id="svcObjectMarz"></div></div>'+
+        '<div class="field"><label>Адрес</label><input id="svcObjectAddress"></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="section"><h3>📞 Контакт услуги</h3><div class="field"><label>Телефон для этой услуги</label><input id="svcPhone" inputmode="tel" placeholder="'+esc(tr('phone'))+'"></div><div class="muted small">Можно оставить телефон компании/адреса или указать отдельный номер.</div></div>'+
+    '<div class="section"><h3>🛠 Услуга</h3>'+
+      '<div class="field"><label>Название</label><input id="svcName" autocomplete="off"></div>'+
+      '<div class="field"><label>Описание</label><textarea id="svcDescription" rows="4"></textarea></div>'+
+      '<div class="field"><label>Цена</label><input id="svcPrice" type="number" min="0" step="1" inputmode="numeric"></div>'+
+    '</div>'+
+    '<div class="notice">Каталог, направление и подкатегория здесь не заполняются. AI использует данные услуги для внутренней классификации.</div>'+
+    '<div class="actions" style="margin-top:15px"><button class="btn secondary" onclick="closeServiceCreate()">'+tr('back')+'</button><button class="btn" onclick="submitNewService()">✓ '+tr('save')+'</button></div>'+
   '</div>';
   document.body.appendChild(modal);
-  document.getElementById('newServiceObject')?.addEventListener('change',syncServiceObject);
-  document.getElementById('newServiceBusiness')?.addEventListener('change',async e=>{
-    const id=e.target.value;
-    if(!id)return;
-    state.current=state.businesses.find(x=>String(x.id)===String(id))||state.current;
-    try{
-      state.objects=await loadBusinessObjects(id);
-      addService();
-    }catch(err){toast(err.message)}
-  });
-  syncServiceObject();
-  document.getElementById('newServiceName')?.focus();
-}
-function syncServiceObject(){
-  const id=document.getElementById('newServiceObject')?.value;
-  const o=state.objects.find(x=>String(x.id)===String(id));
-  const addr=document.getElementById('newServiceAddress');
-  const cm=document.getElementById('newServiceCityMarz');
-  const ph=document.getElementById('newServicePhone');
-  if(o){
-    if(addr)addr.value=o.address||'';
-    if(cm)cm.value=[o.city,o.marz].filter(Boolean).join(' · ');
-    if(ph&&!ph.value)ph.value=o.phone||state.current?.phone||'';
-  }else{
-    if(addr)addr.value='';
-    if(cm)cm.value='';
-    if(ph&&!ph.value)ph.value=state.current?.phone||'';
+
+  const bs=document.getElementById('svcBusiness'), os=document.getElementById('svcObject');
+  const newBusiness=document.getElementById('svcNewBusiness'), newObject=document.getElementById('svcNewObject');
+  const phone=document.getElementById('svcPhone');
+
+  function setDefaultPhone(){
+    if(phone.value.trim())return;
+    if(os.value && os.value!=='__new__'){
+      const o=state.objects.find(x=>String(x.id)===String(os.value));
+      phone.value=o?.phone||state.current?.phone||'';
+    }else if(bs.value && bs.value!=='__new__'){
+      const b=state.businesses.find(x=>String(x.id)===String(bs.value));
+      phone.value=b?.phone||'';
+    }
   }
-}
-async function createAddressFromService(){
-  const businessId=document.getElementById('newServiceBusiness')?.value||state.current?.id;
-  if(!businessId)return;
-  const name=prompt(tr('objectName'));
-  if(!name)return;
-  const address=prompt(tr('address'));
-  if(!address)return;
-  const city=prompt(tr('city'));
-  if(!city)return;
-  const marz=prompt(tr('marz'));
-  try{
-    const od=await api('/api/master/0/objects',{method:'POST',headers:{'X-Business-Id':String(businessId)},body:{name,address,city,marz,phone:state.current?.phone||''}});
-    state.objects=await loadBusinessObjects(businessId);
-    addService();
-    const sel=document.getElementById('newServiceObject');
-    if(sel&&od.object?.id){sel.value=String(od.object.id);syncServiceObject();}
-    toast('✓ '+tr('saved'));
-  }catch(e){toast(e.message)}
-}
-async function createBusinessFromService(){
-  const name=prompt(tr('name')); if(!name)return;
-  try{
-    const created=await api('/api/master/0/businesses',{method:'POST',body:{name}});
-    await loadBusinesses();
-    const createdId=created.business?.id||created.id||state.businesses.filter(b=>String(b.name||'').trim()===name.trim()).sort((a,b)=>Number(b.id)-Number(a.id))[0]?.id;
-    if(!createdId)throw new Error('company_create_failed');
-    state.current=state.businesses.find(x=>String(x.id)===String(createdId))||state.current;
-    state.objects=await loadBusinessObjects(createdId);
-    addService();
-    const bs=document.getElementById('newServiceBusiness');
-    if(bs)bs.value=String(createdId);
-  }catch(e){toast(e.message)}
+  bs.onchange=async()=>{
+    const isNew=bs.value==='__new__';
+    newBusiness.style.display=isNew?'block':'none';
+    if(!isNew){
+      const b=state.businesses.find(x=>String(x.id)===String(bs.value));
+      state.current=b||state.current;
+      try{
+        state.objects=await refreshServiceBusinessObjects(bs.value);
+        os.innerHTML=(state.objects.length?'<option value="">Выберите адрес</option>':'<option value="">Адресов пока нет</option>')+
+          state.objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name||'')+(o.address?' · '+esc(o.address):'')+(o.city?' · '+esc(o.city):'')+'</option>').join('')+
+          '<option value="__new__">＋ Новый адрес</option>';
+        newObject.style.display='none'; setDefaultPhone();
+      }catch(err){toast(err.message)}
+    }else{
+      state.objects=[]; os.innerHTML='<option value="">Сначала создайте компанию</option>'; os.value='';
+      newObject.style.display='block';
+      phone.value='';
+    }
+  };
+  os.onchange=()=>{
+    newObject.style.display=os.value==='__new__'?'block':'none';
+    if(os.value==='__new__'){document.getElementById('svcPhone').value=document.getElementById('svcObjectPhone').value||document.getElementById('svcBusinessPhone').value||'';return}
+    setDefaultPhone();
+  };
+  document.getElementById('svcObjectPhone').oninput=e=>{if(!phone.value.trim())phone.value=e.target.value};
+  document.getElementById('svcBusinessPhone').oninput=e=>{if(!phone.value.trim())phone.value=e.target.value};
+  setDefaultPhone();
+  document.getElementById('svcName')?.focus();
 }
 async function submitNewService(){
-  const businessId=document.getElementById('newServiceBusiness')?.value||state.current?.id;
-  const objectId=document.getElementById('newServiceObject')?.value||'';
-  const name=document.getElementById('newServiceName')?.value.trim()||'';
-  const description=document.getElementById('newServiceDescription')?.value.trim()||'';
-  const priceRaw=document.getElementById('newServicePrice')?.value.trim()||'';
-  if(!businessId){toast(tr('company'));return}
-  if(name.length<2){toast(tr('name'));return}
-  if(priceRaw!==''&&(!Number.isFinite(Number(priceRaw))||Number(priceRaw)<0)){toast(tr('price'));return}
-  if(!objectId){toast(tr('selectObject'));return}
+  const businessValue=document.getElementById('svcBusiness')?.value||'';
+  const newBusiness=businessValue==='__new__';
+  const objectValue=document.getElementById('svcObject')?.value||'';
+  const newObject=objectValue==='__new__';
+  const serviceName=document.getElementById('svcName')?.value.trim()||'';
+  const description=document.getElementById('svcDescription')?.value.trim()||'';
+  const priceRaw=document.getElementById('svcPrice')?.value.trim()||'';
+  const phone=document.getElementById('svcPhone')?.value.trim()||'';
+  if(!businessValue){toast('Выберите компанию');return}
+  if(newBusiness && (document.getElementById('svcBusinessName')?.value.trim()||'').length<2){toast('Введите название компании');return}
+  if(!newBusiness && !state.businesses.find(b=>String(b.id)===String(businessValue))){toast('Компания не найдена');return}
+  if(!objectValue){toast('Выберите адрес или создайте новый');return}
+  if(newObject){
+    if((document.getElementById('svcObjectName')?.value.trim()||'').length<2){toast('Введите название адреса');return}
+    if(!(document.getElementById('svcObjectAddress')?.value.trim()||'')){toast('Введите адрес');return}
+    if(!(document.getElementById('svcObjectCity')?.value.trim()||'')){toast('Введите город');return}
+  }
+  if(serviceName.length<2){toast('Введите название услуги');return}
+  if(priceRaw!==''&&(!Number.isFinite(Number(priceRaw))||Number(priceRaw)<0)){toast('Проверьте цену');return}
+  const save=document.querySelector('#serviceCreateModal .actions .btn:not(.secondary)');
+  if(save){save.disabled=true;save.textContent='Сохранение…'}
   try{
-    state.current=state.businesses.find(x=>String(x.id)===String(businessId))||state.current;
-    const d=await api('/api/master/0/services',{method:'POST',headers:{'X-Business-Id':String(businessId)},body:{name,description,price:priceRaw===''?null:Number(priceRaw),object_id:Number(objectId),contact_phone:state.current?.phone||null}});
+    let businessId;
+    if(newBusiness){
+      const b=await api('/api/master/0/businesses',{method:'POST',body:{
+        name:document.getElementById('svcBusinessName').value.trim(),
+        description:document.getElementById('svcBusinessDescription').value.trim(),
+        phone:document.getElementById('svcBusinessPhone').value.trim()
+      }});
+      businessId=b.business.id;
+      await loadBusinesses();
+    }else businessId=Number(businessValue);
+
+    if(newObject){
+      const o=await api('/api/master/0/objects',{method:'POST',headers:{'X-Business-Id':String(businessId)},body:{
+        name:document.getElementById('svcObjectName').value.trim(),
+        address:document.getElementById('svcObjectAddress').value.trim(),
+        city:document.getElementById('svcObjectCity').value.trim(),
+        marz:document.getElementById('svcObjectMarz').value.trim(),
+        phone:document.getElementById('svcObjectPhone').value.trim() || null
+      }});
+      objectId=o.object.id;
+    }else{
+      objectId=Number(objectValue);
+    }
+
+    const company=state.businesses.find(b=>String(b.id)===String(businessId))||null;
+    const contactPhone=phone || company?.phone || '';
+    const d=await api('/api/master/0/services',{method:'POST',headers:{'X-Business-Id':String(businessId)},body:{
+      name:serviceName,description,price:priceRaw===''?null:Number(priceRaw),
+      object_id:objectId,contact_phone:contactPhone
+    }});
     closeServiceCreate();
     await loadBusinesses();
-    state.current=state.businesses.find(x=>String(x.id)===String(businessId))||state.current;
-    await openBusiness(businessId);
-    showCompanySection('services');
-    toast(d.proposal_created?'Հայտը ուղարկվեց ադմինիստրատորին':'Ծառայությունը ուղարկվեց ադմինիստրատորին հաստատման համար');
-  }catch(e){toast(e.message)}
+    state.current=state.businesses.find(b=>String(b.id)===String(businessId))||state.businesses[0]||null;
+    await openBusiness(businessId); showCompanySection('services');
+    toast(d.proposal_created?'Заявка на услугу отправлена администратору':'Услуга сохранена');
+  }catch(e){
+    if(save){save.disabled=false;save.textContent='✓ '+tr('save')}
+    toast(e.message);
+  }
 }
 function renderApplications(){document.getElementById('applications').innerHTML='<div class="heading"><div><h1>📨 '+tr('applications')+'</h1><p>Այստեղ միայն ընթացակարգերն են։ Ավարտված հայտը այլևս այստեղ չի մնում որպես ակտիվ գործընթաց։</p></div></div><div class="list">'+(state.applications.length?state.applications.map(a=>'<div class="item click" onclick="openApplication('+a.id+')"><div class="row"><b>#'+a.id+' · '+esc(a.service_name||a.business_name||'Հայտ')+'</b>'+status(a.status)+'</div><div class="muted">'+esc(a.business_name_db||a.business_name||'')+' · '+esc(a.direction_name||a.master_name_am||'')+'</div><div class="chips"><span class="chip">'+esc(a.category_name_am||a.category_name_ru||'AI')+'</span>'+(a.document_id?'<span class="chip ok">📄 '+tr('document')+'</span>':'')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>'}
 function openApplication(id){const a=state.applications.find(x=>x.id===id);if(!a)return;const p=a.payload_json||{};const sv=a.services||p.services||[];document.getElementById('application').innerHTML='<button class="back" onclick="openMain(\'applications\')">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h1>📨 #'+a.id+'</h1><p>'+esc(a.business_name_db||a.business_name||'')+'</p></div>'+status(a.status)+'</div><div class="section"><h3>'+tr('applicationInfo')+'</h3><div class="grid2"><div><b>'+tr('direction')+'</b><div>'+esc(a.master_name_am||a.master_name_ru||a.direction_name||'—')+'</div></div><div><b>'+tr('subcategory')+'</b><div>'+esc(a.category_name_am||a.category_name_ru||a.subcategory_name||'—')+'</div></div><div><b>'+tr('price')+'</b><div>'+esc(a.price??'—')+'</div></div><div><b>'+tr('document')+'</b><div>'+ (a.document_id?status(a.document_status||'pending'):'—')+'</div></div></div></div><div class="section"><h3>'+tr('services')+'</h3><div class="list">'+(sv.length?sv.map(x=>'<div class="item"><div class="row"><b>'+esc(x.name||x.service_name)+'</b><span>'+esc(x.price??'')+' AMD</span></div><div class="muted">'+esc(x.direction_name||'')+' · '+esc(x.subcategory_name||'')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div></div><div class="section"><div class="notice">Եթե գործընթացը ավարտվի հաստատմամբ, արդյունքը դառնում է իրական ընկերություն / ուղղություն / ծառայություն և այլևս չի խառնվում ակտիվ հայտերի հետ։</div></div></div>';setView('application',false)}
