@@ -180,6 +180,22 @@ def _admin_catalog():
         FROM categories c JOIN master_categories m ON m.id=c.master_category_id
         WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.id""")
 
+def _admin_category_suggestions(service_name, master_category_id=None):
+    target=_norm(service_name)
+    if not target: return []
+    rows=_admin_catalog()
+    if master_category_id is not None:
+        rows=[x for x in rows if x.get("master_category_id")==master_category_id]
+    tokens=[t for t in re.findall(r"[a-zа-яёև-]+",target) if len(t)>2]
+    scored=[]
+    for x in rows:
+        names=[str(x.get(k) or "") for k in ("name_am","name_ru","name_en")]
+        hay=_norm(" ".join(names))
+        score=sum(1 for t in tokens if t in hay)
+        if score: scored.append((score,names[0] or names[1] or names[2]))
+    scored.sort(reverse=True)
+    return list(dict.fromkeys(name for _,name in scored[:5]))
+
 def _admin_category_by_text(value):
     target=str(value or "").strip().casefold()
     if not target: return None
@@ -330,6 +346,9 @@ def _admin_fallback_intent(message, focused_id=None):
         return {"intent":"show_application","target":"application","application_id":focused_id,"confidence":0.5}
     if any(x in text for x in ("ուղղիր ենթակատեգորիան","շտկիր ենթակատեգորիան","փոխիր ենթակատեգորիան","կատեգորիան ճիշտ չէ","ուղղիր կատեգորիան","исправь подкатегорию","исправить подкатегорию","исправь категорию")):
         return {"intent":"edit_application","target":"application","application_id":focused_id,"field":"subcategory","value_raw":"","confidence":0.5}
+    if any(x in text for x in ("ստուգիր","ստուգել","ցույց տուր","ցուցադրիր","պատմիր","проверь","покажи","открой","show","check","inspect")):
+        if "հայտ" in text or "заяв" in text or "application" in text:
+            return {"intent":"show_applications","target":"application","confidence":0.4}
     m=re.search(r"(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*#?\s*(\d+)",text)
     aid=int(m.group(1)) if m else focused_id
     if any(x in text for x in ("открой","բացիր","open")) and aid:
@@ -425,7 +444,11 @@ async def admin_ai_message(admin_id,message):
         value=str(c.get("value_raw") or c.get("value_text") or "").strip()
         if field in {"category","subcategory"}:
             if not value:
-                return "Текущая подкатегория «"+str(app.get("subcategory_name") or "—")+"». Укажите новую, например: «այստեղ պետք է Հոնքեր լինի»."
+                current=str(app.get("subcategory_name") or "—")
+                suggestions=_admin_category_suggestions(str(app.get("service_name") or ""),app.get("master_category_id"))
+                if suggestions:
+                    return "Текущая подкатегория: «"+current+"». Возможные варианты: "+", ".join("«"+x+"»" for x in suggestions)+"\nУкажите нужную подкатегорию."
+                return "Текущая подкатегория «"+current+"». Укажите новую подкатегорию."
             cat=_admin_category_by_text(value)
             if not cat:
                 return "Не нашёл однозначную подкатегорию «"+value+"» в активном каталоге. Уточните точное название."
