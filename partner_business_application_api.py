@@ -139,9 +139,6 @@ def ensure_business_application_schema():
     """)
 
     # Repair legacy duplicate directions before enforcing uniqueness.
-    # Drop the old full unique index FIRST: otherwise changing duplicate rows
-    # to deleted can itself violate the old unique constraint during UPDATE.
-    _exec("DROP INDEX IF EXISTS uq_partner_direction_business_master")
     _exec("""
     UPDATE partner_directions pd
        SET status='deleted', updated_at=NOW()
@@ -191,6 +188,9 @@ def ensure_business_application_schema():
       WHERE x.partner_id=b.partner_id AND x.is_default=TRUE AND x.id<>b.id
     )
     """)
+    # Remove the legacy full unique index before reconciling business_id.
+    # Some old rows become duplicates only during this migration.
+    _exec("DROP INDEX IF EXISTS uq_partner_direction_business_master")
     # Attach legacy records to the existing/default business.
     # Old records predate the multi-company model, so legacy rows without a
     # business are safely attached only to the partner's default company.
