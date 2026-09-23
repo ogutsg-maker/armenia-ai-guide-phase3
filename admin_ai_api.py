@@ -195,6 +195,15 @@ _ADMIN_QUERY_TARGETS={
  "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}}
 _ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
 _ADMIN_STATUS_ALIASES={"applications":{"pending":["pending_admin","pending_partner","document_pending"],"moderation":["pending_admin"]},"partners":{"pending":["pending"],"moderation":["pending","pending_verification"]},"businesses":{}}
+def _admin_normalize_location(field,value):
+    text=str(value or "").strip()
+    key=_norm(text)
+    aliases={
+        "location_marz":{"котайк":"Kotayk","կոտայք":"Kotayk","kotayk":"Kotayk"},
+        "location_city":{"раздан":"Հրազդան","հրազդան":"Հրազդան","hrazdan":"Հրազդան"}
+    }
+    return aliases.get(field,{}).get(key,text)
+
 def _admin_query_target(value):
  text=_norm(value)
  if text in _ADMIN_QUERY_TARGETS:return text
@@ -208,6 +217,7 @@ def _admin_query_filter_items(filters,target=None):
   field=_ADMIN_QUERY_FIELD_ALIASES.get(_norm(raw_field),_norm(raw_field))
   if _norm(raw_field)=="name" and target=="catalog": field="name"
   elif _norm(raw_field)=="name" and target=="businesses": field="name"
+  if field in {"location_marz","location_city"}: raw_value=_admin_normalize_location(field,raw_value)
   if isinstance(raw_value,dict):
    for op,value in raw_value.items():items.append((field,_norm(op),value))
   else:items.append((field,"eq",raw_value))
@@ -327,7 +337,7 @@ async def _admin_execute(command):
         loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
         return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
     if intent=="query_database":
-        return await _admin_query_answer(str(command.get("question") or message),command.get("target") or "applications",command.get("filters") or {},command.get("limit") or 20,command.get("sort"))
+        return await _admin_query_answer(str(command.get("question") or ""),command.get("target") or "applications",command.get("filters") or {},command.get("limit") or 20,command.get("sort"))
     if intent=="show_full_application":
         return _admin_full_application_text(aid)
     if intent=="show_partners":
