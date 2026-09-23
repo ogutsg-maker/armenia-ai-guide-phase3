@@ -632,96 +632,56 @@ async def _admin_execute_state_action(action):
         return "✓ Заявка #"+str(aid)+" отправлена партнёру на уточнение."
     return "Действие не определено."
 
-async def _admin_ai_json(message,ctx):
+async async def _admin_ai_json(message,ctx):
     from groq import AsyncGroq
     key=os.getenv("GROQ_API_KEY","").strip()
     if not key: raise RuntimeError("GROQ_API_KEY is not configured")
     model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
     client=AsyncGroq(api_key=key)
-    system="""You are the structural Intent Extractor for the Armenia AI Guide admin panel.
-Your ONLY job is to parse the administrator's natural language into strict JSON.
-You do not talk to the user. You do not advise. Output ONLY valid JSON.
+    system="""You are the semantic reasoning and intent-planning layer for the Armenia AI Guide administrator.
+Understand Armenian, Russian, English, mixed-language messages, typos, colloquial wording and short follow-ups.
+Do not expose hidden chain-of-thought. Return only a concise reasoning_summary.
+Identity, IDs, permissions and database execution belong to Python.
 
-STRICT RULES:
-1. NEVER invent, hallucinate, predict, or resolve database IDs. Python resolves all IDs.
-2. Use the supplied focused application and conversation history. Short follow-ups continue the current task.
-3. If the administrator says "это", "эта", "здесь", "այս", "այստեղ", "ուղղիր", "исправь", or only names a field, use the focused application and previous field when available.
-4. If a correction is requested without a new value, set value_raw=null and action_required=suggest_alternatives.
-5. If a new value is explicitly provided, put ONLY the new/target value in value_raw and use action_required=execute. For replacement language A to B, ignore old A and extract only new B into value_raw. This applies to Russian ("измени A на B"), Armenian ("A-ն փոխիր B-ով"), and English ("change A to B"). Never include verbs or particles such as "на", "ով", or "to" in value_raw.
-6. Questions and inspection requests are READ ONLY. Do not turn a question into a mutation.
-7. Understand Armenian, Russian and English, including mixed-language messages.
+The administrator speaks naturally. Do not require command phrases.
+Armenian "ինչ հայտեր ունենք?", "ինչ հայտ ունենք?", "ինչ հայտեր կան?", "ցույց տուր հայտերը", "որ հայտերն ունենք?", Russian "какие заявки у нас?", "что по заявкам?", and English "what applications do we have?" all mean listing applications unless a count or filter is explicit.
 
-Return exactly one JSON object in this schema:
-{"intent":"query_database|show_applications|show_application_count|show_application|show_application_field|inspect_application|suggest_application_correction|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"applications|partners|businesses|catalog|application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","filters":{},"sort":null,"limit":20,"action_required":"read_only|suggest_alternatives|request_value|execute","value_raw":null,"reason":null,"confidence":0.0}
+Return ONLY JSON with:
+reasoning_summary, intent, target, application_id, field, filters, sort, limit, action_required, value_raw, reason, response_language, confidence.
 
-INTENT RULES:
-- Any information request needing database rows, a count, search, filtering, or comparison -> query_database.
-- "сколько заявок", "քանի հայտ", "how many applications" -> query_database target=applications.
-- "покажи/проверь заявки" -> show_applications or query_database.
-- "открой/покажи заявку" -> show_application.
-- "проверь ... и исправь ошибки", "նայիր հայտերը և ուղղիր սխալները" -> suggest_application_correction. Inspect first; NEVER mutate directly.
-- Questions are always read_only.
-- query_database filters use only eq, neq, contains, gt, gte, lt, lte, in.
-- For "дорогие/самые дорогие услуги" do NOT invent a price threshold; use target=applications and sort={"field":"price","direction":"desc"}.
-- Common filters: location_city, location_marz, location_village, address, status, business_name, service_name, subcategory_name, price.
-- "дороже 5000", "выше 5000", "5000-ից բարձր" -> price {"gt":5000}.
-- "дешевле 5000" -> price {"lt":5000}.
-- "Котайк" as region -> location_marz="Kotayk"; "Раздан"/"Հրազդան" -> location_city="Հրազդան".
-- "кто сейчас висит на модерации" -> status="pending".
-- "у кого цена выше 5000" usually target=applications.
-- Never invent IDs, SQL, table names, column names, or catalog IDs. Python validates query fields and builds SQL.
-- A correction without a value is edit_application with value_raw=null and action_required=suggest_alternatives.
-- An explicit replacement value is edit_application with action_required=execute.
-
-FIELD RULES:
-- ենթակատեգորիա / подкатегория / subcategory -> subcategory
-- կատեգորիա / категория -> subcategory when changing the application's catalog category
-- գին / цена / price -> price
-- անուն / название услуги / service name -> service_name
-- քաղաք / город / city -> location_city
-- նկարագրություն / описание / description -> description
-
-CONTEXT EXAMPLES:
-Focused application #36, last field=subcategory:
-"Ուղղիր" -> edit_application, field=subcategory, application_id=36, value_raw=null, action_required=suggest_alternatives.
-"исправь" -> same.
-"подкатегория" -> edit_application, field=subcategory, application_id=36, value_raw=null, action_required=suggest_alternatives.
-"նայիր ենթակատեգորիան և ուղղիր" -> edit_application, field=subcategory, application_id=36, value_raw=null, action_required=suggest_alternatives.
-"проверь какая подкатегория" -> show_application_field, field=subcategory.
-"открой заявку #36" -> show_application, application_id=36.
-"поменяй подкатегорию на Брови" -> edit_application, field=subcategory, value_raw="Брови", action_required=execute.
-
-QUERY EXAMPLES:
-"покажи заявки из Раздана дороже 3000" -> query_database, target=applications, filters={"location_city":"Հրազդան","price":{"gt":3000}}
-"у кого цена выше 5000?" -> query_database, target=applications, filters={"price":{"gt":5000}}
-"у кого из партнеров в Котайке статус pending?" -> query_database, target=partners, filters={"status":"pending","location_marz":"Kotayk"}
-"покажи дорогие услуги" -> query_database, target=applications, filters={"price":{"gt":5000}}
-"есть че по Раздану?" -> query_database, target=applications, filters={"location_city":"Հրազդան"}
-"каталог маникюра" -> query_database, target=catalog, filters={"name":{"contains":"маникюр"}}
-
-Never return a catalog ID. Never invent a value not present in the administrator's message or supplied context.
+Allowed intents: query_database, show_applications, show_application_count, show_application, show_application_field, inspect_application, suggest_application_correction, edit_application, approve_application, reject_application, clarify_application, show_partners, show_businesses, unknown.
+Rules:
+1. Questions and inspection requests are read-only.
+2. Never invent IDs or catalog IDs.
+3. Resolve pronouns from supplied context.
+4. Navigation words are handled by Python.
+5. Natural list requests without an explicit count/filter prefer show_applications.
+6. Count questions use show_application_count.
+7. Search/filter/comparison requests use query_database.
+8. Corrections without a value propose alternatives.
+9. Explicit replacement goes only in value_raw.
+10. response_language matches the user's message.
+11. confidence is an honest qualitative estimate.
 """
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
-        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=260,)
+        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=320)
     except Exception as first:
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
-            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=260)
-        else: raise
+            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=320)
+        else:
+            raise
     raw=(resp.choices[0].message.content or "").strip()
-    raw=re.sub(r"^\s*\`\`\`(?:json)?\s*|\s*\`\`\`\s*$","",raw,flags=re.I|re.S).strip()
     try:
         data=json.loads(raw)
     except json.JSONDecodeError:
-        start=raw.find("{")
-        end=raw.rfind("}")
-        if start<0 or end<=start:
-            raise RuntimeError("Groq returned invalid JSON")
+        start=raw.find("{"); end=raw.rfind("}")
+        if start<0 or end<=start: raise RuntimeError("Groq returned invalid JSON")
         data=json.loads(raw[start:end+1])
-    if not isinstance(data,dict):
-        raise RuntimeError("Groq returned a non-object intent")
-    return data
+    if not isinstance(data,dict): raise RuntimeError("Groq returned a non-object intent")
+    return _admin_normalize_plan(data,message)
+
 def _admin_fallback_intent(message,focused_id=None):
     text=_norm(message)
     # Deterministic fallback is deliberately semantic, not a list of UI commands.
