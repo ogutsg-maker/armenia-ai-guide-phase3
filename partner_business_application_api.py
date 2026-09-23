@@ -152,15 +152,17 @@ def ensure_business_application_schema():
              AND newer.id>pd.id
        )
     """)
-    _exec("""
-    CREATE UNIQUE INDEX uq_partner_direction_business_master
-      ON partner_directions(business_id,master_category_id)
-      WHERE status <> 'deleted'
-    """)
+    # Unique index is created after legacy reconciliation.
     
     # Pending service proposals belonging to archived companies are stale:
     # the partner has already deleted those companies, so they must not remain
     # visible in Admin applications.
+    _exec("""
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_direction_business_master
+      ON partner_directions(business_id,master_category_id)
+      WHERE status <> 'deleted'
+    """)
+    
     _exec("""DELETE FROM partner_applications
              WHERE status NOT IN ('approved','rejected')
                AND COALESCE(payload_json->>'source','')='partner_service'
