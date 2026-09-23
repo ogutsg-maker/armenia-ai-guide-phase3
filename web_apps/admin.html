@@ -298,6 +298,7 @@ async function loadApplications(){
    (x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':'')+
    ''+
    (!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':'')+
+   ((isServiceProposal&&x.status!=='approved')?'<button class="btn danger" onclick="appAction('+x.id+',\'delete\')">🗑 Ջնջել</button>':'')+
    '</div></div>';
   }).join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
  }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
