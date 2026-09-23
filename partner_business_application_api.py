@@ -1456,6 +1456,14 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                           (json.dumps({"working_hours":registration_hours},ensure_ascii=False),
                            existing_object["id"],a["partner_id"],bid))
 
+        payload_object_id = _safe_int(payload.get("object_id"))
+        if payload_object_id:
+            _exec("""UPDATE services
+                     SET object_id=%s,
+                         contact_phone=COALESCE(NULLIF(data_json->>'contact_phone',''),contact_phone)
+                     WHERE partner_id=%s AND business_id=%s
+                       AND (data_json->>'application_id')=%s""",
+                  (payload_object_id,a["partner_id"],bid,str(aid)))
         _exec("""UPDATE partner_applications SET business_id=%s,status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                  WHERE id=%s""",(bid,_auth(request),aid))
         # Keep the canonical partner record and firm profile synchronized.
