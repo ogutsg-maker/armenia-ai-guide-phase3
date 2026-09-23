@@ -879,6 +879,48 @@ async def admin_ai_message(admin_id,message):
                 _admin_history(state,"assistant",reply)
                 return reply
 
+    # Universal conversational resolver: Python owns identity/navigation,
+    # while Groq remains responsible for semantic interpretation.
+    current_list=state.get("current_list") or []
+    current_pos=state.get("current_position")
+    current_type=state.get("last_focused_entity_type")
+    current_id=state.get("last_focused_entity_id")
+    if current_list:
+        ordinal_map=[
+            (r"(?:\\b(?:первая|первую|первый|первое|1-я|1ю)\\b|\\b(?:առաջին|առաջինը|առաջինին)\\b)",0),
+            (r"(?:\\b(?:вторая|вторую|второй|второе|2-я|2ю)\\b|\\b(?:երկրորդ|երկրորդը|երկրորդին)\\b)",1),
+            (r"(?:\\b(?:третья|третью|третий|третье|3-я|3ю)\\b|\\b(?:երրորդ|երրորդը|երրորդին)\\b)",2)
+        ]
+        for pattern,idx in ordinal_map:
+            if re.search(pattern,local_text,re.I|re.U) and idx < len(current_list):
+                item=current_list[idx]
+                state["current_position"]=idx
+                state["last_focused_entity_type"]=item.get("type")
+                state["last_focused_entity_id"]=int(item["id"])
+                if item.get("type")=="application":
+                    focused_id=int(item["id"])
+                    state["last_focused_application_id"]=focused_id
+                break
+    if current_list and re.search(r"(?:\\b(?:следующая|следующую|следующий|следующее|дальше|next)\\b|\\b(?:հաջորդը|հաջորդ)\\b)",local_text,re.I|re.U):
+        pos=int(current_pos) if isinstance(current_pos,int) else -1
+        next_pos=pos+1
+        if next_pos >= len(current_list):
+            return "Это последний элемент в текущем списке."
+        item=current_list[next_pos]
+        state["current_position"]=next_pos
+        state["last_focused_entity_type"]=item.get("type")
+        state["last_focused_entity_id"]=int(item["id"])
+        if item.get("type")=="application":
+            focused_id=int(item["id"])
+            state["last_focused_application_id"]=focused_id
+    if current_id and re.search(r"(?:\\b(?:этот|эта|эту|его|ему|этого|этой)\\b|\\b(?:այս|սա|նրան|նրա)\\b)",local_text,re.I|re.U):
+        if current_type=="application":
+            focused_id=int(current_id)
+            state["last_focused_application_id"]=focused_id
+    if focused_id and re.search(r"(?:покаж|открой|show|open|ցույց|բաց).*(?:полн|целик|всю|ամբողջ|լիարժեք|complete|full)",local_text,re.I|re.U):
+        c={"intent":"show_full_application","target":"application","application_id":int(focused_id),
+           "action_required":"read_only","confidence":1.0}
+
     # Context hydration: focused application + history + DB values, normalized for JSON.
     focused_id=state.get("last_focused_application_id")
     if not focused_id and len(state.get("last_shown_applications") or [])==1:
