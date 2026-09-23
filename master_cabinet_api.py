@@ -320,7 +320,7 @@ async def api_services(request: web.Request):
             # services exist for this partner; the cabinet must display them
             # even if a legacy DB has a different category schema.
             cur.execute(
-                """SELECT s.*
+                """SELECT s.*, (s.data_json->>'object_id') AS service_object_id, (s.data_json->>'contact_phone') AS service_contact_phone
                    FROM services s
                    WHERE s.partner_id=%s AND s.business_id=%s
                      AND (s.status IS NULL OR s.status <> 'deleted')
