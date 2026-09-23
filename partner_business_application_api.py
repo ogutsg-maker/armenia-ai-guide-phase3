@@ -555,6 +555,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                             c.name_am AS category_name_am,c.name_ru AS category_name_ru
                      FROM partner_applications a
                      LEFT JOIN partner_businesses b ON b.id=a.business_id
+                     LEFT JOIN partner_objects po ON po.id=a.object_id
                      LEFT JOIN master_categories m ON m.id=a.master_category_id
                      LEFT JOIN categories c ON c.id=a.category_id
                      WHERE a.partner_id=%s
@@ -595,7 +596,9 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     async def admin_applications(request):
         _admin(request)
         rows=_all("""SELECT a.*,p.business_name AS partner_legacy_name,p.user_id,
-                            b.name AS business_name_db,
+                            b.name AS business_name_db,b.phone AS business_phone,
+                            po.object_name AS object_name_db,po.address AS object_address,
+                            po.city AS object_city,po.marz AS object_marz,po.phone AS object_phone,
                             m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,
                             c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,
                             d.original_filename AS document_filename,d.status AS document_status
@@ -638,6 +641,22 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                 item["subcategory_name"]=(cat or {}).get("category_name_am") or (cat or {}).get("category_name_ru") or ("" if cid is None else None)
                 item["needs_admin_classification"]=cid is None
                 enriched.append(item)
+            # Complete old service proposals from canonical company/address data.
+            if not row.get("business_name"):
+                row["business_name"]=row.get("business_name_db") or row.get("partner_legacy_name")
+            if not row.get("phone"):
+                row["phone"]=row.get("object_phone") or row.get("business_phone")
+            if not row.get("location_marz"):
+                row["location_marz"]=row.get("object_marz")
+            if not row.get("location_city"):
+                row["location_city"]=row.get("object_city")
+            if not row.get("address"):
+                row["address"]=row.get("object_address")
+            if not row.get("object_name"):
+                row["object_name"]=row.get("object_name_db")
+            for svc in enriched:
+                svc.setdefault("object_id", payload.get("object_id") or row.get("object_id"))
+                svc.setdefault("contact_phone", payload.get("contact_phone") or row.get("phone"))
             row["payload_json"]=payload
             row["services"]=enriched
             row["catalog_services"]=enriched
