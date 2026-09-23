@@ -1422,11 +1422,11 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             if existing:
                 _exec("""UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',
                          data_json=%s::jsonb,updated_at=NOW() WHERE id=%s""",
-                      (cid,name,service_description,price,data_json,existing["id"]))
+                      (cid,name,service_description,price,object_id,contact_phone,data_json,existing["id"]))
             else:
                 _exec("""INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json)
                          VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s::jsonb)""",
-                      (a["partner_id"],bid,cid,name,service_description,price,data_json))
+                      (a["partner_id"],bid,cid,name,service_description,price,object_id,contact_phone,data_json))
 
         # Create the firm's first physical object from the approved registration
         # when no object exists yet. A firm can add more objects later.
