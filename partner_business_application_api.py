@@ -10,6 +10,7 @@ from decimal import Decimal
 import psycopg
 from psycopg.rows import dict_row
 from aiohttp import web
+from notify import notify
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 
 logger = logging.getLogger(__name__)
@@ -1068,6 +1069,23 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                     (aid,),
                     True
                 )
+            if str(row.get("status") or "") == "pending_admin":
+                try:
+                    admin_id = int(request.app.get("stage3_admin_id") or os.getenv("ADMIN_TELEGRAM_ID", "0") or 0)
+                    if admin_id:
+                        service_name = str(row.get("service_name") or "новая услуга")
+                        business_name = str(row.get("business_name") or "бизнес")
+                        location = ", ".join(x for x in [row.get("location_marz"), row.get("location_city"), row.get("address")] if x)
+                        body = ("Поступила новая заявка #" + str(row["id"]) + " от " + business_name + ".\\n\\n" +
+                                "🛠 " + service_name + " · " + str(row.get("price") if row.get("price") is not None else "—") + " ֏")
+                        if location:
+                            body += "\\n📍 " + location
+                        body += "\\n\\n🤖 AI-секретарь готов проверить и выполнить вашу команду."
+                        await notify(request.app, admin_id, title="📨 Новая заявка", body=body,
+                                      kind="partner_application", audience="admin",
+                                      data={"application_id": int(row["id"])}, telegram_text="🤖 AI-секретарь\\n\\n" + body + "\\n\\nНапишите, что сделать с заявкой.")
+                except Exception:
+                    logger.exception("Admin application notification failed for %s", row.get("id"))
             return web.json_response({"ok":True,"application":row})
 
         except web.HTTPException:
