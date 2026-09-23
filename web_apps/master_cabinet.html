@@ -313,6 +313,7 @@ async function submitNewService(){
   if(save){save.disabled=true;save.textContent='Сохранение…'}
   try{
     let businessId;
+    let objectId;
     if(newBusiness){
       const b=await api('/api/master/0/businesses',{method:'POST',body:{
         name:document.getElementById('svcBusinessName').value.trim(),
