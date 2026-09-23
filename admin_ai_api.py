@@ -684,26 +684,28 @@ Rules:
 
 def _admin_fallback_intent(message,focused_id=None):
     text=_norm(message)
-    # Deterministic fallback is deliberately semantic, not a list of UI commands.
-    if re.search(r"(сколько|քանի)\s+.*(заяв|հայտ)|how many applications",text):
-        return {"intent":"show_application_count","target":"application","confidence":0.9}
-    if any(x in text for x in ("նայիր հայտերը և ուղղիր սխալները","проверь заявки и исправь ошибки","проверь заявки и исправь","ստուգիր հայտերը և ուղղիր","check applications and fix")):
-        return {"intent":"suggest_application_correction","target":"application","confidence":0.9}
-    if any(x in text for x in ("ստուգիր հայտերը","ցույց տուր հայտերը","проверь заявки","покажи заявки","show applications")):
-        return {"intent":"show_applications","target":"application","confidence":0.8}
-    if any(x in text for x in ("ինչ կատեգոր","ինչ ենթակատեգոր","какая категория","какая подкатегория","под какой категор","what category","which category")):
-        return {"intent":"show_application_field","target":"application","field":"subcategory","application_id":focused_id,"confidence":0.8}
-    if any(x in text for x in ("հայտը ճիշտ է լրացված","հայտը ճիշտ է լրացված՞","проверь заявку","заявка заполнена правильно")):
-        return {"intent":"inspect_application","target":"application","application_id":focused_id,"confidence":0.8}
-    if any(x in text for x in ("ուղղիր","исправь","շտկիր")) and focused_id:
-        return {"intent":"edit_application","target":"application","application_id":focused_id,
-                "field":"subcategory","value_raw":None,"action_required":"suggest_alternatives","confidence":0.7}
+    has_application=bool(re.search(r"(հայտ|դիմում|заявк|request|application)",text,re.I|re.U))
+    asks_count=bool(re.search(r"(քանի|сколько|how many|count|количеств)",text,re.I|re.U))
+    asks_list=bool(re.search(r"(ինչ|որ|какие|какая|что|what|which|ցույց|show|list|ցուցակ)",text,re.I|re.U))
+    asks_category=bool(re.search(r"(կատեգոր|ենթակատեգոր|category|subcategory|подкатегор)",text,re.I|re.U))
+    asks_inspect=bool(re.search(r"(ստուգ|провер|check|ճիշտ|правильно|correct|ошибк|սխալ)",text,re.I|re.U))
+    if has_application and asks_count:
+        return _admin_normalize_plan({"intent":"show_application_count","target":"applications","reasoning_summary":"Вопрос о количестве заявок.","confidence":0.88},message)
+    if has_application and asks_category and (asks_inspect or "ինչ" in text or "какая" in text):
+        return _admin_normalize_plan({"intent":"show_application_field","target":"application","field":"subcategory","application_id":focused_id,"reasoning_summary":"Запрос о категории или подкатегории текущей заявки.","confidence":0.82},message)
+    if has_application and asks_inspect and re.search(r"(ուղղ|исправ|fix|շտկ)",text,re.I|re.U):
+        return _admin_normalize_plan({"intent":"suggest_application_correction","target":"application","application_id":focused_id,"reasoning_summary":"Нужно проверить заявку и предложить исправление.","confidence":0.86},message)
+    if has_application and (asks_list or re.search(r"(կան|ունենք|есть|имеем|have)",text,re.I|re.U)):
+        return _admin_normalize_plan({"intent":"show_applications","target":"applications","reasoning_summary":"Запрос о наличии или списке заявок.","confidence":0.84},message)
+    if focused_id and re.search(r"(ստուգ|провер|check)",text,re.I|re.U):
+        return _admin_normalize_plan({"intent":"inspect_application","target":"application","application_id":focused_id,"reasoning_summary":"Проверка текущей заявки без изменения данных.","confidence":0.8},message)
+    if focused_id and re.search(r"(ուղղ|исправ|շտկ|fix)",text,re.I|re.U):
+        return _admin_normalize_plan({"intent":"edit_application","target":"application","application_id":focused_id,"field":"subcategory","value_raw":None,"action_required":"suggest_alternatives","reasoning_summary":"Исправление текущего поля требует предложения вариантов.","confidence":0.72},message)
     m=re.search(r"(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*#?\s*(\d+)",text)
     aid=int(m.group(1)) if m else focused_id
-    if any(x in text for x in ("открой","բացիր","open","покажи")) and aid:
-        return {"intent":"show_application","target":"application","application_id":aid,"confidence":0.8}
-    return {"intent":"unknown","confidence":0.0}
-
+    if aid and re.search(r"(открой|բաց|open|покаж|ցույց)",text,re.I|re.U):
+        return _admin_normalize_plan({"intent":"show_application","target":"application","application_id":aid,"reasoning_summary":"Запрошено открытие конкретной заявки.","confidence":0.86},message)
+    return _admin_normalize_plan({"intent":"unknown","reasoning_summary":"Недостаточно уверенности для безопасного действия.","confidence":0.0},message)
 
 
 def _admin_parse_replacement(message):
@@ -934,6 +936,9 @@ async def admin_ai_message(admin_id,message):
     if c is None:
         try: c=await _admin_ai_json(message,ctx)
         except Exception: c=_admin_fallback_intent(message,focused_id)
+    c=_admin_normalize_plan(c,message)
+    state["last_action"]={"intent":c.get("intent"),"target":c.get("target"),"reasoning_summary":c.get("reasoning_summary"),"confidence":c.get("confidence")}
+    state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
 
     intent=str(c.get("intent") or "unknown").lower()
     target=str(c.get("target") or "").lower()
@@ -990,8 +995,8 @@ async def admin_ai_message(admin_id,message):
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
     if intent in {"show_application","inspect_application","show_application_field","show_full_application"}:
-        if not aid: return "Сначала откройте заявку или укажите её номер."
-        if not _admin_hydrate_application(aid): return "Заявка #"+str(aid)+" не найдена."
+        if not aid: return _admin_localized(c.get("response_language","ru"),"need_application")
+        if not _admin_hydrate_application(aid): return _admin_localized(c.get("response_language","ru"),"not_found",id=aid)
         state["last_focused_application_id"]=int(aid)
         if intent=="show_full_application":
             reply=_admin_full_application_text(int(aid))
@@ -1074,14 +1079,16 @@ async def api_admin_assistant(request):
     if not message: return web.json_response({"ok":False,"error":"message_required"},status=400)
     try:
         return web.json_response({"ok":True,"reply":await admin_ai_message(int(request.app.get("stage3_admin_id") or 0),message)})
-    except Exception:
+    except Exception as exc:
         try:
             state=_admin_session(int(request.app.get("stage3_admin_id") or 0))
             state["pending_action"]=None; state["waiting_for_input"]=None
+            state["last_action_failed"]=True; state["last_error"]=str(exc)[:1000]
+            state["last_error_context"]=message[:1000]; state["retry_count"]=int(state.get("retry_count",0) or 0)+1
         except Exception: pass
         import logging
         logging.getLogger(__name__).exception("admin_ai_turn_failed")
-        return web.json_response({"ok":True,"reply":"Не удалось безопасно обработать команду. Изменений не внесено. Повторите команду."})
+        return web.json_response({"ok":True,"reply":_admin_localized(_admin_detect_language(message),"safe_error")})
 
 
 
