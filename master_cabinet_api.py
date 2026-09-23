@@ -181,13 +181,17 @@ async def api_settings_update(request: web.Request):
 
 
 async def api_objects(request: web.Request):
+    await _ensure_partner_object_active_column()
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id",
+                """SELECT * FROM partner_objects
+                   WHERE partner_id=%s AND business_id=%s
+                     AND COALESCE(is_active, TRUE)=TRUE
+                   ORDER BY id""",
                 (pid,bid),
             )
             rows = cur.fetchall()
@@ -207,7 +211,15 @@ async def api_objects(request: web.Request):
     return web.json_response({"ok": True, "objects": _json(rows)})
 
 
+async def _ensure_partner_object_active_column():
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE partner_objects ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+        conn.commit()
+
+
 async def api_object_create(request: web.Request):
+    await _ensure_partner_object_active_column()
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     bid = _business_id(request,pid)
@@ -228,6 +240,7 @@ async def api_object_create(request: web.Request):
 
 
 async def api_object_update(request: web.Request):
+    await _ensure_partner_object_active_column()
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     bid = _business_id(request,pid)
@@ -295,17 +308,35 @@ async def api_object_update(request: web.Request):
 
 
 async def api_object_delete(request: web.Request):
+    await _ensure_partner_object_active_column()
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     bid = _business_id(request,pid)
     oid = int(request.match_info["object_id"])
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING id", (oid,pid,bid))
+            cur.execute(
+                """UPDATE partner_objects
+                   SET is_active=FALSE
+                   WHERE id=%s AND partner_id=%s AND business_id=%s
+                     AND COALESCE(is_active, TRUE)=TRUE
+                   RETURNING id""",
+                (oid,pid,bid),
+            )
             row = cur.fetchone()
+            if row:
+                cur.execute(
+                    """UPDATE services
+                       SET data_json = COALESCE(data_json,'{}'::jsonb) - 'object_id' - 'object_snapshot',
+                           updated_at=NOW()
+                       WHERE partner_id=%s AND business_id=%s
+                         AND (data_json->>'object_id')=%s
+                         AND (status IS NULL OR status <> 'deleted')""",
+                    (pid,bid,str(oid)),
+                )
         conn.commit()
     if not row:
-        return web.json_response({"ok": False, "error": "object_not_found"}, status=404)
+        return web.json_response({"ok": False, "error": "address_not_found"}, status=404)
     return web.json_response({"ok": True, "id": oid})
 
 
