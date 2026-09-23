@@ -138,6 +138,14 @@ def ensure_business_application_schema():
     CREATE INDEX IF NOT EXISTS idx_partner_applications_partner ON partner_applications(partner_id,status,created_at DESC);
     """)
 
+    # Pending service proposals belonging to archived companies are stale:
+    # the partner has already deleted those companies, so they must not remain
+    # visible in Admin applications.
+    _exec("""DELETE FROM partner_applications
+             WHERE status NOT IN ('approved','rejected')
+               AND COALESCE(payload_json->>'source','')='partner_service'
+               AND business_id IN (SELECT id FROM partner_businesses WHERE status='archived')""")
+
     # One default business for every existing partner. Existing records remain untouched.
     _exec("""
     INSERT INTO partner_businesses(partner_id,name,description,is_default)
@@ -539,6 +547,12 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         if not row:
             return web.json_response({"ok":False,"error":"business_not_found"},status=404)
 
+        # A deleted company must also remove its unapproved service proposals.
+        # Approved history remains untouched.
+        _exec("""DELETE FROM partner_applications
+                 WHERE business_id=%s
+                   AND status NOT IN ('approved','rejected')
+                   AND COALESCE(payload_json->>'source','')='partner_service'""",(bid,))
         # Keep one active default company when another company exists.
         replacement=_exec("""SELECT id FROM partner_businesses
                              WHERE partner_id=%s AND status='active'
