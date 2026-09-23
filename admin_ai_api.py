@@ -310,22 +310,7 @@ async def _admin_execute(command):
         rows=_admin_context(limit=30).get("applications",[])
         if not rows: return "📨 Заявок нет."
         return "📨 Заявки ("+str(len(rows))+"):\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏" for x in rows[:20])
-    if intent=="show_full_application":
-        if not aid: return "Сначала откройте заявку или укажите её номер."
-        if not _admin_hydrate_application(aid): return "Заявка #"+str(aid)+" не найдена."
-        state["last_focused_application_id"]=int(aid)
-        state["last_focused_field"]=None
-        reply=await _admin_execute({"intent":"show_full_application","application_id":int(aid)})
-        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
-
-    if intent=="show_full_application":
-        if not aid: return "Сначала откройте заявку или укажите её номер."
-        if not _admin_hydrate_application(aid): return "Заявка #"+str(aid)+" не найдена."
-        state["last_focused_application_id"]=int(aid)
-        state["last_focused_field"]=None
-        reply=await _admin_execute({"intent":"show_full_application","application_id":int(aid)})
-        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
-
+    # Full application is handled by the canonical read-only branch below.
     if intent=="show_application_count":
         row=platform_db.one("SELECT COUNT(*) AS count FROM partner_applications WHERE status NOT IN ('approved','pending_partner')")
         return "📨 Сейчас в работе: "+str(int(row.get("count") or 0))+" заявок."
@@ -881,6 +866,7 @@ async def admin_ai_message(admin_id,message):
 
     # Universal conversational resolver: Python owns identity/navigation,
     # while Groq remains responsible for semantic interpretation.
+    focused_id=state.get("last_focused_application_id")
     current_list=state.get("current_list") or []
     current_pos=state.get("current_position")
     current_type=state.get("last_focused_entity_type")
@@ -1009,13 +995,16 @@ async def admin_ai_message(admin_id,message):
         reply=await _admin_execute({"intent":"show_applications"})
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    if intent in {"show_application","inspect_application","show_application_field"}:
+    if intent in {"show_application","inspect_application","show_application_field","show_full_application"}:
         if not aid: return "Сначала откройте заявку или укажите её номер."
         if not _admin_hydrate_application(aid): return "Заявка #"+str(aid)+" не найдена."
         state["last_focused_application_id"]=int(aid)
-        reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
-        if intent=="inspect_application": reply+="\n\n🔎 Проверка заполнения:\n"+_application_review(int(aid))
-        elif intent=="show_application_field": reply+="\n\n"+_application_field_answer(int(aid),field)
+        if intent=="show_full_application":
+            reply=_admin_full_application_text(int(aid))
+        else:
+            reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
+            if intent=="inspect_application": reply+="\n\n🔎 Проверка заполнения:\n"+_application_review(int(aid))
+            elif intent=="show_application_field": reply+="\n\n"+_application_field_answer(int(aid),field)
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
     # Compound command: inspect and propose, never mutate.
