@@ -98,8 +98,7 @@ If ambiguous, use clarify and ask one concise question.
         "additionalProperties":False
     }
     prompt = json.dumps({"message":message,"language":language,"context":context}, ensure_ascii=False)
-    resp = await client.chat.completions.create(
-        model=model,
+    request_kwargs = dict(
         temperature=0,
         max_tokens=900,
         response_format={"type":"json_object"},
@@ -108,6 +107,16 @@ If ambiguous, use clarify and ask one concise question.
             {"role":"user","content":prompt}
         ],
     )
+    try:
+        resp = await client.chat.completions.create(model=model, **request_kwargs)
+    except Exception as first_exc:
+        # Groq model IDs change over time. If Render still has a retired
+        # GROQ_MODEL (for example llama-3.1-8b-instant), retry once with the
+        # currently supported GPT-OSS 20B model.
+        if model != "openai/gpt-oss-20b" and ("404" in str(first_exc) or "model" in str(first_exc).lower()):
+            resp = await client.chat.completions.create(model="openai/gpt-oss-20b", **request_kwargs)
+        else:
+            raise
     raw = resp.choices[0].message.content or "{}"
     data = json.loads(raw)
     if not isinstance(data, dict):
