@@ -236,9 +236,9 @@ async def api_ai_command(request: web.Request):
 
     # Natural-language confirmation: if the partner answers "да / yes / այո"
     # after a pending action, treat it exactly like pressing the Confirm button.
-    normalized = re.sub(r"[\\s.!?,;:]+", " ", message.lower()).strip()
+    normalized = re.sub(r"[\s.!?,;:]+", " ", message.lower()).strip()
     if normalized in {
-        "да", "да да", "yes", "y", "ok", "okay", "confirm", "confirmed",
+        "да", "да да", "da", "yes", "y", "ok", "okay", "confirm", "confirmed",
         "подтверждаю", "подтвердить", "согласен", "согласна",
         "այո", "հա", "հաստատում եմ", "հաստատել"
     }:
