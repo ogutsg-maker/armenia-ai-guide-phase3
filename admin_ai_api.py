@@ -35,14 +35,32 @@ def _admin_localized(lang,key,**kwargs):
     return _ADMIN_LOCALES.get(lang,_ADMIN_LOCALES["ru"]).get(key,key).format(**kwargs)
 
 def _admin_normalize_plan(data,message=""):
+    """Normalize the single semantic ActionPlan contract used by the admin AI."""
     if not isinstance(data,dict): data={}
-    lang=str(data.get("response_language") or "").lower()[:2]
+    lang=str(data.get("response_language") or data.get("language") or "").lower()[:2]
     if lang not in {"am","ru","en"}: lang=_admin_detect_language(message)
     try: confidence=float(data.get("confidence",0) or 0)
     except Exception: confidence=0.0
-    data["response_language"]=lang; data["confidence"]=max(0.0,min(1.0,confidence))
+    # Keep one canonical identity field internally while accepting legacy output.
+    entity_id=data.get("entity_id", data.get("application_id"))
+    if entity_id not in (None,""):
+        try: entity_id=int(entity_id)
+        except (TypeError,ValueError): entity_id=None
+    data["entity_id"]=entity_id
+    data["application_id"]=entity_id
+    data["navigation"]=data.get("navigation")
+    data["response_language"]=lang
+    data["confidence"]=max(0.0,min(1.0,confidence))
     data["reasoning_summary"]=str(data.get("reasoning_summary") or "")[:500]
-    data.setdefault("filters",{}); data.setdefault("sort",None); data.setdefault("limit",20); data.setdefault("action_required","read_only")
+    data["intent"]=str(data.get("intent") or "unknown").strip().lower()
+    data["target"]=str(data.get("target") or "").strip().lower()
+    data["field"]=None if data.get("field") in (None,"","none") else str(data.get("field")).strip().lower()
+    data["value_raw"]=data.get("value_raw",data.get("value_text"))
+    data.setdefault("filters",{})
+    data.setdefault("sort",None)
+    try: data["limit"]=max(1,min(50,int(data.get("limit",20) or 20)))
+    except Exception: data["limit"]=20
+    data.setdefault("action_required","read_only")
     return data
 
 def _admin(request):
@@ -653,10 +671,12 @@ Identity, IDs, permissions and database execution belong to Python.
 The administrator speaks naturally. Do not require command phrases.
 Armenian "ինչ հայտեր ունենք?", "ինչ հայտ ունենք?", "ինչ հայտեր կան?", "ցույց տուր հայտերը", "որ հայտերն ունենք?", Russian "какие заявки у нас?", "что по заявкам?", and English "what applications do we have?" all mean listing applications unless a count or filter is explicit.
 
-Return ONLY JSON with:
-reasoning_summary, intent, target, application_id, field, filters, sort, limit, action_required, value_raw, reason, response_language, confidence.
+Return ONLY one JSON ActionPlan with exactly these logical fields:
+reasoning_summary, intent, target, entity_id, field, value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
+You may include application_id only for backward compatibility; Python normalizes it to entity_id.
+reasoning_summary is one short sentence, never hidden chain-of-thought.
 
-Allowed intents: query_database, show_applications, show_application_count, show_application, show_application_field, inspect_application, suggest_application_correction, edit_application, approve_application, reject_application, clarify_application, show_partners, show_businesses, unknown.
+Allowed intents: query_database, show_applications, show_application_count, show_application, show_application_field, show_documents, inspect_application, suggest_application_correction, edit_application, approve_application, reject_application, clarify_application, show_partners, show_businesses, unknown.
 Rules:
 1. Questions and inspection requests are read-only.
 2. Never invent IDs or catalog IDs.
@@ -673,7 +693,13 @@ Rules:
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
-        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=320)
+        try:
+            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=320,response_format={"type":"json_object"})
+        except Exception as json_mode_error:
+            # Some Groq/model combinations reject response_format; retry without it.
+            if "response_format" not in str(json_mode_error).lower() and "json_object" not in str(json_mode_error).lower():
+                raise
+            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=320)
     except Exception as first:
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
             resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=320)
@@ -949,11 +975,27 @@ async def admin_ai_message(admin_id,message):
 
     intent=str(c.get("intent") or "unknown").lower()
     target=str(c.get("target") or "").lower()
-    aid=c.get("application_id") or focused_id
+    aid=c.get("entity_id") or c.get("application_id") or focused_id
+    # The semantic layer owns meaning; Python only resolves identity/navigation and validates execution.
+    navigation=c.get("navigation")
+    if isinstance(navigation,dict):
+        nav_type=_norm(navigation.get("type"))
+        if nav_type in {"first","1","առաջին","առաջինը"} and current_list:
+            state["current_position"]=0
+            aid=int(current_list[0].get("id")) if current_list[0].get("id") else aid
+        elif nav_type in {"next","հաջորդ","հաջորդը"} and current_list:
+            pos=int(state.get("current_position") if isinstance(state.get("current_position"),int) else -1)+1
+            if pos < len(current_list):
+                state["current_position"]=pos
+                aid=int(current_list[pos].get("id")) if current_list[pos].get("id") else aid
     field=str(c.get("field") or "").lower()
-    intent={"open_application":"show_application","count_applications":"show_application_count","count":"show_application_count","inspect":"inspect_application"}.get(intent,intent)
+    intent={"open_application":"show_application","count_applications":"show_application_count","count":"show_application_count","inspect":"inspect_application","documents":"show_documents","show_document":"show_documents","show_documents":"show_documents"}.get(intent,intent)
 
     if field in {"category","subcategory","price","service_name","location_city","description","documents"}: state["last_focused_field"]=field
+    # Generic reference resolution: once an entity is focused, pronouns inherit that identity.
+    # The AI receives the focused entity in context; this fallback only protects short ambiguous turns.
+    if not aid and state.get("last_focused_entity_type")=="application":
+        aid=state.get("last_focused_entity_id") or state.get("last_focused_application_id")
     elif not field or field=="none": field=state.get("last_focused_field") or ""
     if aid:
         try:
@@ -1001,12 +1043,14 @@ async def admin_ai_message(admin_id,message):
         reply=await _admin_execute({"intent":"show_applications"})
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    if intent in {"show_application","inspect_application","show_application_field","show_full_application"}:
+    if intent in {"show_application","inspect_application","show_application_field","show_full_application","show_documents"}:
         if not aid: return _admin_localized(c.get("response_language","ru"),"need_application")
         if not _admin_hydrate_application(aid): return _admin_localized(c.get("response_language","ru"),"not_found",id=aid)
         state["last_focused_application_id"]=int(aid)
         if intent=="show_full_application":
             reply=_admin_full_application_text(int(aid))
+        elif intent=="show_documents":
+            reply=_application_field_answer(int(aid),"documents")
         else:
             reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
             if intent=="inspect_application": reply+="\n\n🔎 Проверка заполнения:\n"+_application_review(int(aid))
