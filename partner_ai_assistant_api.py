@@ -308,6 +308,22 @@ async def api_ai_command(request: web.Request):
     command["language"]=language
     command["message"]=message
     intent=command.get("intent")
+
+    # Resolve an explicitly named company deterministically. Do not depend on
+    # Groq returning business_id when the partner has already named the company
+    # in natural language (for example: "для моей компании BYUTI").
+    if intent == "add_service" and not command.get("business_id"):
+        msg_norm = re.sub(r"\\s+", " ", message.casefold()).strip()
+        businesses = ctx.get("businesses", [])
+        exact = [
+            b for b in businesses
+            if str(b.get("name") or "").casefold().strip()
+            and str(b.get("name") or "").casefold().strip() in msg_norm
+        ]
+        if len(exact) == 1:
+            command["business_id"] = int(exact[0]["id"])
+        elif len(businesses) == 1:
+            command["business_id"] = int(businesses[0]["id"])
     if intent in {"show_businesses","show_services","show_orders"}:
         return await _execute_read(pid,command,ctx)
     if intent=="clarify" or not intent:
