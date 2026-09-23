@@ -230,9 +230,9 @@ async def api_object_create(request: web.Request):
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,data_json)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-                (pid,bid,name,data.get("address"),data.get("city"),data.get("marz"),json.dumps(data.get("data_json") or {})),
+                """INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,phone,data_json)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                (pid,bid,name,data.get("address"),data.get("city"),data.get("marz"),str(data.get("phone") or "").strip()[:100] or None,json.dumps(data.get("data_json") or {})),
             )
             row = cur.fetchone()
         conn.commit()
@@ -246,7 +246,7 @@ async def api_object_update(request: web.Request):
     bid = _business_id(request,pid)
     oid = int(request.match_info["object_id"])
     data = await request.json()
-    allowed = {"object_name", "name", "address", "city", "marz", "data_json"}
+    allowed = {"object_name", "name", "address", "city", "marz", "phone", "data_json"}
     fields = {k:data[k] for k in allowed if k in data}
     if "name" in fields and "object_name" not in fields:
         fields["object_name"] = fields.pop("name")
