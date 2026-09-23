@@ -204,7 +204,20 @@ def _concept_tokens(text):
     raw=set(_tokens(text))
     expanded=set(raw)
     for key, aliases in _ADMIN_CONCEPT_MAP.items():
+        matched=False
         if raw.intersection(aliases) or key in raw:
+            matched=True
+        # Handle common Armenian/Russian inflections:
+        # брови/бровей/бровями, հոնք/հոնքեր/հոնքերի, etc.
+        if not matched:
+            for token in raw:
+                for alias in aliases | {key}:
+                    if len(alias) >= 4 and (token.startswith(alias[:4]) or alias.startswith(token[:4])):
+                        matched=True
+                        break
+                if matched:
+                    break
+        if matched:
             expanded.update(aliases)
             expanded.add(key)
     return expanded
@@ -608,6 +621,12 @@ async def admin_ai_message(admin_id,message):
         if not field or field=="none":
             field=state.get("last_focused_field") or ""
         value=str(c.get("value_raw") or c.get("value_text") or "").strip()
+        # If Groq omitted an explicit value, keep a small deterministic fallback
+        # for natural "change X to Y" messages. No DB/catalog IDs are inferred.
+        if not value:
+            m=re.search(r"(?:փոխի|փոխիր|դարձրու|դարձնել|на|на\s+|поменяй(?:\s+на)?|замени(?:\s+на)?|to)\s+(.+)$",message,flags=re.I)
+            if m:
+                value=m.group(1).strip(" .,!?:;")
         if field=="category":
             field="subcategory"
         if field:
@@ -633,7 +652,7 @@ async def admin_ai_message(admin_id,message):
                 return "Не нашёл однозначного соответствия для услуги «"+str(app.get("service_name") or "—")+"» в активном каталоге."
 
             if app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
-                return "Подкатегория относится к другому направлению. Укажите подкатегорию из текущего направления."
+                return "Подкатегория относится к другому направлению. Укажите подкатեգорию из текущего направления."
 
             action["field"]="subcategory"
             action["category_id"]=int(cat["id"])
@@ -641,6 +660,7 @@ async def admin_ai_message(admin_id,message):
             action["new_value"]=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
         else:
             if field not in {"name","service","price","description","note"} or not value:
+                state["pending_action"]=None
                 return "Уточните поле и новое значение: цена, название услуги, описание или подкатегория."
             action["field"]=field
             action["new_value"]=value
@@ -662,8 +682,22 @@ async def api_admin_assistant(request):
     data=await request.json()
     message=str(data.get("message") or "").strip()
     if not message: return web.json_response({"ok":False,"error":"message_required"},status=400)
-    try: return web.json_response({"ok":True,"reply":await admin_ai_message(int(request.app.get("stage3_admin_id") or 0),message)})
-    except Exception as exc: return web.json_response({"ok":False,"error":"admin_ai_failed","message":str(exc)[:500]},status=503)
+    try:
+        return web.json_response({"ok":True,"reply":await admin_ai_message(int(request.app.get("stage3_admin_id") or 0),message)})
+    except Exception as exc:
+        # Never leave a stale confirmation after a failed turn.
+        try:
+            state=_admin_session(int(request.app.get("stage3_admin_id") or 0))
+            state["pending_action"]=None
+        except Exception:
+            pass
+        import logging
+        logging.getLogger(__name__).exception("admin_ai_failed")
+        return web.json_response({
+            "ok":False,
+            "error":"admin_ai_failed",
+            "message":"Не удалось безопасно обработать команду. Изменений не внесено. Повторите команду."
+        },status=503)
 
 
 def register_admin_ai_routes(app, ai, bot=None):
