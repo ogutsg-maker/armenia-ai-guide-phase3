@@ -894,6 +894,8 @@ async def admin_ai_message(admin_id,message):
                 if item.get("type")=="application":
                     focused_id=int(item["id"])
                     state["last_focused_application_id"]=focused_id
+                nav_intent={"intent":"show_application","target":"application","application_id":int(item["id"]),
+                            "action_required":"read_only","confidence":1.0}
                 break
     if current_list and re.search(r"(?:\b(?:следующая|следующую|следующий|следующее|дальше|next)\b|\b(?:հաջորդը|հաջորդ)\b)",local_text,re.I|re.U):
         pos=int(current_pos) if isinstance(current_pos,int) else -1
@@ -907,6 +909,8 @@ async def admin_ai_message(admin_id,message):
         if item.get("type")=="application":
             focused_id=int(item["id"])
             state["last_focused_application_id"]=focused_id
+        nav_intent={"intent":"show_application","target":"application","application_id":int(item["id"]),
+                    "action_required":"read_only","confidence":1.0}
     if current_id and re.search(r"(?:\b(?:этот|эта|эту|его|ему|этого|этой)\b|\b(?:այս|սա|նրան|նրա)\b)",local_text,re.I|re.U):
         if current_type=="application":
             focused_id=int(current_id)
