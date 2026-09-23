@@ -185,7 +185,7 @@ async def api_ai_command(request: web.Request):
         return await _execute_read(pid,command,ctx)
     if intent=="clarify" or not intent:
         return web.json_response({"ok":True,"reply":str(command.get("reply") or "Пожалуйста, уточните запрос."),"command":command})
-    if command.get("needs_confirmation",True):
+    if intent not in {"show_businesses","show_services","show_orders","clarify"}:
         token=_pending_add(pid,command)
         return web.json_response({"ok":True,"reply":str(command.get("reply") or _preview(command,ctx,language)),"confirmation_id":token,"command":command})
     return await _execute_mutation(pid,command,ctx)
