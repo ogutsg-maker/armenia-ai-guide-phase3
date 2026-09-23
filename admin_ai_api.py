@@ -339,7 +339,7 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
 
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
- labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог"}
+ labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","services":"🛠 Услуги"}
  lines=[labels.get(target,"🔎 Результат")+" ("+str(len(rows))+"):"]
  for x in rows[:20]:
   if target=="applications":
@@ -988,6 +988,21 @@ async def admin_ai_message(admin_id,message):
         try: c=await _admin_ai_json(message,ctx)
         except Exception: c=_admin_fallback_intent(message,focused_id)
     c=_admin_normalize_plan(c,message)
+
+    # Semantic safety-net: if the model is uncertain/returns unknown, recover only
+    # high-confidence concepts from the full sentence and the active context.
+    # This is not the primary parser; it prevents a good semantic model response
+    # from collapsing into the generic "I didn't understand" screen.
+    if str(c.get("intent") or "unknown")=="unknown":
+        semantic_text=_norm(message)
+        focused_now=state.get("last_focused_application_id") or state.get("last_focused_entity_id")
+        if focused_now and re.search(r"(փաստաթուղ|փաստաթուղթ|документ|документы|document|documents)",semantic_text,re.I|re.U):
+            c=_admin_normalize_plan({"intent":"show_documents","target":"application","entity_id":focused_now,"field":"documents","reasoning_summary":"Հարցը վերաբերում է ընթացիկ հայտի փաստաթղթերին։","confidence":0.92},message)
+        elif focused_now and re.search(r"(կատեգոր|ենթակատեգոր|category|subcategory|подкатегор)",semantic_text,re.I|re.U) and re.search(r"(ճիշտ|արդյոք|правиль|верн|correct|right)",semantic_text,re.I|re.U):
+            c=_admin_normalize_plan({"intent":"inspect_application","target":"application","entity_id":focused_now,"field":"subcategory","reasoning_summary":"Ստուգվում է ընթացիկ հայտի կատեգորիայի ճիշտ լինելը՝ առանց փոփոխության։","confidence":0.92},message)
+        elif re.search(r"(ծառայություններ|ծառայություն|услуг|услуги|service|services|uslugi)",semantic_text,re.I|re.U):
+            c=_admin_normalize_plan({"intent":"query_database","target":"services","reasoning_summary":"Հարցը վերաբերում է ծառայությունների ցանկին։","confidence":0.82},message)
+
     state["last_action"]={"intent":c.get("intent"),"target":c.get("target"),"reasoning_summary":c.get("reasoning_summary"),"confidence":c.get("confidence")}
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
 
