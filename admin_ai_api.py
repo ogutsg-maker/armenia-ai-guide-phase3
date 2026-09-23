@@ -12,6 +12,12 @@ from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 
 
+def _norm(text):
+    if not text:
+        return ""
+    return " ".join(str(text).casefold().strip().split())
+
+
 def _admin(request):
     raw=request.headers.get('X-Telegram-Init-Data','').strip()
     token=request.app.get('stage3_bot_token','')
