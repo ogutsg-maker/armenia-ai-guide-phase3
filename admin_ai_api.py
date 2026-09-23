@@ -510,6 +510,76 @@ def _admin_fallback_intent(message,focused_id=None):
     return {"intent":"unknown","confidence":0.0}
 
 
+
+def _admin_parse_replacement(message):
+    """Parse only high-confidence A->B replacement syntax. Never resolves catalog IDs."""
+    text=str(message or "").strip()
+    if not text:
+        return None
+    patterns=[
+        (r"^\\s*(.+?)\\s*(?:→|->|=>)\\s*(.+?)\\s*$", 2),
+        (r"^\\s*(?:измени|поменяй|замени)\\s+.+?\\s+(?:на)\\s+(.+?)\\s*$", 1),
+        (r"^\\s*(?:change|replace)\\s+.+?\\s+(?:to|with)\\s+(.+?)\\s*$", 1),
+        (r"^\\s*.+?\\s*(?:փոխիր|փոխարինիր|դարձրու)\\s+(.+?)\\s*$", 1),
+    ]
+    for pattern,index in patterns:
+        m=re.match(pattern,text,flags=re.I|re.U)
+        if not m:
+            continue
+        target=m.group(index).strip()
+        target=re.sub(r"^[\"'«]+|[\"'».,!?]+$","",target).strip()
+        if target and len(target)<=120:
+            return target
+    return None
+
+
+def _admin_audit_application_catalog(app):
+    """Audit current subcategory against the most specific live catalog concept."""
+    if not app:
+        return None
+    service=str(app.get("service_name") or "").strip()
+    if not service:
+        return None
+    candidates=_admin_category_candidates(service,app.get("master_category_id"),limit=20)
+    if not candidates:
+        return None
+
+    specific_groups={
+        "брови":{"брови","հոնքեր","հոնք","eyebrows","eyebrow"},
+        "маникюр":{"маникюр","մատնահարդարում","manicure","եղունգ"},
+        "педикюр":{"педикюр","պեդիկյուր","pedicure"},
+        "макияж":{"макияж","դիմահարդարում","makeup","визаж"},
+        "стрижка":{"стрижка","վարսավիր","սանրվածք","haircut"},
+    }
+    generic_groups={
+        "окрашивание":{"окрашивание","ներկում","ներկել","coloring","colouring"},
+        "волосы":{"волосы","մազ","մազեր","hair"},
+    }
+    service_concepts=_concept_tokens(service)
+    specific_present={k for k,v in specific_groups.items() if service_concepts.intersection(v)}
+    generic_present={k for k,v in generic_groups.items() if service_concepts.intersection(v)}
+
+    ranked=[]
+    for item in candidates:
+        row=item["row"]
+        cat_text=_norm(" ".join(str(row.get(k) or "") for k in ("name_am","name_ru","name_en")))
+        cat_concepts=_concept_tokens(cat_text)
+        spec_hits=sum(1 for k in specific_present if cat_concepts.intersection(specific_groups[k]))
+        generic_hits=sum(1 for k in generic_present if cat_concepts.intersection(generic_groups[k]))
+        score=item["score"] + spec_hits*1200 + generic_hits*80
+        ranked.append((score,spec_hits,generic_hits,item))
+    ranked.sort(key=lambda x:(x[0],x[1],-x[2]),reverse=True)
+
+    best=ranked[0][3]["row"]
+    current=_norm(str(app.get("subcategory_name") or ""))
+    label=_norm(str(best.get("name_am") or best.get("name_ru") or best.get("name_en") or ""))
+    if not label or current==label:
+        return None
+    if ranked[0][1] <= 0 and ranked[0][0] < 700:
+        return None
+    return best
+
+
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
     if not message: return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
