@@ -476,9 +476,23 @@ async def api_admin_partner_applications(request):
     admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     rows = _db_fetchall(
         """
-        SELECT p.id, p.user_id, p.business_name, p.business_description, p.status,
-               p.verification_status, p.rejection_reason, p.created_at,
-               (SELECT po.city FROM partner_objects po JOIN partner_businesses pb ON pb.id=po.business_id WHERE po.partner_id=p.id ORDER BY pb.is_default DESC,po.id LIMIT 1) AS city,
+        SELECT p.id, p.user_id, p.status, p.verification_status, p.rejection_reason, p.created_at,
+               COALESCE((SELECT COUNT(*) FROM partner_businesses b
+                         WHERE b.partner_id=p.id AND b.status<>'archived'),0) AS company_count,
+               COALESCE((SELECT COUNT(*) FROM services s
+                         JOIN partner_businesses b ON b.id=s.business_id
+                         WHERE s.partner_id=p.id AND b.status<>'archived' AND s.status<>'deleted'),0) AS service_count,
+               COALESCE(
+                 (SELECT NULLIF(a.phone,'') FROM partner_applications a
+                  WHERE a.partner_id=p.id AND a.status='approved'
+                  ORDER BY a.created_at DESC,a.id DESC LIMIT 1),
+                 (SELECT NULLIF(b.phone,'') FROM partner_businesses b
+                  WHERE b.partner_id=p.id AND b.status<>'archived'
+                  ORDER BY b.is_default DESC,b.id LIMIT 1)
+               ) AS partner_phone,
+               (SELECT NULLIF(a.address,'') FROM partner_applications a
+                WHERE a.partner_id=p.id AND a.status='approved'
+                ORDER BY a.created_at DESC,a.id DESC LIMIT 1) AS partner_address,
                COALESCE((SELECT COUNT(*) FROM partner_verification_documents d WHERE d.partner_id=p.id),0) AS document_count,
                (SELECT MAX(d.created_at) FROM partner_verification_documents d WHERE d.partner_id=p.id) AS last_document_at
         FROM partners p
@@ -661,6 +675,65 @@ async def api_admin_partner_detail(request):
                 )
             obj["data_json"] = data_json
         business["objects"] = objects
+
+        # Admin company view is strictly business-scoped. Never aggregate
+        # directions, services or documents from the other companies of the
+        # same Telegram partner into this company.
+        business["directions"] = _db_fetchall(
+            """SELECT pd.id, pd.business_id, pd.master_category_id, pd.status,
+                      pd.rejection_reason, m.name_am, m.name_ru, m.name_en,
+                      COALESCE(
+                        json_agg(DISTINCT jsonb_build_object(
+                          'id', c.id,
+                          'name_am', c.name_am,
+                          'name_ru', c.name_ru,
+                          'name_en', c.name_en
+                        )) FILTER (WHERE c.id IS NOT NULL),
+                        '[]'::json
+                      ) AS subcategories,
+                      COALESCE(
+                        (SELECT COUNT(*) FROM partner_verification_documents d
+                         WHERE d.partner_direction_id=pd.id AND d.business_id=%s),
+                        0
+                      ) AS document_count
+               FROM partner_directions pd
+               JOIN master_categories m ON m.id=pd.master_category_id
+               LEFT JOIN partner_direction_categories pdc ON pdc.partner_direction_id=pd.id
+               LEFT JOIN categories c ON c.id=pdc.category_id
+               WHERE pd.partner_id=%s
+                 AND pd.business_id=%s
+                 AND pd.status<>'deleted'
+               GROUP BY pd.id,m.id
+               ORDER BY m.id""",
+            (business["id"], pid, business["id"])
+        )
+        business["services"] = _db_fetchall(
+            """SELECT s.id, s.business_id, s.name AS service_name,
+                      s.description, s.price, s.status, s.category_id,
+                      s.object_id, s.contact_phone,
+                      c.name_am AS category_name_am, c.name_ru AS category_name_ru,
+                      c.name_en AS category_name_en,
+                      m.name_am AS master_name_am, m.name_ru AS master_name_ru,
+                      m.name_en AS master_name_en
+               FROM services s
+               LEFT JOIN categories c ON c.id=s.category_id
+               LEFT JOIN master_categories m ON m.id=c.master_category_id
+               WHERE s.partner_id=%s AND s.business_id=%s AND s.status<>'deleted'
+               ORDER BY s.id DESC""",
+            (pid, business["id"])
+        )
+        business["documents"] = _db_fetchall(
+            """SELECT id, business_id, partner_direction_id, document_type,
+                      original_filename, mime_type, file_size, status,
+                      rejection_reason, created_at, reviewed_at
+               FROM partner_verification_documents
+               WHERE partner_id=%s AND business_id=%s
+               ORDER BY created_at DESC""",
+            (pid, business["id"])
+        )
+        business["service_count"] = len(business["services"])
+        business["direction_count"] = len(business["directions"])
+
     return web.json_response({"ok": True, "admin_id": admin_id, "partner": partner, "documents": docs, "businesses": businesses})
 
 
