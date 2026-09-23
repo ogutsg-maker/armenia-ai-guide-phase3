@@ -48,6 +48,11 @@ def _admin_normalize_plan(data,message=""):
         except (TypeError,ValueError): entity_id=None
     data["entity_id"]=entity_id
     data["application_id"]=entity_id
+    data["entity_type"]=str(data.get("entity_type") or data.get("target") or "").strip().lower()
+    data["entity_name"]=str(data.get("entity_name") or data.get("entity_query") or "").strip()[:200]
+    raw_needed=data.get("data_needed")
+    if not isinstance(raw_needed,list): raw_needed=[]
+    data["data_needed"]=[str(x).strip().lower() for x in raw_needed if str(x).strip()][:20]
     data["navigation"]=data.get("navigation")
     data["response_language"]=lang
     data["confidence"]=max(0.0,min(1.0,confidence))
@@ -210,7 +215,7 @@ def _admin_hydrate_context(state,limit=12):
         "last_shown_query_rows":state.get("last_shown_query_rows",[])[:10],
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
-        "query_capabilities":{"targets":["applications","partners","businesses","catalog"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
+        "query_capabilities":{"targets":["applications","partners","businesses","catalog","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
         "history":state.get("history",[])[-6:]})
 
 
@@ -347,6 +352,7 @@ def _admin_query_result_text(target,rows,filters,question):
    lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏"+(" · "+loc if loc else ""))
   elif target=="partners":lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")+" · verification="+str(x.get("verification_status") or "—"))
   elif target=="businesses":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")+" · "+str(x.get("partner_business_name") or "—"))
+  elif target=="services":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—"))
   else:lines.append("#"+str(x.get("id"))+" · "+str(x.get("name_am") or x.get("name_ru") or x.get("name_en") or "—")+" · "+str(x.get("master_name_am") or x.get("master_name_ru") or "—"))
  return "\n".join(lines)
 
@@ -659,65 +665,59 @@ async def _admin_execute_state_action(action):
     return "Действие не определено."
 
 async def _admin_ai_json(message,ctx):
+    """Universal semantic planner: meaning first, Python validates and executes."""
     from groq import AsyncGroq
     key=os.getenv("GROQ_API_KEY","").strip()
     if not key: raise RuntimeError("GROQ_API_KEY is not configured")
     model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
     client=AsyncGroq(api_key=key)
-    system="""You are the semantic reasoning and intent-planning layer for the Armenia AI Guide administrator.
-Understand Armenian, Russian, English, mixed-language messages, typos, colloquial wording and short follow-ups.
-Do not expose hidden chain-of-thought. Return only a concise reasoning_summary.
-Identity, IDs, permissions and database execution belong to Python.
+    system="""You are the universal semantic planner for the Armenia AI Guide administrator.
+Understand what the administrator means, not predefined command phrases. Input can be Armenian,
+Russian, English, mixed language, transliteration, typos, colloquial wording, elliptical follow-ups
+or broad natural questions. Use the supplied conversation context.
 
-The administrator speaks naturally. Do not require command phrases or exact keywords.
-Treat meaning, not wording, as primary. The following semantic examples are mandatory:
-- "իսկ նրա փաստաթղթերը?", "նրա փաստաթղթերը", "а его документы?", "покажи документы", "what about its documents?" => show_documents for the currently focused application.
-- "իսկ կատեգորիան ճիշտ է?", "կատեգորիան ճիշտ է՞", "правильная ли категория?", "категория верная?", "is the category correct?" => inspect_application for the focused application, with field=subcategory when the question concerns category/subcategory. This is a read-only verification, not an edit.
-- "ամբողջությամբ ցույց տուր", "покажи полностью", "show the whole one" => show_full_application for the focused application.
-- "հաջորդը", "следующая", "next one" => navigate to the next item; Python resolves navigation.
-- "a kakie est uslugi?", "какие есть услуги?", "ինչ ծառայություններ կան?", "what services are available?" => understand this as a request for a service list/query, not an unknown request. If the available database target is not explicit in context, use target=services and intent=query_database.
-- Pronouns and elliptical follow-ups ("իսկ", "նրա", "այս", "это", "его", "ее", "this", "that", "what about...") inherit the currently focused entity unless the message explicitly names another entity.
-- Armenian/Russian/English mixed transliteration is valid input; infer the intended meaning from the whole message.
+Decide the goal, subject/entity, context reference, factual data needed, and whether the request is
+read-only or a mutation. Python is the source of truth: it resolves IDs, permissions and executes
+only whitelisted database operations. Never invent IDs or write SQL. Do not expose hidden
+chain-of-thought; reasoning_summary is one short sentence.
 
-Armenian "ինչ հայտեր ունենք?", "ինչ հայտ ունենք?", "ինչ հայտեր կան?", "ցույց տուր հայտերը", "որ հայտերն ունենք?", Russian "какие заявки у нас?", "что по заявкам?", and English "what applications do we have?" all mean listing applications unless a count or filter is explicit.
+Use generic intents when appropriate:
+information_request, inspect_entity, query_database, show_applications, show_application_count,
+show_application, show_application_field, show_documents, edit_application, approve_application,
+reject_application, clarify_application, suggest_application_correction, show_partners,
+show_businesses, unknown.
 
-Return ONLY one JSON ActionPlan with exactly these logical fields:
-reasoning_summary, intent, target, entity_id, field, value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
-You may include application_id only for backward compatibility; Python normalizes it to entity_id.
-reasoning_summary is one short sentence, never hidden chain-of-thought.
+For lists/searches/counts/filters use query_database. For ordinary factual questions use
+information_request or inspect_entity. For explicit mutations use the appropriate write intent.
+entity_type can be application, partner, business, service, catalog, document, order, booking,
+or unknown. entity_id is only an ID explicitly present or safely supplied by context; otherwise
+leave it null. entity_name is the natural name to search. data_needed is a concise list of factual
+datasets/fields needed, such as application, partner, documents, services, categories, verification,
+status, location, prices, orders, bookings. navigation describes first/next/previous/ordinal
+navigation; Python resolves it. filters/sort/limit apply to database queries. action_required is
+read_only unless a real mutation is explicitly requested. response_language follows the user.
+confidence is an honest estimate.
 
-Allowed intents: query_database, show_applications, show_application_count, show_application, show_application_field, show_documents, inspect_application, suggest_application_correction, edit_application, approve_application, reject_application, clarify_application, show_partners, show_businesses, unknown.
-Rules:
-1. Questions and inspection requests are read-only.
-2. Never invent IDs or catalog IDs.
-3. Resolve pronouns from supplied context.
-4. Navigation words are handled by Python.
-5. Natural list requests without an explicit count/filter prefer show_applications.
-6. Count questions use show_application_count.
-7. Search/filter/comparison requests use query_database.
-8. Corrections without a value propose alternatives.
-9. Explicit replacement goes only in value_raw.
-10. response_language matches the user's message.
-11. confidence is an honest qualitative estimate.
+Return ONLY JSON with:
+reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed, field,
+value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
 """
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
         try:
-            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=320,response_format={"type":"json_object"})
+            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,
+                max_tokens=420,response_format={"type":"json_object"})
         except Exception as json_mode_error:
-            # Some Groq/model combinations reject response_format; retry without it.
             if "response_format" not in str(json_mode_error).lower() and "json_object" not in str(json_mode_error).lower():
                 raise
-            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=320)
+            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=420)
     except Exception as first:
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
-            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=320)
-        else:
-            raise
+            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=420)
+        else: raise
     raw=(resp.choices[0].message.content or "").strip()
-    try:
-        data=json.loads(raw)
+    try: data=json.loads(raw)
     except json.JSONDecodeError:
         start=raw.find("{"); end=raw.rfind("}")
         if start<0 or end<=start: raise RuntimeError("Groq returned invalid JSON")
@@ -827,6 +827,152 @@ def _admin_audit_application_catalog(app):
         return None
     return best
 
+
+def _admin_resolve_semantic_entity(plan,state):
+    entity_type=_norm(plan.get("entity_type") or plan.get("target"))
+    entity_name=str(plan.get("entity_name") or "").strip()
+    entity_id=plan.get("entity_id")
+    if entity_id not in (None,""):
+        try: return entity_type,int(entity_id)
+        except (TypeError,ValueError): pass
+    focused_type=state.get("last_focused_entity_type")
+    focused_id=state.get("last_focused_entity_id") or state.get("last_focused_application_id")
+    if not entity_name and focused_id:
+        return focused_type or "application",int(focused_id)
+    if not entity_name: return None,None
+    q="%"+entity_name+"%"; candidates=[]
+    try:
+        candidates += platform_db.rows("""SELECT id,business_name,'application' AS entity_type FROM partner_applications
+            WHERE business_name ILIKE %s OR service_name ILIKE %s ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 10""",(q,q))
+    except Exception: pass
+    try:
+        candidates += platform_db.rows("""SELECT id,business_name,'partner' AS entity_type FROM partners
+            WHERE business_name ILIKE %s ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 10""",(q,))
+    except Exception: pass
+    try:
+        candidates += platform_db.rows("""SELECT id,name,'business' AS entity_type FROM partner_businesses
+            WHERE name ILIKE %s ORDER BY id DESC LIMIT 10""",(q,))
+    except Exception: pass
+    if not candidates: return None,None
+    typed=[x for x in candidates if entity_type and _norm(x.get("entity_type"))==entity_type]
+    pool=typed or candidates
+    exact=[x for x in pool if _norm(x.get("business_name") or x.get("name"))==_norm(entity_name)]
+    chosen=(exact or pool)[0]
+    return str(chosen.get("entity_type") or entity_type or "unknown"),int(chosen["id"])
+
+
+def _admin_semantic_documents(application_id):
+    if not application_id: return []
+    try:
+        exists=platform_db.one("""SELECT table_name FROM information_schema.tables
+            WHERE table_schema='public' AND table_name='partner_verification_documents'""")
+        if not exists: return []
+        cols=platform_db.rows("""SELECT column_name FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='partner_verification_documents'
+            ORDER BY ordinal_position""")
+        names={str(x.get("column_name")) for x in cols}
+        app_col=next((x for x in ("application_id","partner_application_id","partner_id") if x in names),None)
+        if not app_col: return []
+        select_cols=[x for x in ("id","application_id","partner_application_id","partner_id","document_type",
+            "file_name","file_url","status","verification_status","admin_note","rejection_reason",
+            "created_at","updated_at") if x in names]
+        if not select_cols: return []
+        value=int(application_id)
+        if app_col=="partner_id":
+            app=platform_db.one("SELECT partner_id FROM partner_applications WHERE id=%s",(value,))
+            if not app or app.get("partner_id") is None: return []
+            value=app["partner_id"]
+        return _admin_safe(platform_db.rows("SELECT "+",".join(select_cols)+" FROM partner_verification_documents WHERE "+app_col+"=%s ORDER BY id DESC LIMIT 50",(value,)))
+    except Exception: return []
+
+
+def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
+    result={}
+    if entity_type=="application" and entity_id:
+        app=_admin_hydrate_application(entity_id)
+        if not app: return {}
+        result["application"]=app
+        needed=set(data_needed or [])
+        if not needed: needed={"application","documents","partner","categories","services","verification"}
+        result["documents"]=_admin_semantic_documents(entity_id)
+        if app.get("partner_id") and ("partner" in needed or "verification" in needed):
+            try:
+                result["partner"]=_admin_safe(platform_db.one("""SELECT id,user_id,status,verification_status,
+                    business_name,business_description,contact_share_policy,created_at,updated_at
+                    FROM partners WHERE id=%s""",(int(app["partner_id"]),)))
+            except Exception: result["partner"]=None
+        if app.get("category_id") and ("categories" in needed or "category" in needed or "subcategory" in needed):
+            try:
+                result["category"]=_admin_safe(platform_db.one("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,
+                    m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en
+                    FROM categories c JOIN master_categories m ON m.id=c.master_category_id WHERE c.id=%s""",(int(app["category_id"]),)))
+            except Exception: result["category"]=None
+            try:
+                result["catalog_candidates"]=_admin_safe([x["row"] for x in _admin_category_candidates(
+                    str(app.get("service_name") or ""),app.get("master_category_id"),limit=8)])
+            except Exception: result["catalog_candidates"]=[]
+        if app.get("category_id") and ("services" in needed or "service" in needed):
+            try:
+                result["services"]=_admin_safe(platform_db.rows(
+                    "SELECT id,name,category_id,created_at FROM services WHERE category_id=%s ORDER BY id DESC LIMIT 50",
+                    (int(app["category_id"]),)))
+            except Exception: result["services"]=[]
+        return result
+    if entity_type=="partner" and entity_id:
+        try:
+            result["partner"]=_admin_safe(platform_db.one("""SELECT id,user_id,status,verification_status,business_name,
+                business_description,contact_share_policy,created_at,updated_at FROM partners WHERE id=%s""",(int(entity_id),)))
+            result["businesses"]=_admin_safe(platform_db.rows(
+                "SELECT id,partner_id,name,description,phone,status,created_at FROM partner_businesses WHERE partner_id=%s AND status<>'archived' ORDER BY id DESC LIMIT 50",
+                (int(entity_id),)))
+        except Exception: pass
+        return result
+    if entity_type=="business" and entity_id:
+        try:
+            result["business"]=_admin_safe(platform_db.one("""SELECT b.id,b.partner_id,b.name,b.description,b.phone,b.status,
+                b.created_at,p.business_name AS partner_name,p.verification_status FROM partner_businesses b
+                JOIN partners p ON p.id=b.partner_id WHERE b.id=%s""",(int(entity_id),)))
+        except Exception: pass
+        return result
+    return result
+
+
+async def _admin_semantic_answer(question,plan,state):
+    entity_type,entity_id=_admin_resolve_semantic_entity(plan,state)
+    if entity_id:
+        state["last_focused_entity_type"]=entity_type
+        state["last_focused_entity_id"]=entity_id
+        if entity_type=="application": state["last_focused_application_id"]=entity_id
+    needed=plan.get("data_needed") or []
+    target=_admin_query_target(plan.get("target"))
+    facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state) if entity_id else {}
+    if not facts and target:
+        rows,error=_admin_query_rows(target,plan.get("filters") or {},plan.get("limit") or 20,plan.get("sort"))
+        facts={"target":target,"rows":rows or []}
+        if error: facts={"error":error}
+    if not facts:
+        return _admin_localized(plan.get("response_language","ru"),"unknown")
+    fallback=json.dumps(facts,ensure_ascii=False,default=str)
+    if isinstance(facts,dict) and "rows" in facts:
+        fallback=_admin_query_result_text(target or entity_type,facts.get("rows") or [],plan.get("filters") or {},question)
+    key=os.getenv("GROQ_API_KEY","").strip()
+    if not key: return fallback
+    try:
+        from groq import AsyncGroq
+        client=AsyncGroq(api_key=key); model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
+        payload=json.dumps({"question":question,"goal":plan.get("intent"),"entity_type":entity_type,
+            "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
+        resp=await client.chat.completions.create(model=model,messages=[
+            {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
+Answer naturally, directly and humanly in the same language as the question. Use ONLY the supplied
+database facts. Explain what the facts mean for the actual question. If something is missing, rejected,
+inconsistent or potentially wrong, say so precisely. Do not invent facts or claim checks that were not
+performed. Do not mention AI, prompts, SQL, internal tools or chain-of-thought. Simple question = simple
+answer; broad inspection = compact structured summary."""},
+            {"role":"user","content":payload}],temperature=0,max_tokens=700)
+        answer=(resp.choices[0].message.content or "").strip()
+        return answer or fallback
+    except Exception: return fallback
 
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
@@ -989,19 +1135,6 @@ async def admin_ai_message(admin_id,message):
         except Exception: c=_admin_fallback_intent(message,focused_id)
     c=_admin_normalize_plan(c,message)
 
-    # Semantic safety-net: if the model is uncertain/returns unknown, recover only
-    # high-confidence concepts from the full sentence and the active context.
-    # This is not the primary parser; it prevents a good semantic model response
-    # from collapsing into the generic "I didn't understand" screen.
-    if str(c.get("intent") or "unknown")=="unknown":
-        semantic_text=_norm(message)
-        focused_now=state.get("last_focused_application_id") or state.get("last_focused_entity_id")
-        if focused_now and re.search(r"(փաստաթուղ|փաստաթուղթ|документ|документы|document|documents)",semantic_text,re.I|re.U):
-            c=_admin_normalize_plan({"intent":"show_documents","target":"application","entity_id":focused_now,"field":"documents","reasoning_summary":"Հարցը վերաբերում է ընթացիկ հայտի փաստաթղթերին։","confidence":0.92},message)
-        elif focused_now and re.search(r"(կատեգոր|ենթակատեգոր|category|subcategory|подкатегор)",semantic_text,re.I|re.U) and re.search(r"(ճիշտ|արդյոք|правиль|верн|correct|right)",semantic_text,re.I|re.U):
-            c=_admin_normalize_plan({"intent":"inspect_application","target":"application","entity_id":focused_now,"field":"subcategory","reasoning_summary":"Ստուգվում է ընթացիկ հայտի կատեգորիայի ճիշտ լինելը՝ առանց փոփոխության։","confidence":0.92},message)
-        elif re.search(r"(ծառայություններ|ծառայություն|услуг|услуги|service|services|uslugi)",semantic_text,re.I|re.U):
-            c=_admin_normalize_plan({"intent":"query_database","target":"services","reasoning_summary":"Հարցը վերաբերում է ծառայությունների ցանկին։","confidence":0.82},message)
 
     state["last_action"]={"intent":c.get("intent"),"target":c.get("target"),"reasoning_summary":c.get("reasoning_summary"),"confidence":c.get("confidence")}
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
@@ -1024,6 +1157,9 @@ async def admin_ai_message(admin_id,message):
     field=str(c.get("field") or "").lower()
     intent={"open_application":"show_application","count_applications":"show_application_count","count":"show_application_count","inspect":"inspect_application","documents":"show_documents","show_document":"show_documents","show_documents":"show_documents"}.get(intent,intent)
 
+    if intent in {"information_request","inspect_entity","semantic_query","research_entity"}:
+        reply=await _admin_semantic_answer(message,c,state)
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
     if field in {"category","subcategory","price","service_name","location_city","description","documents"}: state["last_focused_field"]=field
     # Generic reference resolution: once an entity is focused, pronouns inherit that identity.
     # The AI receives the focused entity in context; this fallback only protects short ambiguous turns.
@@ -1044,7 +1180,7 @@ async def admin_ai_message(admin_id,message):
     if intent=="query_database":
         qtarget=_admin_query_target(target or c.get("target"))
         if not qtarget:
-            reply="Не понял, по каким данным нужно искать. Укажите: заявки, партнёры, компании или каталог."
+            reply=_admin_localized(c.get("response_language","ru"),"unknown")
         else:
             qfilters=c.get("filters") or {}; qlimit=c.get("limit") or 20; qsort=c.get("sort")
             rows,error=_admin_query_rows(qtarget,qfilters,qlimit,qsort)
