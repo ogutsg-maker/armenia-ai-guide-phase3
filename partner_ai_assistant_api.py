@@ -233,6 +233,39 @@ async def _execute_mutation(pid,c,ctx):
     description=str(c.get("description") or "").strip()
     phone=str(c.get("phone") or "").strip() or None
     price=_clean_num(c.get("price"))
+    if intent=="add_service":
+        if not bid:
+            return web.json_response({"ok":True,"reply":"Укажите, в какой компании добавить услугу."})
+        if not oid:
+            candidates=[x for x in ctx.get("addresses",[]) if int(x.get("business_id") or 0)==bid]
+            if len(candidates)==1:
+                oid=int(candidates[0]["id"])
+            else:
+                return web.json_response({"ok":True,"reply":"Укажите адрес, где должна быть эта услуга."})
+        if not name:
+            return web.json_response({"ok":True,"reply":"Как называется услуга?"})
+        from master_cabinet_api import _ai_match_new_service
+        match=await _ai_match_new_service(pid,name,description,bid)
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id,name FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(bid,pid))
+                b=cur.fetchone()
+                cur.execute("SELECT id,object_name,address,city,marz,phone FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s AND COALESCE(is_active,TRUE)=TRUE",(oid,pid,bid))
+                o=cur.fetchone()
+                if not b or not o:
+                    return web.json_response({"ok":False,"error":"business_or_address_not_found"},status=404)
+                cur.execute("""INSERT INTO partner_applications(
+                    partner_id,business_id,status,business_name,location_marz,location_city,address,object_name,object_id,phone,
+                    direction_name,master_category_id,subcategory_name,category_id,service_name,price,description,ai_reason,payload_json)
+                    VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
+                    (pid,bid,b["name"],o.get("marz"),o.get("city"),o.get("address"),o.get("object_name"),oid,
+                     c.get("contact_phone") or o.get("phone"),match.get("direction_name") or match.get("out_of_scope_master_name") or "",
+                     match.get("master_category_id") or match.get("out_of_scope_master_id"),match.get("subcategory_name") or match.get("proposed_name") or "",
+                     match.get("category_id"),name,price,description,match.get("reason") or "AI assistant request.",json.dumps({"source":"partner_ai_assistant","message":c.get("message"),"object_id":oid},ensure_ascii=False)))
+                aid=int(cur.fetchone()["id"])
+            conn.commit()
+        return web.json_response({"ok":True,"reply":"✓ Услуга «%s» подготовлена и отправлена администратору на подтверждение. Заявка #%s."%(name,aid),"data":{"application_id":aid}})
+
     with _connect() as conn:
         with conn.cursor() as cur:
             if intent=="add_business":
