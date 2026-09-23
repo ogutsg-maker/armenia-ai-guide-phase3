@@ -121,7 +121,7 @@ def _admin_session(admin_id):
     now=time.time()
     state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
-        state={"last_focused_application_id":None,"pending_action":None,"history":[],"updated_at":now}
+        state={"last_focused_application_id":None,"last_focused_field":None,"last_shown_applications":[],"pending_action":None,"history":[],"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
     return state
@@ -395,26 +395,41 @@ async def _admin_ai_json(message,ctx):
     if not key: raise RuntimeError("GROQ_API_KEY is not configured")
     model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
     client=AsyncGroq(api_key=key)
-    system="""You are the intent extractor for the Armenia AI Guide admin secretary.
-Understand Armenian, Russian and English.
-Classify the administrator request. Questions and inspection are READ ONLY and must never become mutations.
+    system="""You are the structural Intent Extractor for the Armenia AI Guide admin panel.
+Your ONLY job is to parse the administrator's natural language into strict JSON.
+You do not talk to the user. You do not advise. Output ONLY valid JSON.
 
-Return ONLY JSON:
-{"intent":"show_applications|show_application|inspect_application|show_application_field|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"application|partner|business|service|category|document|order","application_id":null,"field":null,"value_raw":null,"reason":null,"confidence":0.0}
+STRICT RULES:
+1. NEVER invent, hallucinate, predict, or resolve database IDs. Python resolves all IDs.
+2. Use the supplied focused application and conversation history. Short follow-ups continue the current task.
+3. If the administrator says "это", "эта", "здесь", "այս", "այստեղ", "ուղղիր", "исправь", or only names a field, use the focused application and previous field when available.
+4. If a correction is requested without a new value, set value_raw=null and action_required=suggest_alternatives.
+5. If a new value is explicitly provided, put the exact human text in value_raw and use action_required=execute.
+6. Questions and inspection requests are READ ONLY. Do not turn a question into a mutation.
+7. Understand Armenian, Russian and English, including mixed-language messages.
 
-Rules:
-- Ստուգիր հայտերը / Проверь заявки / покажи заявки -> show_applications.
-- "ինձ ցույց տուր" / "покажи мне" / "show it" after a focused/listed application -> show_application.
-- "հայտը ճիշտ է լրացված՞" / "заявка заполнена правильно?" / "проверь заявку" -> inspect_application. This means inspect and report missing/suspicious data. NEVER clarify automatically.
-- "ինչ կատեգորիաների տակ է ծառայությունը" / "какая категория у услуги" -> show_application_field, field category. READ ONLY.
-- "ինչ ենթակատեգորիայի տակ է" / "какая подкатегория" -> show_application_field, field subcategory. READ ONLY.
-- "открой заявку 36" / "բացիր հայտը 36" -> show_application, id 36.
-- Concrete requests to change data -> edit_application.
-- Explicit approve -> approve_application.
-- Explicit reject or send to partner for clarification -> corresponding mutation.
-- A question marked ? or Armenian ՞ asking whether data is correct is READ ONLY.
-- "это", "эта", "здесь", "այս", "այստեղ" refer to focused_application.
-- Never invent IDs.
+Return exactly:
+{"intent":"edit_application|show_applications|show_application|show_application_field|inspect_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","action_required":"suggest_alternatives|request_value|execute","value_raw":null,"reason":null,"confidence":0.0}
+
+FIELD RULES:
+- ենթակատեգորիա / подкатегория / subcategory -> subcategory
+- կատեգորիա / категория -> subcategory when changing the application's catalog category
+- գին / цена / price -> price
+- անուն / название услуги / service name -> service_name
+- քաղաք / город / city -> location_city
+- նկարագրություն / описание / description -> description
+
+CONTEXT EXAMPLES:
+Focused application #36, last field=subcategory:
+"Ուղղիր" -> edit_application, field=subcategory, application_id=36, value_raw=null, action_required=suggest_alternatives.
+"исправь" -> same.
+"подкатегория" -> edit_application, field=subcategory, application_id=36, value_raw=null, action_required=suggest_alternatives.
+"նայիր ենթակատեգորիան և ուղղիր" -> edit_application, field=subcategory, application_id=36, value_raw=null, action_required=suggest_alternatives.
+"проверь какая подкатегория" -> show_application_field, field=subcategory.
+"открой заявку #36" -> show_application, application_id=36.
+"поменяй подкатегорию на Брови" -> edit_application, field=subcategory, value_raw="Брови", action_required=execute.
+
+Never return a catalog ID. Never invent a value not present in the administrator's message or supplied context.
 """
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
@@ -464,14 +479,27 @@ async def admin_ai_message(admin_id,message):
     state=_admin_session(admin_id)
     normalized=message.lower().strip()
 
+    shown_apps=state.get("last_shown_applications") or []
+    focused_id=state.get("last_focused_application_id")
+    if not focused_id and len(shown_apps)==1:
+        try:
+            focused_id=int(shown_apps[0]["id"])
+            state["last_focused_application_id"]=focused_id
+        except (KeyError,TypeError,ValueError):
+            focused_id=None
+
     pending=state.get("pending_action")
     if pending and normalized in _CONFIRM_YES:
-        reply=await _admin_execute_state_action(pending)
-        state["pending_action"]=None
+        try:
+            reply=await _admin_execute_state_action(pending)
+        finally:
+            state["pending_action"]=None
+            state["last_focused_field"]=None
         _admin_history(state,"assistant",reply)
         return reply
     if pending and normalized in _CONFIRM_NO:
         state["pending_action"]=None
+        state["last_focused_field"]=None
         reply="Отменено. Никаких изменений не внесено."
         _admin_history(state,"assistant",reply)
         return reply
@@ -504,6 +532,20 @@ async def admin_ai_message(admin_id,message):
     aid=c.get("application_id") or focused_id
     field=str(c.get("field") or "").lower()
 
+    if field in {"category","subcategory","price","service_name","location_city","description"}:
+        state["last_focused_field"]=field
+    elif not field or field=="none":
+        field=state.get("last_focused_field") or ""
+
+    if not aid:
+        aid=state.get("last_focused_application_id")
+    if aid:
+        try:
+            aid=int(aid)
+            state["last_focused_application_id"]=aid
+        except (TypeError,ValueError):
+            aid=None
+
     legacy={"inspect":"inspect_application","show":"show_applications","edit":"edit_application","approve":"approve_application","reject":"reject_application","clarify":"clarify_application"}
     intent=legacy.get(intent,intent)
 
@@ -524,6 +566,10 @@ async def admin_ai_message(admin_id,message):
         elif target=="business" or intent=="show_businesses":
             reply=await _admin_execute({"intent":"show_businesses"})
         elif intent=="show_applications":
+            rows=_admin_context(limit=30).get("applications",[])
+            state["last_shown_applications"]=[{"id":int(x["id"]),"business_name":x.get("business_name"),"service_name":x.get("service_name")} for x in rows[:20]]
+            if len(state["last_shown_applications"])==1:
+                state["last_focused_application_id"]=state["last_shown_applications"][0]["id"]
             reply=await _admin_execute({"intent":"show_applications"})
         else:
             if not aid:
@@ -544,23 +590,39 @@ async def admin_ai_message(admin_id,message):
         _admin_history(state,"assistant",reply)
         return reply
 
-    if not aid: return "Укажите номер заявки или сначала откройте заявку."
+    if not aid:
+        shown_apps=state.get("last_shown_applications") or []
+        if len(shown_apps)==1:
+            aid=int(shown_apps[0]["id"])
+            state["last_focused_application_id"]=aid
+    if not aid:
+        return "Сначала откройте заявку или укажите её номер."
     app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
-    if not app: return "Заявка #"+str(aid)+" не найдена."
+    if not app:
+        return "Не удалось найти текущую заявку. Укажите её номер, например #36."
 
+    state["last_focused_application_id"]=int(aid)
     action={"intent":intent,"application_id":int(aid)}
     if intent=="edit_application":
         field=str(c.get("field") or "").lower()
+        if not field or field=="none":
+            field=state.get("last_focused_field") or ""
         value=str(c.get("value_raw") or c.get("value_text") or "").strip()
         if field=="category":
             field="subcategory"
+        if field:
+            state["last_focused_field"]=field
         if field in {"category","subcategory"}:
             requested_value=value or None
-            cat=find_best_subcategory(
-                str(app.get("service_name") or ""),
-                app.get("master_category_id"),
-                requested_value=requested_value,
-            )
+            try:
+                cat=find_best_subcategory(
+                    str(app.get("service_name") or ""),
+                    app.get("master_category_id"),
+                    requested_value=requested_value,
+                )
+            except Exception:
+                state["pending_action"]=None
+                return "Не удалось безопасно определить подкатегорию по активному каталогу. Изменений не внесено."
             if not cat:
                 current=str(app.get("subcategory_name") or "—")
                 suggestions=_admin_category_suggestions(str(app.get("service_name") or ""),app.get("master_category_id"))
