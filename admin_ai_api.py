@@ -18,6 +18,33 @@ def _norm(text):
     return " ".join(str(text).casefold().strip().split())
 
 
+
+_ADMIN_LOCALES={"am":{"unknown":"Ես ամբողջությամբ չհասկացա հարցումը։ Կարող եք հարցնել բնական լեզվով՝ հայտերի, գործընկերների, ընկերությունների կամ կատալոգի մասին։","need_application":"Սկզբում բացեք հայտը կամ նշեք դրա համարը։","not_found":"Հայտ #{id} չի գտնվել։","last_item":"Սա ընթացիկ ցուցակի վերջին տարրն է։","safe_error":"Չհաջողվեց անվտանգ մշակել հարցումը։ Տվյալները չեն փոխվել։ Փորձեք կրկին։"},"ru":{"unknown":"Я не полностью понял запрос. Можно спрашивать обычным языком о заявках, партнёрах, компаниях или каталоге.","need_application":"Сначала откройте заявку или укажите её номер.","not_found":"Заявка #{id} не найдена.","last_item":"Это последний элемент в текущем списке.","safe_error":"Не удалось безопасно обработать запрос. Данные не изменены. Повторите запрос."},"en":{"unknown":"I didn't fully understand the request. You can ask naturally about applications, partners, businesses, or the catalog.","need_application":"Open an application first or specify its number.","not_found":"Application #{id} was not found.","last_item":"This is the last item in the current list.","safe_error":"I couldn't safely process the request. No data was changed. Please try again."}}
+
+def _admin_detect_language(text):
+    t=str(text or "")
+    am=sum(1 for ch in t if "\u0530"<=ch<="\u058f")
+    ru=sum(1 for ch in t if "\u0400"<=ch<="\u04ff")
+    en=sum(1 for ch in t if "a"<=ch.lower()<="z")
+    if am>=max(1,ru,en): return "am"
+    if ru>=max(1,am,en): return "ru"
+    if en>0: return "en"
+    return "ru"
+
+def _admin_localized(lang,key,**kwargs):
+    return _ADMIN_LOCALES.get(lang,_ADMIN_LOCALES["ru"]).get(key,key).format(**kwargs)
+
+def _admin_normalize_plan(data,message=""):
+    if not isinstance(data,dict): data={}
+    lang=str(data.get("response_language") or "").lower()[:2]
+    if lang not in {"am","ru","en"}: lang=_admin_detect_language(message)
+    try: confidence=float(data.get("confidence",0) or 0)
+    except Exception: confidence=0.0
+    data["response_language"]=lang; data["confidence"]=max(0.0,min(1.0,confidence))
+    data["reasoning_summary"]=str(data.get("reasoning_summary") or "")[:500]
+    data.setdefault("filters",{}); data.setdefault("sort",None); data.setdefault("limit",20); data.setdefault("action_required","read_only")
+    return data
+
 def _admin(request):
     raw=request.headers.get('X-Telegram-Init-Data','').strip()
     token=request.app.get('stage3_bot_token','')
@@ -131,7 +158,7 @@ def _admin_session(admin_id):
     sid=int(admin_id); now=time.time(); state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
         state={"last_focused_application_id":None,"last_focused_field":None,"last_focused_entity_type":None,"last_focused_entity_id":None,"last_shown_applications":[],"current_list":[],"current_position":None,
-               "last_query":None,"last_shown_query_rows":[],"pending_action":None,"waiting_for_input":None,"history":[],"updated_at":now}
+               "last_query":None,"last_shown_query_rows":[],"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"last_error_context":None,"retry_count":0,"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
     return state
