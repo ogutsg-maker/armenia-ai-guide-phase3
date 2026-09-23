@@ -442,7 +442,7 @@ async def _execute_mutation(pid,c,ctx):
                 location = ", ".join(x for x in [o.get("marz"), o.get("city"), o.get("address")] if x)
                 body = "Поступила новая заявка #" + str(aid) + " от " + str(b.get("name") or "бизнес") + ".\\n\\n🛠 " + name + " · " + str(price if price is not None else "—") + " ֏"
                 if location: body += "\\n📍 " + location
-                await notify(request, admin_id, title="📨 Новая заявка", body=body, kind="partner_application", audience="admin", data={"application_id":aid}, telegram_text="🤖 AI-секретарь\\n\\n" + body + "\\n\\nНапишите, что сделать с заявкой.")
+                await notify(request.app, admin_id, title="📨 Новая заявка", body=body, kind="partner_application", audience="admin", data={"application_id":aid}, telegram_text="🤖 AI-секретарь\\n\\n" + body + "\\n\\nНапишите, что сделать с заявкой.")
         except Exception:
             pass
 
