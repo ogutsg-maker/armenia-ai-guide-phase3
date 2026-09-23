@@ -511,6 +511,14 @@ def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[d
         (("մատնահարդարում", "маникюр", "manicure"), ("մատնահարդարում", "маникюр", "manicure")),
         (("պեդիկյուր", "педикюр", "pedicure"), ("ոտնահարդարում", "педикюр", "pedicure")),
         (("դիմահարդարում", "դիմահարդարումը", "макияж", "makeup"), ("դիմահարդարում", "макияж", "makeup")),
+        # Car wash / автомойка: support Armenian, Russian, English and common
+        # Latin transliterations used by partners in free-form messages.
+        (("ավտոլվացում", "մեքենայի լվացում", "մեքենաների լվացում", "մեքենա լվացում",
+          "ավտոմեքենայի լվացում", "ավտոլվաց", "автомойка", "мойка машин", "мойка авто",
+          "мойка автомобиля", "мойка автомобилей", "автомойки", "car wash", "carwash",
+          "car washing", "moyka mashin", "moyka maşin", "moyka masin", "moyka avto",
+          "moyka avtomobilya", "moyka avtomobily", "mashini moyka", "mashin moyka"),
+         ("ավտոլվացում", "автомойка", "car wash")),
         (("հարսանեկան ֆոտոսեսիա", "հարսանեկան լուսանկար", "wedding photo", "wedding photography"), ("հարսանեկան լուսանկարիչ", "wedding photographer", "свадебный фотограф")),
         (("միջոցառումների լուսանկարահանում", "միջոցառման լուսանկար", "event photo", "event photography"), ("լուսանկարիչ", "photographer", "фотограф")),
         (("անհատական ֆոտոսեսիա", "անձնական ֆոտոսեսիա", "portrait", "individual photo"), ("լուսանկարիչ", "photographer", "фотограф")),
