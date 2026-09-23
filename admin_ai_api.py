@@ -155,7 +155,7 @@ admin_note, reason, reply."""
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
             resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0.1,max_tokens=900)
         else: raise
-    raw=(resp.choices[0].message.content or "").strip()
+    raw=(resp.choices[0].message.content or "").strip().replace("```json","").replace("```","").strip()
     data=json.loads(raw)
     return data if isinstance(data,dict) else {}
 
