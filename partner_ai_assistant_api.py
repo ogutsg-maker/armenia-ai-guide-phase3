@@ -212,6 +212,18 @@ async def _execute_read(pid,c,ctx):
     return web.json_response({"ok":True,"reply":"\n".join("📥 #%s — %s" % (x["id"],x.get("status") or "—") for x in rows) or "Заказов пока нет.","data":{"orders":rows}})
 
 
+
+async def api_ai_command_confirm(request: web.Request):
+    uid=_auth(request); pid=_partner(uid)
+    data=await request.json()
+    token=str(data.get("confirmation_id") or "").strip()
+    if not token:
+        return web.json_response({"ok":False,"error":"confirmation_id_required"},status=400)
+    command=_get_pending(token,pid)
+    _PENDING.pop(token,None)
+    ctx=_context(pid)
+    return await _execute_mutation(pid,command,ctx)
+
 async def _execute_mutation(pid,c,ctx):
     intent=c.get("intent")
     bid=int(c["business_id"]) if c.get("business_id") else None
