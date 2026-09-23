@@ -210,7 +210,7 @@ def _admin_query_filter_items(filters):
    for op,value in raw_value.items():items.append((field,_norm(op),value))
   else:items.append((field,"eq",raw_value))
  return items
-def _admin_query_build(target,filters,limit=20):
+def _admin_query_build(target,filters,limit=20,sort=None):
  target=_admin_query_target(target)
  if not target:return None,"Неизвестный объект данных."
  spec=_ADMIN_QUERY_TARGETS[target];clauses=[];params=[]
@@ -236,14 +236,43 @@ def _admin_query_build(target,filters,limit=20):
  try:limit=max(1,min(int(limit or 20),int(spec.get("limit",50))))
  except Exception:limit=20
  where=(" WHERE "+" AND ".join(clauses)) if clauses else ""
- sql="SELECT "+spec["select"]+" FROM "+spec["table"]+where+" ORDER BY "+spec["order"]+" LIMIT %s";params.append(limit)
+ order_sql=spec["order"]
+ if isinstance(sort,dict):
+  sf=str(sort.get("field") or "").casefold();sd=str(sort.get("direction") or "desc").casefold()
+  if sf in {"price","created_at","business_name","service_name","name"} and sd in {"asc","desc"}:
+   sort_col=sf
+   if target=="applications":sort_col="a."+sort_col
+   elif target=="partners":sort_col="p."+sort_col
+   elif target=="businesses":sort_col="b."+sort_col
+   elif target=="catalog":sort_col="c."+sort_col
+   order_sql=sort_col+" "+sd.upper()
+ sql="SELECT "+spec["select"]+" FROM "+spec["table"]+where+" ORDER BY "+order_sql+" LIMIT %s";params.append(limit)
  return (sql,tuple(params),target),None
-def _admin_query_rows(target,filters,limit=20):
- built,error=_admin_query_build(target,filters,limit)
+def _admin_query_rows(target,filters,limit=20,sort=None):
+ built,error=_admin_query_build(target,filters,limit,sort)
  if error:return None,error
  sql,params,target=built
  try:return platform_db.rows(sql,params),None
  except Exception as exc:return None,"Не удалось выполнить поиск по «"+target+"»: "+str(exc)[:180]
+async def _admin_query_answer(question,target,filters,limit=20,sort=None):
+ rows,error=_admin_query_rows(target,filters,limit,sort)
+ if error:return "⚠️ "+error
+ fallback=_admin_query_result_text(target,rows,filters,question)
+ if not rows:return fallback
+ try:
+  from groq import AsyncGroq
+  key=os.getenv("GROQ_API_KEY","").strip()
+  if not key:return fallback
+  model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
+  client=AsyncGroq(api_key=key)
+  payload=json.dumps({"question":question,"target":target,"filters":filters,"rows":rows[:20]},ensure_ascii=False,default=str)
+  resp=await client.chat.completions.create(model=model,messages=[
+   {"role":"system","content":"Answer the Armenia AI Guide administrator in the same language as the question. Use ONLY the supplied database rows. Be concise and factual. Mention the count. Never invent facts. Read-only answer."},
+   {"role":"user","content":payload}],temperature=0,max_tokens=500)
+  answer=(resp.choices[0].message.content or "").strip()
+  return answer or fallback
+ except Exception:return fallback
+
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
  labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог"}
@@ -291,7 +320,7 @@ async def _admin_execute(command):
         loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
         return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
     if intent=="query_database":
-        return await _admin_query_answer(str(command.get("question") or message),command.get("target") or "applications",command.get("filters") or {},command.get("limit") or 20)
+        return await _admin_query_answer(str(command.get("question") or message),command.get("target") or "applications",command.get("filters") or {},command.get("limit") or 20,command.get("sort"))
     if intent=="show_full_application":
         return _admin_full_application_text(aid)
     if intent=="show_partners":
@@ -595,7 +624,7 @@ STRICT RULES:
 7. Understand Armenian, Russian and English, including mixed-language messages.
 
 Return exactly one JSON object in this schema:
-{"intent":"query_database|show_applications|show_application_count|show_application|show_application_field|inspect_application|suggest_application_correction|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"applications|partners|businesses|catalog|application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","filters":{},"limit":20,"action_required":"read_only|suggest_alternatives|request_value|execute","value_raw":null,"reason":null,"confidence":0.0}
+{"intent":"query_database|show_applications|show_application_count|show_application|show_application_field|inspect_application|suggest_application_correction|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"applications|partners|businesses|catalog|application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","filters":{},"sort":null,"limit":20,"action_required":"read_only|suggest_alternatives|request_value|execute","value_raw":null,"reason":null,"confidence":0.0}
 
 INTENT RULES:
 - Any information request needing database rows, a count, search, filtering, or comparison -> query_database.
@@ -605,6 +634,7 @@ INTENT RULES:
 - "проверь ... и исправь ошибки", "նայիր հայտերը և ուղղիր սխալները" -> suggest_application_correction. Inspect first; NEVER mutate directly.
 - Questions are always read_only.
 - query_database filters use only eq, neq, contains, gt, gte, lt, lte, in.
+- For "дорогие/самые дорогие услуги" do NOT invent a price threshold; use target=applications and sort={"field":"price","direction":"desc"}.
 - Common filters: location_city, location_marz, location_village, address, status, business_name, service_name, subcategory_name, price.
 - "дороже 5000", "выше 5000", "5000-ից բարձր" -> price {"gt":5000}.
 - "дешевле 5000" -> price {"lt":5000}.
@@ -887,13 +917,13 @@ async def admin_ai_message(admin_id,message):
         if not qtarget:
             reply="Не понял, по каким данным нужно искать. Укажите: заявки, партнёры, компании или каталог."
         else:
-            qfilters=c.get("filters") or {}; qlimit=c.get("limit") or 20
-            rows,error=_admin_query_rows(qtarget,qfilters,qlimit)
+            qfilters=c.get("filters") or {}; qlimit=c.get("limit") or 20; qsort=c.get("sort")
+            rows,error=_admin_query_rows(qtarget,qfilters,qlimit,qsort)
             if error: reply="⚠️ "+error
             else:
-                state["last_query"]={"target":qtarget,"filters":_admin_safe(qfilters),"limit":int(qlimit or 20)}
+                state["last_query"]={"target":qtarget,"filters":_admin_safe(qfilters),"sort":_admin_safe(qsort),"limit":int(qlimit or 20)}
                 state["last_shown_query_rows"]=[_admin_safe(x) for x in (rows or [])[:20]]
-                reply=_admin_query_result_text(qtarget,rows,qfilters,message)
+                reply=await _admin_query_answer(message,qtarget,qfilters,qlimit,qsort)
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
     if intent=="show_application_count":
