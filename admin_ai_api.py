@@ -13,7 +13,7 @@ from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWeb
 
 
 def _norm(text):
-    if not text:
+    if text is None:
         return ""
     return " ".join(str(text).casefold().strip().split())
 
@@ -188,17 +188,31 @@ def _admin_catalog():
 
 def _admin_category_suggestions(service_name, master_category_id=None):
     target=_norm(service_name)
-    if not target: return []
-    rows=_admin_catalog()
+    if not target:
+        return []
+    try:
+        rows=_admin_catalog()
+    except Exception:
+        return []
+    if not rows:
+        return []
     if master_category_id is not None:
-        rows=[x for x in rows if x.get("master_category_id")==master_category_id]
+        try:
+            target_master_id=int(master_category_id)
+            rows=[x for x in rows if x.get("master_category_id") is not None and int(x.get("master_category_id"))==target_master_id]
+        except (ValueError,TypeError):
+            pass
     tokens=[t for t in re.findall(r"[a-zа-яёև-]+",target) if len(t)>2]
     scored=[]
     for x in rows:
-        names=[str(x.get(k) or "") for k in ("name_am","name_ru","name_en")]
+        names=[str(x.get(k) or "").strip() for k in ("name_am","name_ru","name_en")]
+        names=[n for n in names if n]
+        if not names:
+            continue
         hay=_norm(" ".join(names))
         score=sum(1 for t in tokens if t in hay)
-        if score: scored.append((score,names[0] or names[1] or names[2]))
+        if score:
+            scored.append((score,names[0]))
     scored.sort(reverse=True)
     return list(dict.fromkeys(name for _,name in scored[:5]))
 
