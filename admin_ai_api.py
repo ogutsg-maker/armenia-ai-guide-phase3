@@ -105,7 +105,7 @@ async def potential_research(request):
 _ADMIN_PENDING={}
 _ADMIN_PENDING_TTL=15*60
 
-def _admin_context(limit=30):
+def _admin_context(limit=30, include_catalog=False):
     applications=platform_db.rows("""SELECT a.*,p.user_id FROM partner_applications a
         JOIN partners p ON p.id=a.partner_id
         WHERE a.status NOT IN ('approved','pending_partner')
@@ -117,12 +117,14 @@ def _admin_context(limit=30):
             except Exception: payload={}
         a["payload_json"]=payload
         a["services"]=payload.get("services") if isinstance(payload,dict) and isinstance(payload.get("services"),list) else []
-    catalog=platform_db.rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
-        FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-        WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.master_category_id,c.id""")
-    return {"applications":applications,"catalog":catalog,
+    result={"applications":applications,
             "partners":platform_db.rows("SELECT id,user_id,status,verification_status,business_name,business_description FROM partners ORDER BY id DESC LIMIT 50"),
             "businesses":platform_db.rows("SELECT id,partner_id,name,description,phone,status FROM partner_businesses WHERE status<>'archived' ORDER BY id DESC LIMIT 100")}
+    if include_catalog:
+        result["catalog"]=platform_db.rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
+            FROM categories c JOIN master_categories m ON m.id=c.master_category_id
+            WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.master_category_id,c.id""")
+    return result
 
 def _admin_pending_add(command):
     token=uuid.uuid4().hex
@@ -202,7 +204,7 @@ async def _admin_execute(c):
         sub=str(c.get("subcategory_name") or "").strip().casefold()
         if sub and c.get("category_id") is None:
             matches=[]
-            for cat in _admin_context().get("catalog",[]):
+            for cat in _admin_context(include_catalog=True).get("catalog",[]):
                 names=[cat.get("name_am"),cat.get("name_ru"),cat.get("name_en")]
                 if any(str(n or "").strip().casefold()==sub for n in names): matches.append(cat)
             if len(matches)==1:
