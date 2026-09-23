@@ -195,8 +195,9 @@ def _admin_history(state,role,text):
 def _admin_hydrate_application(aid):
     if not aid: return None
     try:
-        return _admin_safe(platform_db.one("""SELECT id,business_name,status,service_name,price,direction_name,
-            master_category_id,subcategory_name,category_id,location_marz,location_city,address,phone,description,created_at,updated_at
+        return _admin_safe(platform_db.one("""SELECT id,partner_id,business_name,status,service_name,price,direction_name,
+            master_category_id,subcategory_name,category_id,location_marz,location_city,location_village,address,
+            phone,description,object_name,document_id,payload_json,created_at,updated_at
             FROM partner_applications WHERE id=%s""",(int(aid),)))
     except Exception: return None
 
@@ -416,7 +417,7 @@ def _admin_full_application_text(aid):
         "☎ Телефон: "+val(a.get("phone")),
         "",
         "🛠 Услуга: "+val(a.get("service_name")),
-        "💰 Цена: "+(val(a.get("price"))+" ֏" if a.get("price") is not None else "—"),
+        "💰 Գին: "+(val(a.get("price"))+" ֏" if a.get("price") is not None else "—"),
         "🧭 Направление: "+val(a.get("direction_name")),
         "🏷 Подкатегория: "+val(a.get("subcategory_name")),
         "🆔 ID категории: "+val(a.get("category_id")),
@@ -580,10 +581,20 @@ def _admin_category_by_text(value, master_category_id=None):
 
 def _application_review(aid):
     app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
-    if not app: return "Заявка не найдена."
-    checks=[("Компания",app.get("business_name")),("Услуга",app.get("service_name")),("Цена",app.get("price")),("Направление",app.get("direction_name")),("Подкатегория",app.get("subcategory_name")),("Город",app.get("location_city")),("Адрес",app.get("address")),("Телефон",app.get("phone"))]
-    missing=[name for name,value in checks if value is None or str(value).strip()==""]
-    return "Основные поля заполнены. Явно пустых обязательных данных не вижу." if not missing else "Пустые поля: "+", ".join(missing)
+    if not app: return "Հայտը չի գտնվել։"
+    docs=_admin_semantic_documents(aid)
+    category=None
+    if app.get("category_id"):
+        category=platform_db.one("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.is_active
+            FROM categories c WHERE c.id=%s""",(int(app["category_id"]),))
+    truth=_admin_application_truth(app,docs,category)
+    errors=[x for x in truth.get("checks",[]) if x.get("severity")=="error"]
+    warnings=[x for x in truth.get("checks",[]) if x.get("severity")=="warning"]
+    parts=[]
+    if errors: parts.append("Ստուգված խնդիրներ՝ "+", ".join(str(x.get("message") or x.get("code")) for x in errors))
+    else: parts.append("Ստուգված կոշտ սխալ չի հայտնաբերվել։")
+    if warnings: parts.append("Լրացուցիչ ստուգման/տեղեկության կարիք կա՝ "+", ".join(str(x.get("message") or x.get("code")) for x in warnings))
+    return " ".join(parts)
 
 def _application_field_answer(aid,field):
     app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
@@ -886,6 +897,81 @@ def _admin_semantic_documents(application_id):
     except Exception: return []
 
 
+def _admin_application_truth(app, documents=None, category=None):
+    """Return only checks that are provable from current platform data.
+    This layer deliberately does not treat missing phone/description as errors
+    unless an explicit backend rule exists for them.
+    """
+    if not app:
+        return {"checks": [], "currency": "AMD"}
+    checks=[]
+    status=str(app.get("status") or "").strip()
+    if status:
+        checks.append({"code":"status","severity":"info","value":status,
+                       "message":"Հայտի ընթացիկ կարգավիճակը՝ "+status+"։"})
+    else:
+        checks.append({"code":"status_missing","severity":"warning","message":"Հայտի կարգավիճակը լրացված չէ։"})
+
+    service=str(app.get("service_name") or "").strip()
+    if service:
+        checks.append({"code":"service_present","severity":"ok","value":service})
+    else:
+        checks.append({"code":"service_missing","severity":"warning","message":"Ծառայության անունը նշված չէ։"})
+
+    price=app.get("price")
+    if price in (None,""):
+        checks.append({"code":"price_missing","severity":"warning","message":"Ծառայության գինը նշված չէ։"})
+    else:
+        try:
+            numeric=float(price)
+            checks.append({"code":"price_valid","severity":"ok","value":numeric,"currency":"AMD"})
+            if numeric < 0:
+                checks.append({"code":"price_negative","severity":"error","message":"Գինը բացասական է։"})
+        except (TypeError,ValueError):
+            checks.append({"code":"price_invalid","severity":"error","value":str(price),
+                           "message":"Գնի արժեքը թվային չէ։"})
+
+    if category:
+        active=category.get("is_active")
+        checks.append({"code":"category_exists","severity":"ok","value":category.get("id"),
+                       "name_am":category.get("name_am"),"name_ru":category.get("name_ru"),
+                       "name_en":category.get("name_en"),"is_active":active})
+        if active is False:
+            checks.append({"code":"category_inactive","severity":"error",
+                           "message":"Ընտրված կատեգորիան ակտիվ չէ։"})
+        if app.get("master_category_id") is not None and category.get("master_category_id") is not None:
+            try:
+                if int(app["master_category_id"]) != int(category["master_category_id"]):
+                    checks.append({"code":"category_direction_mismatch","severity":"error",
+                                   "message":"Կատեգորիան չի պատկանում հայտում նշված ուղղությանը։"})
+                else:
+                    checks.append({"code":"category_direction_match","severity":"ok"})
+            except (TypeError,ValueError):
+                pass
+
+    docs=list(documents or [])
+    if docs:
+        statuses=[str(d.get("status") or d.get("verification_status") or "").strip().lower() for d in docs]
+        approved=sum(1 for s in statuses if s=="approved")
+        checks.append({"code":"documents_present","severity":"ok","count":len(docs),"approved":approved})
+        if statuses and approved==len(statuses):
+            checks.append({"code":"documents_all_approved","severity":"ok"})
+        elif any(s in {"rejected","declined"} for s in statuses):
+            checks.append({"code":"documents_rejected","severity":"error"})
+        else:
+            checks.append({"code":"documents_pending","severity":"warning"})
+    else:
+        checks.append({"code":"documents_missing","severity":"warning","message":"Կապված հաստատման փաստաթուղթ չի գտնվել։"})
+
+    # Phone and description are factual fields, not approval errors here.
+    for field in ("phone","description"):
+        value=app.get(field)
+        checks.append({"code":field+"_present" if str(value or "").strip() else field+"_missing",
+                       "severity":"info","value":bool(str(value or "").strip())})
+
+    return {"checks":checks,"currency":"AMD",
+            "approval_rule_note":"Չլրացված phone/description դաշտերը ինքնին սխալ չեն համարվում, քանի դեռ backend-ում դրանց պարտադիր լինելու կանոն չկա։"}
+
 def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
     result={}
     if entity_type=="application" and entity_id:
@@ -903,7 +989,7 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
             except Exception: result["partner"]=None
         if app.get("category_id") and ("categories" in needed or "category" in needed or "subcategory" in needed):
             try:
-                result["category"]=_admin_safe(platform_db.one("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,
+                result["category"]=_admin_safe(platform_db.one("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.is_active,
                     m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en
                     FROM categories c JOIN master_categories m ON m.id=c.master_category_id WHERE c.id=%s""",(int(app["category_id"]),)))
             except Exception: result["category"]=None
@@ -911,6 +997,7 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
                 result["catalog_candidates"]=_admin_safe([x["row"] for x in _admin_category_candidates(
                     str(app.get("service_name") or ""),app.get("master_category_id"),limit=8)])
             except Exception: result["catalog_candidates"]=[]
+        result["truth"]=_admin_application_truth(app,result.get("documents"),result.get("category"))
         if app.get("category_id") and ("services" in needed or "service" in needed):
             try:
                 result["services"]=_admin_safe(platform_db.rows(
@@ -965,10 +1052,17 @@ async def _admin_semantic_answer(question,plan,state):
         resp=await client.chat.completions.create(model=model,messages=[
             {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
 Answer naturally, directly and humanly in the same language as the question. Use ONLY the supplied
-database facts. Explain what the facts mean for the actual question. If something is missing, rejected,
-inconsistent or potentially wrong, say so precisely. Do not invent facts or claim checks that were not
-performed. Do not mention AI, prompts, SQL, internal tools or chain-of-thought. Simple question = simple
-answer; broad inspection = compact structured summary."""},
+database facts and the supplied truth/check results. The truth/check results are authoritative for
+whether something is actually wrong. Do NOT turn an empty field into an error, mandatory field, or
+approval problem unless the supplied facts explicitly prove that rule. Do not invent business rules,
+approval consequences, currency, prices, categories, or document status.
+All application/service prices in these facts are in AMD (֏) unless the facts explicitly state another
+currency. Never call an AMD amount dollars, euros, or another currency.
+For a "show/open" request, prefer a compact human-readable summary with the important fields; do not
+dump a Markdown table or raw database structure. If the user asks whether something is "normal", first
+state the factual status, then verified problems, then missing information that is merely informational.
+If no verified error is present, say that clearly. Do not mention AI, prompts, SQL, internal tools or
+chain-of-thought. Simple question = simple answer; broad inspection = compact structured summary."""},
             {"role":"user","content":payload}],temperature=0,max_tokens=700)
         answer=(resp.choices[0].message.content or "").strip()
         return answer or fallback
