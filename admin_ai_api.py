@@ -753,14 +753,6 @@ async def admin_ai_message(admin_id,message):
         c={"intent":"suggest_application_correction","target":"application","application_id":None,"action_required":"suggest_alternatives","confidence":1.0}
     else:
         c=None
-    if re.search(r"(?:ստուգիր|проверь|check).*(?:հայտ|заявк|application).*(?:ուղղիր|исправ|fix|շտկ)",local_text):
-        c={"intent":"suggest_application_correction","target":"application","application_id":focused_id,"action_required":"suggest_alternatives","confidence":1.0}
-    elif re.search(r"(?:ստուգիր|проверь|check).*(?:ենթակատեգոր|подкатегор|subcategory)",local_text):
-        c={"intent":"show_application_field","target":"application","field":"subcategory","application_id":focused_id,"action_required":"read_only","confidence":1.0}
-    elif re.fullmatch(r"(?:ուղղիր|исправь|շտկիր)(?:\s+(?:սխալները|ошибки|ошибка|errors))?",local_text):
-        c={"intent":"suggest_application_correction","target":"application","application_id":focused_id,"action_required":"suggest_alternatives","confidence":1.0}
-    else:
-        c=None
     ctx=_admin_hydrate_context(state)
     if c is None:
         try: c=await _admin_ai_json(message,ctx)
