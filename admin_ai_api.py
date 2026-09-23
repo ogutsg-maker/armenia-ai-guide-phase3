@@ -386,9 +386,16 @@ async def admin_ai_message(admin_id,message):
             master_category_id,subcategory_name,category_id,location_marz,location_city,address
             FROM partner_applications WHERE id=%s""",(focused_id,))
 
+    # Context loading must never make a simple read command fail.
+    # The resolver can work with a focused application even if the optional
+    # applications context query is temporarily unavailable.
+    try:
+        applications_ctx=_admin_context(limit=12,include_catalog=False).get("applications",[])
+    except Exception:
+        applications_ctx=[]
     ctx={"focused_application":focused,
          "history":state.get("history",[])[-6:],
-         "applications":_admin_context(limit=12,include_catalog=False).get("applications",[])}
+         "applications":applications_ctx}
     try:
         c=await _admin_ai_json(message,ctx)
     except Exception as ai_error:
