@@ -189,6 +189,24 @@ def _admin_category_by_text(value):
     if len(exact)==1: return exact[0]
     return None
 
+def _application_review(aid):
+    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
+    if not app: return "Заявка не найдена."
+    checks=[("Компания",app.get("business_name")),("Услуга",app.get("service_name")),("Цена",app.get("price")),("Направление",app.get("direction_name")),("Подкатегория",app.get("subcategory_name")),("Город",app.get("location_city")),("Адрес",app.get("address")),("Телефон",app.get("phone"))]
+    missing=[name for name,value in checks if value is None or str(value).strip()==""]
+    return "Основные поля заполнены. Явно пустых обязательных данных не вижу." if not missing else "Пустые поля: "+", ".join(missing)
+
+def _application_field_answer(aid,field):
+    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
+    if not app: return "Заявка не найдена."
+    if field=="category":
+        return "🧭 Направление: «"+str(app.get("direction_name") or "—")+"»\n🏷 Категория/подкатегория: «"+str(app.get("subcategory_name") or "—")+"»"
+    if field=="subcategory":
+        return "🏷 Подкатегория: «"+str(app.get("subcategory_name") or "—")+"»"
+    if field=="service":
+        return "🛠 Услуга: «"+str(app.get("service_name") or "—")+"»"
+    return "Укажите поле заявки."
+
 def _admin_state_preview(action):
     aid=action.get("application_id")
     app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
@@ -254,18 +272,26 @@ async def _admin_ai_json(message,ctx):
     model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
     client=AsyncGroq(api_key=key)
     system="""You are the intent extractor for the Armenia AI Guide admin secretary.
-Understand Armenian, Russian and English natural language.
-Return ONLY one valid JSON object. No markdown, no explanations.
-Schema: {"intent":"inspect|edit|approve|reject|clarify|show","target":"application|partner|business|service|category|document|order","application_id":null,"field":null,"value_text":null,"reason":null,"confidence":0.0}
-"Ստուգիր հայտերը" means show applications.
-"Ստուգիր հայտը" means show applications.
-"открой заявку 36" means inspect application 36.
-"ենթակատեգորիան ճիշտ չէ" means edit application subcategory, with no value.
-"այստեղ պետք է Հոնքեր լինի" means edit application subcategory to Հոնքեր.
-"цена неправильная, поставь 2500" means edit application price to 2500.
-"одобри заявку 36" means approve application 36.
-"заявка заполнена неправильно" means clarify application.
-Use focused_application for this, here, it, the application. Never invent IDs."""
+Understand Armenian, Russian and English.
+Classify the administrator request. Questions and inspection are READ ONLY and must never become mutations.
+
+Return ONLY JSON:
+{"intent":"show_applications|show_application|inspect_application|show_application_field|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"application|partner|business|service|category|document|order","application_id":null,"field":null,"value_raw":null,"reason":null,"confidence":0.0}
+
+Rules:
+- Ստուգիր հայտերը / Проверь заявки / покажи заявки -> show_applications.
+- "ինձ ցույց տուր" / "покажи мне" / "show it" after a focused/listed application -> show_application.
+- "հայտը ճիշտ է լրացված՞" / "заявка заполнена правильно?" / "проверь заявку" -> inspect_application. This means inspect and report missing/suspicious data. NEVER clarify automatically.
+- "ինչ կատեգորիաների տակ է ծառայությունը" / "какая категория у услуги" -> show_application_field, field category. READ ONLY.
+- "ինչ ենթակատեգորիայի տակ է" / "какая подкатегория" -> show_application_field, field subcategory. READ ONLY.
+- "открой заявку 36" / "բացիր հայտը 36" -> show_application, id 36.
+- Concrete requests to change data -> edit_application.
+- Explicit approve -> approve_application.
+- Explicit reject or send to partner for clarification -> corresponding mutation.
+- A question marked ? or Armenian ՞ asking whether data is correct is READ ONLY.
+- "это", "эта", "здесь", "այս", "այստեղ" refer to focused_application.
+- Never invent IDs.
+"""
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
@@ -319,16 +345,27 @@ async def admin_ai_message(admin_id,message):
     intent=str(c.get("intent") or "").lower()
     target=str(c.get("target") or "").lower()
     aid=c.get("application_id") or focused_id
+    field=str(c.get("field") or "").lower()
 
-    legacy={"inspect":"show_application","show":"show_applications","edit":"edit_application","approve":"approve_application","reject":"reject_application","clarify":"clarify_application"}
+    legacy={"inspect":"inspect_application","show":"show_applications","edit":"edit_application","approve":"approve_application","reject":"reject_application","clarify":"clarify_application"}
     intent=legacy.get(intent,intent)
-    if intent in {"show_application","show_applications","show_partners","show_businesses"}:
-        if target=="partner" or intent=="show_partners": return await _admin_execute({"intent":"show_partners"})
-        if target=="business" or intent=="show_businesses": return await _admin_execute({"intent":"show_businesses"})
-        if intent=="show_applications": return await _admin_execute({"intent":"show_applications"})
-        if not aid: return await _admin_execute({"intent":"show_applications"})
-        state["last_focused_application_id"]=int(aid)
-        reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
+
+    if intent in {"show_application","inspect_application","show_application_field","show_applications","show_partners","show_businesses"}:
+        if target=="partner" or intent=="show_partners":
+            reply=await _admin_execute({"intent":"show_partners"})
+        elif target=="business" or intent=="show_businesses":
+            reply=await _admin_execute({"intent":"show_businesses"})
+        elif intent=="show_applications":
+            reply=await _admin_execute({"intent":"show_applications"})
+        else:
+            if not aid:
+                return "Сначала откройте заявку или укажите её номер."
+            state["last_focused_application_id"]=int(aid)
+            reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
+            if intent=="inspect_application":
+                reply += "\n\n🔎 Проверка заполнения:\n" + _application_review(int(aid))
+            elif intent=="show_application_field":
+                reply += "\n\n" + _application_field_answer(int(aid),field)
         _admin_history(state,"admin",message)
         _admin_history(state,"assistant",reply)
         return reply
