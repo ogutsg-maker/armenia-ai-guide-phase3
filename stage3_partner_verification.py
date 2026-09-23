@@ -1116,5 +1116,6 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/admin/partner-applications/{id}/approve", api_admin_partner_approve)
     app.router.add_post("/api/admin/partner-applications/{id}/reject", api_admin_partner_reject)
     app.router.add_post("/api/admin/partner-applications/{id}/suspend", api_admin_partner_suspend)
-    app.router.add_delete("/api/admin/partner-applications/{id}/businesses/{business_id}", api_admin_partner_business_delete)\n    app.router.add_post("/api/admin/partner-applications/{id}/block", api_admin_partner_block)
+    app.router.add_delete("/api/admin/partner-applications/{id}/businesses/{business_id}", api_admin_partner_business_delete)
+    app.router.add_post("/api/admin/partner-applications/{id}/block", api_admin_partner_block)
 
