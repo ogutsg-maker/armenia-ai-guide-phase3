@@ -200,7 +200,12 @@ def _application_field_answer(aid,field):
     app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
     if not app: return "Заявка не найдена."
     if field=="category":
-        return "🧭 Направление: «"+str(app.get("direction_name") or "—")+"»\n🏷 Категория/подкатегория: «"+str(app.get("subcategory_name") or "—")+"»"
+        master_id=app.get("master_category_id")
+        master=None
+        if master_id:
+            master=platform_db.one("SELECT name_am,name_ru,name_en FROM master_categories WHERE id=%s",(int(master_id),))
+        master_name=(master.get("name_am") or master.get("name_ru") or master.get("name_en")) if master else (app.get("direction_name") or "—")
+        return "🧭 Направություն: «"+str(master_name or "—")+"»\n📂 Ենթակատեգորիա: «"+str(app.get("subcategory_name") or "—")+"»"
     if field=="subcategory":
         return "🏷 Подкатегория: «"+str(app.get("subcategory_name") or "—")+"»"
     if field=="service":
@@ -313,6 +318,22 @@ Rules:
     if not isinstance(data,dict):
         raise RuntimeError("Groq returned a non-object intent")
     return data
+def _admin_fallback_intent(message, focused_id=None):
+    text=_norm(message)
+    if any(x in text for x in ("ստուգիր հայտերը","ցույց տուր հայտերը","проверь заявки","покажи заявки","show applications")):
+        return {"intent":"show_applications","target":"application","confidence":0.5}
+    if any(x in text for x in ("ինչ կատեգոր","ինչ ենթակատեգոր","какая категория","какая подкатегория","под какой категор","what category","which category")):
+        return {"intent":"show_application_field","target":"application","field":"category","application_id":focused_id,"confidence":0.5}
+    if any(x in text for x in ("հայտը ճիշտ է լրացված","հայտը ճիշտ է լրացված՞","проверь заявку","заявка заполнена правильно")):
+        return {"intent":"inspect_application","target":"application","application_id":focused_id,"confidence":0.5}
+    if any(x in text for x in ("ինձ ցույց տուր","ցույց տուր","покажи мне","покажи","show it")):
+        return {"intent":"show_application","target":"application","application_id":focused_id,"confidence":0.5}
+    m=re.search(r"(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*#?\s*(\d+)",text)
+    aid=int(m.group(1)) if m else focused_id
+    if any(x in text for x in ("открой","բացիր","open")) and aid:
+        return {"intent":"show_application","target":"application","application_id":aid,"confidence":0.5}
+    return {"intent":"unknown","confidence":0.0}
+
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
     if not message: return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
@@ -341,7 +362,12 @@ async def admin_ai_message(admin_id,message):
     ctx={"focused_application":focused,
          "history":state.get("history",[])[-6:],
          "applications":_admin_context(limit=12,include_catalog=False).get("applications",[])}
-    c=await _admin_ai_json(message,ctx)
+    try:
+        c=await _admin_ai_json(message,ctx)
+    except Exception as ai_error:
+        c=_admin_fallback_intent(message,focused_id)
+        if c.get("intent")=="unknown":
+            raise ai_error
     intent=str(c.get("intent") or "").lower()
     target=str(c.get("target") or "").lower()
     aid=c.get("application_id") or focused_id
