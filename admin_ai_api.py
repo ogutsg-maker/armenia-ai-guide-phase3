@@ -215,7 +215,7 @@ def _admin_hydrate_context(state,limit=12):
         "last_shown_query_rows":state.get("last_shown_query_rows",[])[:10],
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
-        "query_capabilities":{"targets":["applications","partners","businesses","catalog"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
+        "query_capabilities":{"targets":["applications","partners","businesses","catalog","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
         "history":state.get("history",[])[-6:]})
 
 
@@ -352,6 +352,7 @@ def _admin_query_result_text(target,rows,filters,question):
    lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏"+(" · "+loc if loc else ""))
   elif target=="partners":lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")+" · verification="+str(x.get("verification_status") or "—"))
   elif target=="businesses":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")+" · "+str(x.get("partner_business_name") or "—"))
+  elif target=="services":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—"))
   else:lines.append("#"+str(x.get("id"))+" · "+str(x.get("name_am") or x.get("name_ru") or x.get("name_en") or "—")+" · "+str(x.get("master_name_am") or x.get("master_name_ru") or "—"))
  return "\n".join(lines)
 
