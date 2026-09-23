@@ -205,7 +205,7 @@ async function addService(){
   modal.innerHTML='<div class="modal-card">'+
     '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Укажите компанию, место и контакт именно для этой услуги.</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
     '<div class="section"><h3>🏢 Компания</h3>'+
-      '<div class="field"><label>Компания</label><select id="svcBusiness">'+firmOptions+'<option value="__new__">＋ Новая компания</option></select></div>'+
+      '<div class="field"><label>Компания</label><div class="row"><select id="svcBusiness" style="flex:1">'+firmOptions+'<option value="__new__">＋ Новая компания</option></select><button type="button" class="btn secondary smallbtn" id="svcEditBusiness" onclick="toggleServiceCompanyEdit()">✎</button></div></div>'+
       '<div id="svcNewBusiness" style="display:none">'+
         '<div class="grid2"><div class="field"><label>Название компании</label><input id="svcBusinessName"></div><div class="field"><label>Телефон компании</label><input id="svcBusinessPhone" inputmode="tel"></div></div>'+
         '<div class="field"><label>Описание компании</label><textarea id="svcBusinessDescription" rows="3"></textarea></div>'+
@@ -214,9 +214,9 @@ async function addService(){
       '</div>'+
     '</div>'+
     '<div class="section"><h3>📍 Адрес</h3>'+
-      '<div class="field"><label>Адрес оказания услуги</label><select id="svcObject">'+
+      '<div class="field"><label>Адрес оказания услуги</label><div class="row"><select id="svcObject" style="flex:1">'+
         (hasObjects?'<option value="">Выберите адрес</option>':'<option value="__new__" selected>＋ Новый адрес</option>')+
-        objectOptions+(hasObjects?'<option value="__new__">＋ Новый адрес</option>':'')+'</select></div>'+
+        objectOptions+(hasObjects?'<option value="__new__">＋ Новый адрес</option>':'')+'</select><button type="button" class="btn secondary smallbtn" id="svcEditObject" onclick="toggleServiceObjectEdit()">✎</button></div></div>'+
       '<div id="svcNewObject" style="display:none">'+
         '<div class="grid2"><div class="field"><label>Название адреса</label><input id="svcObjectName"></div><div class="field"><label>Телефон адреса</label><input id="svcObjectPhone" inputmode="tel"></div></div>'+
         '<div class="grid2"><div class="field"><label>Город</label><input id="svcObjectCity"></div><div class="field"><label>Марз</label><input id="svcObjectMarz"></div></div>'+
@@ -233,6 +233,80 @@ async function addService(){
     '<div class="actions" style="margin-top:15px"><button class="btn secondary" onclick="closeServiceCreate()">'+tr('back')+'</button><button class="btn" onclick="submitNewService()">✓ '+tr('save')+'</button></div>'+
   '</div>';
   document.body.appendChild(modal);
+
+  let serviceCompanyEditing=false;
+  let serviceObjectEditing=false;
+
+  window.toggleServiceCompanyEdit=function(){
+    const id=bs?.value;
+    if(!id || id==='__new__') return;
+    const b=state.businesses.find(x=>String(x.id)===String(id));
+    if(!b)return;
+    const wrap=document.getElementById('svcNewBusiness');
+    if(!wrap)return;
+    serviceCompanyEditing=!serviceCompanyEditing;
+    wrap.style.display=serviceCompanyEditing?'block':'none';
+    wrap.innerHTML=serviceCompanyEditing?
+      '<div class="grid2"><div class="field"><label>Название компании</label><input id="svcBusinessName" value="'+esc(b.name||'')+'"></div><div class="field"><label>Телефон компании</label><input id="svcBusinessPhone" inputmode="tel" value="'+esc(b.phone||'')+'"></div></div>'+
+      '<div class="field"><label>Описание компании</label><textarea id="svcBusinessDescription" rows="3">'+esc(b.description||'')+'</textarea></div>'+
+      '<div class="actions"><button type="button" class="btn secondary smallbtn" onclick="toggleServiceCompanyEdit()">Отмена</button><button type="button" class="btn smallbtn" onclick="saveServiceCompanyInline('+b.id+')">✓ Сохранить</button></div>'
+      : '';
+  };
+
+  window.saveServiceCompanyInline=async function(id){
+    try{
+      const name=document.getElementById('svcBusinessName')?.value.trim()||'';
+      const description=document.getElementById('svcBusinessDescription')?.value||'';
+      const phone=document.getElementById('svcBusinessPhone')?.value.trim()||'';
+      if(name.length<2){toast(tr('name'));return}
+      const d=await api('/api/master/0/businesses/'+id,{method:'POST',body:{name,description,phone}});
+      const ix=state.businesses.findIndex(x=>String(x.id)===String(id));
+      if(ix>=0)state.businesses[ix]=d.business;
+      state.current=state.businesses[ix]||state.current;
+      const opt=[...bs.options].find(x=>String(x.value)===String(id));
+      if(opt)opt.textContent=d.business.name;
+      serviceCompanyEditing=false;
+      document.getElementById('svcNewBusiness').style.display='none';
+      toast('✓ '+tr('saved'));
+      setDefaultPhone();
+    }catch(e){toast(e.message)}
+  };
+
+  window.toggleServiceObjectEdit=function(){
+    const id=os?.value;
+    if(!id || id==='__new__') return;
+    const o=state.objects.find(x=>String(x.id)===String(id));
+    if(!o)return;
+    serviceObjectEditing=!serviceObjectEditing;
+    const wrap=document.getElementById('svcNewObject');
+    if(!wrap)return;
+    if(serviceObjectEditing){
+      wrap.style.display='block';
+      wrap.innerHTML='<div class="grid2"><div class="field"><label>'+tr('name')+'</label><input id="svcObjectName" value="'+esc(o.object_name||o.name||'')+'"></div><div class="field"><label>Телефон адреса</label><input id="svcObjectPhone" inputmode="tel" value="'+esc(o.phone||'')+'"></div></div>'+
+      '<div class="grid2"><div class="field"><label>'+tr('city')+'</label><input id="svcObjectCity" value="'+esc(o.city||'')+'"></div><div class="field"><label>'+tr('marz')+'</label><input id="svcObjectMarz" value="'+esc(o.marz||'')+'"></div></div>'+
+      '<div class="field"><label>'+tr('address')+'</label><input id="svcObjectAddress" value="'+esc(o.address||'')+'"></div>'+
+      '<div class="actions"><button type="button" class="btn secondary smallbtn" onclick="toggleServiceObjectEdit()">Отмена</button><button type="button" class="btn smallbtn" onclick="saveServiceObjectInline('+o.id+')">✓ Сохранить</button></div>';
+    }else wrap.style.display='none';
+  };
+
+  window.saveServiceObjectInline=async function(id){
+    try{
+      const name=document.getElementById('svcObjectName')?.value.trim()||'';
+      const city=document.getElementById('svcObjectCity')?.value.trim()||'';
+      const address=document.getElementById('svcObjectAddress')?.value.trim()||'';
+      const marz=document.getElementById('svcObjectMarz')?.value.trim()||'';
+      if(name.length<2 || !city || !address){toast(tr('objectDataRequired'));return}
+      const d=await api('/api/master/0/objects/'+id,{method:'POST',headers:{'X-Business-Id':String(bs.value)},body:{object_name:name,city,address,marz}});
+      const ix=state.objects.findIndex(x=>String(x.id)===String(id));
+      if(ix>=0)state.objects[ix]=d.object;
+      const opt=[...os.options].find(x=>String(x.value)===String(id));
+      if(opt)opt.textContent=(d.object.object_name||d.object.name||'')+(d.object.address?' · '+d.object.address:'')+(d.object.city?' · '+d.object.city:'');
+      serviceObjectEditing=false;
+      document.getElementById('svcNewObject').style.display='none';
+      toast('✓ '+tr('saved'));
+      setDefaultPhone();
+    }catch(e){toast(e.message)}
+  };
 
   const bs=document.getElementById('svcBusiness'), os=document.getElementById('svcObject');
   const newBusiness=document.getElementById('svcNewBusiness'), newObject=document.getElementById('svcNewObject');
