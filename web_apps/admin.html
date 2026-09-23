@@ -290,11 +290,12 @@ async function loadApplications(){
    (x.document_id?'<div class="detail"><b>📄 Փաստաթուղթ</b> '+esc(x.document_filename||('#'+x.document_id))+' · '+esc(x.document_status||'կցված')+' <button class="btn soft" style="margin-left:8px;padding:6px 9px" onclick="openApplicationDoc('+esc(x.partner_id)+','+esc(x.document_id)+')">👁 Դիտել</button></div>':'<div class="detail"><b>📄 Փաստաթուղթ</b> դեռ կցված չէ</div>')+
    '<div id="appEditor'+x.id+'"></div>'+
    '<div class="actions">'+
-   '<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել ամբողջ հայտը</button>'+
-   (x.status==='pending_admin'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել ծառայությունը</button>'+(!isServiceProposal?'<button class="btn soft" onclick="appAction('+x.id+',\'send_to_partner\')">↩ Գործընկերոջը լրացման</button>':''):'')+
+   (x.status==='pending_admin'&&isServiceProposal?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել և ակտիվացնել</button>':'')+
+   (x.status==='pending_admin'&&!isServiceProposal?'<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել հայտը</button><button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել հայտը</button>':'')+
+   (x.status==='pending_admin'&&isServiceProposal?'<button class="btn secondary" onclick="editApplication('+x.id+')">✎ Դասակարգել / խմբագրել</button>':'')+
    (x.status==='pending_partner'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել տվյալները → փաստաթուղթ</button>':'')+
    (x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':'')+
-   (x.status==='document_under_review'&&x.document_status==='approved'?'<button class="btn ok" onclick="appAction('+x.id+',\'activate\')">▶ Ակտիվացնել</button>':'')+
+   ''+
    (!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':'')+
    '</div></div>';
   }).join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
