@@ -186,44 +186,127 @@ def _admin_catalog():
         FROM categories c JOIN master_categories m ON m.id=c.master_category_id
         WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.id""")
 
-def _admin_category_suggestions(service_name, master_category_id=None):
-    target=_norm(service_name)
+# Small deterministic concept dictionary used only by the Python resolver.
+_ADMIN_CONCEPT_MAP = {
+    "брови": {"брови", "հոնքեր", "հոնք", "eyebrows", "eyebrow"},
+    "маникюр": {"маникюр", "մատնահարդարում", "manicure", "եղունգ"},
+    "педикюр": {"педикюр", "պեդիկյուր", "pedicure"},
+    "макияж": {"макияж", "դիմահարդարում", "makeup", "визаж"},
+    "стрижка": {"стрижка", "վարսավիր", "սանրվածք", "haircut"},
+    "волосы": {"волосы", "մազ", "մազեր", "hair"},
+    "окрашивание": {"окрашивание", "ներկում", "ներկել", "coloring", "colouring"},
+}
+
+def _tokens(text):
+    return [t for t in re.findall(r"[a-zа-яёևա-ֆ0-9-]+", _norm(text)) if len(t) > 1]
+
+def _concept_tokens(text):
+    raw=set(_tokens(text))
+    expanded=set(raw)
+    for key, aliases in _ADMIN_CONCEPT_MAP.items():
+        if raw.intersection(aliases) or key in raw:
+            expanded.update(aliases)
+            expanded.add(key)
+    return expanded
+
+def _filter_catalog_master(rows, master_category_id):
+    if master_category_id is None:
+        return rows
+    try:
+        mid=int(master_category_id)
+    except (ValueError,TypeError):
+        return rows
+    return [x for x in rows if x.get("master_category_id") is not None and int(x.get("master_category_id"))==mid]
+
+def _admin_category_candidates(value, master_category_id=None, limit=8):
+    """Deterministic live-catalog resolver. IDs always come from DB."""
+    target=_norm(value)
     if not target:
         return []
     try:
-        rows=_admin_catalog()
+        rows=_filter_catalog_master(_admin_catalog(), master_category_id)
     except Exception:
         return []
     if not rows:
         return []
-    if master_category_id is not None:
-        try:
-            target_master_id=int(master_category_id)
-            rows=[x for x in rows if x.get("master_category_id") is not None and int(x.get("master_category_id"))==target_master_id]
-        except (ValueError,TypeError):
-            pass
-    tokens=[t for t in re.findall(r"[a-zа-яёև-]+",target) if len(t)>2]
+
+    target_tokens=set(_tokens(target))
+    target_concepts=_concept_tokens(target)
     scored=[]
-    for x in rows:
-        names=[str(x.get(k) or "").strip() for k in ("name_am","name_ru","name_en")]
-        names=[n for n in names if n]
+
+    for row in rows:
+        names={k:_norm(row.get(k) or "") for k in ("name_am","name_ru","name_en")}
+        names={k:v for k,v in names.items() if v}
         if not names:
             continue
-        hay=_norm(" ".join(names))
-        score=sum(1 for t in tokens if t in hay)
-        if score:
-            scored.append((score,names[0]))
-    scored.sort(reverse=True)
-    return list(dict.fromkeys(name for _,name in scored[:5]))
+        best=0
+        reasons=[]
 
-def _admin_category_by_text(value):
-    target=str(value or "").strip().casefold()
-    if not target: return None
-    rows=_admin_catalog()
-    exact=[x for x in rows if target in {str(x.get("name_am") or "").casefold(),
-        str(x.get("name_ru") or "").casefold(),str(x.get("name_en") or "").casefold()}]
-    if len(exact)==1: return exact[0]
-    return None
+        if target in names.values():
+            best=max(best,1000)
+            reasons.append("exact")
+
+        if any(target in name or name in target for name in names.values()):
+            best=max(best,700)
+            reasons.append("phrase")
+
+        catalog_text=" ".join(names.values())
+        catalog_tokens=set(_tokens(catalog_text))
+        catalog_concepts=_concept_tokens(catalog_text)
+
+        concept_overlap=target_concepts.intersection(catalog_concepts)
+        if concept_overlap:
+            specific={"брови","հոնքեր","հոնք","eyebrows","eyebrow",
+                      "маникюр","մատնահարդարում","manicure",
+                      "պեդիկյուր","pedicure","макияж","դիմահարդարում","makeup","визаж"}
+            specific_hits=concept_overlap.intersection(specific)
+            best=max(best,500 + min(len(concept_overlap),5)*20 + len(specific_hits)*80)
+            reasons.append("concept")
+
+        overlap=target_tokens.intersection(catalog_tokens)
+        if overlap:
+            best=max(best,300 + min(len(overlap),5)*20)
+            reasons.append("token")
+
+        root_hits=0
+        for token in target_tokens:
+            if len(token) < 4:
+                continue
+            if any(token in ct or ct in token for ct in catalog_tokens if len(ct) >= 4):
+                root_hits += 1
+        if root_hits:
+            best=max(best,180 + min(root_hits,5)*15)
+            reasons.append("root")
+
+        if best:
+            label=str(row.get("name_am") or row.get("name_ru") or row.get("name_en") or "")
+            scored.append((best,len(reasons),label.casefold(),row,reasons))
+
+    scored.sort(key=lambda item:(item[0],item[1],item[2]),reverse=True)
+    return [{"row":x[3],"score":x[0],"reasons":x[4]} for x in scored[:max(1,int(limit))]]
+
+def find_best_subcategory(service_name, master_category_id=None, requested_value=None):
+    query=str(requested_value or "").strip() or str(service_name or "").strip()
+    candidates=_admin_category_candidates(query, master_category_id, limit=8)
+    if not candidates:
+        return None
+    top=candidates[0]
+    if requested_value:
+        return top["row"] if top["score"] >= 700 else None
+    return top["row"] if top["score"] >= 500 else None
+
+def _admin_category_suggestions(service_name, master_category_id=None):
+    candidates=_admin_category_candidates(service_name, master_category_id, limit=5)
+    result=[]
+    for item in candidates:
+        row=item["row"]
+        label=str(row.get("name_am") or row.get("name_ru") or row.get("name_en") or "").strip()
+        if label and label not in result:
+            result.append(label)
+    return result
+
+def _admin_category_by_text(value, master_category_id=None):
+    return find_best_subcategory("", master_category_id, requested_value=value)
 
 def _application_review(aid):
     app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
@@ -469,20 +552,30 @@ async def admin_ai_message(admin_id,message):
     if intent=="edit_application":
         field=str(c.get("field") or "").lower()
         value=str(c.get("value_raw") or c.get("value_text") or "").strip()
+        if field=="category":
+            field="subcategory"
         if field in {"category","subcategory"}:
-            if not value:
+            requested_value=value or None
+            cat=find_best_subcategory(
+                str(app.get("service_name") or ""),
+                app.get("master_category_id"),
+                requested_value=requested_value,
+            )
+            if not cat:
                 current=str(app.get("subcategory_name") or "—")
                 suggestions=_admin_category_suggestions(str(app.get("service_name") or ""),app.get("master_category_id"))
                 if suggestions:
-                    return "Текущая подкатегория: «"+current+"». Возможные варианты: "+", ".join("«"+x+"»" for x in suggestions)+"\nУкажите нужную подкатегорию."
-                return "Текущая подкатегория «"+current+"». Укажите новую подкатегорию."
-            cat=_admin_category_by_text(value)
-            if not cat:
-                return "Не нашёл однозначную подкатегорию «"+value+"» в активном каталоге. Уточните точное название."
+                    return "Текущая подкатегория: «"+current+"». По живому каталогу вижу варианты: "+", ".join("«"+x+"»" for x in suggestions)+"\nУкажите нужную подкатегорию."
+                if requested_value:
+                    return "Не нашёл однозначную подкатегорию «"+requested_value+"» в активном каталоге."
+                return "Не нашёл однозначного соответствия для услуги «"+str(app.get("service_name") or "—")+"» в активном каталоге."
+
             if app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
                 return "Подкатегория относится к другому направлению. Укажите подкатегорию из текущего направления."
+
             action["field"]="subcategory"
             action["category_id"]=int(cat["id"])
+            action["old_value_name"]=str(app.get("subcategory_name") or "—")
             action["new_value"]=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
         else:
             if field not in {"name","service","price","description","note"} or not value:
