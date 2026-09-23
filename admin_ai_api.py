@@ -350,6 +350,17 @@ async def admin_ai_message(admin_id,message):
     legacy={"inspect":"inspect_application","show":"show_applications","edit":"edit_application","approve":"approve_application","reject":"reject_application","clarify":"clarify_application"}
     intent=legacy.get(intent,intent)
 
+    # Questions are read-only. This is a protocol rule, not a phrase-specific command.
+    is_question=(
+        "?" in message or "՞" in message or
+        re.search(r"\b(как|какая|какие|какое|почему|зачем|что|где|каков|what|which|how|why|where|ինչ|ինչպես|որ|որտեղ|արդյոք)\b",message.casefold())
+    )
+    if is_question and intent in {"edit_application","approve_application","reject_application","clarify_application"}:
+        if field in {"category","subcategory","service","price","description"}:
+            intent="show_application_field"
+        else:
+            intent="inspect_application"
+
     if intent in {"show_application","inspect_application","show_application_field","show_applications","show_partners","show_businesses"}:
         if target=="partner" or intent=="show_partners":
             reply=await _admin_execute({"intent":"show_partners"})
