@@ -496,7 +496,7 @@ async def api_admin_partner_detail(request):
     if not partner:
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
     docs = _db_fetchall("SELECT id, partner_direction_id, document_type, original_filename, mime_type, file_size, status, rejection_reason, storage_path, created_at, reviewed_at FROM partner_verification_documents WHERE partner_id=%s ORDER BY created_at DESC", (pid,))
-    businesses = _db_fetchall("SELECT id, name, description, phone, status, is_default FROM partner_businesses WHERE partner_id=%s ORDER BY is_default DESC,id", (pid,))
+    businesses = _db_fetchall("SELECT id, name, description, phone, status, is_default FROM partner_businesses WHERE partner_id=%s AND status<>'archived' ORDER BY is_default DESC,id", (pid,))
     for business in businesses:
         objects = _db_fetchall("SELECT id, object_name, address, city, marz, data_json, working_hours FROM partner_objects WHERE partner_id=%s AND business_id=%s ORDER BY id", (pid, business["id"]))
         # Legacy approved registrations may predate object-level working-hours storage.
