@@ -422,7 +422,16 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
     catalog = await _load_full_service_catalog()
 
     def norm_match(value):
-        return re.sub(r"[^a-zа-яёա-ֆ0-9]+", " ", str(value or "").lower(), flags=re.IGNORECASE).strip()
+        # Normalize common Armenian orthographic/typing variants before
+        # catalogue matching. Partners often type older/incorrect forms such
+        # as «ավտօմեքենաների լվացւմ» for «ավտոմեքենաների լվացում».
+        text = str(value or "").lower()
+        text = (
+            text.replace("օ", "ո")
+                .replace("և", "եւ")
+                .replace("ւ", "ու")
+        )
+        return re.sub(r"[^a-zа-яёա-ֆ0-9]+", " ", text, flags=re.IGNORECASE).strip()
 
     query = norm_match(f"{name} {description}")
     name_norm = norm_match(name)
@@ -437,6 +446,14 @@ async def _ai_match_new_service(pid: int, name: str, description: str = "", busi
         {"պեդիկյուր", "ոտնահարդարում", "педикюр", "pedicure"},
         {"դիմահարդարում", "макияж", "makeup"},
         {"տրանսֆեր", "transfer", "трансфер"},
+        # Car wash / автомойка. Include Armenian spelling variants and common
+        # Latin transliterations so the classifier does not depend on one exact
+        # phrase.
+        {"ավտոլվացում", "ավտոմեքենաների լվացում", "մեքենաների լվացում",
+         "մեքենայի լվացում", "ավտոմեքենայի լվացում", "ավտոլվաց",
+         "автомойка", "мойка машин", "мойка авто", "мойка автомобиля",
+         "мойка автомобилей", "car wash", "carwash", "car washing",
+         "moyka mashin", "moyka masin", "moyka avto", "moyka avtomobilya"},
         {"էքսկուրսիա", "экскурсия", "экскурсии", "tour", "excursion"},
         {"լուսանկար", "լուսանկարիչ", "ֆոտո", "фотограф", "фотография", "photographer", "photography"},
         {"տեսանկարահանում", "տեսագրում", "վիդեո", "видеограф", "видеосъемка", "video", "videography"},
