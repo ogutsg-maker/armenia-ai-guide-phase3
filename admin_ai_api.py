@@ -116,7 +116,10 @@ def _admin_context(limit=30):
             except Exception: payload={}
         a["payload_json"]=payload
         a["services"]=payload.get("services") if isinstance(payload,dict) and isinstance(payload.get("services"),list) else []
-    return {"applications":applications,
+    catalog=platform_db.rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
+        FROM categories c JOIN master_categories m ON m.id=c.master_category_id
+        WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.master_category_id,c.id""")
+    return {"applications":applications,"catalog":catalog,
             "partners":platform_db.rows("SELECT id,user_id,status,verification_status,business_name,business_description FROM partners ORDER BY id DESC LIMIT 50"),
             "businesses":platform_db.rows("SELECT id,partner_id,name,description,phone,status FROM partner_businesses WHERE status<>'archived' ORDER BY id DESC LIMIT 100")}
 
@@ -139,6 +142,7 @@ approve_application, reject_application, clarify_application, show_partners,
 show_businesses, clarify.
 Never invent IDs. Use only IDs from context.
 For mutations extract application_id and exact requested fields.
+When the administrator names a catalogue category/subcategory, use the matching IDs from context.catalog.
 JSON fields: intent, application_id, partner_id, master_category_id,
 category_id, service_name, price, direction_name, subcategory_name,
 admin_note, reason, reply."""
@@ -194,6 +198,17 @@ async def _admin_execute(c):
     if not platform_db.one("SELECT id FROM partner_applications WHERE id=%s",(aid,)): return "Заявка #"+str(aid)+" не найдена."
     if intent=="edit_application":
         fields={}
+        sub=str(c.get("subcategory_name") or "").strip().casefold()
+        if sub and c.get("category_id") is None:
+            matches=[]
+            for cat in _admin_context().get("catalog",[]):
+                names=[cat.get("name_am"),cat.get("name_ru"),cat.get("name_en")]
+                if any(str(n or "").strip().casefold()==sub for n in names): matches.append(cat)
+            if len(matches)==1:
+                c["category_id"]=int(matches[0]["id"])
+                c["master_category_id"]=int(matches[0]["master_category_id"])
+                c["subcategory_name"]=matches[0].get("name_am") or matches[0].get("name_ru") or matches[0].get("name_en")
+                c["direction_name"]=matches[0].get("master_am") or matches[0].get("master_ru") or matches[0].get("master_en")
         for k in ("direction_name","subcategory_name","service_name","admin_note"):
             if c.get(k) not in (None,""): fields[k]=str(c[k]).strip()
         for k in ("master_category_id","category_id"):
