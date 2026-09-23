@@ -195,6 +195,14 @@ async def _admin_execute(command):
         reply=await _admin_execute({"intent":"show_full_application","application_id":int(aid)})
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
+    if intent=="show_full_application":
+        if not aid: return "Сначала откройте заявку или укажите её номер."
+        if not _admin_hydrate_application(aid): return "Заявка #"+str(aid)+" не найдена."
+        state["last_focused_application_id"]=int(aid)
+        state["last_focused_field"]=None
+        reply=await _admin_execute({"intent":"show_full_application","application_id":int(aid)})
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
     if intent=="show_application_count":
         row=platform_db.one("SELECT COUNT(*) AS count FROM partner_applications WHERE status NOT IN ('approved','pending_partner')")
         return "📨 Сейчас в работе: "+str(int(row.get("count") or 0))+" заявок."
