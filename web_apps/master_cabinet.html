@@ -377,14 +377,14 @@ function analyzeServiceText(){
   const preview=document.getElementById('svcAiPreview');
   if(!text){toast('Напишите или расскажите об услуге');return;}
   // Extract the explicit price locally; catalogue classification remains on the server.
-  const priceMatches=[...text.matchAll(/(?:^|\\s)(\\d{3,7})(?:[.,]\\d+)?\\s*(?:դրամ|դր\\.?|֏|amd|dram|драм)\\b/giu)];
+  const priceMatches=[...text.matchAll(/(?:^|\s)(\d{3,7})(?:[.,]\d+)?\s*(?:դրամ|դր\.?|֏|amd|dram|драм)\b/giu)];
   const price=priceMatches.length?Number(priceMatches[priceMatches.length-1][1]):null;
   let name=text;
   if(priceMatches.length){
     const p=priceMatches[0].index;
-    name=text.slice(0,p).replace(/^(?:добавьте|добавить|добавим|ավելացրեք|ավելացնել|add)\\s+/iu,'').trim();
+    name=text.slice(0,p).replace(/^(?:добавьте|добавить|добавим|ավելացրեք|ավելացնել|add)\s+/iu,'').trim();
   }
-  name=name.replace(/^(?:услугу|услуга|ծառայություն|service)\\s*[:,-]?\\s*/iu,'').trim();
+  name=name.replace(/^(?:услугу|услуга|ծառայություն|service)\s*[:,-]?\s*/iu,'').trim();
   // Keep a compact phrase as the service name; the original speech/text is preserved as description.
   if(name.length>100) name=name.slice(0,100).trim();
   document.getElementById('svcName').value=name;
