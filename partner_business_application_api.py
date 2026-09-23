@@ -1114,13 +1114,19 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         action=str(data.get("action") or "").strip()
         a=_one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
         if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        allowed={"edit","send_to_partner","reject","approve","approve_document","approve_service_proposal","activate"}
+        allowed={"edit","send_to_partner","reject","delete","approve","approve_document","approve_service_proposal","activate"}
         if action not in allowed: return web.json_response({"ok":False,"error":"invalid_action"},status=400)
         fields={}
         for k in ("business_name","location_marz","location_city","location_village","address","phone",
                   "direction_name","master_category_id","subcategory_name","category_id","service_name",
                   "price","description","object_name","admin_note"):
             if k in data: fields[k]=data[k]
+
+        if action=="delete":
+            if str(a.get("status") or "")=="approved":
+                return web.json_response({"ok":False,"error":"approved_application_cannot_be_deleted"},status=409)
+            _exec("DELETE FROM partner_applications WHERE id=%s",(aid,))
+            return web.json_response({"ok":True,"deleted":True,"application_id":aid})
 
         if action=="edit":
             payload=data.get("payload")
