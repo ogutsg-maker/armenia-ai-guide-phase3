@@ -187,6 +187,14 @@ async def _admin_execute(command):
         rows=_admin_context(limit=30).get("applications",[])
         if not rows: return "📨 Заявок нет."
         return "📨 Заявки ("+str(len(rows))+"):\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏" for x in rows[:20])
+    if intent=="show_full_application":
+        if not aid: return "Сначала откройте заявку или укажите её номер."
+        if not _admin_hydrate_application(aid): return "Заявка #"+str(aid)+" не найдена."
+        state["last_focused_application_id"]=int(aid)
+        state["last_focused_field"]=None
+        reply=await _admin_execute({"intent":"show_full_application","application_id":int(aid)})
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
     if intent=="show_application_count":
         row=platform_db.one("SELECT COUNT(*) AS count FROM partner_applications WHERE status NOT IN ('approved','pending_partner')")
         return "📨 Сейчас в работе: "+str(int(row.get("count") or 0))+" заявок."
@@ -196,6 +204,8 @@ async def _admin_execute(command):
         if not a: return "Заявка #"+str(aid)+" не найдена."
         loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
         return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
+    if intent=="show_full_application":
+        return _admin_full_application_text(aid)
     if intent=="show_partners":
         rows=_admin_context(limit=1).get("partners",[])
         return "🤝 Партнёров нет." if not rows else "🤝 Партнёры:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:30])
@@ -203,6 +213,69 @@ async def _admin_execute(command):
         rows=_admin_context(limit=1).get("businesses",[])
         return "🏢 Компаний нет." if not rows else "🏢 Компании:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:50])
     return "Неизвестный запрос."
+
+
+def _admin_full_application_text(aid):
+    """Return the complete current application state for read-only admin inspection."""
+    if not aid:
+        return "Укажите номер заявки."
+    a=platform_db.one("""SELECT a.*,p.user_id
+        FROM partner_applications a
+        LEFT JOIN partners p ON p.id=a.partner_id
+        WHERE a.id=%s""",(int(aid),))
+    if not a:
+        return "Заявка #"+str(aid)+" не найдена."
+
+    def val(v):
+        if v is None or str(v).strip()=="":
+            return "—"
+        return str(v)
+
+    loc=", ".join(str(x) for x in (
+        a.get("location_marz"),a.get("location_city"),
+        a.get("location_village"),a.get("address")
+    ) if x)
+
+    lines=[
+        "📨 Заявка #"+str(aid)+" · "+val(a.get("business_name")),
+        "Статус: "+val(a.get("status")),
+        "Telegram: "+val(a.get("user_id")),
+        "📍 Место: "+(loc or "—"),
+        "☎ Телефон: "+val(a.get("phone")),
+        "",
+        "🛠 Услуга: "+val(a.get("service_name")),
+        "💰 Цена: "+(val(a.get("price"))+" ֏" if a.get("price") is not None else "—"),
+        "🧭 Направление: "+val(a.get("direction_name")),
+        "🏷 Подкатегория: "+val(a.get("subcategory_name")),
+        "🆔 ID категории: "+val(a.get("category_id")),
+        "",
+        "📝 Описание: "+val(a.get("description")),
+        "🏢 Объект: "+val(a.get("object_name")),
+        "📄 Документ ID: "+val(a.get("document_id")),
+        "Создана: "+val(a.get("created_at")),
+        "Обновлена: "+val(a.get("updated_at")),
+    ]
+
+    payload=a.get("payload_json") or {}
+    if isinstance(payload,str):
+        try: payload=json.loads(payload)
+        except Exception: payload={}
+    if isinstance(payload,dict):
+        services=payload.get("services")
+        if isinstance(services,list) and services:
+            lines += ["","🛠 Все услуги из заявки:"]
+            for i,svc in enumerate(services,1):
+                if not isinstance(svc,dict): continue
+                name=svc.get("name") or svc.get("service_name") or "—"
+                price=svc.get("price")
+                direction=svc.get("direction_name") or "—"
+                sub=svc.get("subcategory_name") or "—"
+                lines.append(
+                    str(i)+". "+str(name)+" · "+
+                    ((str(price)+" ֏") if price is not None else "—")+" · "+
+                    str(direction)+" → "+str(sub)
+                )
+    return "\n".join(lines)
 
 
 def _admin_catalog():
@@ -663,6 +736,23 @@ async def admin_ai_message(admin_id,message):
         except Exception: focused_id=None
     # Deterministic high-confidence intents for short admin commands.
     local_text=_norm(message)
+    full_app_match=bool(re.search(
+        r"(?:ամբողջական|ամբողջությամբ|ամբողջ|լիարժեք|ուղղված|полностью|полную|полное|всю|исправленную|целиком|full|complete).*(?:հայտ|заявк|application)|(?:հայտ|заявк|application).*(?:ամբողջական|ամբողջությամբ|ամբողջ|լիարժեք|ուղղված|полностью|полную|полное|всю|исправленную|целиком|full|complete)",
+        local_text,re.IGNORECASE
+    ))
+    if full_app_match and re.search(r"(?:ցույց|покаж|открой|show|open)",local_text,re.IGNORECASE):
+        id_match=re.search(r"(?:#|№)\s*(\d+)",local_text)
+        requested_aid=int(id_match.group(1)) if id_match else None
+        c={"intent":"show_full_application","target":"application",
+           "application_id":requested_aid,"action_required":"read_only","confidence":1.0}
+    elif re.search(r"(?:ստուգիր|проверь|check).*(?:հայտ|заявк|application).*(?:ուղղիր|исправ|fix|շտկ)",local_text):
+        c={"intent":"suggest_application_correction","target":"application","application_id":None,"action_required":"suggest_alternatives","confidence":1.0}
+    elif re.search(r"(?:ստուգիր|проверь|check).*(?:ենթակատեգոր|подкатегор|subcategory)",local_text):
+        c={"intent":"show_application_field","target":"application","field":"subcategory","application_id":None,"action_required":"read_only","confidence":1.0}
+    elif re.fullmatch(r"(?:ուղղիր|исправь|շտկիր)(?:\s+(?:սխալները|ошибки|ошибка|errors))?",local_text):
+        c={"intent":"suggest_application_correction","target":"application","application_id":None,"action_required":"suggest_alternatives","confidence":1.0}
+    else:
+        c=None
     if re.search(r"(?:ստուգիր|проверь|check).*(?:հայտ|заявк|application).*(?:ուղղիր|исправ|fix|շտկ)",local_text):
         c={"intent":"suggest_application_correction","target":"application","application_id":focused_id,"action_required":"suggest_alternatives","confidence":1.0}
     elif re.search(r"(?:ստուգիր|проверь|check).*(?:ենթակատեգոր|подкатегор|subcategory)",local_text):
