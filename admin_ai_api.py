@@ -246,7 +246,7 @@ _ADMIN_QUERY_TARGETS={
  "partners":{"table":"partners p","select":"p.id,p.user_id,p.business_name,p.business_description,p.status,p.verification_status,p.contact_share_policy,p.created_at,p.updated_at","order":"p.created_at DESC","limit":50,"aliases":{"partner","partners","партнеры","գործընկերներ"},"fields":{"status":"p.status","verification_status":"p.verification_status","business_name":"p.business_name","business_description":"p.business_description","location_marz":"__PARTNER_LOCATION_MARZ__","location_city":"__PARTNER_LOCATION_CITY__"}},
  "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
  "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"},
- "services":{"table":"services s","select":"s.id,s.name,s.category_id,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id"}}}
+ "services":{"table":"services s LEFT JOIN categories c ON c.id=s.category_id LEFT JOIN master_categories m ON m.id=c.master_category_id","select":"s.id,s.name,s.category_id,c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,c.master_category_id,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id","category_name":"c.name_am","master_category_id":"c.master_category_id"}}}
 _ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
 _ADMIN_STATUS_ALIASES={"applications":{"pending":["pending_admin","pending_partner","document_pending"],"moderation":["pending_admin"]},"partners":{"pending":["pending"],"moderation":["pending","pending_verification"]},"businesses":{}}
 def _admin_normalize_location(field,value):
@@ -354,7 +354,7 @@ def _admin_query_result_text(target,rows,filters,question):
    lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏"+(" · "+loc if loc else ""))
   elif target=="partners":lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")+" · verification="+str(x.get("verification_status") or "—"))
   elif target=="businesses":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")+" · "+str(x.get("partner_business_name") or "—"))
-  elif target=="services":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—"))
+  elif target=="services":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—")+" · "+str(x.get("category_name_am") or x.get("category_name_ru") or x.get("category_name_en") or "—"))
   else:lines.append("#"+str(x.get("id"))+" · "+str(x.get("name_am") or x.get("name_ru") or x.get("name_en") or "—")+" · "+str(x.get("master_name_am") or x.get("master_name_ru") or "—"))
  return "\n".join(lines)
 
@@ -901,6 +901,31 @@ def _admin_semantic_documents(application_id):
     except Exception: return []
 
 
+def _admin_service_category_audit(rows):
+    """Fact-based service -> catalog category audit."""
+    result=[]
+    for row in rows or []:
+        service_name=str(row.get("name") or "").strip()
+        category_id=row.get("category_id")
+        stored_category=str(row.get("category_name_am") or row.get("category_name_ru") or row.get("category_name_en") or "").strip()
+        candidates=[]
+        try:
+            candidates=_admin_category_candidates(service_name,row.get("master_category_id"),limit=8) or []
+        except Exception:
+            candidates=[]
+        candidate_rows=[]
+        for item in candidates:
+            x=item.get("row") if isinstance(item,dict) and "row" in item else item
+            if isinstance(x,dict): candidate_rows.append(x)
+        exact=[x for x in candidate_rows if str(x.get("id"))==str(category_id)]
+        result.append({"service_id":row.get("id"),"service_name":service_name,"category_id":category_id,
+            "category_name":stored_category,"direction":row.get("master_name_am") or row.get("master_name_ru") or row.get("master_name_en"),
+            "catalog_candidates":candidate_rows[:8],
+            "stored_category_is_top_candidate":bool(exact and candidate_rows and str(candidate_rows[0].get("id"))==str(category_id)),
+            "verdict":"matched" if exact and candidate_rows and str(candidate_rows[0].get("id"))==str(category_id)
+                     else ("review" if candidate_rows else "insufficient_data")})
+    return result
+
 def _admin_application_truth(app, documents=None, category=None):
     """Return only checks that are provable from current platform data.
     This layer deliberately does not treat missing phone/description as errors
@@ -1069,6 +1094,8 @@ async def _admin_semantic_answer(question,plan,state):
         state["last_query"]=question[:500]
     fallback=json.dumps(facts,ensure_ascii=False,default=str)
     if isinstance(facts,dict) and "rows" in facts:
+        if (target or entity_type)=="services":
+            facts["category_audit"]=_admin_service_category_audit(facts.get("rows") or [])
         fallback=_admin_query_result_text(target or entity_type,facts.get("rows") or [],plan.get("filters") or {},question)
     key=os.getenv("GROQ_API_KEY","").strip()
     if not key: return fallback
@@ -1081,7 +1108,9 @@ async def _admin_semantic_answer(question,plan,state):
             {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
 Answer naturally, directly and humanly in the same language as the question. The question may
 be a short follow-up to the previous result. In that case, answer from the supplied rows and identify
-the requested property (such as names, IDs, categories, prices, statuses) from those rows.
+the requested property (such as names, IDs, categories, prices, statuses) from those rows. If the user
+gives a numeric ID that appears in the previous rows, resolve it against those rows; do not ask the
+user to restate the request.
 Use ONLY the supplied database facts and the supplied truth/check results. The truth/check results are authoritative for
 whether something is actually wrong. Do NOT turn an empty field into an error, mandatory field, or
 approval problem unless the supplied facts explicitly prove that rule. Do not invent business rules,
