@@ -217,18 +217,40 @@ def _get_pending(token: str, pid: int) -> dict[str, Any]:
 
 
 def _entity_name(ctx, key, ident):
-    if ident is None: return ""
-    for x in ctx.get(key,[]):
-        if int(x["id"]) == int(ident):
-            if key == "addresses":
-                label = str(x.get("object_name") or "").strip()
-                parts = [str(x.get(k) or "").strip() for k in ("address", "city", "marz") if str(x.get(k) or "").strip()]
-                location = ", ".join(parts)
-                if label and location:
-                    return f"{label} — {location}"
-                return label or location
-            return x.get("name") or x.get("object_name") or ""
+    if ident is None:
+        return ""
+    for x in ctx.get(key, []):
+        if int(x["id"]) != int(ident):
+            continue
+        if key == "addresses":
+            label = str(x.get("object_name") or "").strip()
+            parts = [
+                str(x.get("address") or "").strip(),
+                str(x.get("city") or "").strip(),
+                str(x.get("marz") or "").strip(),
+            ]
+            location = ", ".join(p for p in parts if p)
+            if label and location:
+                return f"{label} — {location}"
+            return label or location
+        return x.get("name") or x.get("object_name") or ""
     return ""
+
+
+def _address_label(ctx, ident):
+    """Human-readable address label; never expose the internal object ID."""
+    label = _entity_name(ctx, "addresses", ident)
+    if label:
+        return label
+    for x in ctx.get("addresses", []):
+        if str(x.get("id")) == str(ident):
+            parts = [
+                str(x.get("address") or "").strip(),
+                str(x.get("city") or "").strip(),
+                str(x.get("marz") or "").strip(),
+            ]
+            return ", ".join(p for p in parts if p)
+    return "Адрес не указан"
 
 
 async def api_ai_command(request: web.Request):
@@ -318,7 +340,7 @@ def _preview(c,ctx,lang):
     if c.get("business_id"):
         details.append("🏢 "+(_entity_name(ctx,"businesses",c.get("business_id")) or str(c["business_id"])))
     if c.get("object_id"):
-        details.append("📍 "+(_entity_name(ctx,"addresses",c.get("object_id")) or str(c["object_id"])))
+        details.append("📍 "+_address_label(ctx,c.get("object_id")))
     return title + (":\n" + "\n".join(details) if details else "")
 
 
