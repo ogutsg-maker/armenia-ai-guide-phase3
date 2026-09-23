@@ -117,8 +117,38 @@ If ambiguous, use clarify and ask one concise question.
             resp = await client.chat.completions.create(model="openai/gpt-oss-20b", **request_kwargs)
         else:
             raise
-    raw = resp.choices[0].message.content or "{}"
-    data = json.loads(raw)
+    raw = resp.choices[0].message.content or ""
+    raw = raw.strip()
+    if raw.startswith("\`\`\`"):
+        raw = re.sub(r"^\`\`\`(?:json)?\\s*", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\\s*\`\`\`$", "", raw).strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        start, end = raw.find("{"), raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                data = json.loads(raw[start:end + 1])
+            except json.JSONDecodeError:
+                data = None
+        else:
+            data = None
+    if not isinstance(data, dict):
+        repair = await client.chat.completions.create(
+            model=model,
+            temperature=0,
+            max_tokens=700,
+            response_format={"type":"json_object"},
+            messages=[
+                {"role":"system","content":"Return ONLY one valid JSON object. No markdown, no explanation."},
+                {"role":"user","content":"Convert this failed output into a valid JSON object matching the requested assistant schema: " + raw[:5000]}
+            ],
+        )
+        repaired = (repair.choices[0].message.content or "").strip()
+        try:
+            data = json.loads(repaired)
+        except json.JSONDecodeError as exc:
+            raise ValueError("invalid_ai_response") from exc
     if not isinstance(data, dict):
         raise ValueError("invalid_ai_response")
     return data
