@@ -320,7 +320,7 @@ async def api_services(request: web.Request):
             # services exist for this partner; the cabinet must display them
             # even if a legacy DB has a different category schema.
             cur.execute(
-                """SELECT s.*, (s.data_json->>'object_id') AS service_object_id, (s.data_json->>'location_id') AS location_id, (s.data_json->>'contact_phone') AS service_contact_phone
+                """SELECT s.*, (s.data_json->>'object_id') AS service_object_id, (s.data_json->>'contact_phone') AS service_contact_phone
                    FROM services s
                    WHERE s.partner_id=%s AND s.business_id=%s
                      AND (s.status IS NULL OR s.status <> 'deleted')
@@ -683,22 +683,14 @@ Return the result as valid JSON only."""
 
 async def api_service_create(request: web.Request):
     uid=_auth_partner(request); pid=_require_partner(uid); bid=_business_id(request,pid)
-    data=await request.json(); name=str(data.get("name") or data.get("service_name") or "").strip(); description=str(data.get("description") or "").strip(); location_id=_safe_int(data.get("location_id")); object_id=_safe_int(data.get("object_id")); contact_phone=str(data.get("contact_phone") or "").strip() or None
+    data=await request.json(); name=str(data.get("name") or data.get("service_name") or "").strip(); description=str(data.get("description") or "").strip(); object_id=_safe_int(data.get("object_id")); contact_phone=str(data.get("contact_phone") or "").strip() or None
     if not name: return web.json_response({"ok":False,"error":"service_name_required"},status=400)
-    if not location_id and object_id:
-        with _connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id FROM partner_locations WHERE partner_id=%s AND business_id=%s AND address=(SELECT address FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s) LIMIT 1",(pid,bid,object_id,pid,bid))
-                lr=cur.fetchone()
-                if lr: location_id=int(lr["id"])
-    if not location_id:
-        return web.json_response({"ok":False,"error":"service_location_required","message":"Ընտրեք հասցեն ընկերությունից։"},status=400)
+    if not object_id: return web.json_response({"ok":False,"error":"service_object_required","message":"Ընտրեք օբյեկտ կամ ստեղծեք նորը։"},status=400)
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM partner_locations WHERE id=%s AND partner_id=%s AND business_id=%s",(location_id,pid,bid))
-            location_row=cur.fetchone()
-    if not location_row: return web.json_response({"ok":False,"error":"service_location_not_found"},status=404)
-    object_id = None
+            cur.execute("SELECT id,object_name,address,city,marz,phone FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s",(object_id,pid,bid))
+            object_row=cur.fetchone()
+    if not object_row: return web.json_response({"ok":False,"error":"service_object_not_found"},status=404)
     try: price=float(data.get("price")) if data.get("price") not in (None,"") else None
     except (TypeError,ValueError): return web.json_response({"ok":False,"error":"invalid_price"},status=400)
     try: match=await _ai_match_new_service(pid,name,description,bid)
@@ -722,7 +714,7 @@ async def api_service_create(request: web.Request):
                              user_row.get("phone"),match.get("out_of_scope_master_name") or "",
                              match.get("out_of_scope_master_id") or match.get("master_category_id"),
                              match.get("proposed_name") or None,name,price,description,match.get("reason") or "",
-                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None,"object_id":object_id,"location_id":location_id,"contact_phone":contact_phone,
+                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None,"object_id":object_id,"contact_phone":contact_phone,
                                          "services":[{"name":name,"price":price,"description":description,"object_id":object_id,"contact_phone":contact_phone,
                                                       "matched_subcategory_id":match.get("category_id"),
                                                       "direction_id":match.get("master_category_id")}]},ensure_ascii=False)))
@@ -762,7 +754,7 @@ async def api_service_update(request: web.Request):
     bid = _business_id(request,pid)
     sid = int(request.match_info["service_id"])
     data = await request.json()
-    allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json", "object_id", "location_id", "contact_phone"}
+    allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json", "object_id", "contact_phone"}
     fields = {k: data[k] for k in allowed if k in data}
     if not fields:
         return web.json_response({"ok": True})
@@ -873,44 +865,6 @@ async def api_bookings(request: web.Request):
     return web.json_response({"ok": True, "bookings": _json(rows)})
 
 
-async def api_businesses(request: web.Request):
-    uid = _auth_partner(request)
-    pid = _require_partner(uid)
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            # Always repair the default company for existing partners.
-            cur.execute("""CREATE TABLE IF NOT EXISTS partner_businesses(
-                id BIGSERIAL PRIMARY KEY,
-                partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
-                name TEXT NOT NULL,
-                description TEXT,
-                phone TEXT,
-                status TEXT NOT NULL DEFAULT 'active',
-                is_default BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )""")
-            cur.execute("""SELECT id,name,description,phone,status,is_default,created_at,updated_at
-                           FROM partner_businesses
-                           WHERE partner_id=%s AND status <> 'archived'
-                           ORDER BY is_default DESC,id""",(pid,))
-            rows=cur.fetchall()
-            if not rows:
-                cur.execute("""SELECT business_name,business_description,phone
-                               FROM partners WHERE id=%s""",(pid,))
-                p=cur.fetchone()
-                if p:
-                    name=(p["business_name"] or "").strip() or "Իմ ընկերությունը"
-                    cur.execute("""INSERT INTO partner_businesses
-                                   (partner_id,name,description,phone,is_default,status)
-                                   VALUES(%s,%s,%s,%s,TRUE,'active')
-                                   RETURNING id,name,description,phone,status,is_default,created_at,updated_at""",
-                                (pid,name,p["business_description"],p["phone"]))
-                    rows=[cur.fetchone()]
-            conn.commit()
-    return web.json_response({"ok":True,"businesses":_json(rows),"current":_json(rows[0]) if rows else None})
-
-
 async def api_locations(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -921,67 +875,6 @@ async def api_locations(request: web.Request):
             rows = cur.fetchall()
     return web.json_response({"ok": True, "locations": _json(rows)})
 
-
-async def api_location_create(request: web.Request):
-    uid = _auth_partner(request)
-    pid = _require_partner(uid)
-    bid = _business_id(request,pid)
-    data = await request.json()
-    address = str(data.get("address") or "").strip()
-    city = str(data.get("city") or "").strip()
-    marz = str(data.get("marz") or "").strip()
-    phone = str(data.get("phone") or "").strip() or None
-    if not address or not city:
-        return web.json_response({"ok":False,"error":"location_address_city_required"},status=400)
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""INSERT INTO partner_locations(partner_id,business_id,address,city,marz,phone)
-                           VALUES(%s,%s,%s,%s,%s,%s) RETURNING *""",
-                        (pid,bid,address,city,marz,phone))
-            row=cur.fetchone()
-        conn.commit()
-    return web.json_response({"ok":True,"location":_json(row)})
-
-
-async def api_location_update(request: web.Request):
-    uid = _auth_partner(request)
-    pid = _require_partner(uid)
-    bid = _business_id(request,pid)
-    lid = int(request.match_info["location_id"])
-    data = await request.json()
-    allowed={"address","city","marz","phone"}
-    fields={k:str(data[k]).strip() if data[k] is not None else None for k in allowed if k in data}
-    if "address" in fields and not fields["address"]:
-        return web.json_response({"ok":False,"error":"location_address_required"},status=400)
-    if "city" in fields and not fields["city"]:
-        return web.json_response({"ok":False,"error":"location_city_required"},status=400)
-    if not fields:
-        return web.json_response({"ok":True})
-    sets=", ".join(f"{k}=%s" for k in fields)
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"UPDATE partner_locations SET {sets} WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",
-                        (*fields.values(),lid,pid,bid))
-            row=cur.fetchone()
-        conn.commit()
-    if not row:
-        return web.json_response({"ok":False,"error":"location_not_found"},status=404)
-    return web.json_response({"ok":True,"location":_json(row)})
-
-
-async def api_location_delete(request: web.Request):
-    uid = _auth_partner(request)
-    pid = _require_partner(uid)
-    bid = _business_id(request,pid)
-    lid = int(request.match_info["location_id"])
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM partner_locations WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING id",(lid,pid,bid))
-            row=cur.fetchone()
-        conn.commit()
-    if not row:
-        return web.json_response({"ok":False,"error":"location_not_found"},status=404)
-    return web.json_response({"ok":True,"id":lid})
 
 async def api_reviews(request: web.Request):
     uid = _auth_partner(request)
@@ -996,7 +889,6 @@ async def api_reviews(request: web.Request):
 async def api_documents(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
-    bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""SELECT id,partner_id,business_id,document_type,original_filename,mime_type,file_size,status,
@@ -1134,7 +1026,6 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     """
     app["partner_db"] = db
     app.router.add_get("/api/master/{id}/dashboard", api_dashboard)
-    app.router.add_get("/api/master/{id}/businesses", api_businesses)
     app.router.add_get("/api/master/{id}/settings", api_settings)
     app.router.add_post("/api/master/{id}/settings", api_settings_update)
     app.router.add_get("/api/master/{id}/objects", api_objects)
@@ -1153,9 +1044,6 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/notifications/read-all", api_notifications_read_all)
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
     app.router.add_get("/api/master/{id}/locations", api_locations)
-    app.router.add_post("/api/master/{id}/locations", api_location_create)
-    app.router.add_post("/api/master/{id}/locations/{location_id}", api_location_update)
-    app.router.add_delete("/api/master/{id}/locations/{location_id}", api_location_delete)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
     # NOTE: GET /api/master/{id}/documents is already registered by
     # register_stage3_routes (api_partner_documents), which is called earlier
