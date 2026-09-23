@@ -435,11 +435,27 @@ def ensure_platform_schema() -> None:
     -- Backfill tariff-override columns on pre-existing services tables.
     ALTER TABLE services ADD COLUMN IF NOT EXISTS commission_type TEXT;
     ALTER TABLE services ADD COLUMN IF NOT EXISTS commission_value NUMERIC;
+    -- A service is delivered at one physical partner object. Keep the
+    -- location relation canonical instead of hiding it in data_json.
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS object_id BIGINT;
+    ALTER TABLE services ADD COLUMN IF NOT EXISTS contact_phone TEXT;
+    ALTER TABLE partner_objects ADD COLUMN IF NOT EXISTS phone TEXT;
+    CREATE INDEX IF NOT EXISTS idx_services_object ON services(object_id);
     -- Backfill direction-level default tariff on pre-existing installs.
     ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS commission_type TEXT NOT NULL DEFAULT 'on_top';
     ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS commission_value NUMERIC NOT NULL DEFAULT 10;
 
     CREATE INDEX IF NOT EXISTS idx_services_partner_status ON services(partner_id, status);
+    DO $
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname='fk_services_object'
+        ) THEN
+            ALTER TABLE services
+                ADD CONSTRAINT fk_services_object
+                FOREIGN KEY (object_id) REFERENCES partner_objects(id) ON DELETE SET NULL;
+        END IF;
+    END $;
     CREATE INDEX IF NOT EXISTS idx_partner_locations_partner ON partner_locations(partner_id);
     CREATE INDEX IF NOT EXISTS idx_service_requests_client ON service_requests(client_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_negotiations_request ON negotiations(request_id, status);
