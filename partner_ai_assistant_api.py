@@ -23,6 +23,26 @@ _PENDING: dict[str, tuple[float, int, dict[str, Any]]] = {}
 _PENDING_TTL = 10 * 60
 
 
+def _json_safe(value: Any):
+    """Convert DB values to JSON-safe primitives before aiohttp serializes them."""
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _json_response(payload, *args, **kwargs):
+    return web.json_response(_json_safe(payload), *args, **kwargs)
+
+
 def _auth(request: web.Request) -> int:
     raw = request.headers.get("X-Telegram-Init-Data", "").strip()
     if not raw:
