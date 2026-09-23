@@ -201,6 +201,7 @@ async function addService(){
   const modal=document.createElement('div'); modal.id='serviceCreateModal'; modal.className='modal';
   const firmOptions=firms.map(b=>'<option value="'+b.id+'" '+(current&&String(b.id)===String(current.id)?'selected':'')+'>'+esc(b.name)+'</option>').join('');
   const objectOptions=objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name||'')+(o.address?' · '+esc(o.address):'')+(o.city?' · '+esc(o.city):'')+'</option>').join('');
+  const hasObjects=objects.length>0;
   modal.innerHTML='<div class="modal-card">'+
     '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Укажите компанию, место и контакт именно для этой услуги.</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
     '<div class="section"><h3>🏢 Компания</h3>'+
@@ -212,8 +213,8 @@ async function addService(){
     '</div>'+
     '<div class="section"><h3>📍 Адрес</h3>'+
       '<div class="field"><label>Адрес оказания услуги</label><select id="svcObject">'+
-        (objectOptions?'<option value="">Выберите адрес</option>':'<option value="">Адресов у '+esc(current?.name||'этой компании')+' пока нет</option>')+
-        objectOptions+'<option value="__new__">＋ Новый адрес</option></select></div>'+
+        (hasObjects?'<option value="">Выберите адрес</option>':'<option value="__new__" selected>＋ Новый адрес</option>')+
+        objectOptions+(hasObjects?'<option value="__new__">＋ Новый адрес</option>':'')+'</select></div>'+
       '<div id="svcNewObject" style="display:none">'+
         '<div class="grid2"><div class="field"><label>Название адреса</label><input id="svcObjectName"></div><div class="field"><label>Телефон адреса</label><input id="svcObjectPhone" inputmode="tel"></div></div>'+
         '<div class="grid2"><div class="field"><label>Город</label><input id="svcObjectCity"></div><div class="field"><label>Марз</label><input id="svcObjectMarz"></div></div>'+
@@ -234,6 +235,10 @@ async function addService(){
   const bs=document.getElementById('svcBusiness'), os=document.getElementById('svcObject');
   const newBusiness=document.getElementById('svcNewBusiness'), newObject=document.getElementById('svcNewObject');
   const phone=document.getElementById('svcPhone');
+  if(!hasObjects){
+    os.value='__new__';
+    newObject.style.display='block';
+  }
 
   function setDefaultPhone(){
     if(phone.value.trim())return;
