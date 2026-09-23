@@ -102,35 +102,106 @@ async def potential_research(request):
 # duplicate settings surface.
 # =====================================================================
 
+
 _ADMIN_PENDING={}
 _ADMIN_PENDING_TTL=15*60
-_ADMIN_LAST_APPLICATION={}
+_ADMIN_SESSIONS={}
+_ADMIN_SESSION_TTL=30*60
+_CONFIRM_YES={"да","да.","yes","yes.","ok","okay","подтверждаю","подтвердить","հա","այո","այո.","հաստատում եմ"}
+_CONFIRM_NO={"нет","нет.","no","no.","cancel","отмена","отменить","ոչ","ոչ.","չեղարկել"}
 
-def _admin_context(limit=30, include_catalog=False):
-    applications=platform_db.rows("""SELECT a.*,p.user_id FROM partner_applications a
-        JOIN partners p ON p.id=a.partner_id
-        WHERE a.status NOT IN ('approved','pending_partner')
-        ORDER BY a.created_at DESC LIMIT %s""",(limit,))
-    for a in applications:
-        payload=a.get("payload_json") or {}
-        if isinstance(payload,str):
-            try: payload=json.loads(payload)
-            except Exception: payload={}
-        a["payload_json"]=payload
-        a["services"]=payload.get("services") if isinstance(payload,dict) and isinstance(payload.get("services"),list) else []
-    result={"applications":applications,
-            "partners":platform_db.rows("SELECT id,user_id,status,verification_status,business_name,business_description FROM partners ORDER BY id DESC LIMIT 50"),
-            "businesses":platform_db.rows("SELECT id,partner_id,name,description,phone,status FROM partner_businesses WHERE status<>'archived' ORDER BY id DESC LIMIT 100")}
-    if include_catalog:
-        result["catalog"]=platform_db.rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
-            FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-            WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.master_category_id,c.id""")
-    return result
+def _admin_session(admin_id):
+    sid=int(admin_id)
+    now=time.time()
+    state=_ADMIN_SESSIONS.get(sid)
+    if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
+        state={"last_focused_application_id":None,"pending_action":None,"history":[],"updated_at":now}
+        _ADMIN_SESSIONS[sid]=state
+    state["updated_at"]=now
+    return state
+
+def _admin_history(state,role,text):
+    state.setdefault("history",[]).append({"role":role,"content":str(text)[:1000]})
+    state["history"]=state["history"][-8:]
+    state["updated_at"]=time.time()
 
 def _admin_pending_add(command):
     token=uuid.uuid4().hex
     _ADMIN_PENDING[token]=(time.time(),command)
     return token
+
+def _admin_catalog():
+    return platform_db.rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,
+        m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
+        FROM categories c JOIN master_categories m ON m.id=c.master_category_id
+        WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.id""")
+
+def _admin_category_by_text(value):
+    target=str(value or "").strip().casefold()
+    if not target: return None
+    rows=_admin_catalog()
+    exact=[x for x in rows if target in {str(x.get("name_am") or "").casefold(),
+        str(x.get("name_ru") or "").casefold(),str(x.get("name_en") or "").casefold()}]
+    if len(exact)==1: return exact[0]
+    return None
+
+def _admin_state_preview(action):
+    aid=action.get("application_id")
+    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
+    if not app: return "Заявка #"+str(aid)+" не найдена."
+    if action.get("intent")=="edit_application":
+        field=action.get("field")
+        old=app.get({"subcategory":"subcategory_name","category":"subcategory_name",
+                      "name":"service_name","service":"service_name","price":"price",
+                      "description":"description","note":"admin_note"}.get(field))
+        return "📨 Заявка #"+str(aid)+"\n🔧 "+str(field)+" : «"+str(old or "—")+"» → «"+str(action.get("new_value") or "—")+"»"
+    if action.get("intent")=="approve_application":
+        return "📨 Заявка #"+str(aid)+"\n✅ Перевести заявку на этап документа"
+    if action.get("intent")=="reject_application":
+        return "📨 Заявка #"+str(aid)+"\n❌ Отклонить\n📝 "+str(action.get("reason") or "Без причины")
+    if action.get("intent")=="clarify_application":
+        return "📨 Заявка #"+str(aid)+"\n📝 Отправить партнёру на уточнение\n"+str(action.get("admin_note") or "Требуется уточнение")
+    return "Действие не определено."
+
+async def _admin_execute_state_action(action):
+    aid=int(action.get("application_id") or 0)
+    if action.get("intent")=="edit_application":
+        field=action.get("field")
+        if field=="subcategory":
+            cat=platform_db.one("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en
+                FROM categories c WHERE c.id=%s AND c.is_active=TRUE""",(int(action["category_id"]),))
+            app=platform_db.one("SELECT master_category_id FROM partner_applications WHERE id=%s",(aid,))
+            if not cat: return "Подкатегория отсутствует в активном каталоге."
+            if app and app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
+                return "Подкатегория относится к другому направлению."
+            label=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
+            platform_db.execute("UPDATE partner_applications SET category_id=%s,subcategory_name=%s,updated_at=NOW() WHERE id=%s",
+                (int(cat["id"]),label,aid))
+            return "✓ Заявка #"+str(aid)+" : подкатегория изменена на «"+label+"»."
+        columns={"name":"service_name","service":"service_name","price":"price","description":"description","note":"admin_note"}
+        column=columns.get(field)
+        if not column: return "Уточните поле для изменения."
+        value=action.get("new_value")
+        if field=="price":
+            try: value=float(str(value).replace(" ","").replace(",","."))
+            except Exception: return "Цена должна быть числом."
+        else:
+            value=str(value or "").strip()
+            if not value: return "Новое значение не указано."
+        platform_db.execute("UPDATE partner_applications SET "+column+"=%s,updated_at=NOW() WHERE id=%s",(value,aid))
+        return "✓ Заявка #"+str(aid)+" : "+str(field)+" изменено."
+    if action.get("intent")=="approve_application":
+        platform_db.execute("UPDATE partner_applications SET status='document_pending',reviewed_at=NOW(),updated_at=NOW() WHERE id=%s AND status NOT IN ('approved','pending_partner')",(aid,))
+        return "✓ Заявка #"+str(aid)+" переведена на этап документа."
+    if action.get("intent")=="reject_application":
+        reason=str(action.get("reason") or "Отклонено администратором.")[:3000]
+        platform_db.execute("UPDATE partner_applications SET status='rejected',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(reason,aid))
+        return "✓ Заявка #"+str(aid)+" отклонена."
+    if action.get("intent")=="clarify_application":
+        note=str(action.get("admin_note") or "Требуется уточнение данных.")[:3000]
+        platform_db.execute("UPDATE partner_applications SET status='pending_partner',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(note,aid))
+        return "✓ Заявка #"+str(aid)+" отправлена партнёру на уточнение."
+    return "Действие не определено."
 
 async def _admin_ai_json(message,ctx):
     from groq import AsyncGroq
@@ -138,189 +209,125 @@ async def _admin_ai_json(message,ctx):
     if not key: raise RuntimeError("GROQ_API_KEY is not configured")
     model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
     client=AsyncGroq(api_key=key)
-    system="""You are the AI secretary of Armenia AI Guide.
-Understand Armenian, Russian and English. Return ONLY JSON.
-The administrator speaks naturally and expects real admin actions.
-Allowed intents: show_applications, open_application, edit_application,
-approve_application, reject_application, clarify_application, show_partners,
-show_businesses, clarify.
-Never invent IDs. Use only IDs from context.
-For mutations extract application_id and exact requested fields.
-When the administrator names a catalogue category/subcategory, use the matching IDs from context.catalog.
-JSON fields: intent, application_id, partner_id, master_category_id,
-category_id, service_name, price, direction_name, subcategory_name,
-admin_note, reason, reply."""
+    system="""You are the intent extractor for the Armenia AI Guide admin secretary.
+Understand Armenian, Russian and English natural language.
+Return ONLY JSON and never invent IDs.
+Do not execute SQL and do not write the final response.
+Fields:
+intent = inspect | edit | approve | reject | clarify | show
+target = application | partner | business | service | category | document | order
+application_id = integer or null
+field = name | price | category | subcategory | direction | city | address | phone | description | status | document | note | null
+value_text = requested value or null
+reason = short reason
+confidence = number from 0 to 1
+Examples:
+ենթակատեգորիան ճիշտ չէ -> edit/application/subcategory with null value
+այստեղ պետք է Հոնքեր լինի -> edit/application/subcategory/value Հոնքեր
+цена неправильная, поставь 2500 -> edit/application/price/value 2500
+это вообще не та категория -> edit/application/category with null value
+заявка заполнена неправильно -> clarify/application
+одобри заявку 36 -> approve/application/36
+открой заявку 36 -> inspect/application/36
+Use the focused application for references such as this, here, it, the application."""
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
-        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0.1,max_tokens=900)
+        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=300)
     except Exception as first:
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
-            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0.1,max_tokens=900)
-        else: raise
-    raw=(resp.choices[0].message.content or "").strip().replace("```json","").replace("```","").strip()
+            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=300)
+        else:
+            raise
+    raw=(resp.choices[0].message.content or "").strip()
     data=json.loads(raw)
     return data if isinstance(data,dict) else {}
 
-def _admin_ai_preview(c,ctx):
-    aid=c.get("application_id")
-    a=next((x for x in ctx["applications"] if aid and int(x["id"])==int(aid)),None)
-    if not a: return str(c.get("reply") or "Укажите номер заявки.")
-    price=c.get("price") if c.get("price") is not None else a.get("price")
-    lines=["📨 Заявка #"+str(a["id"])+" · "+str(a.get("business_name") or "—"),
-           "🛠 "+str(c.get("service_name") or a.get("service_name") or "—")+" · "+str(price if price is not None else "—")+" ֏"]
-    loc=", ".join(x for x in [a.get("location_marz"),a.get("location_city"),a.get("address")] if x)
-    if loc: lines.append("📍 "+loc)
-    if c.get("direction_name") or c.get("master_category_id"): lines.append("💇 "+str(c.get("direction_name") or a.get("direction_name") or "Новое направление"))
-    if c.get("subcategory_name") or c.get("category_id"): lines.append("🏷 "+str(c.get("subcategory_name") or a.get("subcategory_name") or "Новая подкатегория"))
-    if c.get("admin_note") or c.get("reason"): lines.append("📝 "+str(c.get("admin_note") or c.get("reason")))
-    return "\n".join(lines)
-
-async def _admin_execute(c):
-    intent=c.get("intent")
-    aid=int(c["application_id"]) if c.get("application_id") else None
-    if intent=="show_applications":
-        rows=_admin_context()["applications"]
-        if not rows: return "📨 Новых заявок нет."
-        return "📨 Заявки:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏" for x in rows[:15])
-    if intent=="open_application":
-        if not aid: return "Укажите номер заявки."
-        a=platform_db.one("SELECT a.*,p.user_id FROM partner_applications a JOIN partners p ON p.id=a.partner_id WHERE a.id=%s",(aid,))
-        if not a: return "Заявка #"+str(aid)+" не найдена."
-        loc=", ".join(x for x in [a.get("location_marz"),a.get("location_city"),a.get("address")] if x)
-        return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+
-                "\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+
-                "\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏"+
-                "\n🏷 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
-    if intent=="show_partners":
-        rows=_admin_context()["partners"]
-        return "🤝 Партнёров нет." if not rows else "🤝 Партнёры:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:20])
-    if intent=="show_businesses":
-        rows=_admin_context()["businesses"]
-        return "🏢 Компаний нет." if not rows else "🏢 Компании:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:30])
-    if not aid: return "Укажите номер заявки."
-    if not platform_db.one("SELECT id FROM partner_applications WHERE id=%s",(aid,)): return "Заявка #"+str(aid)+" не найдена."
-    if intent=="edit_application":
-        fields={}
-        sub=str(c.get("subcategory_name") or "").strip().casefold()
-        if sub and c.get("category_id") is None:
-            matches=[]
-            for cat in _admin_context(include_catalog=True).get("catalog",[]):
-                names=[cat.get("name_am"),cat.get("name_ru"),cat.get("name_en")]
-                if any(str(n or "").strip().casefold()==sub for n in names): matches.append(cat)
-            if len(matches)==1:
-                c["category_id"]=int(matches[0]["id"])
-                c["master_category_id"]=int(matches[0]["master_category_id"])
-                c["subcategory_name"]=matches[0].get("name_am") or matches[0].get("name_ru") or matches[0].get("name_en")
-                c["direction_name"]=matches[0].get("master_am") or matches[0].get("master_ru") or matches[0].get("master_en")
-        for k in ("direction_name","subcategory_name","service_name","admin_note"):
-            if c.get(k) not in (None,""): fields[k]=str(c[k]).strip()
-        for k in ("master_category_id","category_id"):
-            if c.get(k) is not None:
-                try: fields[k]=int(c[k])
-                except: pass
-        if c.get("price") is not None:
-            try: fields["price"]=float(c["price"])
-            except: pass
-        if not fields: return "Уточните, что именно изменить."
-        sets=", ".join(k+"=%s" for k in fields)
-        platform_db.execute("UPDATE partner_applications SET "+sets+",updated_at=NOW() WHERE id=%s",(*fields.values(),aid))
-        return "✓ Заявка #"+str(aid)+" обновлена."
-    if intent=="approve_application":
-        platform_db.execute("UPDATE partner_applications SET status='document_pending',reviewed_at=NOW(),updated_at=NOW() WHERE id=%s AND status NOT IN ('approved','pending_partner')",(aid,))
-        return "✓ Заявка #"+str(aid)+" переведена на этап документа."
-    if intent=="reject_application":
-        reason=str(c.get("reason") or c.get("admin_note") or "Отклонено администратором.")[:3000]
-        platform_db.execute("UPDATE partner_applications SET status='rejected',admin_note=%s,reviewed_at=NOW(),updated_at=NOW()",(reason,aid))
-        return "✓ Заявка #"+str(aid)+" отклонена. Причина: "+reason
-    if intent=="clarify_application":
-        note=str(c.get("admin_note") or c.get("reason") or "Требуется уточнение данных.")[:3000]
-        platform_db.execute("UPDATE partner_applications SET status='pending_partner',admin_note=%s,reviewed_at=NOW(),updated_at=NOW()",(note,aid))
-        return "✓ Заявка #"+str(aid)+" отправлена партнёру на уточнение."
-    return str(c.get("reply") or "Уточните команду.")
-
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
-    if not message:
-        return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
-
-    # Deterministic read-only routing for natural commands in Armenian/Russian/English.
-    # These commands must NEVER create a confirmation request.
+    if not message: return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
+    state=_admin_session(admin_id)
     normalized=message.lower().strip()
-    read_markers=(
-        "проверь","покажи","открой","посмотри","что с","статус","расскажи",
-        "ստուգիր","ցույց տուր","բացիր","նայիր","ինչ վիճակում","կարգավիճակ",
-        "show","open","check","status","tell me"
-    )
-    mutation_markers=(
-        "измени","поставь","добавь","удали","одобри","подтверди","отклони",
-        "отправь","замени","перенеси","исправь","փոխիր","դիր","ավելացրու",
-        "ջնջիր","հաստատիր","մերժիր","ուղարկիր","փոխարինիր","edit","approve",
-        "reject","delete","add","change"
-    )
-    if any(x in normalized for x in read_markers) and not any(x in normalized for x in mutation_markers):
-        ids=re.findall(r"(?:#|(?:заявк[ауеи]?|հայտ(?:ը|ի|ը)?|application)\s*)(\d+)",normalized)
-        ctx=_admin_context(limit=30,include_catalog=False)
-        if ids:
-            aid=int(ids[0])
-            _ADMIN_LAST_APPLICATION[int(admin_id)]=aid
-            return await _admin_execute({"intent":"open_application","application_id":aid})
-        rows=ctx.get("applications") or []
-        # A singular read-only command with one actionable application opens it directly.
-        if len(rows)==1:
-            aid=int(rows[0]["id"])
-            _ADMIN_LAST_APPLICATION[int(admin_id)]=aid
-            return await _admin_execute({"intent":"open_application","application_id":aid})
-        return await _admin_execute({"intent":"show_applications"})
 
-    # Follow-up commands may omit the application number. Keep the last application
-    # the admin inspected in this secretary session.
-    last_aid=_ADMIN_LAST_APPLICATION.get(int(admin_id))
-    if last_aid and any(x in normalized for x in (
-        "ուղղիր","ենթակատեգոր","կատեգոր","փոխիր","շտկիր",
-        "исправь","подкатегор","категор","измени","edit","change"
-    )) and not re.search(r"(?:#|(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*)\d+",normalized):
-        message=message+f" (Контекст: продолжение работы с заявкой #{last_aid}. Используй application_id={last_aid}.)"
+    pending=state.get("pending_action")
+    if pending and normalized in _CONFIRM_YES:
+        reply=await _admin_execute_state_action(pending)
+        state["pending_action"]=None
+        _admin_history(state,"assistant",reply)
+        return reply
+    if pending and normalized in _CONFIRM_NO:
+        state["pending_action"]=None
+        reply="Отменено. Никаких изменений не внесено."
+        _admin_history(state,"assistant",reply)
+        return reply
 
-    # Small, targeted catalog context for category corrections. Sending the full
-    # catalog to Groq is unnecessarily large and can cause request failures.
-    category_followup=any(x in normalized for x in (
-        "ուղղիր","շտկիր","փոխիր","ենթակատեգոր","կատեգոր","ուղղություն",
-        "подкатегор","категор","направлен","исправь","измени",
-        "edit","change","category","subcategory"
-    ))
-    if category_followup and last_aid:
-        app=platform_db.one("""SELECT id,master_category_id,category_id,direction_name,subcategory_name
-            FROM partner_applications WHERE id=%s""",(last_aid,))
-        ctx=_admin_context(limit=30,include_catalog=False)
-        ctx["target_application"]=app or {"id":last_aid}
-        # Give Groq only a compact active catalog with IDs and all language labels.
-        ctx["catalog"]=platform_db.rows("""SELECT c.id,c.master_category_id,
-            c.name_am,c.name_ru,c.name_en,
-            m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
-            FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-            WHERE c.is_active=TRUE AND m.is_active=TRUE
-            ORDER BY c.master_category_id,c.id""")
-    else:
-        include_catalog=any(x in normalized for x in (
-            "категор","подкатегор","направлен","ենթակատեգոր","կատեգոր","ուղղություն"
-        ))
-        ctx=_admin_context(limit=30,include_catalog=include_catalog)
+    focused_id=state.get("last_focused_application_id")
+    focused=None
+    if focused_id:
+        focused=platform_db.one("""SELECT id,business_name,status,service_name,price,direction_name,
+            master_category_id,subcategory_name,category_id,location_marz,location_city,address
+            FROM partner_applications WHERE id=%s""",(focused_id,))
+
+    ctx={"focused_application":focused,
+         "history":state.get("history",[])[-6:],
+         "applications":_admin_context(limit=12,include_catalog=False).get("applications",[])}
     c=await _admin_ai_json(message,ctx)
-    if not c.get("application_id") and last_aid and c.get("intent") in {"edit_application","approve_application","reject_application","clarify_application"}:
-        c["application_id"]=last_aid
-    intent=c.get("intent")
-    if intent in {"show_applications","open_application","show_partners","show_businesses"}:
-        if intent=="open_application" and c.get("application_id"):
-            _ADMIN_LAST_APPLICATION[int(admin_id)]=int(c["application_id"])
-        return await _admin_execute(c)
-    if intent not in {"edit_application","approve_application","reject_application","clarify_application"}:
-        return str(c.get("reply") or "Не понял команду. Укажите номер заявки и действие.")
-    aid=c.get("application_id")
-    if not aid:
-        return "Укажите номер заявки."
-    token=_admin_pending_add(c)
-    return "🤖 Подготовил действие:\n\n"+_admin_ai_preview(c,ctx)+"\n\nПодтвердить? Напишите «да» или «нет».\n\n__PENDING__:"+token
+    intent=str(c.get("intent") or "").lower()
+    target=str(c.get("target") or "").lower()
+    aid=c.get("application_id") or focused_id
+
+    if intent in {"inspect","show"}:
+        if target=="partner": return await _admin_execute({"intent":"show_partners"})
+        if target=="business": return await _admin_execute({"intent":"show_businesses"})
+        if not aid: return await _admin_execute({"intent":"show_applications"})
+        state["last_focused_application_id"]=int(aid)
+        reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
+        _admin_history(state,"admin",message)
+        _admin_history(state,"assistant",reply)
+        return reply
+
+    if intent not in {"edit","approve","reject","clarify"}:
+        reply=str(c.get("reply") or "Уточните, что именно нужно сделать.")
+        _admin_history(state,"admin",message)
+        _admin_history(state,"assistant",reply)
+        return reply
+
+    if not aid: return "Укажите номер заявки или сначала откройте заявку."
+    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
+    if not app: return "Заявка #"+str(aid)+" не найдена."
+
+    action={"intent":intent,"application_id":int(aid)}
+    if intent=="edit":
+        field=str(c.get("field") or "").lower()
+        value=str(c.get("value_text") or "").strip()
+        if field in {"category","subcategory"}:
+            if not value:
+                return "Текущая подкатегория «"+str(app.get("subcategory_name") or "—")+"». Укажите новую, например: «այստեղ պետք է Հոնքեր լինի»."
+            cat=_admin_category_by_text(value)
+            if not cat:
+                return "Не нашёл однозначную подкатегорию «"+value+"» в активном каталоге. Уточните точное название."
+            if app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
+                return "Подкатегория относится к другому направлению. Укажите подкатегорию из текущего направления."
+            action["field"]="subcategory"
+            action["category_id"]=int(cat["id"])
+            action["new_value"]=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
+        else:
+            if field not in {"name","service","price","description","note"} or not value:
+                return "Уточните поле и новое значение: цена, название услуги, описание или подкатегория."
+            action["field"]=field
+            action["new_value"]=value
+    else:
+        action["new_value"]=c.get("value_text")
+        if intent=="reject": action["reason"]=c.get("reason") or c.get("value_text")
+        if intent=="clarify": action["admin_note"]=c.get("reason") or c.get("value_text")
+
+    state["pending_action"]=action
+    token=_admin_pending_add(action)
+    preview=_admin_state_preview(action)
+    reply="🤖 Подготовил действие:\n\n"+preview+"\n\nПодтвердить? Напишите «да» или «нет».\n\nPENDING:"+token
+    _admin_history(state,"admin",message)
+    _admin_history(state,"assistant",reply)
+    return reply
 
 async def api_admin_assistant(request):
     _admin(request)
