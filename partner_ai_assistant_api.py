@@ -263,7 +263,7 @@ async def _execute_read(pid,c,ctx):
         return web.json_response({"ok":True,"reply":"\n".join(lines) or "Компаний пока нет.","data":{"businesses":ctx["businesses"]}})
     if intent=="show_services":
         lines=["🛠 %s — %s ֏" % (x.get("name") or "", x.get("price") if x.get("price") is not None else "—") for x in ctx["services"]]
-        return web.json_response({"ok":True,"reply":"\n".join(lines) or "Услуг пока нет.","data":{"services":ctx["services"]}})
+        return _json_response({"ok":True,"reply":"\n".join(lines) or "Услуг пока нет.","data":{"services":ctx["services"]}})
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id,business_id,status,created_at FROM bookings WHERE partner_id=%s ORDER BY id DESC LIMIT 50", (pid,))
