@@ -224,12 +224,17 @@ async function addService(){
       '</div>'+
     '</div>'+
     '<div class="section"><h3>📞 Контакт услуги</h3><div class="field"><label>Телефон для этой услуги</label><input id="svcPhone" inputmode="tel" placeholder="'+esc(tr('phone'))+'"></div><div class="muted small">Можно оставить телефон компании/адреса или указать отдельный номер.</div></div>'+
-    '<div class="section"><h3>🛠 Услуга</h3>'+
+    '<div class="section"><h3>🛠 Добавление услуги через AI</h3>'+
+      '<div class="notice">Напишите или расскажите своими словами, какую услугу хотите добавить. AI сам выделит название, описание и цену.</div>'+
+      '<div class="field"><label>✍️ Напишите здесь или нажмите 🎤</label><textarea id="svcAiText" rows="5" placeholder="Например: «Добавьте комплексную мойку автомобилей за 5000 драм. Работаем каждый день с 9 до 20»"></textarea></div>'+
+      '<div class="actions"><button type="button" class="btn secondary" id="svcVoiceBtn" onclick="startServiceVoice()">🎤 Говорить</button><button type="button" class="btn secondary" onclick="analyzeServiceText()">🤖 Определить</button></div>'+
+      '<div id="svcAiStatus" class="muted small" style="margin-top:8px"></div>'+
+      '<div id="svcAiPreview" class="notice" style="display:none;margin-top:10px"></div>'+
       '<div class="field"><label>Название</label><input id="svcName" autocomplete="off"></div>'+
-      '<div class="field"><label>Описание</label><textarea id="svcDescription" rows="4"></textarea></div>'+
+      '<div class="field"><label>Описание</label><textarea id="svcDescription" rows="3"></textarea></div>'+
       '<div class="field"><label>Цена</label><input id="svcPrice" type="number" min="0" step="1" inputmode="numeric"></div>'+
     '</div>'+
-    '<div class="notice">Каталог, направление и подкатегория здесь не заполняются. AI использует данные услуги для внутренней классификации.</div>'+
+    '<div class="notice">Направление и подкатегория здесь не заполняются. AI использует выбранную компанию и адрес, а каталог определяет внутренне.</div>'+
     '<div class="actions" style="margin-top:15px"><button class="btn secondary" onclick="closeServiceCreate()">'+tr('back')+'</button><button class="btn" onclick="submitNewService()">✓ '+tr('save')+'</button></div>'+
   '</div>';
   document.body.appendChild(modal);
@@ -363,7 +368,57 @@ async function addService(){
   document.getElementById('svcObjectPhone').oninput=e=>{if(!phone.value.trim())phone.value=e.target.value};
   document.getElementById('svcBusinessPhone').oninput=e=>{if(!phone.value.trim())phone.value=e.target.value};
   setDefaultPhone();
-  document.getElementById('svcName')?.focus();
+  document.getElementById('svcAiText')?.focus();
+}
+function analyzeServiceText(){
+  const input=document.getElementById('svcAiText');
+  const text=String(input?.value||'').trim();
+  const statusEl=document.getElementById('svcAiStatus');
+  const preview=document.getElementById('svcAiPreview');
+  if(!text){toast('Напишите или расскажите об услуге');return;}
+  // Extract the explicit price locally; catalogue classification remains on the server.
+  const priceMatches=[...text.matchAll(/(?:^|\\s)(\\d{3,7})(?:[.,]\\d+)?\\s*(?:դրամ|դր\\.?|֏|amd|dram|драм)\\b/giu)];
+  const price=priceMatches.length?Number(priceMatches[priceMatches.length-1][1]):null;
+  let name=text;
+  if(priceMatches.length){
+    const p=priceMatches[0].index;
+    name=text.slice(0,p).replace(/^(?:добавьте|добавить|добавим|ավելացրեք|ավելացնել|add)\\s+/iu,'').trim();
+  }
+  name=name.replace(/^(?:услугу|услуга|ծառայություն|service)\\s*[:,-]?\\s*/iu,'').trim();
+  // Keep a compact phrase as the service name; the original speech/text is preserved as description.
+  if(name.length>100) name=name.slice(0,100).trim();
+  document.getElementById('svcName').value=name;
+  document.getElementById('svcDescription').value=text;
+  if(price!==null) document.getElementById('svcPrice').value=price;
+  const company=document.getElementById('svcBusiness')?.selectedOptions?.[0]?.textContent||'';
+  const address=document.getElementById('svcObject')?.selectedOptions?.[0]?.textContent||'';
+  preview.style.display='block';
+  preview.innerHTML='<b>Проверьте данные</b><br>🏢 '+esc(company)+'<br>📍 '+esc(address||'—')+'<br>🛠 '+esc(name||'—')+'<br>💰 '+esc(price===null?'Цена не указана':price+' ֏');
+  statusEl.textContent='✓ Данные подготовлены. После «Сохранить» AI классифицирует услугу.';
+}
+let serviceRecognition=null;
+function startServiceVoice(){
+  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const btn=document.getElementById('svcVoiceBtn');
+  const statusEl=document.getElementById('svcAiStatus');
+  if(!SpeechRecognition){
+    toast('Голосовой ввод не поддерживается этим браузером. Можно написать текст.');
+    return;
+  }
+  if(serviceRecognition){try{serviceRecognition.stop()}catch(e){} serviceRecognition=null;return;}
+  const r=new SpeechRecognition();
+  r.lang=state.lang==='hy'?'hy-AM':state.lang==='ru'?'ru-RU':'en-US';
+  r.continuous=false;r.interimResults=true;
+  r.onstart=()=>{btn.textContent='⏹ Остановить';statusEl.textContent='🎤 Слушаю…'};
+  r.onresult=(e)=>{
+    let text='';
+    for(let i=e.resultIndex;i<e.results.length;i++) text+=e.results[i][0].transcript;
+    document.getElementById('svcAiText').value=text;
+  };
+  r.onerror=()=>{statusEl.textContent='Не удалось распознать голос. Попробуйте ещё раз или напишите текст.';btn.textContent='🎤 Говорить';serviceRecognition=null};
+  r.onend=()=>{btn.textContent='🎤 Говорить';serviceRecognition=null; if(document.getElementById('svcAiText')?.value.trim()) analyzeServiceText();};
+  serviceRecognition=r;
+  r.start();
 }
 async function uploadApplicationDocument(applicationId,file){
   if(!applicationId||!file)return;
