@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from aiohttp import web
+from notify import notify
 
 from config import BOT_TOKEN
 from database import _connect
@@ -435,6 +436,16 @@ async def _execute_mutation(pid,c,ctx):
                      match.get("category_id"),name,price,description,match.get("reason") or "AI assistant request.",json.dumps({"source":"partner_ai_assistant","message":c.get("message"),"object_id":oid},ensure_ascii=False)))
                 aid=int(cur.fetchone()["id"])
             conn.commit()
+        try:
+            admin_id = int(os.getenv("ADMIN_TELEGRAM_ID", "0") or 0)
+            if admin_id:
+                location = ", ".join(x for x in [o.get("marz"), o.get("city"), o.get("address")] if x)
+                body = "Поступила новая заявка #" + str(aid) + " от " + str(b.get("name") or "бизнес") + ".\\n\\n🛠 " + name + " · " + str(price if price is not None else "—") + " ֏"
+                if location: body += "\\n📍 " + location
+                await notify(request, admin_id, title="📨 Новая заявка", body=body, kind="partner_application", audience="admin", data={"application_id":aid}, telegram_text="🤖 AI-секретарь\\n\\n" + body + "\\n\\nНапишите, что сделать с заявкой.")
+        except Exception:
+            pass
+
         return web.json_response({"ok":True,"reply":"✓ Услуга «%s» подготовлена и отправлена администратору на подтверждение. Заявка #%s."%(name,aid),"data":{"application_id":aid}})
 
     with _connect() as conn:
