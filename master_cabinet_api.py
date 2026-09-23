@@ -729,6 +729,7 @@ async def api_service_create(request: web.Request):
     if match["status"] in {"out_of_scope","proposal"} or match.get("business_action")=="new_business":
         from partner_business_application_api import ensure_business_application_schema
         ensure_business_application_schema()
+        is_new_business=bool(data.get("new_business"))
         app_bid=None if match.get("business_action")=="new_business" else bid
         with _connect() as conn:
             with conn.cursor() as cur:
@@ -745,11 +746,15 @@ async def api_service_create(request: web.Request):
                              user_row.get("phone"),match.get("out_of_scope_master_name") or "",
                              match.get("out_of_scope_master_id") or match.get("master_category_id"),
                              match.get("proposed_name") or None,name,price,description,match.get("reason") or "",
-                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":app_bid is None,"object_id":object_id,"contact_phone":contact_phone,
+                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":is_new_business,"object_id":object_id,"contact_phone":contact_phone,
                                          "services":[{"name":name,"price":price,"description":description,"object_id":object_id,"contact_phone":contact_phone,
                                                       "matched_subcategory_id":match.get("category_id"),
                                                       "direction_id":match.get("master_category_id")}]},ensure_ascii=False)))
                 aid=int(cur.fetchone()["id"])
+                # A newly introduced company is only a draft container until
+                # the administrator approves its first service/application.
+                if is_new_business and app_bid is not None:
+                    cur.execute("UPDATE partner_businesses SET status='pending',is_default=FALSE,updated_at=NOW() WHERE id=%s AND partner_id=%s",(app_bid,pid))
             conn.commit()
         return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,"new_business":app_bid is None,
                                   "message":"AI-ն կազմեց ամբողջական հայտ և ուղարկեց ադմինիստրատորին։"})
