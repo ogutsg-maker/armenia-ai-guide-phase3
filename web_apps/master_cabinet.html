@@ -74,6 +74,16 @@ if(kind==='directions'){e.innerHTML='<div class="detail"><div class="heading"><h
 if(kind==='services'){e.innerHTML='<div class="detail"><div class="heading"><h2>🛠 '+tr('services')+'</h2><button class="btn" onclick="addService()">'+tr('addService')+'</button></div><div class="list">'+(state.services.length?state.services.map(s=>'<div class="item click" onclick="openService('+s.id+')"><div class="row"><b>'+esc(s.name||s.service_name)+'</b>'+status(s.status)+'</div><div class="muted">'+esc(s.price!=null?s.price+' AMD':'')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div></div>';return}
 if(kind==='documents'){e.innerHTML='<div class="detail"><h2>📄 '+tr('documents')+'</h2><p class="muted">Փաստաթղթերը պատկանում են ընկերությանը և կարող են օգտագործվել նրա նոր հայտերում։</p><div class="list">'+(state.documents.length?state.documents.map(d=>'<div class="item"><div class="row"><b>'+esc(d.original_filename||d.filename||tr('document'))+'</b>'+status(d.status)+'</div><div class="muted">'+esc(d.document_type||'')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div></div>';return}
 if(kind==='territories'){const places=state.objects.filter(o=>o.city||o.marz||o.address);e.innerHTML='<div class="detail"><h2>📍 '+tr('territories')+'</h2><p class="muted">Տարածքային ծածկույթը պատկանում է այս ընկերությանը։</p><div class="list">'+(places.length?places.map(o=>'<div class="item"><b>'+esc(o.object_name||o.name||'')+'</b><div class="muted">'+esc([o.marz,o.city,o.address].filter(Boolean).join(', ')||'—')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div></div>';}}
+function serviceLocation(s){
+  let d=s?.data_json; if(typeof d==='string'){try{d=JSON.parse(d)}catch(e){d={}}}
+  const name=s?.object_name||d?.object_snapshot?.name;
+  const address=s?.object_address||d?.object_snapshot?.address;
+  const city=s?.object_city||d?.object_snapshot?.city;
+  const marz=s?.object_marz||d?.object_snapshot?.marz;
+  const phone=s?.service_contact_phone||d?.contact_phone||d?.object_snapshot?.phone;
+  const place=[name,[marz,city,address].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+  return [place,phone?('📞 '+phone):''].filter(Boolean).join(' · ')||'';
+}
 function objectHours(o){
   let canonical=o?.working_hours;
   if(typeof canonical==='string'){try{canonical=JSON.parse(canonical)}catch(e){canonical={}}}
