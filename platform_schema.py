@@ -446,16 +446,9 @@ def ensure_platform_schema() -> None:
     ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS commission_value NUMERIC NOT NULL DEFAULT 10;
 
     CREATE INDEX IF NOT EXISTS idx_services_partner_status ON services(partner_id, status);
-    DO $
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname='fk_services_object'
-        ) THEN
-            ALTER TABLE services
-                ADD CONSTRAINT fk_services_object
-                FOREIGN KEY (object_id) REFERENCES partner_objects(id) ON DELETE SET NULL;
-        END IF;
-    END $;
+    ALTER TABLE services DROP CONSTRAINT IF EXISTS fk_services_object;
+    ALTER TABLE services ADD CONSTRAINT fk_services_object
+        FOREIGN KEY (object_id) REFERENCES partner_objects(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_partner_locations_partner ON partner_locations(partner_id);
     CREATE INDEX IF NOT EXISTS idx_service_requests_client ON service_requests(client_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_negotiations_request ON negotiations(request_id, status);
