@@ -130,9 +130,8 @@ def _admin_safe(value):
 def _admin_session(admin_id):
     sid=int(admin_id); now=time.time(); state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
-        state={"last_focused_application_id":None,"last_focused_field":None,"last_shown_applications":[],
-               "last_query":None,"last_shown_query_rows":[],
-               "pending_action":None,"waiting_for_input":None,"history":[],"updated_at":now}
+        state={"last_focused_application_id":None,"last_focused_field":None,"last_focused_entity_type":None,"last_focused_entity_id":None,"last_shown_applications":[],"current_list":[],"current_position":None,
+               "last_query":None,"last_shown_query_rows":[],"pending_action":None,"waiting_for_input":None,"history":[],"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
     return state
@@ -341,10 +340,10 @@ async def _admin_execute(command):
     if intent=="show_full_application":
         return _admin_full_application_text(aid)
     if intent=="show_partners":
-        rows=_admin_context(limit=1).get("partners",[])
+        rows=_admin_context(limit=50).get("partners",[])
         return "🤝 Партнёров нет." if not rows else "🤝 Партнёры:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:30])
     if intent=="show_businesses":
-        rows=_admin_context(limit=1).get("businesses",[])
+        rows=_admin_context(limit=100).get("businesses",[])
         return "🏢 Компаний нет." if not rows else "🏢 Компании:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:50])
     return "Неизвестный запрос."
 
@@ -923,7 +922,11 @@ async def admin_ai_message(admin_id,message):
     if field in {"category","subcategory","price","service_name","location_city","description"}: state["last_focused_field"]=field
     elif not field or field=="none": field=state.get("last_focused_field") or ""
     if aid:
-        try: aid=int(aid); state["last_focused_application_id"]=aid
+        try:
+            aid=int(aid)
+            state["last_focused_application_id"]=aid
+            state["last_focused_entity_type"]="application"
+            state["last_focused_entity_id"]=aid
         except (TypeError,ValueError): aid=None
 
     is_question=("?" in message or "՞" in message or bool(re.search(r"\b(как|какая|какие|какое|почему|зачем|что|где|сколько|what|which|how|why|where|how many|ինչ|ինչպես|որ|որտեղ|արդյոք|քանի)\b",message.casefold())))
@@ -955,7 +958,12 @@ async def admin_ai_message(admin_id,message):
         try: rows=_admin_context(limit=30).get("applications",[])
         except Exception: rows=[]
         state["last_shown_applications"]=[{"id":int(x["id"]),"business_name":x.get("business_name"),"service_name":x.get("service_name")} for x in rows[:20]]
-        if len(state["last_shown_applications"])==1: state["last_focused_application_id"]=state["last_shown_applications"][0]["id"]
+        state["current_list"]=[{"type":"application","id":int(x["id"]),"business_name":x.get("business_name")} for x in rows[:20]]
+        state["current_position"]=0 if rows else None
+        if rows:
+            state["last_focused_application_id"]=int(rows[0]["id"])
+            state["last_focused_entity_type"]="application"
+            state["last_focused_entity_id"]=int(rows[0]["id"])
         reply=await _admin_execute({"intent":"show_applications"})
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
