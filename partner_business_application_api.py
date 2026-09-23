@@ -99,7 +99,7 @@ def ensure_business_application_schema():
     ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     CREATE INDEX IF NOT EXISTS idx_partner_businesses_partner ON partner_businesses(partner_id,status);
     ALTER TABLE partner_directions DROP CONSTRAINT IF EXISTS partner_directions_partner_id_master_category_id_key;
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_direction_business_master ON partner_directions(business_id,master_category_id);
+    -- The unique index is recreated below, after legacy duplicates are repaired.
     CREATE INDEX IF NOT EXISTS idx_partner_directions_business ON partner_directions(business_id,status);
     CREATE INDEX IF NOT EXISTS idx_services_business ON services(business_id,status);
     CREATE INDEX IF NOT EXISTS idx_partner_documents_business ON partner_verification_documents(business_id,created_at DESC);
