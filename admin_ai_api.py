@@ -211,38 +211,28 @@ async def _admin_ai_json(message,ctx):
     client=AsyncGroq(api_key=key)
     system="""You are the intent extractor for the Armenia AI Guide admin secretary.
 Understand Armenian, Russian and English natural language.
-Return ONLY JSON and never invent IDs.
-Do not execute SQL and do not write the final response.
-Fields:
-intent = inspect | edit | approve | reject | clarify | show
-target = application | partner | business | service | category | document | order
-application_id = integer or null
-field = name | price | category | subcategory | direction | city | address | phone | description | status | document | note | null
-value_text = requested value or null
-reason = short reason
-confidence = number from 0 to 1
-Examples:
-ենթակատեգորիան ճիշտ չէ -> edit/application/subcategory with null value
-այստեղ պետք է Հոնքեր լինի -> edit/application/subcategory/value Հոնքեր
-цена неправильная, поставь 2500 -> edit/application/price/value 2500
-это вообще не та категория -> edit/application/category with null value
-заявка заполнена неправильно -> clarify/application
-одобри заявку 36 -> approve/application/36
-открой заявку 36 -> inspect/application/36
-Use the focused application for references such as this, here, it, the application."""
+Return ONLY one valid JSON object. No markdown, no explanations.
+Schema: {"intent":"inspect|edit|approve|reject|clarify|show","target":"application|partner|business|service|category|document|order","application_id":null,"field":null,"value_text":null,"reason":null,"confidence":0.0}
+"Ստուգիր հայտերը" means show applications.
+"Ստուգիր հայտը" means show applications.
+"открой заявку 36" means inspect application 36.
+"ենթակատեգորիան ճիշտ չէ" means edit application subcategory, with no value.
+"այստեղ պետք է Հոնքեր լինի" means edit application subcategory to Հոնքեր.
+"цена неправильная, поставь 2500" means edit application price to 2500.
+"одобри заявку 36" means approve application 36.
+"заявка заполнена неправильно" means clarify application.
+Use focused_application for this, here, it, the application. Never invent IDs."""
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
-        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=300)
+        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=180,response_format={"type":"json_object"})
     except Exception as first:
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
-            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=300)
-        else:
-            raise
+            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=180,response_format={"type":"json_object"})
+        else: raise
     raw=(resp.choices[0].message.content or "").strip()
-    data=json.loads(raw)
-    return data if isinstance(data,dict) else {}
-
+    raw=re.sub(r"^```json\s*|\s*```$","",raw,flags=re.I|re.S).strip()
+    return json.loads(raw)
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
     if not message: return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
