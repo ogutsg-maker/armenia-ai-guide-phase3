@@ -209,6 +209,8 @@ async function addService(){
       '<div id="svcNewBusiness" style="display:none">'+
         '<div class="grid2"><div class="field"><label>Название компании</label><input id="svcBusinessName"></div><div class="field"><label>Телефон компании</label><input id="svcBusinessPhone" inputmode="tel"></div></div>'+
         '<div class="field"><label>Описание компании</label><textarea id="svcBusinessDescription" rows="3"></textarea></div>'+
+        '<div class="field"><label>📄 Документ компании</label><input id="svcBusinessDocument" type="file" accept=".pdf,image/jpeg,image/png,image/webp"></div>'+
+        '<div class="muted small">Для новой компании документ можно приложить сразу. Администратор увидит его вместе с компанией и первой услугой.</div>'+
       '</div>'+
     '</div>'+
     '<div class="section"><h3>📍 Адрес</h3>'+
@@ -289,6 +291,16 @@ async function addService(){
   setDefaultPhone();
   document.getElementById('svcName')?.focus();
 }
+async function uploadApplicationDocument(applicationId,file){
+  if(!applicationId||!file)return;
+  const fd=new FormData();
+  fd.append('file',file);
+  fd.append('document_type','business_document');
+  const r=await fetch('/api/master/0/applications/'+applicationId+'/document',{method:'POST',headers:headers(),body:fd});
+  const d=await r.json().catch(()=>({ok:false,error:'bad_json'}));
+  if(!r.ok||d.ok===false)throw new Error(d.error||d.message||('HTTP '+r.status));
+  return d;
+}
 async function submitNewService(){
   const businessValue=document.getElementById('svcBusiness')?.value||'';
   const newBusiness=businessValue==='__new__';
@@ -298,6 +310,7 @@ async function submitNewService(){
   const description=document.getElementById('svcDescription')?.value.trim()||'';
   const priceRaw=document.getElementById('svcPrice')?.value.trim()||'';
   const phone=document.getElementById('svcPhone')?.value.trim()||'';
+  const businessDocument=document.getElementById('svcBusinessDocument')?.files?.[0]||null;
   if(!businessValue){toast('Выберите компанию');return}
   if(newBusiness && (document.getElementById('svcBusinessName')?.value.trim()||'').length<2){toast('Введите название компании');return}
   if(!newBusiness && !state.businesses.find(b=>String(b.id)===String(businessValue))){toast('Компания не найдена');return}
@@ -343,17 +356,37 @@ async function submitNewService(){
       name:serviceName,description,price:priceRaw===''?null:Number(priceRaw),
       object_id:objectId,contact_phone:contactPhone,new_business:newBusiness
     }});
+    if(newBusiness && businessDocument && d.application_id){
+      await uploadApplicationDocument(d.application_id,businessDocument);
+    }
     closeServiceCreate();
     await loadBusinesses();
     state.current=state.businesses.find(b=>String(b.id)===String(businessId))||state.businesses[0]||null;
     await openBusiness(businessId); showCompanySection('services');
-    toast(d.proposal_created?'Заявка на услугу отправлена администратору':'Услуга сохранена');
+    toast(d.proposal_created?(newBusiness&&businessDocument?'Заявка отправлена администратору вместе с документом':'Заявка на услугу отправлена администратору'):'Услуга сохранена');
   }catch(e){
     if(save){save.disabled=false;save.textContent='✓ '+tr('save')}
     toast(e.message);
   }
 }
-function renderApplications(){document.getElementById('applications').innerHTML='<div class="heading"><div><h1>📨 '+tr('applications')+'</h1><p>Այստեղ միայն ընթացակարգերն են։ Ավարտված հայտը այլևս այստեղ չի մնում որպես ակտիվ գործընթաց։</p></div></div><div class="list">'+(state.applications.length?state.applications.map(a=>'<div class="item click" onclick="openApplication('+a.id+')"><div class="row"><b>#'+a.id+' · '+esc(a.service_name||a.business_name||'Հայտ')+'</b>'+status(a.status)+'</div><div class="muted">'+esc(a.business_name_db||a.business_name||'')+' · '+esc(a.direction_name||a.master_name_am||'')+'</div><div class="chips"><span class="chip">'+esc(a.category_name_am||a.category_name_ru||'AI')+'</span>'+(a.document_id?'<span class="chip ok">📄 '+tr('document')+'</span>':'')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>'}
+function renderApplications(){
+  document.getElementById('applications').innerHTML='<div class="heading"><div><h1>📨 '+tr('applications')+'</h1><p>Այստեղ ընթացիկ հայտերն են։ Նոր ընկերության առաջին ծառայության հայտը պահպանում է ամբողջ ընկերության կոնտեքստը։</p></div></div><div class="list">'+
+  (state.applications.length?state.applications.map(a=>{
+    const needsDoc=!a.document_id && ['pending_admin','document_pending','document_under_review'].includes(String(a.status||''));
+    const doc=a.document_id?'<span class="chip ok">📄 '+tr('document')+'</span>':'<span class="chip warn">📄 '+(state.lang==='ru'?'Документ не загружен':state.lang==='en'?'Document not uploaded':'Փաստաթուղթ չկա')+'</span>';
+    return '<div class="item"><div class="row"><b>#'+a.id+' · '+esc(a.service_name||a.business_name||'Հայտ')+'</b>'+status(a.status)+'</div>'+
+      '<div class="muted">'+esc(a.business_name_db||a.business_name||'')+' · '+esc(a.direction_name||a.master_name_am||'')+'</div>'+
+      '<div class="chips">'+doc+'</div>'+
+      (a.document_id?'<div class="muted small">Փաստաթուղթը կցված է այս հայտին։</div>':'')+
+      (needsDoc?'<div class="section"><label class="muted small">📄 '+(state.lang==='ru'?'Добавить документ к этой заявке':state.lang==='en'?'Add document to this application':'Ավելացնել փաստաթուղթ այս հայտին')+'</label><input id="appDoc'+a.id+'" type="file" accept=".pdf,image/jpeg,image/png,image/webp" onchange="uploadApplicationDocumentFromInput('+a.id+',this)"></div>':'')+
+      '<div class="actions" style="margin-top:9px"><button class="btn secondary" onclick="openApplication('+a.id+')">'+tr('open')+' →</button></div></div>';
+  }).join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>';
+}
+async function uploadApplicationDocumentFromInput(id,input){
+  const file=input?.files?.[0]; if(!file)return;
+  try{input.disabled=true;await uploadApplicationDocument(id,file);await loadApplications();renderApplications();toast('✓ '+(state.lang==='ru'?'Документ загружен':state.lang==='en'?'Document uploaded':'Փաստաթուղթը բեռնվեց'))}
+  catch(e){input.disabled=false;toast(e.message)}
+}
 function openApplication(id){const a=state.applications.find(x=>x.id===id);if(!a)return;const p=a.payload_json||{};const sv=a.services||p.services||[];document.getElementById('application').innerHTML='<button class="back" onclick="openMain(\'applications\')">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h1>📨 #'+a.id+'</h1><p>'+esc(a.business_name_db||a.business_name||'')+'</p></div>'+status(a.status)+'</div><div class="section"><h3>'+tr('applicationInfo')+'</h3><div class="grid2"><div><b>'+tr('direction')+'</b><div>'+esc(a.master_name_am||a.master_name_ru||a.direction_name||'—')+'</div></div><div><b>'+tr('subcategory')+'</b><div>'+esc(a.category_name_am||a.category_name_ru||a.subcategory_name||'—')+'</div></div><div><b>'+tr('price')+'</b><div>'+esc(a.price??'—')+'</div></div><div><b>'+tr('document')+'</b><div>'+ (a.document_id?status(a.document_status||'pending'):'—')+'</div></div></div></div><div class="section"><h3>'+tr('services')+'</h3><div class="list">'+(sv.length?sv.map(x=>'<div class="item"><div class="row"><b>'+esc(x.name||x.service_name)+'</b><span>'+esc(x.price??'')+' AMD</span></div><div class="muted">'+esc(x.direction_name||'')+' · '+esc(x.subcategory_name||'')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div></div><div class="section"><div class="notice">Եթե գործընթացը ավարտվի հաստատմամբ, արդյունքը դառնում է իրական ընկերություն / ուղղություն / ծառայություն և այլևս չի խառնվում ակտիվ հայտերի հետ։</div></div></div>';setView('application',false)}
 function renderOrders(){document.getElementById('orders').innerHTML='<div class="heading"><div><h1>📥 '+tr('orders')+'</h1><p>Պատվերները առանձին աշխատանքային հոսք են և կապված են ընտրված ընկերության հետ։</p></div></div><div class="list">'+(state.bookings.length?state.bookings.map(b=>'<div class="item"><div class="row"><b>#'+b.id+'</b>'+status(b.status)+'</div><div class="muted">'+esc(b.service_name||'')+'</div></div>').join(''):'<div class="empty">'+tr('noOrders')+'</div>')+'</div>'}
 function renderNegotiations(){document.getElementById('negotiations').innerHTML='<div class="heading"><div><h1>💬 '+tr('negotiations')+'</h1><p>Բանակցությունները բացվում են առանձին սենյակում՝ առանց ընկերության հիմնական տվյալները խառնելու։</p></div></div><div class="empty">'+tr('noNegotiations')+'</div>'}
