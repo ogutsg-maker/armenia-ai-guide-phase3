@@ -876,6 +876,67 @@ async def api_locations(request: web.Request):
     return web.json_response({"ok": True, "locations": _json(rows)})
 
 
+async def api_location_create(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    bid = _business_id(request,pid)
+    data = await request.json()
+    address = str(data.get("address") or "").strip()
+    city = str(data.get("city") or "").strip()
+    marz = str(data.get("marz") or "").strip()
+    phone = str(data.get("phone") or "").strip() or None
+    if not address or not city:
+        return web.json_response({"ok":False,"error":"location_address_city_required"},status=400)
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO partner_locations(partner_id,business_id,address,city,marz,phone)
+                           VALUES(%s,%s,%s,%s,%s,%s) RETURNING *""",
+                        (pid,bid,address,city,marz,phone))
+            row=cur.fetchone()
+        conn.commit()
+    return web.json_response({"ok":True,"location":_json(row)})
+
+
+async def api_location_update(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    bid = _business_id(request,pid)
+    lid = int(request.match_info["location_id"])
+    data = await request.json()
+    allowed={"address","city","marz","phone"}
+    fields={k:str(data[k]).strip() if data[k] is not None else None for k in allowed if k in data}
+    if "address" in fields and not fields["address"]:
+        return web.json_response({"ok":False,"error":"location_address_required"},status=400)
+    if "city" in fields and not fields["city"]:
+        return web.json_response({"ok":False,"error":"location_city_required"},status=400)
+    if not fields:
+        return web.json_response({"ok":True})
+    sets=", ".join(f"{k}=%s" for k in fields)
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE partner_locations SET {sets} WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING *",
+                        (*fields.values(),lid,pid,bid))
+            row=cur.fetchone()
+        conn.commit()
+    if not row:
+        return web.json_response({"ok":False,"error":"location_not_found"},status=404)
+    return web.json_response({"ok":True,"location":_json(row)})
+
+
+async def api_location_delete(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    bid = _business_id(request,pid)
+    lid = int(request.match_info["location_id"])
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM partner_locations WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING id",(lid,pid,bid))
+            row=cur.fetchone()
+        conn.commit()
+    if not row:
+        return web.json_response({"ok":False,"error":"location_not_found"},status=404)
+    return web.json_response({"ok":True,"id":lid})
+
 async def api_reviews(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -1044,6 +1105,9 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/notifications/read-all", api_notifications_read_all)
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
     app.router.add_get("/api/master/{id}/locations", api_locations)
+    app.router.add_post("/api/master/{id}/locations", api_location_create)
+    app.router.add_post("/api/master/{id}/locations/{location_id}", api_location_update)
+    app.router.add_delete("/api/master/{id}/locations/{location_id}", api_location_delete)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
     # NOTE: GET /api/master/{id}/documents is already registered by
     # register_stage3_routes (api_partner_documents), which is called earlier
