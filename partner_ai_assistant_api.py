@@ -233,6 +233,45 @@ async def api_ai_command(request: web.Request):
     if not message:
         return web.json_response({"ok":False,"error":"message_required"},status=400)
     ctx=_context(pid)
+
+    # Natural-language confirmation: if the partner answers "да / yes / այո"
+    # after a pending action, treat it exactly like pressing the Confirm button.
+    normalized = re.sub(r"[\\s.!?,;:]+", " ", message.lower()).strip()
+    if normalized in {
+        "да", "да да", "yes", "y", "ok", "okay", "confirm", "confirmed",
+        "подтверждаю", "подтвердить", "согласен", "согласна",
+        "այո", "հա", "հաստատում եմ", "հաստատել"
+    }:
+        pending = [
+            (ts, token, cmd)
+            for token, (ts, owner_pid, cmd) in _PENDING.items()
+            if owner_pid == pid and time.time() - ts <= _PENDING_TTL
+        ]
+        if pending:
+            _, token, command = max(pending, key=lambda item: item[0])
+            _PENDING.pop(token, None)
+            result = await _execute_mutation(pid, command, ctx)
+            if isinstance(result, web.Response):
+                return result
+
+    # Natural-language cancellation of the last pending action.
+    if normalized in {
+        "нет", "no", "n", "cancel", "отмена", "отменить",
+        "не надо", "не делай", "ոչ", "ոչ, պետք չէ", "չեղարկել"
+    }:
+        pending = [
+            (ts, token)
+            for token, (ts, owner_pid, _) in _PENDING.items()
+            if owner_pid == pid and time.time() - ts <= _PENDING_TTL
+        ]
+        if pending:
+            _, token = max(pending, key=lambda item: item[0])
+            _PENDING.pop(token, None)
+            return web.json_response({
+                "ok": True,
+                "reply": {"hy": "Գործողությունը չեղարկվեց։", "ru": "Действие отменено.", "en": "Action cancelled."}.get(language, "Action cancelled.")
+            })
+
     try:
         command=await _ai_json(message,language,ctx)
     except Exception as exc:
@@ -252,8 +291,28 @@ async def api_ai_command(request: web.Request):
 
 def _preview(c,ctx,lang):
     intent=c.get("intent","")
-    names={ "add_service":"Добавить услугу", "update_service":"Изменить услугу", "delete_service":"Удалить услугу", "add_business":"Добавить компанию", "update_business":"Изменить компанию", "delete_business":"Удалить компанию", "add_address":"Добавить адрес", "update_address":"Изменить адрес", "delete_address":"Удалить адрес" }
-    return names.get(intent,intent)
+    names={
+        "add_service":"Добавить услугу",
+        "update_service":"Изменить услугу",
+        "delete_service":"Удалить услугу",
+        "add_business":"Добавить компанию",
+        "update_business":"Изменить компанию",
+        "delete_business":"Удалить компанию",
+        "add_address":"Добавить адрес",
+        "update_address":"Изменить адрес",
+        "delete_address":"Удалить адрес",
+    }
+    title=names.get(intent,intent)
+    details=[]
+    if c.get("name"):
+        details.append("🛠 "+str(c["name"]))
+    if c.get("price") is not None:
+        details.append("💰 "+str(c["price"])+" ֏")
+    if c.get("business_id"):
+        details.append("🏢 "+(_entity_name(ctx,"businesses",c.get("business_id")) or str(c["business_id"])))
+    if c.get("object_id"):
+        details.append("📍 "+(_entity_name(ctx,"addresses",c.get("object_id")) or str(c["object_id"])))
+    return title + (":\\n" + "\\n".join(details) if details else "")
 
 
 async def _execute_read(pid,c,ctx):
