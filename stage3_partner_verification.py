@@ -1005,6 +1005,78 @@ async def api_admin_partner_reject(request):
     return await _set_partner_decision(request, "reject")
 
 
+async def api_admin_partner_business_delete(request):
+    """Safely remove one company from the admin panel.
+
+    Empty/erroneous companies are hard-deleted. Companies that already have
+    transactional or approved history are archived instead, so orders,
+    payments and audit history cannot be destroyed accidentally.
+    """
+    admin_id = _admin_telegram_id(
+        request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id")
+    )
+    pid = int(request.match_info["id"])
+    bid = int(request.match_info["business_id"])
+
+    business = _db_fetchone(
+        "SELECT * FROM partner_businesses WHERE id=%s AND partner_id=%s",
+        (bid, pid),
+    )
+    if not business:
+        return web.json_response({"ok": False, "error": "business_not_found"}, status=404)
+    if business.get("status") == "archived":
+        return web.json_response({"ok": True, "deleted": False, "archived": True, "business_id": bid})
+
+    counts = _db_fetchone(
+        """SELECT
+             (SELECT COUNT(*) FROM services WHERE business_id=%s AND status<>'deleted') AS services,
+             (SELECT COUNT(*) FROM partner_verification_documents WHERE business_id=%s) AS documents,
+             (SELECT COUNT(*) FROM partner_objects WHERE business_id=%s) AS objects,
+             (SELECT COUNT(*) FROM partner_locations WHERE business_id=%s) AS locations,
+             (SELECT COUNT(*) FROM bookings WHERE business_id=%s) AS bookings,
+             (SELECT COUNT(*) FROM partner_applications WHERE business_id=%s AND status='approved') AS approved_applications
+           """,
+        (bid, bid, bid, bid, bid, bid),
+    ) or {}
+
+    transactional = int(counts.get("bookings") or 0) > 0
+    historical = transactional or int(counts.get("approved_applications") or 0) > 0
+
+    if historical:
+        _db_execute(
+            "UPDATE partner_businesses SET status='archived', is_default=FALSE, updated_at=NOW() WHERE id=%s AND partner_id=%s",
+            (bid, pid),
+        )
+        _audit(admin_id, "business_archived", bid, {
+            "partner_id": pid,
+            "reason": "historical_data",
+            "counts": counts,
+        })
+        return web.json_response({
+            "ok": True,
+            "deleted": False,
+            "archived": True,
+            "business_id": bid,
+            "message": "Компания архивирована: у неё есть история, которую нельзя удалить.",
+        })
+
+    # No orders/payments or approved application history: this is safe to remove.
+    # FK rules on the business-scoped tables remove the company's directions,
+    # services, documents, objects, locations and pending requests; booking rows
+    # are not expected here and are protected by the historical check above.
+    _db_execute("DELETE FROM partner_businesses WHERE id=%s AND partner_id=%s", (bid, pid))
+    _audit(admin_id, "business_deleted", bid, {
+        "partner_id": pid,
+        "counts": counts,
+    })
+    return web.json_response({
+        "ok": True,
+        "deleted": True,
+        "archived": False,
+        "business_id": bid,
+    })
+
+
 async def api_admin_partner_suspend(request):
     admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     pid = int(request.match_info["id"])
@@ -1037,5 +1109,5 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/admin/partner-applications/{id}/approve", api_admin_partner_approve)
     app.router.add_post("/api/admin/partner-applications/{id}/reject", api_admin_partner_reject)
     app.router.add_post("/api/admin/partner-applications/{id}/suspend", api_admin_partner_suspend)
-    app.router.add_post("/api/admin/partner-applications/{id}/block", api_admin_partner_block)
+    app.router.add_delete("/api/admin/partner-applications/{id}/businesses/{business_id}", api_admin_partner_business_delete)\n    app.router.add_post("/api/admin/partner-applications/{id}/block", api_admin_partner_block)
 
