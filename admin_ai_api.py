@@ -131,6 +131,7 @@ def _admin_session(admin_id):
     sid=int(admin_id); now=time.time(); state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
         state={"last_focused_application_id":None,"last_focused_field":None,"last_shown_applications":[],
+               "last_query":None,"last_shown_query_rows":[],
                "pending_action":None,"waiting_for_input":None,"history":[],"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
@@ -160,7 +161,11 @@ def _admin_hydrate_context(state,limit=12):
     except Exception: applications=[]
     return _admin_safe({"focused_application":_admin_hydrate_application(state.get("last_focused_application_id")),
         "applications":applications,"waiting_for_input":state.get("waiting_for_input"),
-        "last_focused_field":state.get("last_focused_field"),"history":state.get("history",[])[-6:]})
+        "last_focused_field":state.get("last_focused_field"),
+        "last_query":state.get("last_query"),
+        "last_shown_query_rows":state.get("last_shown_query_rows",[])[:10],
+        "query_capabilities":{"targets":["applications","partners","businesses","catalog"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
+        "history":state.get("history",[])[-6:]})
 
 
 def _admin_context(limit=30,include_catalog=False):
@@ -178,6 +183,79 @@ def _admin_context(limit=30,include_catalog=False):
     if include_catalog: result["catalog"]=_admin_catalog()
     return _admin_safe(result)
 
+
+
+# =====================================================================
+# Dynamic Admin Query / Skills layer
+# =====================================================================
+_ADMIN_QUERY_TARGETS={
+ "applications":{"table":"partner_applications a","select":"a.id,a.business_name,a.status,a.service_name,a.price,a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,a.location_marz,a.location_city,a.location_village,a.address,a.phone,a.description,a.created_at,a.updated_at","order":"a.created_at DESC","limit":50,"aliases":{"application","applications","requests","заявки","հայտեր"},"fields":{"status":"a.status","business_name":"a.business_name","service_name":"a.service_name","price":"a.price","direction_name":"a.direction_name","subcategory_name":"a.subcategory_name","location_marz":"a.location_marz","location_city":"a.location_city","location_village":"a.location_village","address":"a.address","phone":"a.phone","description":"a.description","category_id":"a.category_id","master_category_id":"a.master_category_id"}},
+ "partners":{"table":"partners p","select":"p.id,p.user_id,p.business_name,p.business_description,p.status,p.verification_status,p.contact_share_policy,p.created_at,p.updated_at","order":"p.created_at DESC","limit":50,"aliases":{"partner","partners","партнеры","գործընկերներ"},"fields":{"status":"p.status","verification_status":"p.verification_status","business_name":"p.business_name","business_description":"p.business_description"}},
+ "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
+ "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}}
+_ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
+_ADMIN_STATUS_ALIASES={"applications":{"pending":["pending_admin","pending_partner","document_pending"],"moderation":["pending_admin"]},"partners":{"pending":["pending"],"moderation":["pending","pending_verification"]},"businesses":{}}
+def _admin_query_target(value):
+ text=_norm(value)
+ if text in _ADMIN_QUERY_TARGETS:return text
+ for key,spec in _ADMIN_QUERY_TARGETS.items():
+  if text in {_norm(x) for x in spec.get("aliases",set())}:return key
+ return None
+def _admin_query_filter_items(filters):
+ if not isinstance(filters,dict):return []
+ items=[]
+ for raw_field,raw_value in filters.items():
+  field=_ADMIN_QUERY_FIELD_ALIASES.get(_norm(raw_field),_norm(raw_field))
+  if isinstance(raw_value,dict):
+   for op,value in raw_value.items():items.append((field,_norm(op),value))
+  else:items.append((field,"eq",raw_value))
+ return items
+def _admin_query_build(target,filters,limit=20):
+ target=_admin_query_target(target)
+ if not target:return None,"Неизвестный объект данных."
+ spec=_ADMIN_QUERY_TARGETS[target];clauses=[];params=[]
+ if spec.get("base_where"):clauses.append(spec["base_where"])
+ for field,op,value in _admin_query_filter_items(filters):
+  column=spec["fields"].get(field)
+  if not column:return None,"Фильтр «"+str(field)+"» недоступен для объекта «"+target+"»."
+  op=str(op or "eq").casefold().strip()
+  if op in {"eq","equals","="}:
+   aliases=_ADMIN_STATUS_ALIASES.get(target,{}).get(_norm(value))
+   if field=="status" and aliases:clauses.append(column+" = ANY(%s)");params.append(list(aliases))
+   else:clauses.append(column+" = %s");params.append(value)
+  elif op in {"neq","not_equals","!="}:clauses.append(column+" <> %s");params.append(value)
+  elif op in {"contains","like","ilike"}:clauses.append("COALESCE("+column+",'') ILIKE %s");params.append("%"+str(value)+"%")
+  elif op in {"gt","greater_than","price_gt"}:clauses.append(column+" > %s");params.append(value)
+  elif op in {"gte","greater_or_equal","at_least","price_gte"}:clauses.append(column+" >= %s");params.append(value)
+  elif op in {"lt","less_than","price_lt"}:clauses.append(column+" < %s");params.append(value)
+  elif op in {"lte","less_or_equal","at_most","price_lte"}:clauses.append(column+" <= %s");params.append(value)
+  elif op=="in":
+   if not isinstance(value,list) or not value or len(value)>20:return None,"Оператор in требует список до 20 значений."
+   clauses.append(column+" = ANY(%s)");params.append(value)
+  else:return None,"Оператор «"+op+"» не разрешён."
+ try:limit=max(1,min(int(limit or 20),int(spec.get("limit",50))))
+ except Exception:limit=20
+ where=(" WHERE "+" AND ".join(clauses)) if clauses else ""
+ sql="SELECT "+spec["select"]+" FROM "+spec["table"]+where+" ORDER BY "+spec["order"]+" LIMIT %s";params.append(limit)
+ return (sql,tuple(params),target),None
+def _admin_query_rows(target,filters,limit=20):
+ built,error=_admin_query_build(target,filters,limit)
+ if error:return None,error
+ sql,params,target=built
+ try:return platform_db.rows(sql,params),None
+ except Exception as exc:return None,"Не удалось выполнить поиск по «"+target+"»: "+str(exc)[:180]
+def _admin_query_result_text(target,rows,filters,question):
+ if not rows:return "🔎 Ничего не найдено."
+ labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог"}
+ lines=[labels.get(target,"🔎 Результат")+" ("+str(len(rows))+"):"]
+ for x in rows[:20]:
+  if target=="applications":
+   loc=", ".join(str(v) for v in (x.get("location_marz"),x.get("location_city"),x.get("address")) if v)
+   lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏"+(" · "+loc if loc else ""))
+  elif target=="partners":lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")+" · verification="+str(x.get("verification_status") or "—"))
+  elif target=="businesses":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")+" · "+str(x.get("partner_business_name") or "—"))
+  else:lines.append("#"+str(x.get("id"))+" · "+str(x.get("name_am") or x.get("name_ru") or x.get("name_en") or "—")+" · "+str(x.get("master_name_am") or x.get("master_name_ru") or "—"))
+ return "\n".join(lines)
 
 async def _admin_execute(command):
     intent=str(command.get("intent") or ""); aid=command.get("application_id")
@@ -212,6 +290,8 @@ async def _admin_execute(command):
         if not a: return "Заявка #"+str(aid)+" не найдена."
         loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
         return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
+    if intent=="query_database":
+        return await _admin_query_answer(str(command.get("question") or message),command.get("target") or "applications",command.get("filters") or {},command.get("limit") or 20)
     if intent=="show_full_application":
         return _admin_full_application_text(aid)
     if intent=="show_partners":
@@ -514,18 +594,26 @@ STRICT RULES:
 6. Questions and inspection requests are READ ONLY. Do not turn a question into a mutation.
 7. Understand Armenian, Russian and English, including mixed-language messages.
 
-Return exactly:
-{"intent":"show_applications|show_application_count|show_application|show_application_field|inspect_application|suggest_application_correction|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","action_required":"suggest_alternatives|request_value|execute|read_only","value_raw":null,"reason":null,"confidence":0.0}
+Return exactly one JSON object in this schema:
+{"intent":"query_database|show_applications|show_application_count|show_application|show_application_field|inspect_application|suggest_application_correction|edit_application|approve_application|reject_application|clarify_application|show_partners|show_businesses|unknown","target":"applications|partners|businesses|catalog|application|partner|business|service|category|document|order","application_id":null,"field":"subcategory|price|service_name|location_city|description|null","filters":{},"limit":20,"action_required":"read_only|suggest_alternatives|request_value|execute","value_raw":null,"reason":null,"confidence":0.0}
 
 INTENT RULES:
-- "сколько заявок", "քանի հայտ", "how many applications" -> show_application_count.
-- "покажи/проверь заявки" -> show_applications.
+- Any information request needing database rows, a count, search, filtering, or comparison -> query_database.
+- "сколько заявок", "քանի հայտ", "how many applications" -> query_database target=applications.
+- "покажи/проверь заявки" -> show_applications or query_database.
 - "открой/покажи заявку" -> show_application.
-- "проверь ... и исправь ошибки", "նայիր հայտերը և ուղղիր սխալները" -> suggest_application_correction. This means inspect first and prepare a proposal; NEVER mutate directly.
-- Questions about a field are read_only and use show_application_field or inspect_application.
+- "проверь ... и исправь ошибки", "նայիր հայտերը և ուղղիր սխալները" -> suggest_application_correction. Inspect first; NEVER mutate directly.
+- Questions are always read_only.
+- query_database filters use only eq, neq, contains, gt, gte, lt, lte, in.
+- Common filters: location_city, location_marz, location_village, address, status, business_name, service_name, subcategory_name, price.
+- "дороже 5000", "выше 5000", "5000-ից բարձր" -> price {"gt":5000}.
+- "дешевле 5000" -> price {"lt":5000}.
+- "Котайк" as region -> location_marz="Kotayk"; "Раздан"/"Հրազդան" -> location_city="Հրազդան".
+- "кто сейчас висит на модерации" -> status="pending".
+- "у кого цена выше 5000" usually target=applications.
+- Never invent IDs, SQL, table names, column names, or catalog IDs. Python validates query fields and builds SQL.
 - A correction without a value is edit_application with value_raw=null and action_required=suggest_alternatives.
 - An explicit replacement value is edit_application with action_required=execute.
-- Never invent IDs or catalog values. Python resolves all IDs and catalog values.
 
 FIELD RULES:
 - ենթակատեգորիա / подкатегория / subcategory -> subcategory
@@ -544,6 +632,14 @@ Focused application #36, last field=subcategory:
 "проверь какая подкатегория" -> show_application_field, field=subcategory.
 "открой заявку #36" -> show_application, application_id=36.
 "поменяй подкатегорию на Брови" -> edit_application, field=subcategory, value_raw="Брови", action_required=execute.
+
+QUERY EXAMPLES:
+"покажи заявки из Раздана дороже 3000" -> query_database, target=applications, filters={"location_city":"Հրազդան","price":{"gt":3000}}
+"у кого цена выше 5000?" -> query_database, target=applications, filters={"price":{"gt":5000}}
+"у кого из партнеров в Котайке статус pending?" -> query_database, target=partners, filters={"status":"pending","location_marz":"Kotayk"}
+"покажи дорогие услуги" -> query_database, target=applications, filters={"price":{"gt":5000}}
+"есть че по Раздану?" -> query_database, target=applications, filters={"location_city":"Հրազդան"}
+"каталог маникюра" -> query_database, target=catalog, filters={"name":{"contains":"маникюр"}}
 
 Never return a catalog ID. Never invent a value not present in the administrator's message or supplied context.
 """
@@ -785,6 +881,20 @@ async def admin_ai_message(admin_id,message):
 
     is_question=("?" in message or "՞" in message or bool(re.search(r"\b(как|какая|какие|какое|почему|зачем|что|где|сколько|what|which|how|why|where|how many|ինչ|ինչպես|որ|որտեղ|արդյոք|քանի)\b",message.casefold())))
     if is_question and intent in {"edit_application","approve_application","reject_application","clarify_application"}: intent="show_application_field" if field else "inspect_application"
+
+    if intent=="query_database":
+        qtarget=_admin_query_target(target or c.get("target"))
+        if not qtarget:
+            reply="Не понял, по каким данным нужно искать. Укажите: заявки, партнёры, компании или каталог."
+        else:
+            qfilters=c.get("filters") or {}; qlimit=c.get("limit") or 20
+            rows,error=_admin_query_rows(qtarget,qfilters,qlimit)
+            if error: reply="⚠️ "+error
+            else:
+                state["last_query"]={"target":qtarget,"filters":_admin_safe(qfilters),"limit":int(qlimit or 20)}
+                state["last_shown_query_rows"]=[_admin_safe(x) for x in (rows or [])[:20]]
+                reply=_admin_query_result_text(qtarget,rows,qfilters,message)
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
     if intent=="show_application_count":
         rows=_admin_context(limit=30).get("applications",[])
