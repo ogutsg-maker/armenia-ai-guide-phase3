@@ -319,12 +319,57 @@ def _admin_query_build(target,filters,limit=20,sort=None):
    order_sql=sort_col+" "+sd.upper()
  sql="SELECT "+spec["select"]+" FROM "+spec["table"]+where+" ORDER BY "+order_sql+" LIMIT %s";params.append(limit)
  return (sql,tuple(params),target),None
+def _admin_service_price_map(service_ids):
+    """Read partner-service prices using the actual live schema, without assuming column names.
+    Prices belong to partner service records, not the catalog master service row.
+    """
+    ids=[int(x) for x in (service_ids or []) if str(x).isdigit()]
+    if not ids:
+        return {}
+    try:
+        cols=platform_db.rows("""SELECT column_name FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='partner_services'
+            ORDER BY ordinal_position""")
+    except Exception:
+        return {}
+    names={str(x.get("column_name") or "").lower() for x in cols or []}
+    sid=next((x for x in ("service_id","services_id","catalog_service_id") if x in names),None)
+    price=next((x for x in ("price","price_amd","base_price","amount") if x in names),None)
+    if not sid or not price:
+        return {}
+    try:
+        rows=platform_db.rows(
+            f"SELECT {sid} AS service_id,{price} AS price FROM partner_services WHERE {sid}=ANY(%s)",
+            (ids,))
+    except Exception:
+        try:
+            placeholders=",".join(["%s"]*len(ids))
+            rows=platform_db.rows(
+                f"SELECT {sid} AS service_id,{price} AS price FROM partner_services WHERE {sid} IN ({placeholders})",
+                tuple(ids))
+        except Exception:
+            return {}
+    result={}
+    for row in rows or []:
+        k=row.get("service_id")
+        if k is None: continue
+        result.setdefault(int(k),[]).append(row.get("price"))
+    return result
+
 def _admin_query_rows(target,filters,limit=20,sort=None):
  built,error=_admin_query_build(target,filters,limit,sort)
  if error:return None,error
  sql,params,target=built
- try:return platform_db.rows(sql,params),None
- except Exception as exc:return None,"Не удалось выполнить поиск по «"+target+"»: "+str(exc)[:180]
+ try:
+  rows=platform_db.rows(sql,params)
+  if target=="services" and rows:
+   price_map=_admin_service_price_map([x.get("id") for x in rows])
+   for x in rows:
+    vals=price_map.get(int(x["id"])) if x.get("id") is not None else None
+    x["prices_amd"]=vals or []
+    x["price_amd"]=vals[0] if vals and len(vals)==1 else None
+  return rows,None
+ except Exception as exc:return None,"Չհաջողվեց կատարել որոնումը՝ "+str(exc)[:180]
 async def _admin_query_answer(question,target,filters,limit=20,sort=None):
  rows,error=_admin_query_rows(target,filters,limit,sort)
  if error:return "⚠️ "+error
@@ -354,7 +399,10 @@ def _admin_query_result_text(target,rows,filters,question):
    lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏"+(" · "+loc if loc else ""))
   elif target=="partners":lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")+" · verification="+str(x.get("verification_status") or "—"))
   elif target=="businesses":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")+" · "+str(x.get("partner_business_name") or "—"))
-  elif target=="services":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—")+" · "+str(x.get("category_name_am") or x.get("category_name_ru") or x.get("category_name_en") or "—"))
+  elif target=="services":
+   prices=x.get("prices_amd") or []
+   price_text=(" · գին="+", ".join(str(p)+" ֏" for p in prices if p is not None)) if prices else " · գին=—"
+   lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—")+" · "+str(x.get("category_name_am") or x.get("category_name_ru") or x.get("category_name_en") or "—")+price_text)
   else:lines.append("#"+str(x.get("id"))+" · "+str(x.get("name_am") or x.get("name_ru") or x.get("name_en") or "—")+" · "+str(x.get("master_name_am") or x.get("master_name_ru") or "—"))
  return "\n".join(lines)
 
@@ -1111,7 +1159,7 @@ be a short follow-up to the previous result. In that case, answer from the suppl
 the requested property (such as names, IDs, categories, prices, statuses) from those rows. If the user
 gives a numeric ID that appears in the previous rows, resolve it against those rows; do not ask the
 user to restate the request.
-Use ONLY the supplied database facts and the supplied truth/check results. The truth/check results are authoritative for
+Use ONLY the supplied database facts and the supplied truth/check results. Service prices may be supplied separately from catalog service rows as `prices_amd`; when present, these are the actual stored partner-service prices in AMD (֏). Do not say that prices are unavailable if `prices_amd` contains values. The truth/check results are authoritative for
 whether something is actually wrong. Do NOT turn an empty field into an error, mandatory field, or
 approval problem unless the supplied facts explicitly prove that rule. Do not invent business rules,
 approval consequences, currency, prices, categories, or document status.
