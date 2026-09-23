@@ -104,6 +104,7 @@ async def potential_research(request):
 
 _ADMIN_PENDING={}
 _ADMIN_PENDING_TTL=15*60
+_ADMIN_LAST_APPLICATION={}
 
 def _admin_context(limit=30, include_catalog=False):
     applications=platform_db.rows("""SELECT a.*,p.user_id FROM partner_applications a
@@ -261,20 +262,38 @@ async def admin_ai_message(admin_id,message):
         ids=re.findall(r"(?:#|(?:заявк[ауеи]?|հայտ(?:ը|ի|ը)?|application)\s*)(\d+)",normalized)
         ctx=_admin_context(limit=30,include_catalog=False)
         if ids:
-            return await _admin_execute({"intent":"open_application","application_id":int(ids[0])})
+            aid=int(ids[0])
+            _ADMIN_LAST_APPLICATION[int(admin_id)]=aid
+            return await _admin_execute({"intent":"open_application","application_id":aid})
         rows=ctx.get("applications") or []
         # A singular read-only command with one actionable application opens it directly.
         if len(rows)==1:
-            return await _admin_execute({"intent":"open_application","application_id":int(rows[0]["id"])})
+            aid=int(rows[0]["id"])
+            _ADMIN_LAST_APPLICATION[int(admin_id)]=aid
+            return await _admin_execute({"intent":"open_application","application_id":aid})
         return await _admin_execute({"intent":"show_applications"})
 
+    # Follow-up commands may omit the application number. Keep the last application
+    # the admin inspected in this secretary session.
+    last_aid=_ADMIN_LAST_APPLICATION.get(int(admin_id))
+    if last_aid and any(x in normalized for x in (
+        "ուղղիր","ենթակատեգոր","կատեգոր","փոխիր","շտկիր",
+        "исправь","подкатегор","категор","измени","edit","change"
+    )) and not re.search(r"(?:#|(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*)\d+",normalized):
+        message=message+f" (Контекст: продолжение работы с заявкой #{last_aid}. Используй application_id={last_aid}.)"
+
     include_catalog=any(x in normalized for x in (
-        "категор","подкатегор","направлен","ենթակատեգոր","կատեգոր","ուղղություն"
+        "категор","подкатегор","направлен","ենթակատեգոր","կատեգոր","ուղղություն",
+        "ուղղիր","շտկիր","подкатегорию"
     ))
     ctx=_admin_context(limit=30,include_catalog=include_catalog)
     c=await _admin_ai_json(message,ctx)
+    if not c.get("application_id") and last_aid and c.get("intent") in {"edit_application","approve_application","reject_application","clarify_application"}:
+        c["application_id"]=last_aid
     intent=c.get("intent")
     if intent in {"show_applications","open_application","show_partners","show_businesses"}:
+        if intent=="open_application" and c.get("application_id"):
+            _ADMIN_LAST_APPLICATION[int(admin_id)]=int(c["application_id"])
         return await _admin_execute(c)
     if intent not in {"edit_application","approve_application","reject_application","clarify_application"}:
         return str(c.get("reply") or "Не понял команду. Укажите номер заявки и действие.")
