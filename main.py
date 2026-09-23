@@ -25,6 +25,7 @@ from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_weba
 from stage3_partner_verification import register_stage3_routes
 from partner_business_application_api import register_business_application_routes
 from partner_directions_api import register_partner_direction_routes
+from admin_ai_api import admin_ai_message
 import runtime_platform_bootstrap  # noqa: F401
 
 try:
@@ -462,6 +463,20 @@ async def cmd_admin_panel(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
     await message.answer("👑 Admin Cabinet", reply_markup=_keyboard("admin.html", "Բացել Admin Cabinet"))
+
+
+@router.message(lambda message: message.from_user.id == ADMIN_ID and bool((message.text or message.caption or "").strip()))
+async def telegram_admin_ai_secretary(message: types.Message):
+    """The admin can operate the platform directly from the Telegram chat."""
+    text = (message.text or message.caption or "").strip()
+    if not text or text.startswith("/"):
+        return
+    try:
+        reply = await admin_ai_message(message.from_user.id, text)
+        await message.answer(reply)
+    except Exception:
+        logger.exception("Telegram admin AI secretary failed")
+        await message.answer("⚠️ AI-секретарь временно недоступен. Попробуйте ещё раз.")
 
 
 @router.message(PartnerAIStates.onboarding)
