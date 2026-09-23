@@ -750,7 +750,12 @@ async def admin_ai_message(admin_id,message):
     ))
     if full_app_match and re.search(r"(?:ցույց|покаж|открой|show|open)",local_text,re.IGNORECASE):
         id_match=re.search(r"(?:#|№)\s*(\d+)",local_text)
-        requested_aid=int(id_match.group(1)) if id_match else None
+        requested_aid=int(id_match.group(1)) if id_match else focused_id
+        if not requested_aid and len(state.get("last_shown_applications") or [])==1:
+            try:
+                requested_aid=int(state["last_shown_applications"][0]["id"])
+            except Exception:
+                requested_aid=None
         c={"intent":"show_full_application","target":"application",
            "application_id":requested_aid,"action_required":"read_only","confidence":1.0}
     elif re.search(r"(?:ստուգիր|проверь|check).*(?:հայտ|заявк|application).*(?:ուղղիր|исправ|fix|շտկ)",local_text):
@@ -782,6 +787,10 @@ async def admin_ai_message(admin_id,message):
     if is_question and intent in {"edit_application","approve_application","reject_application","clarify_application"}: intent="show_application_field" if field else "inspect_application"
 
     if intent=="show_application_count":
+        rows=_admin_context(limit=30).get("applications",[])
+        if len(rows)==1:
+            try: state["last_focused_application_id"]=int(rows[0]["id"])
+            except Exception: pass
         reply=await _admin_execute({"intent":"show_application_count"})
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
