@@ -43,9 +43,9 @@ main{padding:20px;min-width:0}.view{display:none}.view.on{display:block}.back{bo
 const tg=window.Telegram?.WebApp; tg?.ready(); tg?.expand();
 const state={lang:(tg?.initDataUnsafe?.user?.language_code||'hy').startsWith('ru')?'ru':'hy',businesses:[],current:null,directions:[],services:[],objects:[],documents:[],applications:[],bookings:[],reviews:[],stack:[]};
 const T={
-hy:{businesses:'Իմ ընկերությունները',applications:'Հայտեր',orders:'Պատվերներ',negotiations:'Բանակցություններ',settings:'Կարգավորումներ',objects:'Օբյեկտներ',directions:'Ուղղություններ',services:'Ծառայություններ',territories:'Տարածքներ',documents:'Փաստաթղթեր',companyInfo:'Ընկերության տվյալներ',companySettings:'Ընկերության կարգավորումներ',objectEdit:'Խմբագրել օբյեկտը',serviceEdit:'Խմբագրել ծառայությունը',companySettingsHint:'Տվյալ ընկերության տվյալների խմբագրում',saved:'Պահպանված',open:'Բացել',back:'← Հետ',pending:'Սպասում է',approved:'Հաստատված',active:'Ակտիվ',rejected:'Մերժված',newCompany:'＋ Նոր ընկերություն',empty:'Տվյալներ դեռ չկան',save:'Պահպանել',addObject:'＋ Օբյեկտ',addService:'＋ Նոր ծառայություն',all:'Բոլորը',applicationInfo:'Հայտի ընթացք',noOrders:'Պատվերներ դեռ չկան',noNegotiations:'Բանակցություններ դեռ չկան',global:'Ընդհանուր կարգավորումներ',name:'Անվանում',description:'Նկարագրություն',phoneCompany:'Հեռախոս',city:'Քաղաք',address:'Հասցե',phone:'Հեռախոս',status:'Կարգավիճակ',classification:'AI դասակարգում',document:'Փաստաթուղթ',price:'Գին',direction:'Ուղղություն',subcategory:'Ենթաուղղություն'},
-ru:{businesses:'Мои компании',applications:'Заявки',orders:'Заказы',negotiations:'Переговоры',settings:'Настройки',objects:'Объекты',directions:'Направления',services:'Услуги',territories:'Территории',documents:'Документы',companyInfo:'Данные компании',companySettings:'Настройки компании',objectEdit:'Редактировать объект',serviceEdit:'Редактировать услугу',companySettingsHint:'Редактирование данных этой компании',saved:'Сохранено',open:'Открыть',back:'← Назад',pending:'На проверке',approved:'Подтверждено',active:'Активно',rejected:'Отклонено',newCompany:'＋ Новая компания',empty:'Данных пока нет',save:'Сохранить',addObject:'＋ Объект',addService:'＋ Новая услуга',all:'Все',applicationInfo:'Ход заявки',noOrders:'Заказов пока нет',noNegotiations:'Переговоров пока нет',global:'Общие настройки',name:'Название',description:'Описание',phoneCompany:'Телефон',city:'Город',address:'Адрес',phone:'Телефон',status:'Статус',classification:'AI-классификация',document:'Документ',price:'Цена',direction:'Направление',subcategory:'Подкатегория'},
-en:{businesses:'My companies',applications:'Applications',orders:'Orders',negotiations:'Negotiations',settings:'Settings',objects:'Objects',directions:'Directions',services:'Services',territories:'Territories',documents:'Documents',companyInfo:'Company information',companySettings:'Company settings',objectEdit:'Edit object',serviceEdit:'Edit service',companySettingsHint:'Edit this company',saved:'Saved',open:'Open',back:'← Back',pending:'Pending',approved:'Approved',active:'Active',rejected:'Rejected',newCompany:'＋ New company',empty:'No data yet',save:'Save',addObject:'＋ Object',addService:'＋ New service',all:'All',applicationInfo:'Application progress',noOrders:'No orders yet',noNegotiations:'No negotiations yet',global:'General settings',name:'Name',description:'Description',phoneCompany:'Phone',city:'City',address:'Address',phone:'Phone',status:'Status',classification:'AI classification',document:'Document',price:'Price',direction:'Direction',subcategory:'Subcategory'}
+hy:{company:'Ընկերություն',object:'Օբյեկտ',selectObject:'Ընտրեք օբյեկտը',objectName:'Օբյեկտի անվանում',marz:'Մարզ',autoFromObject:'կընտրվի օբյեկտից',optionalNew:'կամ նոր հեռախոս',objectDataRequired:'Լրացրեք օբյեկտի անվանումը, հասցեն և քաղաքը',businesses:'Իմ ընկերությունները',applications:'Հայտեր',orders:'Պատվերներ',negotiations:'Բանակցություններ',settings:'Կարգավորումներ',objects:'Օբյեկտներ',directions:'Ուղղություններ',services:'Ծառայություններ',territories:'Տարածքներ',documents:'Փաստաթղթեր',companyInfo:'Ընկերության տվյալներ',companySettings:'Ընկերության կարգավորումներ',objectEdit:'Խմբագրել օբյեկտը',serviceEdit:'Խմբագրել ծառայությունը',companySettingsHint:'Տվյալ ընկերության տվյալների խմբագրում',saved:'Պահպանված',open:'Բացել',back:'← Հետ',pending:'Սպասում է',approved:'Հաստատված',active:'Ակտիվ',rejected:'Մերժված',newCompany:'＋ Նոր ընկերություն',empty:'Տվյալներ դեռ չկան',save:'Պահպանել',addObject:'＋ Օբյեկտ',addService:'＋ Նոր ծառայություն',all:'Բոլորը',applicationInfo:'Հայտի ընթացք',noOrders:'Պատվերներ դեռ չկան',noNegotiations:'Բանակցություններ դեռ չկան',global:'Ընդհանուր կարգավորումներ',name:'Անվանում',description:'Նկարագրություն',phoneCompany:'Հեռախոս',city:'Քաղաք',address:'Հասցե',phone:'Հեռախոս',status:'Կարգավիճակ',classification:'AI դասակարգում',document:'Փաստաթուղթ',price:'Գին',direction:'Ուղղություն',subcategory:'Ենթաուղղություն'},
+ru:{company:'Компания',object:'Объект',selectObject:'Выберите объект',objectName:'Название объекта',marz:'Марз',autoFromObject:'подтянется из объекта',optionalNew:'или новый телефон',objectDataRequired:'Заполните название объекта, адрес и город',businesses:'Мои компании',applications:'Заявки',orders:'Заказы',negotiations:'Переговоры',settings:'Настройки',objects:'Объекты',directions:'Направления',services:'Услуги',territories:'Территории',documents:'Документы',companyInfo:'Данные компании',companySettings:'Настройки компании',objectEdit:'Редактировать объект',serviceEdit:'Редактировать услугу',companySettingsHint:'Редактирование данных этой компании',saved:'Сохранено',open:'Открыть',back:'← Назад',pending:'На проверке',approved:'Подтверждено',active:'Активно',rejected:'Отклонено',newCompany:'＋ Новая компания',empty:'Данных пока нет',save:'Сохранить',addObject:'＋ Объект',addService:'＋ Новая услуга',all:'Все',applicationInfo:'Ход заявки',noOrders:'Заказов пока нет',noNegotiations:'Переговоров пока нет',global:'Общие настройки',name:'Название',description:'Описание',phoneCompany:'Телефон',city:'Город',address:'Адрес',phone:'Телефон',status:'Статус',classification:'AI-классификация',document:'Документ',price:'Цена',direction:'Направление',subcategory:'Подкатегория'},
+en:{company:'Company',object:'Object',selectObject:'Select an object',objectName:'Object name',marz:'Marz',autoFromObject:'taken from object',optionalNew:'or new phone',objectDataRequired:'Fill object name, address and city',businesses:'My companies',applications:'Applications',orders:'Orders',negotiations:'Negotiations',settings:'Settings',objects:'Objects',directions:'Directions',services:'Services',territories:'Territories',documents:'Documents',companyInfo:'Company information',companySettings:'Company settings',objectEdit:'Edit object',serviceEdit:'Edit service',companySettingsHint:'Edit this company',saved:'Saved',open:'Open',back:'← Back',pending:'Pending',approved:'Approved',active:'Active',rejected:'Rejected',newCompany:'＋ New company',empty:'No data yet',save:'Save',addObject:'＋ Object',addService:'＋ New service',all:'All',applicationInfo:'Application progress',noOrders:'No orders yet',noNegotiations:'No negotiations yet',global:'General settings',name:'Name',description:'Description',phoneCompany:'Phone',city:'City',address:'Address',phone:'Phone',status:'Status',classification:'AI classification',document:'Document',price:'Price',direction:'Direction',subcategory:'Subcategory'}
 };
 const tr=k=>(T[state.lang]||T.hy)[k]||k;
 function headers(){return {'X-Telegram-Init-Data':tg?.initData||''};}
@@ -172,33 +172,81 @@ async function saveServiceEdit(id){
 }
 function closeServiceCreate(){document.getElementById('serviceCreateModal')?.remove()}
 function addService(){
-  if(!state.current)return;
   closeServiceCreate();
   const modal=document.createElement('div');
-  modal.id='serviceCreateModal';
-  modal.className='modal';
+  modal.id='serviceCreateModal'; modal.className='modal';
+  const firms=state.businesses.map(x=>'<option value="'+x.id+'" '+(String(x.id)===String(state.current?.id)?'selected':'')+'>'+esc(x.name)+'</option>').join('');
+  const objects=state.objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name)+' · '+esc([o.city,o.address].filter(Boolean).join(', '))+'</option>').join('');
+  const firmPhone=state.current?.phone||'';
   modal.innerHTML='<div class="modal-card">'+
-    '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Գրեք ծառայության մասին սովորական լեզվով։ AI-ը կդասակարգի այն կատալոգում։</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
-    '<div class="field"><label>'+tr('name')+'</label><input id="newServiceName" autocomplete="off" placeholder="Օր․ յուղի և ֆիլտրերի փոխարինում"></div>'+
-    '<div class="field"><label>'+tr('description')+'</label><textarea id="newServiceDescription" rows="4" placeholder="Կարճ նկարագրեք՝ ինչ է ներառում ծառայությունը"></textarea></div>'+
-    '<div class="field"><label>'+tr('price')+'</label><input id="newServicePrice" type="number" min="0" step="1" inputmode="numeric" placeholder="AMD"></div>'+
-    '<div class="notice">AI-ը ինքն է ընտրում գործող ուղղությունն ու ենթաուղղությունը։ Եթե վստահելի համապատասխանություն չգտնվի, հայտը կգնա ադմինիստրատորին դասակարգման համար։</div>'+
-    '<div class="actions"><button class="btn secondary" onclick="closeServiceCreate()">'+tr('back')+'</button><button class="btn ok" onclick="submitNewService()">✓ '+tr('save')+'</button></div>'+
+    '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Укажите, где именно оказывается услуга. AI определит только направление и подкатегорию.</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
+    '<div class="field"><label>🏢 '+tr('company')+'</label><div style="display:flex;gap:7px"><select id="newServiceBusiness" style="flex:1">'+firms+'</select><button class="btn secondary" onclick="createBusinessFromService()">＋</button></div></div>'+
+    '<div class="field"><label>📍 '+tr('object')+'</label><div style="display:flex;gap:7px"><select id="newServiceObject" style="flex:1"><option value="">'+tr('selectObject')+'</option>'+objects+'</select><button class="btn secondary" onclick="toggleNewServiceObject()">＋</button></div></div>'+
+    '<div id="newServiceObjectFields" style="display:none">'+
+      '<div class="field"><label>'+tr('objectName')+'</label><input id="newServiceObjectName" placeholder="'+tr('objectName')+'"></div>'+
+      '<div class="grid2"><div class="field"><label>'+tr('address')+'</label><input id="newServiceObjectAddress"></div><div class="field"><label>'+tr('city')+'</label><input id="newServiceObjectCity"></div></div>'+
+      '<div class="field"><label>'+tr('marz')+'</label><input id="newServiceObjectMarz"></div>'+
+    '</div>'+
+    '<div class="grid2"><div class="field"><label>📍 '+tr('address')+'</label><input id="newServiceAddress" placeholder="'+tr('autoFromObject')+'"></div><div class="field"><label>🏙 '+tr('city')+' / '+tr('marz')+'</label><input id="newServiceCityMarz" placeholder="'+tr('autoFromObject')+'"></div></div>'+
+    '<div class="field"><label>📞 '+tr('phone')+'</label><input id="newServicePhone" value="'+esc(firmPhone)+'" placeholder="'+tr('optionalNew')+'"></div>'+
+    '<div class="hr"></div>'+
+    '<div class="field"><label>🛠 '+tr('name')+'</label><input id="newServiceName" autocomplete="off"></div>'+
+    '<div class="field"><label>'+tr('description')+'</label><textarea id="newServiceDescription" rows="4"></textarea></div>'+
+    '<div class="field"><label>💰 '+tr('price')+'</label><input id="newServicePrice" type="number" min="0" step="1" inputmode="numeric"></div>'+
+    '<div class="notice">AI-ը ինքն է ընտրում գործող կատալոգի ուղղությունն ու ենթաուղղությունը։ Հասցեն և կոնտակտը AI-ը չի որոշում։</div>'+
+    '<div class="actions"><button class="btn secondary" onclick="closeServiceCreate()">'+tr('back')+'</button><button class="btn" onclick="submitNewService()">✓ '+tr('save')+'</button></div>'+
   '</div>';
   document.body.appendChild(modal);
+  document.getElementById('newServiceObject')?.addEventListener('change',syncServiceObject);
+  document.getElementById('newServiceBusiness')?.addEventListener('change',async e=>{
+    const id=e.target.value; state.current=state.businesses.find(x=>String(x.id)===String(id))||state.current;
+    try{const d=await api('/api/master/0/objects',{headers:{'X-Business-Id':String(id)}}); state.objects=d.objects||[]; addService()}catch(err){toast(err.message)}
+  });
+  syncServiceObject();
   document.getElementById('newServiceName')?.focus();
 }
+function syncServiceObject(){
+  const id=document.getElementById('newServiceObject')?.value;
+  const o=state.objects.find(x=>String(x.id)===String(id));
+  if(!o)return;
+  const addr=document.getElementById('newServiceAddress'); const cm=document.getElementById('newServiceCityMarz'); const ph=document.getElementById('newServicePhone');
+  if(addr)addr.value=[o.address].filter(Boolean).join('');
+  if(cm)cm.value=[o.city,o.marz].filter(Boolean).join(' · ');
+  if(ph&&!ph.value)ph.value=o.phone||state.current?.phone||'';
+}
+function toggleNewServiceObject(){
+  const box=document.getElementById('newServiceObjectFields'); if(!box)return;
+  box.style.display=box.style.display==='none'?'block':'none';
+  if(box.style.display==='block'){document.getElementById('newServiceObject').value='';}
+}
+async function createBusinessFromService(){
+  const name=prompt(tr('name')); if(!name)return;
+  try{await api('/api/master/0/businesses',{method:'POST',body:{name}}); await loadBusinesses(); addService();}
+  catch(e){toast(e.message)}
+}
 async function submitNewService(){
+  const objectSelect=document.getElementById('newServiceObject');
+  let objectId=objectSelect?.value||'';
+  const creating=document.getElementById('newServiceObjectFields')?.style.display==='block';
   const name=document.getElementById('newServiceName')?.value.trim()||'';
   const description=document.getElementById('newServiceDescription')?.value.trim()||'';
   const priceRaw=document.getElementById('newServicePrice')?.value.trim()||'';
+  const phone=document.getElementById('newServicePhone')?.value.trim()||'';
   if(name.length<2){toast(tr('name'));return}
   if(priceRaw!==''&&(!Number.isFinite(Number(priceRaw))||Number(priceRaw)<0)){toast(tr('price'));return}
   try{
-    const d=await api('/api/master/0/services',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name,description,price:priceRaw===''?null:Number(priceRaw)}});
-    closeServiceCreate();
-    await openBusiness(state.current.id);
-    showCompanySection('services');
+    if(creating){
+      const objectName=document.getElementById('newServiceObjectName')?.value.trim()||'';
+      const address=document.getElementById('newServiceObjectAddress')?.value.trim()||'';
+      const city=document.getElementById('newServiceObjectCity')?.value.trim()||'';
+      const marz=document.getElementById('newServiceObjectMarz')?.value.trim()||'';
+      if(!objectName||!address||!city){toast(tr('objectDataRequired'));return}
+      const od=await api('/api/master/0/objects',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name:objectName,address,city,marz,phone}});
+      objectId=od.object?.id||'';
+    }
+    if(!objectId){toast(tr('selectObject'));return}
+    const d=await api('/api/master/0/services',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name,description,price:priceRaw===''?null:Number(priceRaw),object_id:Number(objectId),contact_phone:phone||null}});
+    closeServiceCreate(); await openBusiness(state.current.id); showCompanySection('services');
     toast(d.proposal_created?'Հայտը ուղարկվեց ադմինիստրատորին':'Ծառայությունը ուղարկվեց ադմինիստրատորին հաստատման համար');
   }catch(e){toast(e.message)}
 }
