@@ -4,6 +4,7 @@ import os
 import re
 import time
 import uuid
+import platform_db
 from aiohttp import web
 from platform_db import proposals, review_proposal, edit_proposal, add_clarification, potential_partners, update_potential, create_potential
 from potential_partner_ai import PotentialPartnerAI
