@@ -574,7 +574,12 @@ def _application_field_answer(aid,field):
         return "🏷 Подкатегория: «"+str(app.get("subcategory_name") or "—")+"»"
     if field=="service":
         return "🛠 Услуга: «"+str(app.get("service_name") or "—")+"»"
-    return "Укажите поле заявки."
+    if field=="documents":
+        doc_id=app.get("document_id")
+        if doc_id:
+            return "📄 Փաստաթուղթ\n🆔 ID: "+str(doc_id)+"\n📌 Հայտի փաստաթղթի ID-ն առկա է։ Եթե պետք է, կարող եմ ստուգել դրա ընթացիկ հաստատման կարգավիճակը։"
+        return "📄 Փաստաթուղթ\n⚠️ Հայտում փաստաթղթի ID նշված չէ։"
+    return "Ուղղեք, թե հայտի որ դաշտն եք ուզում տեսնել."
 
 def _admin_state_preview(action):
     aid=action.get("application_id")
@@ -948,7 +953,7 @@ async def admin_ai_message(admin_id,message):
     field=str(c.get("field") or "").lower()
     intent={"open_application":"show_application","count_applications":"show_application_count","count":"show_application_count","inspect":"inspect_application"}.get(intent,intent)
 
-    if field in {"category","subcategory","price","service_name","location_city","description"}: state["last_focused_field"]=field
+    if field in {"category","subcategory","price","service_name","location_city","description","documents"}: state["last_focused_field"]=field
     elif not field or field=="none": field=state.get("last_focused_field") or ""
     if aid:
         try:
