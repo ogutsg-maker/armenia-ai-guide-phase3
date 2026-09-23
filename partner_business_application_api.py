@@ -1204,11 +1204,11 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                     data_json=json.dumps({"application_id":aid,"ai_source":True,"matched_subcategory_id":cid,"direction_id":approved_direction["id"],"object_id":object_id,"contact_phone":contact_phone},ensure_ascii=False)
                     existing=_one("SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND name=%s AND status<>'deleted' ORDER BY id DESC LIMIT 1",(a["partner_id"],bid,name))
                     if existing:
-                        _exec("UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",
-                              (cid,name,service_description,price,data_json,existing["id"]))
+                        _exec("UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',object_id=%s,contact_phone=%s,data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",
+                              (cid,name,service_description,price,object_id,contact_phone,data_json,existing["id"]))
                     else:
-                        _exec("INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json) VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s::jsonb)",
-                              (a["partner_id"],bid,cid,name,service_description,price,data_json))
+                        _exec("INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,object_id,contact_phone,data_json) VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s,%s,%s::jsonb)",
+                              (a["partner_id"],bid,cid,name,service_description,price,object_id,contact_phone,data_json))
                     _exec("INSERT INTO partner_direction_categories(partner_direction_id,category_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(approved_direction["id"],cid))
                 row=_exec("UPDATE partner_applications SET status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW(),admin_note=%s WHERE id=%s RETURNING *",
                           (_auth(request),"Ծառայությունը հաստատված և ակտիվացված է.",aid),True)
