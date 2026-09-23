@@ -97,7 +97,7 @@ If ambiguous, use clarify and ask one concise question.
         "required":["intent","reply","needs_confirmation","business_id","object_id","service_id","name","description","phone","city","marz","address","price","contact_phone","reason"],
         "additionalProperties":False
     }
-    prompt = json.dumps({"message":message,"language":language,"context":context}, ensure_ascii=False)
+    prompt = json.dumps({"message":message,"language":language,"context":context}, ensure_ascii=False, default=str)
     request_kwargs = dict(
         temperature=0,
         max_tokens=900,
