@@ -429,7 +429,7 @@ STRICT RULES:
 2. Use the supplied focused application and conversation history. Short follow-ups continue the current task.
 3. If the administrator says "это", "эта", "здесь", "այս", "այստեղ", "ուղղիր", "исправь", or only names a field, use the focused application and previous field when available.
 4. If a correction is requested without a new value, set value_raw=null and action_required=suggest_alternatives.
-5. If a new value is explicitly provided, put the exact human text in value_raw and use action_required=execute.
+5. If a new value is explicitly provided, put ONLY the new/target value in value_raw and use action_required=execute. For replacement language A to B, ignore old A and extract only new B into value_raw. This applies to Russian ("измени A на B"), Armenian ("A-ն փոխիր B-ով"), and English ("change A to B"). Never include verbs or particles such as "на", "ով", or "to" in value_raw.
 6. Questions and inspection requests are READ ONLY. Do not turn a question into a mutation.
 7. Understand Armenian, Russian and English, including mixed-language messages.
 
