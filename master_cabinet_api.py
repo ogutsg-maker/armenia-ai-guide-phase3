@@ -754,19 +754,34 @@ async def api_service_create(request: web.Request):
                 business_row=cur.fetchone() or {}
                 cur.execute("""SELECT u.phone FROM users u WHERE u.telegram_id=%s""",(uid,))
                 user_row=cur.fetchone() or {}
+                service_phone = contact_phone or object_row.get("phone") or user_row.get("phone")
                 cur.execute("""INSERT INTO partner_applications(
-                                  partner_id,business_id,status,business_name,phone,direction_name,
+                                  partner_id,business_id,status,business_name,location_marz,location_city,
+                                  address,object_name,object_id,phone,direction_name,
                                   master_category_id,subcategory_name,service_name,price,description,ai_reason,payload_json)
-                               VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                               VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                                RETURNING id""",
                             (pid,app_bid,business_row.get("name") if app_bid is not None else match.get("proposed_business_name"),
-                             user_row.get("phone"),match.get("out_of_scope_master_name") or "",
+                             object_row.get("marz"),object_row.get("city"),object_row.get("address"),
+                             object_row.get("object_name"),object_id,service_phone,
+                             match.get("out_of_scope_master_name") or "",
                              match.get("out_of_scope_master_id") or match.get("master_category_id"),
                              match.get("proposed_name") or None,name,price,description,match.get("reason") or "",
-                             json.dumps({"source":"partner_service","current_business_id":bid,"new_business":is_new_business,"object_id":object_id,"contact_phone":contact_phone,
-                                         "services":[{"name":name,"price":price,"description":description,"object_id":object_id,"contact_phone":contact_phone,
-                                                      "matched_subcategory_id":match.get("category_id"),
-                                                      "direction_id":match.get("master_category_id")}]},ensure_ascii=False)))
+                             json.dumps({
+                                 "source":"partner_service",
+                                 "current_business_id":bid,
+                                 "new_business":is_new_business,
+                                 "object_id":object_id,
+                                 "object_name":object_row.get("object_name"),
+                                 "location_marz":object_row.get("marz"),
+                                 "location_city":object_row.get("city"),
+                                 "address":object_row.get("address"),
+                                 "phone":service_phone,
+                                 "contact_phone":contact_phone,
+                                 "services":[{"name":name,"price":price,"description":description,"object_id":object_id,"contact_phone":contact_phone,
+                                              "matched_subcategory_id":match.get("category_id"),
+                                              "direction_id":match.get("master_category_id")}]
+                             },ensure_ascii=False)))
                 aid=int(cur.fetchone()["id"])
                 # A newly introduced company is only a draft container until
                 # the administrator approves its first service/application.
@@ -782,17 +797,36 @@ async def api_service_create(request: web.Request):
         return web.json_response({"ok":True,"proposal_created":True,
                                   "message":"Ծառայությունն ուղարկվել է ադմինիստրատորին դասակարգման համար։"})
     if match["status"]=="clarification": return web.json_response({"ok":False,"error":"service_needs_clarification","message":"Գրեք ծառայության մասին մի փոքր ավելի մանրամասն։"},status=422)
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM partner_businesses WHERE id=%s AND partner_id=%s",(bid,pid))
+            business_row=cur.fetchone() or {}
+    business_name = business_row.get("name") or ""
     payload=json.dumps({"ai_source":True,"matched_subcategory_id":match["category_id"],"master_category_id":match["master_category_id"],"business_id":bid,"object_id":object_id,"contact_phone":contact_phone,"direction_name":match.get("direction_name") or "","subcategory_name":match.get("subcategory_name") or "","services":[{"name":name,"price":price,"description":description,"matched_subcategory_id":match["category_id"],"direction_id":match["master_category_id"],"direction_name":match.get("direction_name") or "","subcategory_name":match.get("subcategory_name") or ""}]},ensure_ascii=False)
     from partner_business_application_api import ensure_business_application_schema
     ensure_business_application_schema()
     with _connect() as conn:
         with conn.cursor() as cur:
+            service_phone = contact_phone or object_row.get("phone")
+            payload_obj = json.loads(payload)
+            payload_obj.update({
+                "business_name": business_name,
+                "location_marz": object_row.get("marz"),
+                "location_city": object_row.get("city"),
+                "address": object_row.get("address"),
+                "object_name": object_row.get("object_name"),
+                "phone": service_phone,
+            })
+            payload = json.dumps(payload_obj, ensure_ascii=False)
             cur.execute("""INSERT INTO partner_applications(
-                              partner_id,business_id,status,business_name,phone,direction_name,
+                              partner_id,business_id,status,business_name,location_marz,location_city,
+                              address,object_name,object_id,phone,direction_name,
                               master_category_id,subcategory_name,category_id,service_name,price,description,ai_reason,payload_json)
-                           VALUES(%s,%s,'pending_admin',%s,(SELECT phone FROM partner_businesses WHERE id=%s),%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                           VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                            RETURNING id""",
-                        (pid,bid,None,bid,match.get("direction_name") or "",match["master_category_id"],
+                        (pid,bid,business_name,object_row.get("marz"),object_row.get("city"),object_row.get("address"),
+                         object_row.get("object_name"),object_id,service_phone,
+                         match.get("direction_name") or "",match["master_category_id"],
                          match.get("subcategory_name") or "",match["category_id"],name,price,description,
                          match.get("reason") or "AI catalogue match.",payload))
             aid=int(cur.fetchone()["id"])
