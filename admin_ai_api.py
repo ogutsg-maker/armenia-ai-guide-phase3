@@ -116,31 +116,56 @@ _ADMIN_SESSION_TTL=30*60
 _CONFIRM_YES={"да","да.","yes","yes.","ok","okay","подтверждаю","подтвердить","հա","այո","այո.","հաստատում եմ"}
 _CONFIRM_NO={"нет","нет.","no","no.","cancel","отмена","отменить","ոչ","ոչ.","չեղարկել"}
 
+def _admin_safe(value):
+    from decimal import Decimal
+    from datetime import date, datetime
+    if value is None or isinstance(value,(str,int,float,bool)): return value
+    if isinstance(value,Decimal): return float(value)
+    if isinstance(value,(datetime,date)): return value.isoformat()
+    if isinstance(value,dict): return {str(k):_admin_safe(v) for k,v in value.items()}
+    if isinstance(value,(list,tuple,set)): return [_admin_safe(v) for v in value]
+    return str(value)
+
+
 def _admin_session(admin_id):
-    sid=int(admin_id)
-    now=time.time()
-    state=_ADMIN_SESSIONS.get(sid)
+    sid=int(admin_id); now=time.time(); state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
-        state={"last_focused_application_id":None,"last_focused_field":None,"last_shown_applications":[],"pending_action":None,"history":[],"updated_at":now}
+        state={"last_focused_application_id":None,"last_focused_field":None,"last_shown_applications":[],
+               "pending_action":None,"waiting_for_input":None,"history":[],"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
     return state
 
+
 def _admin_history(state,role,text):
-    state.setdefault("history",[]).append({"role":role,"content":str(text)[:1000]})
-    state["history"]=state["history"][-8:]
-    state["updated_at"]=time.time()
+    state.setdefault("history",[]).append({"role":str(role),"content":str(text)[:1200]})
+    state["history"]=_admin_safe(state["history"][-10:]); state["updated_at"]=time.time()
 
-def _admin_pending_add(command):
-    token=uuid.uuid4().hex
-    _ADMIN_PENDING[token]=(time.time(),command)
-    return token
 
-def _admin_context(limit=30, include_catalog=False):
-    applications=platform_db.rows("""SELECT a.*,p.user_id FROM partner_applications a
-        JOIN partners p ON p.id=a.partner_id
-        WHERE a.status NOT IN ('approved','pending_partner')
-        ORDER BY a.created_at DESC LIMIT %s""",(int(limit),))
+def _admin_hydrate_application(aid):
+    if not aid: return None
+    try:
+        return _admin_safe(platform_db.one("""SELECT id,business_name,status,service_name,price,direction_name,
+            master_category_id,subcategory_name,category_id,location_marz,location_city,address,phone,description,created_at,updated_at
+            FROM partner_applications WHERE id=%s""",(int(aid),)))
+    except Exception: return None
+
+
+def _admin_hydrate_context(state,limit=12):
+    try:
+        applications=platform_db.rows("""SELECT id,business_name,status,service_name,price,direction_name,
+            master_category_id,subcategory_name,category_id,location_city,address,created_at
+            FROM partner_applications WHERE status NOT IN ('approved','pending_partner')
+            ORDER BY created_at DESC LIMIT %s""",(int(limit),))
+    except Exception: applications=[]
+    return _admin_safe({"focused_application":_admin_hydrate_application(state.get("last_focused_application_id")),
+        "applications":applications,"waiting_for_input":state.get("waiting_for_input"),
+        "last_focused_field":state.get("last_focused_field"),"history":state.get("history",[])[-6:]})
+
+
+def _admin_context(limit=30,include_catalog=False):
+    applications=platform_db.rows("""SELECT a.*,p.user_id FROM partner_applications a JOIN partners p ON p.id=a.partner_id
+        WHERE a.status NOT IN ('approved','pending_partner') ORDER BY a.created_at DESC LIMIT %s""",(int(limit),))
     for a in applications:
         payload=a.get("payload_json") or {}
         if isinstance(payload,str):
@@ -148,259 +173,37 @@ def _admin_context(limit=30, include_catalog=False):
             except Exception: payload={}
         a["payload_json"]=payload
     result={"applications":applications,
-            "partners":platform_db.rows("""SELECT id,user_id,status,verification_status,business_name,business_description
-                FROM partners ORDER BY id DESC LIMIT 50"""),
-            "businesses":platform_db.rows("""SELECT id,partner_id,name,description,phone,status
-                FROM partner_businesses WHERE status<>'archived' ORDER BY id DESC LIMIT 100""")}
+            "partners":platform_db.rows("SELECT id,user_id,status,verification_status,business_name,business_description FROM partners ORDER BY id DESC LIMIT 50"),
+            "businesses":platform_db.rows("SELECT id,partner_id,name,description,phone,status FROM partner_businesses WHERE status<>'archived' ORDER BY id DESC LIMIT 100")}
     if include_catalog: result["catalog"]=_admin_catalog()
-    return result
+    return _admin_safe(result)
+
 
 async def _admin_execute(command):
-    intent=str(command.get("intent") or "")
-    aid=command.get("application_id")
+    intent=str(command.get("intent") or ""); aid=command.get("application_id")
     try: aid=int(aid) if aid is not None else None
     except (TypeError,ValueError): aid=None
     if intent=="show_applications":
         rows=_admin_context(limit=30).get("applications",[])
-        if not rows: return "📨 Новых заявок нет."
-        return "📨 Заявки:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏" for x in rows[:20])
+        if not rows: return "📨 Заявок нет."
+        return "📨 Заявки ("+str(len(rows))+"):\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏" for x in rows[:20])
+    if intent=="show_application_count":
+        row=platform_db.one("SELECT COUNT(*) AS count FROM partner_applications WHERE status NOT IN ('approved','pending_partner')")
+        return "📨 Сейчас в работе: "+str(int(row.get("count") or 0))+" заявок."
     if intent=="open_application":
         if not aid: return "Укажите номер заявки."
-        a=platform_db.one("""SELECT a.*,p.user_id FROM partner_applications a JOIN partners p ON p.id=a.partner_id WHERE a.id=%s""",(aid,))
+        a=platform_db.one("SELECT a.*,p.user_id FROM partner_applications a JOIN partners p ON p.id=a.partner_id WHERE a.id=%s",(aid,))
         if not a: return "Заявка #"+str(aid)+" не найдена."
         loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
         return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
     if intent=="show_partners":
         rows=_admin_context(limit=1).get("partners",[])
-        if not rows: return "🤝 Партнёров нет."
-        return "🤝 Партнёры:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:30])
+        return "🤝 Партнёров нет." if not rows else "🤝 Партнёры:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:30])
     if intent=="show_businesses":
         rows=_admin_context(limit=1).get("businesses",[])
-        if not rows: return "🏢 Компаний нет."
-        return "🏢 Компании:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:50])
+        return "🏢 Компаний нет." if not rows else "🏢 Компании:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:50])
     return "Неизвестный запрос."
 
-def _admin_catalog():
-    return platform_db.rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,
-        m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
-        FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-        WHERE c.is_active=TRUE AND m.is_active=TRUE ORDER BY c.id""")
-
-# Small deterministic concept dictionary used only by the Python resolver.
-_ADMIN_CONCEPT_MAP = {
-    "брови": {"брови", "հոնքեր", "հոնք", "eyebrows", "eyebrow"},
-    "маникюр": {"маникюр", "մատնահարդարում", "manicure", "եղունգ"},
-    "педикюр": {"педикюр", "պեդիկյուր", "pedicure"},
-    "макияж": {"макияж", "դիմահարդարում", "makeup", "визаж"},
-    "стрижка": {"стрижка", "վարսավիր", "սանրվածք", "haircut"},
-    "волосы": {"волосы", "մազ", "մազեր", "hair"},
-    "окрашивание": {"окрашивание", "ներկում", "ներկել", "coloring", "colouring"},
-}
-
-def _tokens(text):
-    return [t for t in re.findall(r"[a-zа-яёևա-ֆ0-9-]+", _norm(text)) if len(t) > 1]
-
-def _concept_tokens(text):
-    raw=set(_tokens(text))
-    expanded=set(raw)
-    for key, aliases in _ADMIN_CONCEPT_MAP.items():
-        matched=False
-        if raw.intersection(aliases) or key in raw:
-            matched=True
-        # Handle common Armenian/Russian inflections:
-        # брови/бровей/бровями, հոնք/հոնքեր/հոնքերի, etc.
-        if not matched:
-            for token in raw:
-                for alias in aliases | {key}:
-                    if len(alias) >= 4 and (token.startswith(alias[:4]) or alias.startswith(token[:4])):
-                        matched=True
-                        break
-                if matched:
-                    break
-        if matched:
-            expanded.update(aliases)
-            expanded.add(key)
-    return expanded
-
-def _filter_catalog_master(rows, master_category_id):
-    if master_category_id is None:
-        return rows
-    try:
-        mid=int(master_category_id)
-    except (ValueError,TypeError):
-        return rows
-    return [x for x in rows if x.get("master_category_id") is not None and int(x.get("master_category_id"))==mid]
-
-def _admin_category_candidates(value, master_category_id=None, limit=8):
-    """Deterministic live-catalog resolver. IDs always come from DB."""
-    target=_norm(value)
-    if not target:
-        return []
-    try:
-        rows=_filter_catalog_master(_admin_catalog(), master_category_id)
-    except Exception:
-        return []
-    if not rows:
-        return []
-
-    target_tokens=set(_tokens(target))
-    target_concepts=_concept_tokens(target)
-    scored=[]
-
-    for row in rows:
-        names={k:_norm(row.get(k) or "") for k in ("name_am","name_ru","name_en")}
-        names={k:v for k,v in names.items() if v}
-        if not names:
-            continue
-        best=0
-        reasons=[]
-
-        if target in names.values():
-            best=max(best,1000)
-            reasons.append("exact")
-
-        if any(target in name or name in target for name in names.values()):
-            best=max(best,700)
-            reasons.append("phrase")
-
-        catalog_text=" ".join(names.values())
-        catalog_tokens=set(_tokens(catalog_text))
-        catalog_concepts=_concept_tokens(catalog_text)
-
-        concept_overlap=target_concepts.intersection(catalog_concepts)
-        if concept_overlap:
-            specific={"брови","հոնքեր","հոնք","eyebrows","eyebrow",
-                      "маникюр","մատնահարդարում","manicure",
-                      "պեդիկյուր","pedicure","макияж","դիմահարդարում","makeup","визаж"}
-            specific_hits=concept_overlap.intersection(specific)
-            best=max(best,500 + min(len(concept_overlap),5)*20 + len(specific_hits)*80)
-            reasons.append("concept")
-
-        overlap=target_tokens.intersection(catalog_tokens)
-        if overlap:
-            best=max(best,300 + min(len(overlap),5)*20)
-            reasons.append("token")
-
-        root_hits=0
-        for token in target_tokens:
-            if len(token) < 4:
-                continue
-            if any(token in ct or ct in token for ct in catalog_tokens if len(ct) >= 4):
-                root_hits += 1
-        if root_hits:
-            best=max(best,180 + min(root_hits,5)*15)
-            reasons.append("root")
-
-        if best:
-            label=str(row.get("name_am") or row.get("name_ru") or row.get("name_en") or "")
-            scored.append((best,len(reasons),label.casefold(),row,reasons))
-
-    scored.sort(key=lambda item:(item[0],item[1],item[2]),reverse=True)
-    return [{"row":x[3],"score":x[0],"reasons":x[4]} for x in scored[:max(1,int(limit))]]
-
-def find_best_subcategory(service_name, master_category_id=None, requested_value=None):
-    query=str(requested_value or "").strip() or str(service_name or "").strip()
-    candidates=_admin_category_candidates(query, master_category_id, limit=8)
-    if not candidates:
-        return None
-    top=candidates[0]
-    if requested_value:
-        return top["row"] if top["score"] >= 700 else None
-    return top["row"] if top["score"] >= 500 else None
-
-def _admin_category_suggestions(service_name, master_category_id=None):
-    candidates=_admin_category_candidates(service_name, master_category_id, limit=5)
-    result=[]
-    for item in candidates:
-        row=item["row"]
-        label=str(row.get("name_am") or row.get("name_ru") or row.get("name_en") or "").strip()
-        if label and label not in result:
-            result.append(label)
-    return result
-
-def _admin_category_by_text(value, master_category_id=None):
-    return find_best_subcategory("", master_category_id, requested_value=value)
-
-def _application_review(aid):
-    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
-    if not app: return "Заявка не найдена."
-    checks=[("Компания",app.get("business_name")),("Услуга",app.get("service_name")),("Цена",app.get("price")),("Направление",app.get("direction_name")),("Подкатегория",app.get("subcategory_name")),("Город",app.get("location_city")),("Адрес",app.get("address")),("Телефон",app.get("phone"))]
-    missing=[name for name,value in checks if value is None or str(value).strip()==""]
-    return "Основные поля заполнены. Явно пустых обязательных данных не вижу." if not missing else "Пустые поля: "+", ".join(missing)
-
-def _application_field_answer(aid,field):
-    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
-    if not app: return "Заявка не найдена."
-    if field=="category":
-        master_id=app.get("master_category_id")
-        master=None
-        if master_id:
-            master=platform_db.one("SELECT name_am,name_ru,name_en FROM master_categories WHERE id=%s",(int(master_id),))
-        master_name=(master.get("name_am") or master.get("name_ru") or master.get("name_en")) if master else (app.get("direction_name") or "—")
-        return "🧭 Направություն: «"+str(master_name or "—")+"»\n📂 Ենթակատեգորիա: «"+str(app.get("subcategory_name") or "—")+"»"
-    if field=="subcategory":
-        return "🏷 Подкатегория: «"+str(app.get("subcategory_name") or "—")+"»"
-    if field=="service":
-        return "🛠 Услуга: «"+str(app.get("service_name") or "—")+"»"
-    return "Укажите поле заявки."
-
-def _admin_state_preview(action):
-    aid=action.get("application_id")
-    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
-    if not app: return "Заявка #"+str(aid)+" не найдена."
-    if action.get("intent")=="edit_application":
-        field=action.get("field")
-        old=app.get({"subcategory":"subcategory_name","category":"subcategory_name",
-                      "name":"service_name","service":"service_name","price":"price",
-                      "description":"description","note":"admin_note"}.get(field))
-        return "📨 Заявка #"+str(aid)+"\n🔧 "+str(field)+" : «"+str(old or "—")+"» → «"+str(action.get("new_value") or "—")+"»"
-    if action.get("intent")=="approve_application":
-        return "📨 Заявка #"+str(aid)+"\n✅ Перевести заявку на этап документа"
-    if action.get("intent")=="reject_application":
-        return "📨 Заявка #"+str(aid)+"\n❌ Отклонить\n📝 "+str(action.get("reason") or "Без причины")
-    if action.get("intent")=="clarify_application":
-        return "📨 Заявка #"+str(aid)+"\n📝 Отправить партнёру на уточнение\n"+str(action.get("admin_note") or "Требуется уточнение")
-    return "Действие не определено."
-
-async def _admin_execute_state_action(action):
-    aid=int(action.get("application_id") or 0)
-    if action.get("intent")=="edit_application":
-        field=action.get("field")
-        if field=="subcategory":
-            cat=platform_db.one("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en
-                FROM categories c WHERE c.id=%s AND c.is_active=TRUE""",(int(action["category_id"]),))
-            app=platform_db.one("SELECT master_category_id FROM partner_applications WHERE id=%s",(aid,))
-            if not cat: return "Подкатегория отсутствует в активном каталоге."
-            if app and app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
-                return "Подкатегория относится к другому направлению."
-            label=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
-            platform_db.execute("UPDATE partner_applications SET category_id=%s,subcategory_name=%s,updated_at=NOW() WHERE id=%s",
-                (int(cat["id"]),label,aid))
-            return "✓ Заявка #"+str(aid)+" : подкатегория изменена на «"+label+"»."
-        columns={"name":"service_name","service":"service_name","price":"price","description":"description","note":"admin_note"}
-        column=columns.get(field)
-        if not column: return "Уточните поле для изменения."
-        value=action.get("new_value")
-        if field=="price":
-            try: value=float(str(value).replace(" ","").replace(",","."))
-            except Exception: return "Цена должна быть числом."
-        else:
-            value=str(value or "").strip()
-            if not value: return "Новое значение не указано."
-        platform_db.execute("UPDATE partner_applications SET "+column+"=%s,updated_at=NOW() WHERE id=%s",(value,aid))
-        return "✓ Заявка #"+str(aid)+" : "+str(field)+" изменено."
-    if action.get("intent")=="approve_application":
-        platform_db.execute("UPDATE partner_applications SET status='document_pending',reviewed_at=NOW(),updated_at=NOW() WHERE id=%s AND status NOT IN ('approved','pending_partner')",(aid,))
-        return "✓ Заявка #"+str(aid)+" переведена на этап документа."
-    if action.get("intent")=="reject_application":
-        reason=str(action.get("reason") or "Отклонено администратором.")[:3000]
-        platform_db.execute("UPDATE partner_applications SET status='rejected',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(reason,aid))
-        return "✓ Заявка #"+str(aid)+" отклонена."
-    if action.get("intent")=="clarify_application":
-        note=str(action.get("admin_note") or "Требуется уточнение данных.")[:3000]
-        platform_db.execute("UPDATE partner_applications SET status='pending_partner',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(note,aid))
-        return "✓ Заявка #"+str(aid)+" отправлена партнёру на уточнение."
-    return "Действие не определено."
 
 async def _admin_ai_json(message,ctx):
     from groq import AsyncGroq
@@ -489,215 +292,163 @@ def _admin_fallback_intent(message, focused_id=None):
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
     if not message: return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
-    state=_admin_session(admin_id)
-    normalized=message.lower().strip()
+    state=_admin_session(admin_id); normalized=_norm(message)
 
-    shown_apps=state.get("last_shown_applications") or []
-    focused_id=state.get("last_focused_application_id")
-    if not focused_id and len(shown_apps)==1:
-        try:
-            focused_id=int(shown_apps[0]["id"])
-            state["last_focused_application_id"]=focused_id
-        except (KeyError,TypeError,ValueError):
-            focused_id=None
-
+    # Local state machine: confirmation and slot filling never call Groq.
     pending=state.get("pending_action")
     if pending and normalized in _CONFIRM_YES:
-        try:
-            reply=await _admin_execute_state_action(pending)
-        finally:
-            state["pending_action"]=None
-            state["last_focused_field"]=None
-        _admin_history(state,"assistant",reply)
-        return reply
+        try: reply=await _admin_execute_state_action(_admin_safe(pending))
+        except Exception: reply="Не удалось сохранить изменение. Изменений не внесено."
+        state["pending_action"]=None; state["waiting_for_input"]=None; state["last_focused_field"]=None
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
     if pending and normalized in _CONFIRM_NO:
-        state["pending_action"]=None
-        state["last_focused_field"]=None
+        state["pending_action"]=None; state["waiting_for_input"]=None; state["last_focused_field"]=None
         reply="Отменено. Никаких изменений не внесено."
-        _admin_history(state,"assistant",reply)
-        return reply
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
+    waiting=state.get("waiting_for_input")
+    if waiting:
+        aid=waiting.get("application_id"); field=str(waiting.get("field") or ""); app=_admin_hydrate_application(aid)
+        if app:
+            raw=message
+            if field=="price":
+                try:
+                    value=float(re.sub(r"[^0-9.,-]","",raw).replace(",","."))
+                    if value<0: raise ValueError
+                except Exception: return "Укажите цену числом, например: 2500."
+            elif field in {"subcategory","service_name","location_city","description"}: value=raw
+            else:
+                state["waiting_for_input"]=None; return "Неизвестное поле для ввода."
+            state["waiting_for_input"]=None; state["last_focused_application_id"]=int(aid); state["last_focused_field"]=field
+            if field=="subcategory":
+                cat=find_best_subcategory(str(app.get("service_name") or ""),app.get("master_category_id"),requested_value=value)
+                if not cat: return "Не нашёл подкатегорию «"+value+"» в активном каталоге."
+                action={"intent":"edit_application","application_id":int(aid),"field":"subcategory","category_id":int(cat["id"]),
+                    "old_value_name":str(app.get("subcategory_name") or "—"),"new_value":str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))}
+            else: action={"intent":"edit_application","application_id":int(aid),"field":field,"new_value":value}
+            state["pending_action"]=_admin_safe(action)
+            reply="🤖 Подготовил действие:\n\n"+_admin_state_preview(action)+"\n\nПодтвердить? «да» / «нет»"
+            _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+        state["waiting_for_input"]=None
+
+    # Context hydration: focused application + history + DB values, normalized for JSON.
     focused_id=state.get("last_focused_application_id")
-    focused=None
-    if focused_id:
-        focused=platform_db.one("""SELECT id,business_name,status,service_name,price,direction_name,
-            master_category_id,subcategory_name,category_id,location_marz,location_city,address
-            FROM partner_applications WHERE id=%s""",(focused_id,))
+    if not focused_id and len(state.get("last_shown_applications") or [])==1:
+        try: focused_id=int(state["last_shown_applications"][0]["id"]); state["last_focused_application_id"]=focused_id
+        except Exception: focused_id=None
+    ctx=_admin_hydrate_context(state)
+    try: c=await _admin_ai_json(message,ctx)
+    except Exception: c=_admin_fallback_intent(message,focused_id)
 
-    # Context loading must never make a simple read command fail.
-    # The resolver can work with a focused application even if the optional
-    # applications context query is temporarily unavailable.
-    try:
-        applications_ctx=_admin_context(limit=12,include_catalog=False).get("applications",[])
-    except Exception:
-        applications_ctx=[]
-    ctx={"focused_application":focused,
-         "history":state.get("history",[])[-6:],
-         "applications":applications_ctx}
-    try:
-        c=await _admin_ai_json(message,ctx)
-    except Exception as ai_error:
-        c=_admin_fallback_intent(message,focused_id)
-        if c.get("intent")=="unknown":
-            raise ai_error
-    intent=str(c.get("intent") or "").lower()
+    intent=str(c.get("intent") or "unknown").lower()
     target=str(c.get("target") or "").lower()
     aid=c.get("application_id") or focused_id
     field=str(c.get("field") or "").lower()
+    intent={"open_application":"show_application","count_applications":"show_application_count","count":"show_application_count","inspect":"inspect_application"}.get(intent,intent)
 
-    if field in {"category","subcategory","price","service_name","location_city","description"}:
-        state["last_focused_field"]=field
-    elif not field or field=="none":
-        field=state.get("last_focused_field") or ""
-
-    if not aid:
-        aid=state.get("last_focused_application_id")
+    if field in {"category","subcategory","price","service_name","location_city","description"}: state["last_focused_field"]=field
+    elif not field or field=="none": field=state.get("last_focused_field") or ""
     if aid:
-        try:
-            aid=int(aid)
-            state["last_focused_application_id"]=aid
-        except (TypeError,ValueError):
-            aid=None
+        try: aid=int(aid); state["last_focused_application_id"]=aid
+        except (TypeError,ValueError): aid=None
 
-    legacy={"inspect":"inspect_application","show":"show_applications","edit":"edit_application","approve":"approve_application","reject":"reject_application","clarify":"clarify_application"}
-    intent=legacy.get(intent,intent)
+    is_question=("?" in message or "՞" in message or bool(re.search(r"\b(как|какая|какие|какое|почему|зачем|что|где|сколько|what|which|how|why|where|how many|ինչ|ինչպես|որ|որտեղ|արդյոք|քանի)\b",message.casefold())))
+    if is_question and intent in {"edit_application","approve_application","reject_application","clarify_application"}: intent="show_application_field" if field else "inspect_application"
 
-    # Questions are read-only. This is a protocol rule, not a phrase-specific command.
-    is_question=(
-        "?" in message or "՞" in message or
-        re.search(r"\b(как|какая|какие|какое|почему|зачем|что|где|каков|what|which|how|why|where|ինչ|ինչպես|որ|որտեղ|արդյոք)\b",message.casefold())
-    )
-    if is_question and intent in {"edit_application","approve_application","reject_application","clarify_application"}:
-        if field in {"category","subcategory","service","price","description"}:
-            intent="show_application_field"
-        else:
-            intent="inspect_application"
+    if intent=="show_application_count":
+        reply=await _admin_execute({"intent":"show_application_count"})
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    if intent in {"show_application","inspect_application","show_application_field","show_applications","show_partners","show_businesses"}:
-        if target=="partner" or intent=="show_partners":
-            reply=await _admin_execute({"intent":"show_partners"})
-        elif target=="business" or intent=="show_businesses":
-            reply=await _admin_execute({"intent":"show_businesses"})
-        elif intent=="show_applications":
-            rows=_admin_context(limit=30).get("applications",[])
-            state["last_shown_applications"]=[{"id":int(x["id"]),"business_name":x.get("business_name"),"service_name":x.get("service_name")} for x in rows[:20]]
-            if len(state["last_shown_applications"])==1:
-                state["last_focused_application_id"]=state["last_shown_applications"][0]["id"]
-            reply=await _admin_execute({"intent":"show_applications"})
-        else:
-            if not aid:
-                return "Сначала откройте заявку или укажите её номер."
-            state["last_focused_application_id"]=int(aid)
-            reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
-            if intent=="inspect_application":
-                reply += "\n\n🔎 Проверка заполнения:\n" + _application_review(int(aid))
-            elif intent=="show_application_field":
-                reply += "\n\n" + _application_field_answer(int(aid),field)
-        _admin_history(state,"admin",message)
-        _admin_history(state,"assistant",reply)
-        return reply
+    if intent=="show_applications":
+        try: rows=_admin_context(limit=30).get("applications",[])
+        except Exception: rows=[]
+        state["last_shown_applications"]=[{"id":int(x["id"]),"business_name":x.get("business_name"),"service_name":x.get("service_name")} for x in rows[:20]]
+        if len(state["last_shown_applications"])==1: state["last_focused_application_id"]=state["last_shown_applications"][0]["id"]
+        reply=await _admin_execute({"intent":"show_applications"})
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
+    if intent in {"show_application","inspect_application","show_application_field"}:
+        if not aid: return "Сначала откройте заявку или укажите её номер."
+        if not _admin_hydrate_application(aid): return "Заявка #"+str(aid)+" не найдена."
+        state["last_focused_application_id"]=int(aid)
+        reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
+        if intent=="inspect_application": reply+="\n\n🔎 Проверка заполнения:\n"+_application_review(int(aid))
+        elif intent=="show_application_field": reply+="\n\n"+_application_field_answer(int(aid),field)
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
+    # Compound command: inspect and propose, never mutate.
+    if intent=="suggest_application_correction":
+        rows=_admin_context(limit=20).get("applications",[]); proposals=[]
+        for row in rows[:10]:
+            app=_admin_hydrate_application(row["id"])
+            if not app: continue
+            cat=find_best_subcategory(str(app.get("service_name") or ""),app.get("master_category_id"))
+            if cat and _norm(str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en")))!=_norm(str(app.get("subcategory_name") or "")):
+                proposals.append((app,cat))
+        if not proposals: return "🔎 Проверил заявки: явных расхождений подкатегорий с активным каталогом не обнаружено."
+        if len(proposals)>1:
+            reply="🔎 Найдены возможные исправления:\n"+"\n".join("#"+str(a["id"])+" · "+str(a.get("service_name") or "—")+" · «"+str(a.get("subcategory_name") or "—")+"» → «"+str(c.get("name_am") or c.get("name_ru") or c.get("name_en"))+"»" for a,c in proposals)+"\n\nУкажите заявку для подготовки изменения."
+            _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+        app,cat=proposals[0]; aid=int(app["id"]); state["last_focused_application_id"]=aid; state["last_focused_field"]="subcategory"
+        action={"intent":"edit_application","application_id":aid,"field":"subcategory","category_id":int(cat["id"]),"old_value_name":str(app.get("subcategory_name") or "—"),"new_value":str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))}
+        state["pending_action"]=_admin_safe(action)
+        reply="🔎 Нашёл исправление для заявки #"+str(aid)+":\n\n"+_admin_state_preview(action)+"\n\nПодтвердить? «да» / «нет»"
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
     if intent not in {"edit_application","approve_application","reject_application","clarify_application"}:
-        reply=str(c.get("reply") or "Уточните, что именно нужно сделать.")
-        _admin_history(state,"admin",message)
-        _admin_history(state,"assistant",reply)
-        return reply
+        reply="Я понял запрос не полностью. Скажите: «покажи заявки», «сколько заявок?», «открой #36», «проверь подкатегорию» или «цена неправильная»."
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    if not aid:
-        shown_apps=state.get("last_shown_applications") or []
-        if len(shown_apps)==1:
-            aid=int(shown_apps[0]["id"])
-            state["last_focused_application_id"]=aid
-    if not aid:
-        return "Сначала откройте заявку или укажите её номер."
-    app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(int(aid),))
-    if not app:
-        return "Не удалось найти текущую заявку. Укажите её номер, например #36."
-
+    # Resolver -> ActionPlan. Only the ActionPlan can reach the executor.
+    if not aid: return "Сначала откройте заявку или укажите её номер."
+    app=_admin_hydrate_application(aid)
+    if not app: return "Заявка #"+str(aid)+" не найдена."
     state["last_focused_application_id"]=int(aid)
     action={"intent":intent,"application_id":int(aid)}
     if intent=="edit_application":
-        field=str(c.get("field") or "").lower()
-        if not field or field=="none":
-            field=state.get("last_focused_field") or ""
+        if field=="category": field="subcategory"
+        if not field: return "Уточните поле: цена, название услуги, описание или подкатегория."
         value=str(c.get("value_raw") or c.get("value_text") or "").strip()
-        # If Groq omitted an explicit value, keep a small deterministic fallback
-        # for natural "change X to Y" messages. No DB/catalog IDs are inferred.
         if not value:
-            m=re.search(r"(?:փոխի|փոխիր|դարձրու|դարձնել|на|на\s+|поменяй(?:\s+на)?|замени(?:\s+на)?|to)\s+(.+)$",message,flags=re.I)
-            if m:
-                value=m.group(1).strip(" .,!?:;")
-        if field=="category":
-            field="subcategory"
-        if field:
-            state["last_focused_field"]=field
-        if field in {"category","subcategory"}:
-            requested_value=value or None
-            try:
-                cat=find_best_subcategory(
-                    str(app.get("service_name") or ""),
-                    app.get("master_category_id"),
-                    requested_value=requested_value,
-                )
-            except Exception:
-                state["pending_action"]=None
-                return "Не удалось безопасно определить подкатегорию по активному каталогу. Изменений не внесено."
+            state["last_focused_field"]=field; state["waiting_for_input"]={"field":field,"application_id":int(aid)}
+            return "Какое значение установить для поля «"+field+"»?"
+        if field=="subcategory":
+            cat=find_best_subcategory(str(app.get("service_name") or ""),app.get("master_category_id"),requested_value=value)
             if not cat:
-                current=str(app.get("subcategory_name") or "—")
                 suggestions=_admin_category_suggestions(str(app.get("service_name") or ""),app.get("master_category_id"))
-                if suggestions:
-                    return "Текущая подкатегория: «"+current+"». По живому каталогу вижу варианты: "+", ".join("«"+x+"»" for x in suggestions)+"\nУкажите нужную подкатегорию."
-                if requested_value:
-                    return "Не нашёл однозначную подкатегорию «"+requested_value+"» в активном каталоге."
-                return "Не нашёл однозначного соответствия для услуги «"+str(app.get("service_name") or "—")+"» в активном каталоге."
-
-            if app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
-                return "Подкатегория относится к другому направлению. Укажите подкатեգорию из текущего направления."
-
-            action["field"]="subcategory"
-            action["category_id"]=int(cat["id"])
-            action["old_value_name"]=str(app.get("subcategory_name") or "—")
-            action["new_value"]=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
+                return "Не нашёл подкатегорию «"+value+"» в активном каталоге."+(("\nВарианты: "+", ".join("«"+x+"»" for x in suggestions)) if suggestions else "")
+            if app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]): return "Подкатегория относится к другому направлению."
+            action.update({"field":"subcategory","category_id":int(cat["id"]),"old_value_name":str(app.get("subcategory_name") or "—"),"new_value":str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))})
         else:
-            if field not in {"name","service","price","description","note"} or not value:
-                state["pending_action"]=None
-                return "Уточните поле и новое значение: цена, название услуги, описание или подкатегория."
-            action["field"]=field
-            action["new_value"]=value
+            if field not in {"price","service_name","location_city","description"}: return "Это поле пока не поддерживается для изменения."
+            if field=="price":
+                try: value=float(re.sub(r"[^0-9.,-]","",value).replace(",","."))
+                except Exception: return "Цена должна быть числом, например: 2500."
+            action.update({"field":field,"new_value":value})
     else:
         action["new_value"]=c.get("value_text")
         if intent=="reject_application": action["reason"]=c.get("reason") or c.get("value_text")
         if intent=="clarify_application": action["admin_note"]=c.get("reason") or c.get("value_text")
+    action=_admin_safe(action); state["pending_action"]=action; state["waiting_for_input"]=None
+    reply="🤖 Подготовил действие:\n\n"+_admin_state_preview(action)+"\n\nПодтвердить? «да» или «нет»."
+    _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    state["pending_action"]=action
-    token=_admin_pending_add(action)
-    preview=_admin_state_preview(action)
-    reply="🤖 Подготовил действие:\n\n"+preview+"\n\nПодтвердить? Напишите «да» или «нет».\n\nPENDING:"+token
-    _admin_history(state,"admin",message)
-    _admin_history(state,"assistant",reply)
-    return reply
 
 async def api_admin_assistant(request):
     _admin(request)
-    data=await request.json()
-    message=str(data.get("message") or "").strip()
+    data=await request.json(); message=str(data.get("message") or "").strip()
     if not message: return web.json_response({"ok":False,"error":"message_required"},status=400)
     try:
         return web.json_response({"ok":True,"reply":await admin_ai_message(int(request.app.get("stage3_admin_id") or 0),message)})
-    except Exception as exc:
-        # Never leave a stale confirmation after a failed turn.
+    except Exception:
         try:
             state=_admin_session(int(request.app.get("stage3_admin_id") or 0))
-            state["pending_action"]=None
-        except Exception:
-            pass
+            state["pending_action"]=None; state["waiting_for_input"]=None
+        except Exception: pass
         import logging
-        logging.getLogger(__name__).exception("admin_ai_failed")
-        return web.json_response({
-            "ok":False,
-            "error":"admin_ai_failed",
-            "message":"Не удалось безопасно обработать команду. Изменений не внесено. Повторите команду."
-        },status=503)
+        logging.getLogger(__name__).exception("admin_ai_turn_failed")
+        return web.json_response({"ok":True,"reply":"Не удалось безопасно обработать команду. Изменений не внесено. Повторите команду."})
+
 
 
 def register_admin_ai_routes(app, ai, bot=None):
