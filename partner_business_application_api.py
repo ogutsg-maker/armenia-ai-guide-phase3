@@ -139,6 +139,9 @@ def ensure_business_application_schema():
     """)
 
     # Repair legacy duplicate directions before enforcing uniqueness.
+    # Drop the old full unique index FIRST: otherwise changing duplicate rows
+    # to deleted can itself violate the old unique constraint during UPDATE.
+    _exec("DROP INDEX IF EXISTS uq_partner_direction_business_master")
     _exec("""
     UPDATE partner_directions pd
        SET status='deleted', updated_at=NOW()
@@ -152,7 +155,6 @@ def ensure_business_application_schema():
              AND newer.id>pd.id
        )
     """)
-    _exec("DROP INDEX IF EXISTS uq_partner_direction_business_master")
     _exec("""
     CREATE UNIQUE INDEX uq_partner_direction_business_master
       ON partner_directions(business_id,master_category_id)
