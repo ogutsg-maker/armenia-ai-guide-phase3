@@ -320,7 +320,7 @@ async def api_services(request: web.Request):
             # services exist for this partner; the cabinet must display them
             # even if a legacy DB has a different category schema.
             cur.execute(
-                """SELECT s.*, (s.data_json->>'object_id') AS service_object_id, (s.data_json->>'contact_phone') AS service_contact_phone
+                """SELECT s.*, (s.data_json->>'object_id') AS service_object_id, (s.data_json->>'location_id') AS location_id, (s.data_json->>'contact_phone') AS service_contact_phone
                    FROM services s
                    WHERE s.partner_id=%s AND s.business_id=%s
                      AND (s.status IS NULL OR s.status <> 'deleted')
@@ -958,6 +958,7 @@ async def api_reviews(request: web.Request):
 async def api_documents(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request,pid)
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""SELECT id,partner_id,business_id,document_type,original_filename,mime_type,file_size,status,
