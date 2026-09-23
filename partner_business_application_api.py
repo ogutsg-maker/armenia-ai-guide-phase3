@@ -491,7 +491,8 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      LIMIT 1
                  )
                  AND b.partner_id=%s""",(p["id"],p["id"]))
-        rows=_all("""SELECT * FROM partner_businesses WHERE partner_id=%s
+        rows=_all("""SELECT * FROM partner_businesses
+                     WHERE partner_id=%s AND status='active'
                      ORDER BY is_default DESC,id""",(p["id"],))
         return web.json_response({"ok":True,"businesses":rows,"current":default_business(p["id"])})
 
@@ -522,6 +523,30 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      RETURNING *""",(name,description or None,phone or None,bid,p["id"]),True)
         if not row: return web.json_response({"ok":False,"error":"business_not_found"},status=404)
         return web.json_response({"ok":True,"business":row})
+
+    async def delete_business(request):
+        uid=_auth(request); p=_partner(uid)
+        if not p: return web.json_response({"ok":False,"error":"partner_not_found"},status=404)
+        bid=_safe_int(request.match_info.get("business_id"))
+        if not bid: return web.json_response({"ok":False,"error":"business_id_required"},status=400)
+
+        # Never physically delete a company: services, addresses, documents and
+        # old bookings may still need their historical business relationship.
+        row=_exec("""UPDATE partner_businesses
+                     SET status='archived', is_default=FALSE, updated_at=NOW()
+                     WHERE id=%s AND partner_id=%s AND status='active'
+                     RETURNING *""",(bid,p["id"]),True)
+        if not row:
+            return web.json_response({"ok":False,"error":"business_not_found"},status=404)
+
+        # Keep one active default company when another company exists.
+        replacement=_exec("""SELECT id FROM partner_businesses
+                             WHERE partner_id=%s AND status='active'
+                             ORDER BY is_default DESC,id LIMIT 1""",(p["id"],),True)
+        if replacement:
+            _exec("""UPDATE partner_businesses SET is_default=TRUE,updated_at=NOW()
+                     WHERE id=%s AND partner_id=%s""",(replacement["id"],p["id"]))
+        return web.json_response({"ok":True,"deleted_business_id":bid})
 
     async def applications(request):
         uid=_auth(request); p=_partner(uid)
@@ -1509,6 +1534,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
     app.router.add_get("/api/master/{id}/businesses",businesses)
     app.router.add_post("/api/master/{id}/businesses",create_business)
     app.router.add_post("/api/master/{id}/businesses/{business_id}",update_business)
+    app.router.add_delete("/api/master/{id}/businesses/{business_id}",delete_business)
     app.router.add_post("/api/master/{id}/applications/{application_id}",application_update)
     app.router.add_delete("/api/master/{id}/applications/{application_id}",application_delete)
     app.router.add_get("/api/master/{id}/application-catalog",application_catalog)
