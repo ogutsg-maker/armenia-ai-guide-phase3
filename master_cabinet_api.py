@@ -737,6 +737,7 @@ async def api_service_create(request: web.Request):
     return web.json_response({"ok":True,"proposal_created":True,"application_id":aid,"ai_classified":True,
                               "matched_category_id":match["category_id"],"master_category_id":match["master_category_id"],
                               "message":"Ծառայությունը դասակարգվեց AI-ի կողմից և ուղարկվեց ադմինիստրատորին հաստատման։"
+    })
 async def api_service_update(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
