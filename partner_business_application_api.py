@@ -99,28 +99,7 @@ def ensure_business_application_schema():
     ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     CREATE INDEX IF NOT EXISTS idx_partner_businesses_partner ON partner_businesses(partner_id,status);
     ALTER TABLE partner_directions DROP CONSTRAINT IF EXISTS partner_directions_partner_id_master_category_id_key;
-    -- Repair legacy duplicates before enforcing the multi-company uniqueness rule.
-    -- Keep the newest row and mark older duplicates deleted; this preserves any
-    -- historical references while allowing startup to remain idempotent.
-    _exec("""
-    UPDATE partner_directions pd
-       SET status='deleted', updated_at=NOW()
-     WHERE pd.business_id IS NOT NULL
-       AND pd.master_category_id IS NOT NULL
-       AND EXISTS (
-           SELECT 1
-           FROM partner_directions newer
-           WHERE newer.business_id=pd.business_id
-             AND newer.master_category_id=pd.master_category_id
-             AND newer.id>pd.id
-       )
-    """)
-    _exec("DROP INDEX IF EXISTS uq_partner_direction_business_master")
-    _exec("""
-    CREATE UNIQUE INDEX uq_partner_direction_business_master
-      ON partner_directions(business_id,master_category_id)
-      WHERE status <> 'deleted'
-    """);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_direction_business_master ON partner_directions(business_id,master_category_id);
     CREATE INDEX IF NOT EXISTS idx_partner_directions_business ON partner_directions(business_id,status);
     CREATE INDEX IF NOT EXISTS idx_services_business ON services(business_id,status);
     CREATE INDEX IF NOT EXISTS idx_partner_documents_business ON partner_verification_documents(business_id,created_at DESC);
@@ -159,6 +138,27 @@ def ensure_business_application_schema():
     CREATE INDEX IF NOT EXISTS idx_partner_applications_partner ON partner_applications(partner_id,status,created_at DESC);
     """)
 
+    # Repair legacy duplicate directions before enforcing uniqueness.
+    _exec("""
+    UPDATE partner_directions pd
+       SET status='deleted', updated_at=NOW()
+     WHERE pd.business_id IS NOT NULL
+       AND pd.master_category_id IS NOT NULL
+       AND EXISTS (
+           SELECT 1
+           FROM partner_directions newer
+           WHERE newer.business_id=pd.business_id
+             AND newer.master_category_id=pd.master_category_id
+             AND newer.id>pd.id
+       )
+    """)
+    _exec("DROP INDEX IF EXISTS uq_partner_direction_business_master")
+    _exec("""
+    CREATE UNIQUE INDEX uq_partner_direction_business_master
+      ON partner_directions(business_id,master_category_id)
+      WHERE status <> 'deleted'
+    """)
+    
     # Pending service proposals belonging to archived companies are stale:
     # the partner has already deleted those companies, so they must not remain
     # visible in Admin applications.
