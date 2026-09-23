@@ -622,6 +622,40 @@ async def admin_ai_message(admin_id,message):
             _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
         state["waiting_for_input"]=None
 
+
+    # High-confidence replacement syntax is handled locally so old A cannot become the new value.
+    focused_id=state.get("last_focused_application_id")
+    replacement=_admin_parse_replacement(message)
+    if replacement and focused_id:
+        app=_admin_hydrate_application(focused_id)
+        if app:
+            field=state.get("last_focused_field") or "subcategory"
+            if field in {"category","subcategory"}:
+                cat=find_best_subcategory("",app.get("master_category_id"),requested_value=replacement)
+                if not cat:
+                    suggestions=_admin_category_suggestions(replacement,app.get("master_category_id"))
+                    state["waiting_for_input"]={"field":"subcategory","application_id":int(focused_id)}
+                    reply=("🔍 Заявка #"+str(focused_id)+"\n"
+                           "Я понял, что нужно изменить подкатегорию на «"+replacement+"», "
+                           "но не нашёл точного соответствия в активном каталоге.")
+                    if suggestions:
+                        reply+="\nВозможные варианты: "+", ".join("«"+x+"»" for x in suggestions)
+                    reply+="\n\nВведите точное название подкатегории."
+                    _admin_history(state,"admin",message)
+                    _admin_history(state,"assistant",reply)
+                    return reply
+                action={"intent":"edit_application","application_id":int(focused_id),"field":"subcategory",
+                        "category_id":int(cat["id"]),
+                        "old_value_name":str(app.get("subcategory_name") or "—"),
+                        "new_value":str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))}
+                state["pending_action"]=_admin_safe(action)
+                state["waiting_for_input"]=None
+                state["last_focused_field"]="subcategory"
+                reply="🤖 Подготовил действие:\n\n"+_admin_state_preview(action)+"\n\nПодтвердить? «да» / «нет»"
+                _admin_history(state,"admin",message)
+                _admin_history(state,"assistant",reply)
+                return reply
+
     # Context hydration: focused application + history + DB values, normalized for JSON.
     focused_id=state.get("last_focused_application_id")
     if not focused_id and len(state.get("last_shown_applications") or [])==1:
