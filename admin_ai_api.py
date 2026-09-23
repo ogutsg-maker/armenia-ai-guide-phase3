@@ -272,11 +272,21 @@ Use focused_application for this, here, it, the application. Never invent IDs.""
         resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=260,)
     except Exception as first:
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
-            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=180,response_format={"type":"json_object"})
+            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=260)
         else: raise
     raw=(resp.choices[0].message.content or "").strip()
-    raw=re.sub(r"^```json\s*|\s*```$","",raw,flags=re.I|re.S).strip()
-    return json.loads(raw)
+    raw=re.sub(r"^\s*\`\`\`(?:json)?\s*|\s*\`\`\`\s*$","",raw,flags=re.I|re.S).strip()
+    try:
+        data=json.loads(raw)
+    except json.JSONDecodeError:
+        start=raw.find("{")
+        end=raw.rfind("}")
+        if start<0 or end<=start:
+            raise RuntimeError("Groq returned invalid JSON")
+        data=json.loads(raw[start:end+1])
+    if not isinstance(data,dict):
+        raise RuntimeError("Groq returned a non-object intent")
+    return data
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
     if not message: return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
@@ -315,7 +325,7 @@ async def admin_ai_message(admin_id,message):
     if intent in {"show_application","show_applications","show_partners","show_businesses"}:
         if target=="partner" or intent=="show_partners": return await _admin_execute({"intent":"show_partners"})
         if target=="business" or intent=="show_businesses": return await _admin_execute({"intent":"show_businesses"})
-        if intent=="show_applications" and not aid: return await _admin_execute({"intent":"show_applications"})
+        if intent=="show_applications": return await _admin_execute({"intent":"show_applications"})
         if not aid: return await _admin_execute({"intent":"show_applications"})
         state["last_focused_application_id"]=int(aid)
         reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
