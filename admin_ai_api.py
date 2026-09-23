@@ -634,7 +634,7 @@ async def _admin_execute_state_action(action):
         return "✓ Заявка #"+str(aid)+" отправлена партнёру на уточнение."
     return "Действие не определено."
 
-async async def _admin_ai_json(message,ctx):
+async def _admin_ai_json(message,ctx):
     from groq import AsyncGroq
     key=os.getenv("GROQ_API_KEY","").strip()
     if not key: raise RuntimeError("GROQ_API_KEY is not configured")
