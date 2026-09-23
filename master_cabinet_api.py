@@ -754,7 +754,7 @@ async def api_service_update(request: web.Request):
     bid = _business_id(request,pid)
     sid = int(request.match_info["service_id"])
     data = await request.json()
-    allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json"}
+    allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json", "object_id", "contact_phone"}
     fields = {k: data[k] for k in allowed if k in data}
     if not fields:
         return web.json_response({"ok": True})
