@@ -1236,11 +1236,19 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                 return web.json_response({"ok":False,"error":"business_required"},status=409)
 
             business=_one(
-                "SELECT * FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",
+                "SELECT * FROM partner_businesses WHERE id=%s AND partner_id=%s AND status IN ('active','pending')",
                 (bid,a["partner_id"])
             )
             if not business:
                 return web.json_response({"ok":False,"error":"business_required"},status=409)
+
+            # A pending company becomes active together with its first
+            # approved service. It was created only to hold this proposal.
+            if str(business.get("status") or "") == "pending":
+                _exec("""UPDATE partner_businesses
+                         SET status='active', updated_at=NOW()
+                         WHERE id=%s AND partner_id=%s""",(bid,a["partner_id"]))
+                business["status"]="active"
 
             # Existing approved direction: one Admin approval is enough for a
             # new service. No new direction/document workflow is needed.
