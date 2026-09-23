@@ -220,6 +220,13 @@ def _entity_name(ctx, key, ident):
     if ident is None: return ""
     for x in ctx.get(key,[]):
         if int(x["id"]) == int(ident):
+            if key == "addresses":
+                label = str(x.get("object_name") or "").strip()
+                parts = [str(x.get(k) or "").strip() for k in ("address", "city", "marz") if str(x.get(k) or "").strip()]
+                location = ", ".join(parts)
+                if label and location:
+                    return f"{label} — {location}"
+                return label or location
             return x.get("name") or x.get("object_name") or ""
     return ""
 
@@ -312,7 +319,7 @@ def _preview(c,ctx,lang):
         details.append("🏢 "+(_entity_name(ctx,"businesses",c.get("business_id")) or str(c["business_id"])))
     if c.get("object_id"):
         details.append("📍 "+(_entity_name(ctx,"addresses",c.get("object_id")) or str(c["object_id"])))
-    return title + (":\\n" + "\\n".join(details) if details else "")
+    return title + (":\n" + "\n".join(details) if details else "")
 
 
 async def _execute_read(pid,c,ctx):
@@ -354,12 +361,20 @@ async def _execute_mutation(pid,c,ctx):
     if intent=="add_service":
         if not bid:
             return web.json_response({"ok":True,"reply":"Укажите, в какой компании добавить услугу."})
-        if not oid:
-            candidates=[x for x in ctx.get("addresses",[]) if int(x.get("business_id") or 0)==bid]
-            if len(candidates)==1:
-                oid=int(candidates[0]["id"])
-            else:
-                return web.json_response({"ok":True,"reply":"Укажите адрес, где должна быть эта услуга."})
+        candidates=[x for x in ctx.get("addresses",[]) if int(x.get("business_id") or 0)==bid]
+        if oid:
+            selected = next((x for x in candidates if int(x["id"]) == oid), None)
+            if selected is None:
+                # If Groq returned a stale/mismatched object id, use the only
+                # active address of the selected company when there is exactly one.
+                if len(candidates) == 1:
+                    oid=int(candidates[0]["id"])
+                else:
+                    return web.json_response({"ok":True,"reply":"Укажите адрес, где должна быть эта услуга."})
+        elif len(candidates)==1:
+            oid=int(candidates[0]["id"])
+        else:
+            return web.json_response({"ok":True,"reply":"Укажите адрес, где должна быть эта услуга."})
         if not name:
             return web.json_response({"ok":True,"reply":"Как называется услуга?"})
         from master_cabinet_api import _ai_match_new_service
