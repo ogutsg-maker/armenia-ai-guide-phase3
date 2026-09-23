@@ -186,6 +186,10 @@ async function saveServiceEdit(id){
 }
 async function deleteService(id){const s=state.services.find(x=>String(x.id)===String(id));if(!s)return;if(!confirm((state.lang==='hy'?'Ջնջե՞լ ծառայությունը՝ ':state.lang==='ru'?'Удалить услугу: ':'Delete service: ')+String(s.name||'')+'?'))return;try{await api('/api/master/0/services/'+id,{method:'DELETE',headers:{'X-Business-Id':String(state.current.id)}});await openBusiness(state.current.id);showCompanySection('services')}catch(e){toast(e.message)}}
 function closeServiceCreate(){document.getElementById('serviceCreateModal')?.remove()}
+async function loadBusinessObjects(businessId){
+  const d=await api('/api/master/0/objects',{headers:{'X-Business-Id':String(businessId)}});
+  return d.objects||[];
+}
 function addService(){
   closeServiceCreate();
   const modal=document.createElement('div');
@@ -194,28 +198,26 @@ function addService(){
   const objects=state.objects.map(o=>'<option value="'+o.id+'">'+esc(o.object_name||o.name)+' · '+esc([o.city,o.address].filter(Boolean).join(', '))+'</option>').join('');
   const firmPhone=state.current?.phone||'';
   modal.innerHTML='<div class="modal-card">'+
-    '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Укажите, где именно оказывается услуга. AI определит только направление и подкатегорию.</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
+    '<div class="heading"><div><h2>🛠 '+tr('addService')+'</h2><p>Выберите компанию и адрес, где оказывается услуга.</p></div><button class="btn secondary" onclick="closeServiceCreate()">✕</button></div>'+
     '<div class="field"><label>🏢 '+tr('company')+'</label><div style="display:flex;gap:7px"><select id="newServiceBusiness" style="flex:1">'+firms+'</select><button class="btn secondary" onclick="createBusinessFromService()">＋</button></div></div>'+
-    '<div class="field"><label>📍 '+tr('object')+'</label><div style="display:flex;gap:7px"><select id="newServiceObject" style="flex:1"><option value="">'+tr('selectObject')+'</option>'+objects+'</select><button class="btn secondary" onclick="toggleNewServiceObject()">＋</button></div></div>'+
-    '<div id="newServiceObjectFields" style="display:none">'+
-      '<div class="field"><label>'+tr('objectName')+'</label><input id="newServiceObjectName" placeholder="'+tr('objectName')+'"></div>'+
-      '<div class="grid2"><div class="field"><label>'+tr('address')+'</label><input id="newServiceObjectAddress"></div><div class="field"><label>'+tr('city')+'</label><input id="newServiceObjectCity"></div></div>'+
-      '<div class="field"><label>'+tr('marz')+'</label><input id="newServiceObjectMarz"></div>'+
-    '</div>'+
-    '<div class="grid2"><div class="field"><label>📍 '+tr('address')+'</label><input id="newServiceAddress" placeholder="'+tr('autoFromObject')+'"></div><div class="field"><label>🏙 '+tr('city')+' / '+tr('marz')+'</label><input id="newServiceCityMarz" placeholder="'+tr('autoFromObject')+'"></div></div>'+
-    '<div class="field"><label>📞 '+tr('phone')+'</label><input id="newServicePhone" value="'+esc(firmPhone)+'" placeholder="'+tr('optionalNew')+'"></div>'+
-    '<div class="hr"></div>'+
+    '<div class="field"><label>📍 '+tr('object')+'</label><div style="display:flex;gap:7px"><select id="newServiceObject" style="flex:1"><option value="">'+tr('selectObject')+'</option>'+objects+'</select><button class="btn secondary" onclick="createAddressFromService()">＋</button></div></div>'+
+    '<div id="newServiceNoAddress" class="notice" style="display:'+(objects?'none':'block')+'">Адресов пока нет. Нажмите «＋», чтобы добавить адрес этой компании.</div>'+
     '<div class="field"><label>🛠 '+tr('name')+'</label><input id="newServiceName" autocomplete="off"></div>'+
     '<div class="field"><label>'+tr('description')+'</label><textarea id="newServiceDescription" rows="4"></textarea></div>'+
     '<div class="field"><label>💰 '+tr('price')+'</label><input id="newServicePrice" type="number" min="0" step="1" inputmode="numeric"></div>'+
-    '<div class="notice">AI-ը ինքն է ընտրում գործող կատալոգի դասակարգումը։ Հասցեն ընտրում է գործընկերը։</div>'+
+    '<div class="notice">AI-ը ինքն է ընտրում գործող կատալոգի դասակարգումը։ Կատալոգի ուղղությունը և ենթակատեգորիան գործընկերը այստեղ չի լրացնում։</div>'+
     '<div class="actions"><button class="btn secondary" onclick="closeServiceCreate()">'+tr('back')+'</button><button class="btn" onclick="submitNewService()">✓ '+tr('save')+'</button></div>'+
   '</div>';
   document.body.appendChild(modal);
   document.getElementById('newServiceObject')?.addEventListener('change',syncServiceObject);
   document.getElementById('newServiceBusiness')?.addEventListener('change',async e=>{
-    const id=e.target.value; state.current=state.businesses.find(x=>String(x.id)===String(id))||state.current;
-    try{const d=await api('/api/master/0/objects',{headers:{'X-Business-Id':String(id)}}); state.objects=d.objects||[]; addService()}catch(err){toast(err.message)}
+    const id=e.target.value;
+    if(!id)return;
+    state.current=state.businesses.find(x=>String(x.id)===String(id))||state.current;
+    try{
+      state.objects=await loadBusinessObjects(id);
+      addService();
+    }catch(err){toast(err.message)}
   });
   syncServiceObject();
   document.getElementById('newServiceName')?.focus();
@@ -223,45 +225,70 @@ function addService(){
 function syncServiceObject(){
   const id=document.getElementById('newServiceObject')?.value;
   const o=state.objects.find(x=>String(x.id)===String(id));
-  if(!o)return;
-  const addr=document.getElementById('newServiceAddress'); const cm=document.getElementById('newServiceCityMarz'); const ph=document.getElementById('newServicePhone');
-  if(addr)addr.value=[o.address].filter(Boolean).join('');
-  if(cm)cm.value=[o.city,o.marz].filter(Boolean).join(' · ');
-  if(ph&&!ph.value)ph.value=o.phone||state.current?.phone||'';
+  const addr=document.getElementById('newServiceAddress');
+  const cm=document.getElementById('newServiceCityMarz');
+  const ph=document.getElementById('newServicePhone');
+  if(o){
+    if(addr)addr.value=o.address||'';
+    if(cm)cm.value=[o.city,o.marz].filter(Boolean).join(' · ');
+    if(ph&&!ph.value)ph.value=o.phone||state.current?.phone||'';
+  }else{
+    if(addr)addr.value='';
+    if(cm)cm.value='';
+    if(ph&&!ph.value)ph.value=state.current?.phone||'';
+  }
 }
-function toggleNewServiceObject(){
-  const box=document.getElementById('newServiceObjectFields'); if(!box)return;
-  box.style.display=box.style.display==='none'?'block':'none';
-  if(box.style.display==='block'){document.getElementById('newServiceObject').value='';}
+async function createAddressFromService(){
+  const businessId=document.getElementById('newServiceBusiness')?.value||state.current?.id;
+  if(!businessId)return;
+  const name=prompt(tr('objectName'));
+  if(!name)return;
+  const address=prompt(tr('address'));
+  if(!address)return;
+  const city=prompt(tr('city'));
+  if(!city)return;
+  const marz=prompt(tr('marz'));
+  try{
+    const od=await api('/api/master/0/objects',{method:'POST',headers:{'X-Business-Id':String(businessId)},body:{name,address,city,marz,phone:state.current?.phone||''}});
+    state.objects=await loadBusinessObjects(businessId);
+    addService();
+    const sel=document.getElementById('newServiceObject');
+    if(sel&&od.object?.id){sel.value=String(od.object.id);syncServiceObject();}
+    toast('✓ '+tr('saved'));
+  }catch(e){toast(e.message)}
 }
 async function createBusinessFromService(){
   const name=prompt(tr('name')); if(!name)return;
-  try{await api('/api/master/0/businesses',{method:'POST',body:{name}}); await loadBusinesses(); addService();}
-  catch(e){toast(e.message)}
+  try{
+    const created=await api('/api/master/0/businesses',{method:'POST',body:{name}});
+    await loadBusinesses();
+    const createdId=created.business?.id||created.id||state.businesses.filter(b=>String(b.name||'').trim()===name.trim()).sort((a,b)=>Number(b.id)-Number(a.id))[0]?.id;
+    if(!createdId)throw new Error('company_create_failed');
+    state.current=state.businesses.find(x=>String(x.id)===String(createdId))||state.current;
+    state.objects=await loadBusinessObjects(createdId);
+    addService();
+    const bs=document.getElementById('newServiceBusiness');
+    if(bs)bs.value=String(createdId);
+  }catch(e){toast(e.message)}
 }
 async function submitNewService(){
-  const objectSelect=document.getElementById('newServiceObject');
-  let objectId=objectSelect?.value||'';
-  const creating=document.getElementById('newServiceObjectFields')?.style.display==='block';
+  const businessId=document.getElementById('newServiceBusiness')?.value||state.current?.id;
+  const objectId=document.getElementById('newServiceObject')?.value||'';
   const name=document.getElementById('newServiceName')?.value.trim()||'';
   const description=document.getElementById('newServiceDescription')?.value.trim()||'';
   const priceRaw=document.getElementById('newServicePrice')?.value.trim()||'';
-  const phone=document.getElementById('newServicePhone')?.value.trim()||'';
+  if(!businessId){toast(tr('company'));return}
   if(name.length<2){toast(tr('name'));return}
   if(priceRaw!==''&&(!Number.isFinite(Number(priceRaw))||Number(priceRaw)<0)){toast(tr('price'));return}
+  if(!objectId){toast(tr('selectObject'));return}
   try{
-    if(creating){
-      const objectName=document.getElementById('newServiceObjectName')?.value.trim()||'';
-      const address=document.getElementById('newServiceObjectAddress')?.value.trim()||'';
-      const city=document.getElementById('newServiceObjectCity')?.value.trim()||'';
-      const marz=document.getElementById('newServiceObjectMarz')?.value.trim()||'';
-      if(!objectName||!address||!city){toast(tr('objectDataRequired'));return}
-      const od=await api('/api/master/0/objects',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name:objectName,address,city,marz,phone}});
-      objectId=od.object?.id||'';
-    }
-    if(!objectId){toast(tr('selectObject'));return}
-    const d=await api('/api/master/0/services',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name,description,price:priceRaw===''?null:Number(priceRaw),object_id:Number(objectId),contact_phone:phone||null}});
-    closeServiceCreate(); await openBusiness(state.current.id); showCompanySection('services');
+    state.current=state.businesses.find(x=>String(x.id)===String(businessId))||state.current;
+    const d=await api('/api/master/0/services',{method:'POST',headers:{'X-Business-Id':String(businessId)},body:{name,description,price:priceRaw===''?null:Number(priceRaw),object_id:Number(objectId),contact_phone:state.current?.phone||null}});
+    closeServiceCreate();
+    await loadBusinesses();
+    state.current=state.businesses.find(x=>String(x.id)===String(businessId))||state.current;
+    await openBusiness(businessId);
+    showCompanySection('services');
     toast(d.proposal_created?'Հայտը ուղարկվեց ադմինիստրատորին':'Ծառայությունը ուղարկվեց ադմինիստրատորին հաստատման համար');
   }catch(e){toast(e.message)}
 }
