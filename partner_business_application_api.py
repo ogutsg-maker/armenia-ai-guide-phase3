@@ -605,6 +605,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      FROM partner_applications a
                      JOIN partners p ON p.id=a.partner_id
                      LEFT JOIN partner_businesses b ON b.id=a.business_id
+                     LEFT JOIN partner_objects po ON po.id=a.object_id
                      LEFT JOIN master_categories m ON m.id=a.master_category_id
                      LEFT JOIN categories c ON c.id=a.category_id
                      LEFT JOIN partner_verification_documents d ON d.id=a.document_id
