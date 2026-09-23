@@ -577,6 +577,9 @@ def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[d
         if _safe_int(item.get("matched_subcategory_id")) is not None:
             continue
         name = _norm(item.get("name")).lower()
+        # Normalize common Armenian orthographic/typing variants before
+        # deterministic catalogue fallback.
+        name = name.replace("օ", "ո").replace("ւ", "ու").replace("և", "եւ")
         if not name:
             continue
         needles = None
