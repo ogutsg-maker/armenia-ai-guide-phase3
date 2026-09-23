@@ -130,6 +130,50 @@ def _admin_pending_add(command):
     _ADMIN_PENDING[token]=(time.time(),command)
     return token
 
+def _admin_context(limit=30, include_catalog=False):
+    applications=platform_db.rows("""SELECT a.*,p.user_id FROM partner_applications a
+        JOIN partners p ON p.id=a.partner_id
+        WHERE a.status NOT IN ('approved','pending_partner')
+        ORDER BY a.created_at DESC LIMIT %s""",(int(limit),))
+    for a in applications:
+        payload=a.get("payload_json") or {}
+        if isinstance(payload,str):
+            try: payload=json.loads(payload)
+            except Exception: payload={}
+        a["payload_json"]=payload
+    result={"applications":applications,
+            "partners":platform_db.rows("""SELECT id,user_id,status,verification_status,business_name,business_description
+                FROM partners ORDER BY id DESC LIMIT 50"""),
+            "businesses":platform_db.rows("""SELECT id,partner_id,name,description,phone,status
+                FROM partner_businesses WHERE status<>'archived' ORDER BY id DESC LIMIT 100""")}
+    if include_catalog: result["catalog"]=_admin_catalog()
+    return result
+
+async def _admin_execute(command):
+    intent=str(command.get("intent") or "")
+    aid=command.get("application_id")
+    try: aid=int(aid) if aid is not None else None
+    except (TypeError,ValueError): aid=None
+    if intent=="show_applications":
+        rows=_admin_context(limit=30).get("applications",[])
+        if not rows: return "📨 Новых заявок нет."
+        return "📨 Заявки:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏" for x in rows[:20])
+    if intent=="open_application":
+        if not aid: return "Укажите номер заявки."
+        a=platform_db.one("""SELECT a.*,p.user_id FROM partner_applications a JOIN partners p ON p.id=a.partner_id WHERE a.id=%s""",(aid,))
+        if not a: return "Заявка #"+str(aid)+" не найдена."
+        loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
+        return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
+    if intent=="show_partners":
+        rows=_admin_context(limit=1).get("partners",[])
+        if not rows: return "🤝 Партнёров нет."
+        return "🤝 Партнёры:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:30])
+    if intent=="show_businesses":
+        rows=_admin_context(limit=1).get("businesses",[])
+        if not rows: return "🏢 Компаний нет."
+        return "🏢 Компании:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:50])
+    return "Неизвестный запрос."
+
 def _admin_catalog():
     return platform_db.rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,
         m.name_am AS master_am,m.name_ru AS master_ru,m.name_en AS master_en
@@ -225,7 +269,7 @@ Use focused_application for this, here, it, the application. Never invent IDs.""
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
-        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=180,response_format={"type":"json_object"})
+        resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=260,)
     except Exception as first:
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
             resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=180,response_format={"type":"json_object"})
@@ -266,9 +310,12 @@ async def admin_ai_message(admin_id,message):
     target=str(c.get("target") or "").lower()
     aid=c.get("application_id") or focused_id
 
-    if intent in {"inspect","show"}:
-        if target=="partner": return await _admin_execute({"intent":"show_partners"})
-        if target=="business": return await _admin_execute({"intent":"show_businesses"})
+    legacy={"inspect":"show_application","show":"show_applications","edit":"edit_application","approve":"approve_application","reject":"reject_application","clarify":"clarify_application"}
+    intent=legacy.get(intent,intent)
+    if intent in {"show_application","show_applications","show_partners","show_businesses"}:
+        if target=="partner" or intent=="show_partners": return await _admin_execute({"intent":"show_partners"})
+        if target=="business" or intent=="show_businesses": return await _admin_execute({"intent":"show_businesses"})
+        if intent=="show_applications" and not aid: return await _admin_execute({"intent":"show_applications"})
         if not aid: return await _admin_execute({"intent":"show_applications"})
         state["last_focused_application_id"]=int(aid)
         reply=await _admin_execute({"intent":"open_application","application_id":int(aid)})
@@ -276,7 +323,7 @@ async def admin_ai_message(admin_id,message):
         _admin_history(state,"assistant",reply)
         return reply
 
-    if intent not in {"edit","approve","reject","clarify"}:
+    if intent not in {"edit_application","approve_application","reject_application","clarify_application"}:
         reply=str(c.get("reply") or "Уточните, что именно нужно сделать.")
         _admin_history(state,"admin",message)
         _admin_history(state,"assistant",reply)
@@ -287,7 +334,7 @@ async def admin_ai_message(admin_id,message):
     if not app: return "Заявка #"+str(aid)+" не найдена."
 
     action={"intent":intent,"application_id":int(aid)}
-    if intent=="edit":
+    if intent=="edit_application":
         field=str(c.get("field") or "").lower()
         value=str(c.get("value_text") or "").strip()
         if field in {"category","subcategory"}:
@@ -308,8 +355,8 @@ async def admin_ai_message(admin_id,message):
             action["new_value"]=value
     else:
         action["new_value"]=c.get("value_text")
-        if intent=="reject": action["reason"]=c.get("reason") or c.get("value_text")
-        if intent=="clarify": action["admin_note"]=c.get("reason") or c.get("value_text")
+        if intent=="reject_application": action["reason"]=c.get("reason") or c.get("value_text")
+        if intent=="clarify_application": action["admin_note"]=c.get("reason") or c.get("value_text")
 
     state["pending_action"]=action
     token=_admin_pending_add(action)
