@@ -1251,6 +1251,16 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # A pending company becomes active together with its first
             # approved service. It was created only to hold this proposal.
             if str(business.get("status") or "") == "pending":
+                # A brand-new company cannot become live without its verification
+                # document. Keep the application pending and ask the partner to
+                # upload the document first.
+                if not a.get("document_id"):
+                    _exec("""UPDATE partner_applications
+                             SET status='document_pending',updated_at=NOW(),
+                                 admin_note=%s
+                             WHERE id=%s""",
+                          ("Նոր ընկերության հաստատման համար անհրաժեշտ է փաստաթուղթ։",aid))
+                    return web.json_response({"ok":True,"status":"document_pending","document_required":True,"application_id":aid})
                 _exec("""UPDATE partner_businesses
                          SET status='active', updated_at=NOW()
                          WHERE id=%s AND partner_id=%s""",(bid,a["partner_id"]))
