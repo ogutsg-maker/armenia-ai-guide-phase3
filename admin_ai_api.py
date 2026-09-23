@@ -718,8 +718,8 @@ async def admin_ai_message(admin_id,message):
         for row in rows[:10]:
             app=_admin_hydrate_application(row["id"])
             if not app: continue
-            cat=find_best_subcategory(str(app.get("service_name") or ""),app.get("master_category_id"))
-            if cat and _norm(str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en")))!=_norm(str(app.get("subcategory_name") or "")):
+            cat=_admin_audit_application_catalog(app)
+            if cat:
                 proposals.append((app,cat))
         if not proposals: return "🔎 Проверил заявки: явных расхождений подкатегорий с активным каталогом не обнаружено."
         if len(proposals)>1:
@@ -751,8 +751,17 @@ async def admin_ai_message(admin_id,message):
         if field=="subcategory":
             cat=find_best_subcategory(str(app.get("service_name") or ""),app.get("master_category_id"),requested_value=value)
             if not cat:
-                suggestions=_admin_category_suggestions(str(app.get("service_name") or ""),app.get("master_category_id"))
-                return "Не нашёл подкатегорию «"+value+"» в активном каталоге."+(("\nВарианты: "+", ".join("«"+x+"»" for x in suggestions)) if suggestions else "")
+                suggestions=_admin_category_suggestions(value,app.get("master_category_id"))
+                state["waiting_for_input"]={"field":"subcategory","application_id":int(aid)}
+                reply=("🔍 Заявка #"+str(aid)+"\n"
+                       "Я понял, что нужно установить подкатегорию «"+value+"», "
+                       "но не нашёл точного соответствия в активном каталоге.")
+                if suggestions:
+                    reply+="\nВозможные варианты: "+", ".join("«"+x+"»" for x in suggestions)
+                reply+="\n\nВведите точное название подкатегории."
+                _admin_history(state,"admin",message)
+                _admin_history(state,"assistant",reply)
+                return reply
             if app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]): return "Подкатегория относится к другому направлению."
             action.update({"field":"subcategory","category_id":int(cat["id"]),"old_value_name":str(app.get("subcategory_name") or "—"),"new_value":str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))})
         else:
