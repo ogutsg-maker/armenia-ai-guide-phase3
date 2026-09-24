@@ -933,9 +933,13 @@ async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
             try:
                 resp=await client.chat.completions.create(**request_kwargs)
             except Exception as structured_exc:
-                # Some OpenRouter/free models reject response_format. Retry once
-                # without it; provider routing still remains under our control.
-                if json_mode:
+                # Only retry structured JSON calls when the provider rejected the
+                # JSON transport itself (typically HTTP 400). Never retry 429s:
+                # doing so multiplies rate-limit pressure and delays the next provider.
+                status=getattr(getattr(structured_exc,"response",None),"status_code",None)
+                message_text=str(structured_exc).lower()
+                is_rate_limited=(status==429 or "429" in message_text or "rate limit" in message_text or "too many requests" in message_text)
+                if json_mode and not is_rate_limited and status in (400,422,None):
                     resp=await client.chat.completions.create(
                         model=model,messages=messages,temperature=0,max_tokens=max_tokens
                     )
