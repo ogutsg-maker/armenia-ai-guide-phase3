@@ -905,6 +905,9 @@ follow-up from supplied context; never use a hardcoded phrase list to make that 
 The supplied ai_schema is live database metadata. Use only its real table/column/FK names for generic
 tools. Never output SQL or arbitrary identifiers.
 """
+    if isinstance(ctx,dict) and "ai_schema" not in ctx:
+        ctx=dict(ctx)
+        ctx["ai_schema"]=__import__("ai_schema").inspector.get_snapshot()
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
