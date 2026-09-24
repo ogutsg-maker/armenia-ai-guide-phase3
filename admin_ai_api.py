@@ -21,7 +21,7 @@ def _norm(text):
 
 
 
-_ADMIN_LOCALES={"am":{"unknown":"Ես ամբողջությամբ չհասկացա հարցումը։ Կարող եք հարցնել բնական լեզվով՝ հայտերի, գործընկերների, ընկերությունների կամ կատալոգի մասին։","need_application":"Սկզբում բացեք հայտը կամ նշեք դրա համարը։","not_found":"Հայտ #{id} չի գտնվել։","last_item":"Սա ընթացիկ ցուցակի վերջին տարրն է։","safe_error":"Չհաջողվեց անվտանգ մշակել հարցումը։ Տվյալները չեն փոխվել։ Փորձեք կրկին։"},"ru":{"unknown":"Я не полностью понял запрос. Можно спрашивать обычным языком о заявках, партнёрах, компаниях или каталоге.","need_application":"Сначала откройте заявку или укажите её номер.","not_found":"Заявка #{id} не найдена.","last_item":"Это последний элемент в текущем списке.","safe_error":"Не удалось безопасно обработать запрос. Данные не изменены. Повторите запрос."},"en":{"unknown":"I didn't fully understand the request. You can ask naturally about applications, partners, businesses, or the catalog.","need_application":"Open an application first or specify its number.","not_found":"Application #{id} was not found.","last_item":"This is the last item in the current list.","safe_error":"I couldn't safely process the request. No data was changed. Please try again."}}
+_ADMIN_LOCALES={"am":{"unknown":"Ես ամբողջությամբ չհասկացա հարցումը։ Կարող եք հարցնել բնական լեզվով՝ հայտերի, գործընկերների, ընկերությունների կամ կատալոգի մասին։","need_application":"Սկզբում բացեք հայտը կամ նշեք դրա համարը։","not_found":"Հայտ #{id} չի գտնվել։","last_item":"Սա ընթացիկ ցուցակի վերջին տարրն է։","safe_error":"Չհաջողվեց անվտանգ մշակել հարցումը։ Տվյալները չեն փոխվել։ Փորձեք կրկին։", "ai_unavailable":"⚠️ AI ծառայությունը ժամանակավորապես հասանելի չէ։ Groq-ը չի սպասարկում հարցումը, իսկ պահուստային AI ծառայություններն էլ հասանելի չեն։ Տվյալները չեն փոխվել։"},"ru":{"unknown":"Я не полностью понял запрос. Можно спрашивать обычным языком о заявках, партнёрах, компаниях или каталоге.","need_application":"Сначала откройте заявку или укажите её номер.","not_found":"Заявка #{id} не найдена.","last_item":"Это последний элемент в текущем списке.","safe_error":"Не удалось безопасно обработать запрос. Данные не изменены. Повторите запрос."},"en":{"unknown":"I didn't fully understand the request. You can ask naturally about applications, partners, businesses, or the catalog.","need_application":"Open an application first or specify its number.","not_found":"Application #{id} was not found.","last_item":"This is the last item in the current list.","safe_error":"I couldn't safely process the request. No data was changed. Please try again."}}
 
 def _admin_detect_language(text):
     t=str(text or "")
@@ -821,6 +821,55 @@ async def _admin_execute_state_action(action):
         return "✓ Заявка #"+str(aid)+" отправлена партнёру на уточнение."
     return "Действие не определено."
 
+
+class AdminAIProviderError(RuntimeError):
+    """All configured AI providers failed for this request."""
+    def __init__(self, message, errors=None):
+        super().__init__(message)
+        self.errors = errors or []
+
+
+async def _admin_ai_completion(messages, *, max_tokens=700):
+    """Call AI providers in order: Groq, OpenAI, OpenRouter."""
+    errors=[]
+    providers=[]
+    groq_key=os.getenv("GROQ_API_KEY","").strip()
+    if groq_key:
+        providers.append(("groq",groq_key,os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"))
+    openai_key=os.getenv("OPENAI_API_KEY","").strip()
+    if openai_key:
+        providers.append(("openai",openai_key,os.getenv("OPENAI_MODEL","").strip() or "gpt-4o-mini"))
+    openrouter_key=os.getenv("OPENROUTER_API_KEY","").strip()
+    if openrouter_key:
+        providers.append(("openrouter",openrouter_key,os.getenv("OPENROUTER_MODEL","").strip() or "openrouter/free"))
+    if not providers:
+        raise AdminAIProviderError("No AI provider is configured.")
+    for provider,key,model in providers:
+        try:
+            if provider=="groq":
+                from groq import AsyncGroq
+                client=AsyncGroq(api_key=key)
+            else:
+                from openai import AsyncOpenAI
+                kwargs={"api_key":key}
+                if provider=="openrouter":
+                    kwargs["base_url"]="https://openrouter.ai/api/v1"
+                    kwargs["default_headers"]={
+                        "HTTP-Referer":os.getenv("OPENROUTER_SITE_URL","https://armenia-ai-guide-phase3.onrender.com"),
+                        "X-Title":"Armenia AI Guide",
+                    }
+                client=AsyncOpenAI(**kwargs)
+            resp=await client.chat.completions.create(
+                model=model,messages=messages,temperature=0,max_tokens=max_tokens
+            )
+            content=(resp.choices[0].message.content or "").strip()
+            if not content:
+                raise RuntimeError("empty AI response")
+            return content,provider,model
+        except Exception as exc:
+            errors.append({"provider":provider,"model":model,"error":str(exc)[:500]})
+    raise AdminAIProviderError("All configured AI providers failed.",errors)
+
 async def _admin_ai_json(message,ctx):
     """Universal semantic planner: meaning first, Python validates and executes."""
     from groq import AsyncGroq
@@ -925,37 +974,19 @@ Never invent IDs, SQL, schema names or facts. Python validates and executes ever
 Do not expose chain-of-thought. Return the same ActionPlan JSON contract, with a short
 reasoning_summary and active_context. Prefer no additional tool when the existing facts answer the
 question."""
+
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
-    # Keep the planner to one Groq request. Some Groq/model combinations reject
-    # response_format=json_object with HTTP 400; retrying that failure consumed another
-    # request and could turn a valid semantic turn into the generic fallback. The prompt
-    # already requires a JSON object, and the parser below accepts a fenced/extracted object.
-    try:
-        resp=await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0,
-            max_tokens=700,
-        )
-    except Exception as first:
-        error_text=str(first).lower()
-        if "429" in error_text or "rate limit" in error_text or "too many requests" in error_text:
-            raise
-        if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in error_text):
-            resp=await client.chat.completions.create(
-                model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=700
-            )
-        else:
-            raise
-    raw=(resp.choices[0].message.content or "").strip()
+    raw,provider,model=await _admin_ai_completion(messages,max_tokens=700)
     try: data=json.loads(raw)
     except json.JSONDecodeError:
         start=raw.find("{"); end=raw.rfind("}")
-        if start<0 or end<=start: raise RuntimeError("Groq returned invalid JSON")
+        if start<0 or end<=start: raise RuntimeError(f"{provider} returned invalid JSON")
         data=json.loads(raw[start:end+1])
-    if not isinstance(data,dict): raise RuntimeError("Groq returned a non-object intent")
+    if not isinstance(data,dict): raise RuntimeError(f"{provider} returned a non-object intent")
+    data["ai_provider"]=provider
     return _admin_normalize_plan(data,message)
+
 
 def _admin_contextual_fallback_plan(message,state):
     """Last-resort identity fallback only; semantic topic resolution belongs to Groq."""
@@ -1515,14 +1546,16 @@ async def _admin_semantic_answer(question,plan,state):
     if isinstance(facts,dict) and "rows" in facts and (target or entity_type)=="services":
         facts["category_audit"]=_admin_service_category_audit(facts.get("rows") or [])
         fallback=_admin_safe_human_fallback(facts, question, plan, target, entity_type)
-    key=os.getenv("GROQ_API_KEY","").strip()
-    if not key: return fallback
+    payload=json.dumps({"question":question,"goal":plan.get("intent"),"entity_type":entity_type,
+        "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
+    try:
+        raw,provider,model=await _admin_ai_completion(messages=[
     try:
         from groq import AsyncGroq
         client=AsyncGroq(api_key=key); model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
         payload=json.dumps({"question":question,"goal":plan.get("intent"),"entity_type":entity_type,
             "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
-        resp=await client.chat.completions.create(model=model,messages=[
+        raw,provider,model=await _admin_ai_completion(messages=[
             {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
 Answer naturally, directly and humanly in the same language as the question. The question may
 be a short follow-up to the previous result. In that case, answer from the supplied rows and identify
@@ -1540,8 +1573,8 @@ dump a Markdown table or raw database structure. If the user asks whether someth
 state the factual status, then verified problems, then missing information that is merely informational. If `category_audit` is supplied, use its verdicts: `matched` means no verified category mismatch in the supplied catalog evidence, `review` means a possible mismatch that needs review, and `insufficient_data` means the system cannot determine it. Do not replace an audit question with a generic service list.
 If no verified error is present, say that clearly. Do not mention AI, prompts, SQL, internal tools or
 chain-of-thought. Simple question = simple answer; broad inspection = compact structured summary."""},
-            {"role":"user","content":payload}],temperature=0,max_tokens=700)
-        answer=(resp.choices[0].message.content or "").strip()
+            {"role":"user","content":payload}],max_tokens=700)
+        answer=raw.strip()
         if _admin_answer_is_internal_payload(answer):
             return fallback
         return answer or fallback
@@ -1730,7 +1763,12 @@ async def admin_ai_message(admin_id,message):
     if state.get("response_language"):
         ctx["preferred_response_language"]=state.get("response_language")
     if c is None:
-        try: c=await _admin_ai_json(message,ctx)
+        try:
+            c=await _admin_ai_json(message,ctx)
+        except AdminAIProviderError:
+            reply=_admin_localized(_admin_detect_language(message),"ai_unavailable")
+            _admin_history(state,"admin",message); _admin_history(state,"assistant",reply)
+            return reply
         except Exception: c=_admin_fallback_intent(message,focused_id,state)
     c=_admin_normalize_plan(c,message)
 
