@@ -813,6 +813,22 @@ def _application_field_answer(aid,field):
     return "Ուղղեք, թե հայտի որ դաշտն եք ուզում տեսնել."
 
 def _admin_state_preview(action):
+    if action.get("intent")=="delete_applications":
+        ids=action.get("application_ids") or []
+        existing=platform_db.rows("SELECT id,business_name,status FROM partner_applications WHERE id = ANY(%s) ORDER BY id DESC",(list(ids),))
+        found={int(row["id"]):row for row in existing if str(row.get("id") or "").isdigit()}
+        if not found:
+            return "Ни одна из указанных заявок не найдена."
+        parts=[]
+        for value in ids:
+            try: iv=int(value)
+            except (TypeError,ValueError): continue
+            row=found.get(iv)
+            if row:
+                parts.append("#"+str(iv)+" · "+str(row.get("business_name") or "—")+" · "+str(row.get("status") or "—"))
+            else:
+                parts.append("#"+str(iv)+" · не найдена")
+        return "🗑 Удалить заявки:\n" + "\n".join(parts) + "\n⚠️ Заявки будут скрыты из активного списка."
     aid=action.get("application_id")
     app=platform_db.one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
     if not app: return "Заявка #"+str(aid)+" не найдена."
@@ -822,9 +838,6 @@ def _admin_state_preview(action):
                       "name":"service_name","service":"service_name","price":"price",
                       "description":"description","note":"admin_note"}.get(field))
         return "📨 Заявка #"+str(aid)+"\n🔧 "+str(field)+" : «"+str(old or "—")+"» → «"+str(action.get("new_value") or "—")+"»"
-    if action.get("intent")=="delete_applications":
-        ids=action.get("application_ids") or []
-        return "🗑 Удалить заявки: "+", ".join("#"+str(x) for x in ids)+"\n⚠️ Заявки будут скрыты из активного списка."
     if action.get("intent")=="approve_application":
         return "📨 Заявка #"+str(aid)+"\n✅ Перевести заявку на этап документа"
     if action.get("intent")=="reject_application":
