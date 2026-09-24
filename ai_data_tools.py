@@ -63,7 +63,7 @@ TOOL_DEFINITIONS = {
         "roles": {"admin", "partner"},
     },
     "count": {
-        "description": "Count a supported business entity without exposing SQL.",
+        "description": "Count a supported business entity without exposing SQL. `directions` means active master categories; `subcategories` means active catalog subcategories.",
         "roles": {"admin", "partner", "client"},
     },
 }
