@@ -501,8 +501,6 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
  if not rows:return fallback
  return fallback
 
-except Exception:return fallback
-
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
  labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","master_categories":"📂 Ուղղություններ","catalog_overview":"📚 Катալոգ","services":"🛠 Услуги"}
@@ -1694,11 +1692,6 @@ async def _admin_semantic_answer(question,plan,state):
     # rendered by the deterministic human fallback. This prevents a second
     # provider call merely to rewrite an already verified DB result.
     return fallback
-
-    except AdminAIProviderError:
-        return fallback
-    except Exception:
-        return fallback
 
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
