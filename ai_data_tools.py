@@ -343,5 +343,19 @@ class DataTools:
         service = str(args.get("service_name") or "").strip()
         if not service:
             raise DataToolError("service_name_required")
-        catalog = self._tool_search_catalog({"query": service}).get("items", [])
-        return {"service_name": service, "candidates": catalog[:8], "count": len(catalog)}
+        candidates = self._tool_search_catalog({"query": service}).get("items", [])
+        seen = {int(x["id"]) for x in candidates if x.get("id") is not None}
+
+        import re
+        tokens = re.findall(r"[A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ]{4,}", service)
+        stop = {"окрашивание", "окраска", "service", "услуга", "ծառայություն"}
+        for token in tokens:
+            if token.casefold() in stop:
+                continue
+            for item in self._tool_search_catalog({"query": token}).get("items", []):
+                iid = item.get("id")
+                if iid is not None and int(iid) not in seen:
+                    seen.add(int(iid))
+                    candidates.append(item)
+
+        return {"service_name": service, "candidates": candidates[:8], "count": len(candidates)}
