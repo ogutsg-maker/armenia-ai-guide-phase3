@@ -174,6 +174,54 @@ _ADMIN_SESSION_TTL=30*60
 _CONFIRM_YES={"да","да.","yes","yes.","ok","okay","подтверждаю","подтвердить","հա","այո","այո.","հաստատում եմ"}
 _CONFIRM_NO={"нет","нет.","no","no.","cancel","отмена","отменить","ոչ","ոչ.","չեղարկել"}
 
+def _admin_safe_human_fallback(facts, question, plan, target="", entity_type=""):
+    if isinstance(facts, dict) and isinstance(facts.get("tool_results"), list):
+        parts=[]
+        for item in facts.get("tool_results") or []:
+            if not isinstance(item, dict) or not isinstance(item.get("data"), dict):
+                continue
+            part=_admin_safe_human_fallback(item["data"], question, plan, target, entity_type)
+            if part and part not in parts:
+                parts.append(part)
+        if parts:
+            return "\n\n".join(parts)
+    if isinstance(facts, dict) and isinstance(facts.get("application"), dict):
+        app=facts["application"]; lines=[
+            "📨 Հայտ #"+str(app.get("id") or "—"),
+            "🏢 "+str(app.get("business_name") or app.get("partner_business_name") or "—"),
+            "📌 Կարգավիճակ՝ "+str(app.get("status") or "—")
+        ]
+        if app.get("service_name"):
+            p=app.get("price")
+            ps=("{:,} ֏".format(int(float(p))) if isinstance(p,(int,float)) and float(p).is_integer() else (str(p)+" ֏" if p not in (None,"") else "—"))
+            lines.append("🛠 Ծառայություն՝ "+str(app.get("service_name"))+(" · "+ps if ps!="—" else ""))
+        if app.get("direction_name"): lines.append("🧭 Ուղղություն՝ "+str(app.get("direction_name")))
+        if app.get("subcategory_name"): lines.append("📂 Ենթակատեգորիա՝ "+str(app.get("subcategory_name")))
+        cat=facts.get("category")
+        if isinstance(cat,dict): lines.append("🔎 Կատալոգ՝ "+str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en") or "—")+(" · ակտիվ" if cat.get("is_active") else " · ոչ ակտիվ"))
+        docs=facts.get("documents")
+        if isinstance(docs,list):
+            ok=sum(1 for d in docs if str((d or {}).get("status") or (d or {}).get("verification_status") or "").casefold() in {"approved","verified","accepted"})
+            lines.append("📄 Փաստաթղթեր՝ "+str(len(docs))+(" · հաստատված՝ "+str(ok) if docs else ""))
+        truth=facts.get("truth")
+        if isinstance(truth,dict):
+            errs=truth.get("errors") or truth.get("error") or []
+            lines.append("⚠️ Ստուգում՝ կան խնդիրներ" if errs else "✅ Ստուգում՝ հաստատված սխալներ չեն հայտնաբերվել")
+        return "\n".join(lines)
+    if isinstance(facts,dict) and facts.get("master_categories_count") is not None:
+        if facts.get("subcategories_count") is not None:
+            return "📚 Կատեգորիաների քանակը՝ "+str(facts["master_categories_count"])+" · ենթակատեգորիաների քանակը՝ "+str(facts["subcategories_count"])+"։"
+        return "📚 Կատեգորիաների քանակը՝ "+str(facts["master_categories_count"])+"։"
+    if isinstance(facts,dict) and facts.get("subcategories_count") is not None:
+        return "📚 Ենթակատեգորիաների քանակը՝ "+str(facts["subcategories_count"])+"։"
+    if isinstance(facts,dict) and "rows" in facts:
+        return _admin_query_result_text(target or entity_type or "query_result",facts.get("rows") or [],plan.get("filters") or {},question)
+    if isinstance(facts,dict) and facts.get("entity") and facts.get("count") is not None:
+        labels={"directions":"կատեգորիա","subcategories":"ենթակատեգորիա","partners":"գործընկեր","applications":"հայտ","services":"ծառայություն"}
+        return "📊 "+labels.get(str(facts.get("entity")),str(facts.get("entity")))+"՝ "+str(facts.get("count"))+"։"
+    return _admin_localized(plan.get("response_language") or _admin_detect_language(question),"unknown")
+
+
 def _admin_answer_is_internal_payload(answer):
     text = str(answer or "").strip()
     if not text:
@@ -1395,11 +1443,10 @@ async def _admin_semantic_answer(question,plan,state):
         else:
             state["last_result_kind"]=target or plan.get("target") or "facts"
             state["last_result_facts"]=_admin_safe(facts)
-    fallback=json.dumps(facts,ensure_ascii=False,default=str)
-    if isinstance(facts,dict) and "rows" in facts:
-        if (target or entity_type)=="services":
-            facts["category_audit"]=_admin_service_category_audit(facts.get("rows") or [])
-        fallback=_admin_query_result_text(target or entity_type,facts.get("rows") or [],plan.get("filters") or {},question)
+    fallback=_admin_safe_human_fallback(facts, question, plan, target, entity_type)
+    if isinstance(facts,dict) and "rows" in facts and (target or entity_type)=="services":
+        facts["category_audit"]=_admin_service_category_audit(facts.get("rows") or [])
+        fallback=_admin_safe_human_fallback(facts, question, plan, target, entity_type)
     key=os.getenv("GROQ_API_KEY","").strip()
     if not key: return fallback
     try:
