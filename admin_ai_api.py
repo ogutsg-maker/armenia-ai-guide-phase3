@@ -52,7 +52,7 @@ def _admin_normalize_plan(data,message=""):
     data["entity_name"]=str(data.get("entity_name") or data.get("entity_query") or "").strip()[:200]
     raw_needed=data.get("data_needed")
     if not isinstance(raw_needed,list): raw_needed=[]
-    data["data_needed"]=[str(x).strip().lower() for x in raw_needed if str(x).strip()][:20]
+    data["data_needed"]=[str(x).strip().lower() for x in raw_needed if str(x).strip()]
     data["navigation"]=data.get("navigation")
     data["response_language"]=lang
     data["confidence"]=max(0.0,min(1.0,confidence))
@@ -63,7 +63,7 @@ def _admin_normalize_plan(data,message=""):
     data["value_raw"]=data.get("value_raw",data.get("value_text"))
     data.setdefault("filters",{})
     data.setdefault("sort",None)
-    try: data["limit"]=max(1,min(50,int(data.get("limit",20) or 20)))
+    try: data["limit"]=max(1,int(data.get("limit",20) or 20))
     except Exception: data["limit"]=20
     data.setdefault("action_required","read_only")
     return data
@@ -214,12 +214,12 @@ def _admin_hydrate_context(state,limit=12):
         "last_focused_field":state.get("last_focused_field"),
         "last_query":state.get("last_query"),
         "last_query_target":state.get("last_query_target"),
-        "last_shown_query_rows":state.get("last_shown_query_rows",[])[:20],
+        "last_shown_query_rows":state.get("last_shown_query_rows",[]),
         "last_result_kind":state.get("last_result_kind"),
         "last_result_facts":state.get("last_result_facts"),
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
-        "query_capabilities":{"targets":["applications","partners","businesses","catalog","master_categories","catalog_overview","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
+        "query_capabilities":{"targets":["applications","partners","businesses","catalog","master_categories","catalog_overview","services"],"catalog_behavior":"master_categories and catalog return the complete current catalog without an artificial row limit; catalog_overview returns live database counts","operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
         "history":state.get("history",[])[-6:]})
 
 
@@ -247,8 +247,8 @@ _ADMIN_QUERY_TARGETS={
  "applications":{"table":"partner_applications a","select":"a.id,a.business_name,a.status,a.service_name,a.price,a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,a.location_marz,a.location_city,a.location_village,a.address,a.phone,a.description,a.created_at,a.updated_at","order":"a.created_at DESC","limit":50,"aliases":{"application","applications","requests","заявки","հայտեր"},"fields":{"status":"a.status","business_name":"a.business_name","service_name":"a.service_name","price":"a.price","direction_name":"a.direction_name","subcategory_name":"a.subcategory_name","location_marz":"a.location_marz","location_city":"a.location_city","location_village":"a.location_village","address":"a.address","phone":"a.phone","description":"a.description","category_id":"a.category_id","master_category_id":"a.master_category_id"}},
  "partners":{"table":"partners p","select":"p.id,p.user_id,p.business_name,p.business_description,p.status,p.verification_status,p.contact_share_policy,p.created_at,p.updated_at","order":"p.created_at DESC","limit":50,"aliases":{"partner","partners","партнеры","գործընկերներ"},"fields":{"status":"p.status","verification_status":"p.verification_status","business_name":"p.business_name","business_description":"p.business_description","location_marz":"__PARTNER_LOCATION_MARZ__","location_city":"__PARTNER_LOCATION_CITY__"}},
  "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
- "master_categories":{"table":"master_categories m","select":"m.id,m.name_am,m.name_ru,m.name_en,m.slug,m.is_active","order":"m.id ASC","limit":50,"aliases":{"master_categories","master category","master categories","directions","direction","главные категории","направления","ուղղություններ","ուղղություն","գլխավոր կատեգորիաներ","գլխավոր կատեգորիա"},"fields":{"name":"m.name_am","name_am":"m.name_am","name_ru":"m.name_ru","name_en":"m.name_en","slug":"m.slug","is_active":"m.is_active"}},
- "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}, "catalog_overview":{"aliases":{"catalog overview","catalog_overview","կատալոգի ընդհանուր","ընդհանուր կատալոգ","catalog stats","catalog count","direction","directions","master categories","subcategory","subcategories","ուղղություն","ուղղություններ","ենթաուղղություն","ենթաուղղություններ","направления","поднаправления"},"limit":1},
+ "master_categories":{"table":"master_categories m","select":"m.id,m.name_am,m.name_ru,m.name_en,m.slug,m.is_active","order":"m.id ASC","limit":0,"aliases":{"master_categories","master category","master categories","directions","direction","главные категории","направления","ուղղություններ","ուղղություն","գլխավոր կատեգորիաներ","գլխավոր կատեգորիա"},"fields":{"name":"m.name_am","name_am":"m.name_am","name_ru":"m.name_ru","name_en":"m.name_en","slug":"m.slug","is_active":"m.is_active"}},
+ "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":0,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}, "catalog_overview":{"aliases":{"catalog overview","catalog_overview","կատալոգի ընդհանուր","ընդհանուր կատալոգ","catalog stats","catalog count","direction","directions","master categories","subcategory","subcategories","ուղղություն","ուղղություններ","ենթաուղղություն","ենթաուղղություններ","направления","поднаправления"},"limit":1},
  "services":{"table":"services s LEFT JOIN categories c ON c.id=s.category_id LEFT JOIN master_categories m ON m.id=c.master_category_id LEFT JOIN partners p ON p.id=s.partner_id","select":"s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,p.business_name AS partner_name,c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,c.master_category_id,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id","category_name":"c.name_am","master_category_id":"c.master_category_id"}}}
 _ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
 _ADMIN_STATUS_ALIASES={"applications":{"pending":["pending_admin","pending_partner","document_pending"],"moderation":["pending_admin"]},"partners":{"pending":["pending"],"moderation":["pending","pending_verification"]},"businesses":{}}
@@ -309,7 +309,7 @@ def _admin_query_build(target,filters,limit=20,sort=None):
    if not isinstance(value,list) or not value or len(value)>20:return None,"Оператор in требует список до 20 значений."
    clauses.append(column+" = ANY(%s)");params.append(value)
   else:return None,"Оператор «"+op+"» не разрешён."
- try:limit=max(1,min(int(limit or 20),int(spec.get("limit",50))))
+ try:limit=max(1,int(limit or 20))
  except Exception:limit=20
  where=(" WHERE "+" AND ".join(clauses)) if clauses else ""
  order_sql=spec["order"]
@@ -322,7 +322,9 @@ def _admin_query_build(target,filters,limit=20,sort=None):
    elif target=="businesses":sort_col="b."+sort_col
    elif target=="catalog":sort_col="c."+sort_col
    order_sql=sort_col+" "+sd.upper()
- sql="SELECT "+spec["select"]+" FROM "+spec["table"]+where+" ORDER BY "+order_sql+" LIMIT %s";params.append(limit)
+ sql="SELECT "+spec["select"]+" FROM "+spec["table"]+where+" ORDER BY "+order_sql
+ if target not in {"master_categories","catalog"}:
+  sql += " LIMIT %s";params.append(limit)
  return (sql,tuple(params),target),None
 def _admin_service_price_map(service_rows):
     """Use the actual partner-specific service price stored on services.price."""
@@ -365,7 +367,7 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
   if not key:return fallback
   model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
   client=AsyncGroq(api_key=key)
-  payload=json.dumps({"question":question,"target":target,"filters":filters,"rows":rows[:20],"category_audit":answer_facts.get("category_audit") if target=="services" else None},ensure_ascii=False,default=str)
+  payload=json.dumps({"question":question,"target":target,"filters":filters,"rows":rows,"category_audit":answer_facts.get("category_audit") if target=="services" else None},ensure_ascii=False,default=str)
   resp=await client.chat.completions.create(model=model,messages=[
    {"role":"system","content":"Answer the Armenia AI Guide administrator in the same language as the question. Use ONLY the supplied database facts. Be concise and factual. Mention the count when relevant. Never invent facts. Prices in service rows are AMD (֏). If category_audit is supplied and the question asks whether services are incorrectly categorized, use its verdicts: matched=no verified mismatch, review=possible mismatch requiring review, insufficient_data=cannot determine. Do not answer an audit question by merely dumping the service list. For catalog_overview, master_categories_count and subcategories_count are the real active catalog counts and short follow-ups remain about that catalog context. Read-only answer."},
    {"role":"user","content":payload}],temperature=0,max_tokens=500)
@@ -381,7 +383,7 @@ def _admin_query_result_text(target,rows,filters,question):
   return ("📚 Կատալոգ՝ "+str(x.get("master_categories_count") or 0)+" ուղղություն, "
           +str(x.get("subcategories_count") or 0)+" ենթաուղղություն։")
  lines=[labels.get(target,"🔎 Результат")+" ("+str(len(rows))+"):"]
- for x in rows[:20]:
+ for x in rows:
   if target=="applications":
    loc=", ".join(str(v) for v in (x.get("location_marz"),x.get("location_city"),x.get("address")) if v)
    lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏"+(" · "+loc if loc else ""))
@@ -741,7 +743,8 @@ reject_application, clarify_application, suggest_application_correction, show_pa
 show_businesses, unknown.
 
 For lists/searches/counts/filters use query_database. For ordinary factual questions use
-information_request or inspect_entity. For explicit mutations use the appropriate write intent.
+information_request or inspect_entity.
+For catalog questions, distinguish the catalog itself from services: master_categories means top-level directions, catalog means subcategories, and catalog_overview means aggregate catalog counts. When the administrator asks for all directions/categories or asks for the names after a catalog list, query the corresponding catalog target and use the complete current catalog. Never assume a fixed catalog size or use 20, 22, or 320 as a hard limit. For questions asking how many directions and subcategories exist, use catalog_overview so counts come from the database. For explicit mutations use the appropriate write intent.
 entity_type can be application, partner, business, service, catalog, document, order, booking,
 or unknown. entity_id is only an ID explicitly present or safely supplied by context; otherwise
 leave it null. entity_name is the natural name to search. data_needed is a concise list of factual
@@ -1390,7 +1393,7 @@ async def admin_ai_message(admin_id,message):
             if error: reply="⚠️ "+error
             else:
                 state["last_query"]={"target":qtarget,"filters":_admin_safe(qfilters),"sort":_admin_safe(qsort),"limit":int(qlimit or 20)}
-                state["last_shown_query_rows"]=[_admin_safe(x) for x in (rows or [])[:20]]
+                state["last_shown_query_rows"]=[_admin_safe(x) for x in (rows or [])]
                 state["last_result_kind"]=qtarget
                 state["last_result_facts"]=_admin_safe({"target":qtarget,"rows":rows or []})
                 reply=await _admin_query_answer(message,qtarget,qfilters,qlimit,qsort)
