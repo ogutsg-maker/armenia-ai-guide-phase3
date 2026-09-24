@@ -56,14 +56,9 @@ class LiveSchemaInspector:
                     )
                     continue
 
-                columns = {
-                    row["column_name"]: {
-                        "type": row["data_type"],
-                        "nullable": row["is_nullable"] == "YES",
-                        "default": row["column_default"],
-                    }
-                    for row in columns_rows
-                }
+                # Compact AI-facing schema: identifiers and relationships are
+                # useful to the planner; verbose type/default metadata is not.
+                columns = [row["column_name"] for row in columns_rows]
 
                 pk_rows = platform_db.rows(
                     """
