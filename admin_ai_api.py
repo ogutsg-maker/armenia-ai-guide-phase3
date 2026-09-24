@@ -499,19 +499,9 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
   rows,error=_admin_query_rows(target,retry,limit,sort)
   if error:return "⚠️ "+error
  if not rows:return fallback
- try:
-  from groq import AsyncGroq
-  key=os.getenv("GROQ_API_KEY","").strip()
-  if not key:return fallback
-  model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
-  client=AsyncGroq(api_key=key, max_retries=0)
-  payload=json.dumps({"question":question,"target":target,"filters":filters,"rows":rows,"category_audit":answer_facts.get("category_audit") if target=="services" else None},ensure_ascii=False,default=str)
-  resp=await client.chat.completions.create(model=model,messages=[
-   {"role":"system","content":"Answer the Armenia AI Guide administrator in the same language as the question. Use ONLY the supplied database facts. Be concise and factual. Mention the count when relevant. Never invent facts. Prices in service rows are AMD (֏). If category_audit is supplied and the question asks whether services are incorrectly categorized, use its verdicts: matched=no verified mismatch, review=possible mismatch requiring review, insufficient_data=cannot determine. Do not answer an audit question by merely dumping the service list. For catalog_overview, master_categories_count and subcategories_count are the real active catalog counts and short follow-ups remain about that catalog context. Read-only answer."},
-   {"role":"user","content":payload}],temperature=0,max_tokens=500)
-  answer=(resp.choices[0].message.content or "").strip()
-  return answer or fallback
- except Exception:return fallback
+ return fallback
+
+except Exception:return fallback
 
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
@@ -1652,8 +1642,9 @@ async def _admin_semantic_answer(question,plan,state):
             if error: facts={"error":error}
     else:
         facts=_admin_tool_context(plan,entity_type,entity_id)
-    if facts:
-        facts=await _admin_refine_tool_context(question,plan,entity_type,entity_id,facts)
+    # One semantic AI pass only. Provider fallback is handled inside
+    # _admin_ai_completion as Groq -> OpenAI -> OpenRouter. Do not re-plan
+    # after tool execution: that created extra provider calls during 429s.
     if not facts and entity_id:
         facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state)
     if not facts and target:
@@ -1697,33 +1688,13 @@ async def _admin_semantic_answer(question,plan,state):
     if isinstance(facts,dict) and "rows" in facts and (target or entity_type)=="services":
         facts["category_audit"]=_admin_service_category_audit(facts.get("rows") or [])
         fallback=_admin_safe_human_fallback(facts, question, plan, target, entity_type)
-    payload=json.dumps({"question":question,"goal":plan.get("intent"),"entity_type":entity_type,
-        "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
-    answer_messages=[
-            {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
-Answer naturally, directly and humanly in the same language as the question. The question may
-be a short follow-up to the previous result. In that case, answer from the supplied rows and identify
-the requested property (such as names, IDs, categories, prices, statuses) from those rows. If the user
-gives a numeric ID that appears in the previous rows, resolve it against those rows; do not ask the
-user to restate the request.
-Use ONLY the supplied database facts and the supplied truth/check results. Service prices are supplied on the actual partner-specific `services` rows as `prices_amd` / `price_amd`; these are stored prices in AMD (֏). Do not say that prices are unavailable when a value is present. For catalog overview facts, `master_categories_count` is the real number of active directions and `subcategories_count` is the real number of active subcategories; preserve that subject for short follow-ups. The truth/check results are authoritative for
-whether something is actually wrong. Do NOT turn an empty field into an error, mandatory field, or
-approval problem unless the supplied facts explicitly prove that rule. Do not invent business rules,
-approval consequences, currency, prices, categories, or document status.
-All application/service prices in these facts are in AMD (֏) unless the facts explicitly state another
-currency. Never call an AMD amount dollars, euros, or another currency.
-For a "show/open" request, prefer a compact human-readable summary with the important fields; do not
-dump a Markdown table or raw database structure. If the user asks whether something is "normal", first
-state the factual status, then verified problems, then missing information that is merely informational. If `category_audit` is supplied, use its verdicts: `matched` means no verified category mismatch in the supplied catalog evidence, `review` means a possible mismatch that needs review, and `insufficient_data` means the system cannot determine it. Do not replace an audit question with a generic service list.
-If no verified error is present, say that clearly. Do not mention AI, prompts, SQL, internal tools or
-chain-of-thought. Simple question = simple answer; broad inspection = compact structured summary."""},
-            {"role":"user","content":payload}]
-    try:
-        raw,provider,model=await _admin_ai_completion(messages=answer_messages,max_tokens=700)
-        answer=raw.strip()
-        if _admin_answer_is_internal_payload(answer):
-            return fallback
-        return answer or fallback
+
+    # Keep the semantic request to a single AI planner pass.
+    # The planner chooses the safe read tools; Python/database facts are then
+    # rendered by the deterministic human fallback. This prevents a second
+    # provider call merely to rewrite an already verified DB result.
+    return fallback
+
     except AdminAIProviderError:
         return fallback
     except Exception:
