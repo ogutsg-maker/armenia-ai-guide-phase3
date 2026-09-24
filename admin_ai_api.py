@@ -979,7 +979,7 @@ def _admin_planner_context(ctx):
         ai_context=build_ai_context(
             focused_type or None,
             focused_id,
-            include_platform_index=not bool(focused_id),
+            include_platform_index=True,
         )
     except Exception:
         ai_context=""
@@ -1167,9 +1167,18 @@ def _admin_resolve_semantic_entity(plan,state):
     focused_type=state.get("last_focused_entity_type")
     focused_id=state.get("last_focused_entity_id") or state.get("last_focused_application_id")
     if not entity_name and focused_id:
-        # A focused application must not hijack a newly introduced catalog,
-        # partner, service, or other non-application topic.
-        if not entity_type or entity_type in {str(focused_type or "").lower(),"application"}:
+        focused_type_norm=str(focused_type or "").lower()
+        requested={str(x).casefold() for x in (plan.get("data_needed") or [])}
+        # Keep the immediately focused application for natural follow-ups such as
+        # documents/services/category checks. The model decides the semantic field;
+        # Python only preserves the existing entity identity.
+        if focused_type_norm=="application" and (
+            not entity_type
+            or entity_type=="application"
+            or requested & {"documents","services","application_services","category","subcategory","catalog","status"}
+        ):
+            return "application",int(focused_id)
+        if not entity_type or entity_type in {focused_type_norm,"application"}:
             return focused_type or "application",int(focused_id)
     if not entity_name: return None,None
     q="%"+entity_name+"%"; candidates=[]
@@ -1582,15 +1591,34 @@ async def _admin_semantic_answer(question,plan,state):
             plan["tool_requests"].append({"name":"get_application","arguments":{"application_id":int(entity_id)}})
         if {"category","subcategory","catalog"} & requested and not ({"check_application","check_catalog_match"} & names):
             plan["tool_requests"].append({"name":"check_application","arguments":{"application_id":int(entity_id)}})
+    # Semantic hydration: once the planner identifies what information is needed,
+    # Python guarantees the corresponding safe read even if the model omitted a tool call.
+    # This is business-semantic, not phrase-specific routing.
+    if entity_id and entity_type in {"partner","business","company"} and needed:
+        plan.setdefault("tool_requests", [])
+        requested={str(x).casefold() for x in needed}
+        names={str(r.get("name") or "") for r in plan["tool_requests"] if isinstance(r,dict)}
+        if "services" in requested and "get_services" not in names:
+            plan["tool_requests"].append({"name":"get_services","arguments":{"partner_id":int(entity_id)} if entity_type=="partner" else {"business_id":int(entity_id)}})
+        if "documents" in requested and "get_documents" not in names:
+            plan["tool_requests"].append({"name":"get_documents","arguments":{"partner_id":int(entity_id)} if entity_type=="partner" else {}})
+        if {"category","subcategory","catalog"} & requested and "get_services" not in names and entity_type=="partner":
+            plan["tool_requests"].append({"name":"get_services","arguments":{"partner_id":int(entity_id)}})
     target=_admin_query_target(plan.get("target"))
     if target=="catalog_overview" and not plan.get("tool_requests"):
         rows,error=_admin_query_rows("catalog_overview",{},1,None)
         facts={"rows":rows or []}
         if error: facts={"error":error}
-    elif target=="partners" and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners"} and not plan.get("tool_requests"):
-        rows,error=_admin_query_rows("partners",{},50,None)
-        facts={"entity":"partners","count":len(rows or [])}
-        if error: facts={"error":error}
+    elif target in {"partners","applications","services","directions","subcategories"} and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories"}:
+        try:
+            entity=target
+            raw=DataTools("admin").execute("count",{"entity":entity})
+            payload=raw.get("data") if isinstance(raw,dict) else {}
+            facts=payload if isinstance(payload,dict) else {"entity":entity,"count":0}
+        except Exception:
+            rows,error=_admin_query_rows(target,{},50,None)
+            facts={"entity":target,"count":len(rows or [])}
+            if error: facts={"error":error}
     else:
         facts=_admin_tool_context(plan,entity_type,entity_id)
     if facts:
