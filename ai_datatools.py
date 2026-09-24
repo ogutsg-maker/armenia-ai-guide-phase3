@@ -94,8 +94,15 @@ class AdminDataTools:
         return self.schema.get(str(table or "").strip())
 
     def _columns(self, table: str) -> set[str]:
-        meta = self._table(table)
-        return set((meta or {}).get("columns", {}).keys())
+        meta = self._table(table) or {}
+        raw = meta.get("columns", {})
+        # LiveSchemaInspector exposes a compact list to the AI. Accept the
+        # legacy dict shape too so older snapshots remain compatible.
+        if isinstance(raw, dict):
+            return set(raw.keys())
+        if isinstance(raw, (list, tuple, set)):
+            return {str(c) for c in raw}
+        return set()
 
     def _validate_columns(self, table: str, columns: list[str]) -> bool:
         if not self._table(table):
