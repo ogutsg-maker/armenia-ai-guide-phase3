@@ -840,6 +840,15 @@ def _admin_fallback_intent(message,focused_id=None):
     asks_inspect=bool(re.search(r"(ստուգ|провер|check|ճիշտ|правильно|correct|ошибк|սխալ|верн)",text,re.I|re.U))
     if focused_id and asks_documents:
         return _admin_normalize_plan({"intent":"show_documents","target":"application","entity_id":focused_id,"field":"documents","reasoning_summary":"Փաստաթղթերի մասին հարց՝ ընթացիկ հայտի համատեքստում։","confidence":0.93},message)
+    asks_direction=bool(re.search(r"(ուղղություն|ուղղությունը|направлен|direction)",text,re.I|re.U))
+    if focused_id and asks_direction and asks_inspect:
+        return _admin_normalize_plan({"intent":"information_request","target":"application","entity_type":"application",
+            "entity_id":focused_id,"data_needed":["application","categories","services","verification"],
+            "tool_requests":[
+                {"name":"get_application","arguments":{"application_id":focused_id}},
+                {"name":"check_application","arguments":{"application_id":focused_id}}
+            ],
+            "reasoning_summary":"Ընթացիկ հայտի ուղղության ճիշտ լինելը պետք է ստուգել կատալոգի փաստերով։","confidence":0.93},message)
     if focused_id and asks_category and asks_inspect:
         return _admin_normalize_plan({"intent":"inspect_application","target":"application","entity_id":focused_id,"field":"subcategory","reasoning_summary":"Ընթացիկ հայտի կատեգորիայի ճիշտ լինելը պետք է ստուգել՝ առանց փոփոխության։","confidence":0.93},message)
     if asks_count and re.search(r"(պառտն|գործընկեր|partner|партнер)",text,re.I|re.U):
