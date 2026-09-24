@@ -1017,6 +1017,19 @@ def _admin_fallback_intent(message,focused_id=None):
         m=re.search(r"(ծանր\s+տեխնիկ[այիա]?\s+վարձույթ|тяж[а-яё]*\s+техник[аиы]?\s+(?:в\s+аренду|аренды)|heavy\s+equipment\s+rental|equipment\s+rental)",message,re.I|re.U)
         phrase=(m.group(1) if m else "heavy equipment rental").strip()
         return _admin_normalize_plan({"intent":"query_database","target":"catalog","filters":{"name":{"contains":phrase}},"reasoning_summary":"Կատալոգում ենթաուղղության բնական լեզվով որոնում։","confidence":0.94},message)
+    # A short follow-up like "կոնկրետ ծանր տեխնիկայի համար" refers to the
+    # previous catalog/service search, not to the currently focused application.
+    prev_target=str(state.get("last_query_target") or "").lower()
+    prev_query=str(state.get("last_query") or "")
+    heavy_subject=bool(re.search(r"(ծանր\\s+տեխնիկ|тяж[а-яё]*\\s+техник|высок[а-яё]*\\s+техник|heavy\\s+equipment|equipment)",text,re.I|re.U))
+    if heavy_subject:
+        phrase=message.strip()
+        return _admin_normalize_plan({
+            "intent":"query_database","target":"catalog",
+            "filters":{"name":{"contains":phrase}},
+            "reasoning_summary":"Կարճ հետևողական հարցը վերաբերում է կատալոգում ծանր տեխնիկայի կոնկրետ ծառայություններին։",
+            "confidence":0.96
+        },message)
     if asks_services:
         return _admin_normalize_plan({"intent":"query_database","target":"services","reasoning_summary":"Ծառայությունների ցանկի հարցում։","confidence":0.82},message)
     if has_application and asks_count:
