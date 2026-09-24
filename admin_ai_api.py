@@ -1714,6 +1714,17 @@ async def admin_ai_message(admin_id,message):
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply)
         return reply
 
+    # Route ordinary read-only conversation through the semantic planner before legacy command handlers.
+    try:
+        plan_raw=await _admin_ai_json(message,state)
+        plan=_admin_normalize_plan(plan_raw,message)
+        if str(plan.get("action_required") or "read_only").lower() not in {"mutation","write","confirm"}:
+            reply=await _admin_semantic_answer(message,plan,state)
+            _admin_history(state,"admin",message); _admin_history(state,"assistant",reply)
+            return reply
+    except Exception:
+        pass
+
     waiting=state.get("waiting_for_input")
     if waiting:
         aid=waiting.get("application_id"); field=str(waiting.get("field") or ""); app=_admin_hydrate_application(aid)
