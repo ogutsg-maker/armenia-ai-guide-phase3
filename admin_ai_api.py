@@ -77,7 +77,10 @@ def _admin_normalize_plan(data,message=""):
     data.setdefault("action_required","read_only")
     if isinstance(data.get("active_context"),dict):
         ac=data["active_context"]
-        data["active_context"]={"scope":str(ac.get("scope") or "")[:80],"subject":str(ac.get("subject") or "")[:200],"intent":str(ac.get("intent") or "")[:80],"query":str(ac.get("query") or "")[:500],"filters":ac.get("filters") if isinstance(ac.get("filters"),dict) else {},"entity_type":str(ac.get("entity_type") or "")[:40],"entity_id":ac.get("entity_id")}
+        ac_id=ac.get("entity_id")
+        try: ac_id=int(ac_id) if ac_id not in (None,"") else None
+        except (TypeError,ValueError): ac_id=None
+        data["active_context"]={"scope":str(ac.get("scope") or "")[:80],"subject":str(ac.get("subject") or "")[:200],"intent":str(ac.get("intent") or "")[:80],"query":str(ac.get("query") or "")[:500],"filters":ac.get("filters") if isinstance(ac.get("filters"),dict) else {},"entity_type":str(ac.get("entity_type") or "")[:40],"entity_id":ac_id}
     return data
 
 def _admin(request):
@@ -1390,6 +1393,7 @@ async def _admin_refine_tool_context(question, plan, entity_type, entity_id, fac
                     "replanning": True,
                     "active_context": facts.get("active_context") or {},
                     "tool_results": accumulated,
+                    "ai_schema": __import__("ai_schema").inspector.get_snapshot(),
                     "plan": plan,
                 }
             )
