@@ -408,27 +408,45 @@ class DataTools:
             for key, vals in aliases.items():
                 if rt.intersection(vals) or key in rt:
                     rc.add(key); rc.update(vals)
+            # Separate subject/object concepts from generic operations. Object matches
+            # must dominate: "eyebrow coloring" belongs to eyebrows, not generic hair coloring.
+            object_keys={"eyebrows","manicure","pedicure","makeup","haircut","hair"}
+            operation_keys={"coloring"}
+            object_overlap=concepts.intersection(rc).intersection(object_keys)
+            operation_overlap=concepts.intersection(rc).intersection(operation_keys)
             score=0
             if norm(service) in names or any(norm(service)==x for x in names):
                 score=1000
             elif any(norm(service) in x or x in norm(service) for x in names):
                 score=700
+            if object_overlap:
+                score=max(score,650+min(len(object_overlap),3)*80)
+            if operation_overlap:
+                score=max(score,320+min(len(operation_overlap),2)*25)
             concept_overlap=concepts.intersection(rc)
             if concept_overlap:
-                score=max(score,500+min(len(concept_overlap),5)*20)
+                score=max(score,400+min(len(concept_overlap),5)*20)
             overlap=raw.intersection(rt)
             if overlap:
-                score=max(score,300+min(len(overlap),5)*20)
+                score=max(score,260+min(len(overlap),5)*20)
             roots=0
             for token in raw:
                 if len(token)<4: continue
                 if any(token in ct or ct in token for ct in rt if len(ct)>=4):
                     roots+=1
             if roots:
-                score=max(score,180+min(roots,5)*15)
+                score=max(score,150+min(roots,5)*15)
             if score:
-                scored.append((score,row))
-        scored.sort(key=lambda x:(x[0],str(x[1].get("name_am") or x[1].get("name_ru") or "").casefold()),reverse=True)
-        candidates=[row for score,row in scored[:8]]
+                scored.append((score,row,object_overlap,operation_overlap))
+        scored.sort(key=lambda x:(x[0],len(x[2]),-len(x[3]),str(x[1].get("name_am") or x[1].get("name_ru") or "").casefold()),reverse=True)
+        candidates=[]
+        for score,row,obj,op in scored[:8]:
+            item=dict(row)
+            item["object_matches"]=sorted(obj)
+            item["operation_matches"]=sorted(op)
+            item["match_reason"]="object_match" if obj else ("operation_match" if op else "text_match")
+            candidates.append(item)
         return {"service_name":service,"candidates":candidates,"count":len(candidates),
-                "top_score":scored[0][0] if scored else 0}
+                "top_score":scored[0][0] if scored else 0,
+                "top_object_matches":sorted(scored[0][2]) if scored else [],
+                "top_operation_matches":sorted(scored[0][3]) if scored else []}
