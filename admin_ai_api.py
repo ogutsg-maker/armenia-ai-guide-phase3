@@ -829,6 +829,95 @@ field, value_raw, navigation, filters, sort, limit, action_required, response_la
     if not isinstance(data,dict): raise RuntimeError("Groq returned a non-object intent")
     return _admin_normalize_plan(data,message)
 
+def _admin_contextual_fallback_plan(message,state):
+    """Generic semantic fallback for short/elliptical turns.
+    It resolves the current entity and subject class, not individual phrases.
+    The LLM remains primary; this only protects ambiguous/low-confidence turns.
+    """
+    text=_norm(message)
+    focused_id=state.get("last_focused_application_id") or state.get("last_focused_entity_id")
+    focused_type=state.get("last_focused_entity_type") or ("application" if state.get("last_focused_application_id") else None)
+
+    # If the user names a known business/application explicitly, resolve it from DB.
+    if not focused_id:
+        try:
+            rows=platform_db.rows("""SELECT id,business_name,service_name
+                FROM partner_applications
+                WHERE business_name IS NOT NULL
+                ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 100""")
+            matches=[]
+            for row in rows:
+                name=_norm(row.get("business_name"))
+                if name and len(name)>=2 and name in text:
+                    matches.append(row)
+            if len(matches)==1:
+                focused_id=int(matches[0]["id"])
+                focused_type="application"
+                state["last_focused_application_id"]=focused_id
+                state["last_focused_entity_type"]="application"
+                state["last_focused_entity_id"]=focused_id
+        except Exception:
+            pass
+
+    subject_patterns={
+        "documents": r"(փաստաթուղ|դոկումենտ|документ|document)",
+        "price": r"(գին|արժեք|цена|стоимость|price)",
+        "subcategory": r"(ենթակատեգոր|ենթաուղղ|подкатегор|subcategory)",
+        "category": r"(կատեգոր|category|категор)",
+        "direction": r"(ուղղություն|направлен|direction)",
+        "service": r"(ծառայ|услуг|service)",
+        "status": r"(կարգավիճակ|ստատուս|статус|status)",
+        "location": r"(հասցե|քաղաք|մարզ|место|адрес|город|область|location|city|address)",
+        "description": r"(նկարագր|описан|description)"
+    }
+    subject=None
+    for name,pattern in subject_patterns.items():
+        if re.search(pattern,text,re.I|re.U):
+            subject=name
+            break
+
+    correctness=bool(re.search(
+        r"(ճիշտ|սխալ|ստուգ|արդյոք|правиль|верн|ошиб|провер|correct|wrong|check|whether|is it)",
+        text,re.I|re.U
+    ))
+
+    if focused_id and focused_type=="application":
+        tools=[
+            {"name":"get_application","arguments":{"application_id":int(focused_id)}}
+        ]
+        data=["application"]
+        field=subject
+        if subject=="documents":
+            tools.append({"name":"get_documents","arguments":{"application_id":int(focused_id)}}); data.append("documents")
+            intent="information_request"
+        elif subject in {"category","subcategory"}:
+            app=_admin_hydrate_application(focused_id) or {}
+            tools.append({"name":"check_application","arguments":{"application_id":int(focused_id)}})
+            tools.append({"name":"check_catalog_match","arguments":{"service_name":str(app.get("service_name") or "")}})
+            data += ["categories","verification"]
+            intent="information_request" if correctness else "show_application_field"
+        elif subject=="direction":
+            tools.append({"name":"check_application","arguments":{"application_id":int(focused_id)}})
+            data += ["categories","verification"]
+            intent="information_request"
+        elif subject:
+            data.append(subject)
+            intent="information_request" if correctness else "show_application_field"
+        else:
+            tools.append({"name":"check_application","arguments":{"application_id":int(focused_id)}})
+            tools.append({"name":"get_documents","arguments":{"application_id":int(focused_id)}})
+            data += ["verification","documents","categories","services","prices"]
+            intent="information_request"
+        return _admin_normalize_plan({
+            "intent":intent,"target":"application","entity_type":"application","entity_id":int(focused_id),
+            "field":field,"data_needed":data,"tool_requests":tools,
+            "action_required":"read_only",
+            "reasoning_summary":"Ընթացիկ հայտի համատեքստը և հարցի իմաստային դաշտը լուծված են։",
+            "confidence":0.9
+        },message)
+
+    return None
+
 def _admin_fallback_intent(message,focused_id=None):
     text=_norm(message)
     has_application=bool(re.search(r"(հայտ|դիմում|заявк|request|application)",text,re.I|re.U))
@@ -1499,6 +1588,13 @@ async def admin_ai_message(admin_id,message):
         except Exception: c=_admin_fallback_intent(message,focused_id)
     c=_admin_normalize_plan(c,message)
 
+    # One generic context pass handles low-confidence/unknown turns. This is
+    # deliberately subject-based (entity + field + semantic goal), not a list
+    # of special phrases, so new natural-language variants reuse the same path.
+    if str(c.get("intent") or "unknown") in {"unknown",""} or float(c.get("confidence") or 0) < 0.35:
+        contextual=_admin_contextual_fallback_plan(message,state)
+        if contextual:
+            c=contextual
 
     state["last_action"]={"intent":c.get("intent"),"target":c.get("target"),"reasoning_summary":c.get("reasoning_summary"),"confidence":c.get("confidence")}
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
