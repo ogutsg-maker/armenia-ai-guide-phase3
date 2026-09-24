@@ -504,3 +504,52 @@ async def _execute_mutation(pid,c,ctx):
                     if not cur.fetchone():return web.json_response({"ok":False,"error":"service_not_found"},status=404)
                     conn.commit();return web.json_response({"ok":True,"reply":"✓ Услуга удалена."})
     return web.json_response({"ok":True,"reply":"Запрос принят."})
+
+
+# Shared AI Context integration.
+# Keep the existing partner-specific mutation/read contract, but source the
+# conversational context from the central operational context layer.
+def _context(pid: int) -> dict[str, Any]:
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id,name,description,phone,status FROM partner_businesses "
+                "WHERE partner_id=%s AND status='active' ORDER BY id",
+                (pid,),
+            )
+            businesses = [dict(x) for x in cur.fetchall()]
+            cur.execute(
+                """SELECT id,business_id,object_name,address,city,marz,phone
+                   FROM partner_objects
+                   WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
+                   ORDER BY business_id,id""",
+                (pid,),
+            )
+            objects = [dict(x) for x in cur.fetchall()]
+            cur.execute(
+                """SELECT id,business_id,name,description,price,status,category_id
+                   FROM services
+                   WHERE partner_id=%s AND (status IS NULL OR status <> 'deleted')
+                   ORDER BY business_id,id DESC""",
+                (pid,),
+            )
+            services = [dict(x) for x in cur.fetchall()]
+
+    from ai_context_layer import build_partner_context
+    try:
+        operational = build_partner_context(pid)
+    except Exception:
+        operational = ""
+
+    return {
+        "businesses": businesses,
+        "addresses": objects,
+        "services": services,
+        "operational_context": operational,
+        "permissions": {
+            "role": "partner",
+            "can_read_own_data": True,
+            "can_modify_own_data": True,
+            "confirmation_required_for_mutations": True,
+        },
+    }
