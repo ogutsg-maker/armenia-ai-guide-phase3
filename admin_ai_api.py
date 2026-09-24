@@ -871,7 +871,7 @@ async def _admin_ai_completion(messages, *, max_tokens=700):
     raise AdminAIProviderError("All configured AI providers failed.",errors)
 
 async def _admin_ai_json(message,ctx):
-    """U
+    """Universal semantic planner: meaning first, Python validates and executes."""
     system="""You are the universal semantic planner for the Armenia AI Guide administrator.
 Understand what the administrator means, not predefined command phrases. Input can be Armenian,
 Russian, English, mixed language, transliteration, typos, colloquial wording, elliptical follow-ups
