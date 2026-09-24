@@ -886,10 +886,21 @@ several tools when the answer needs several independent facts. Available tools:
 - check_application: factual application completeness/status checks
 - check_catalog_match: search catalog candidates for a service
 - count: count partners/applications/services/directions/subcategories
+- SEARCH: schema-validated read-only search of one live table
+- ANALYZE: inspect one live record and its FK relationships
+- CHECK: read-only consistency/FK check
+- COMPARE: compare selected records
+- SUGGEST: find candidate records by validated textual fields
 
 Return ONLY JSON with:
 reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed, tool_requests,
-field, value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
+field, value_raw, navigation, filters, sort, limit, action_required, response_language, confidence,
+active_context.
+active_context must contain: scope, subject, intent, query, filters, entity_type, entity_id.
+Treat active_context as semantic conversation state. Decide whether the message is a new topic or a
+follow-up from supplied context; never use a hardcoded phrase list to make that decision.
+The supplied ai_schema is live database metadata. Use only its real table/column/FK names for generic
+tools. Never output SQL or arbitrary identifiers.
 """
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
@@ -915,131 +926,19 @@ field, value_raw, navigation, filters, sort, limit, action_required, response_la
     return _admin_normalize_plan(data,message)
 
 def _admin_contextual_fallback_plan(message,state):
-    """Generic semantic fallback for short/elliptical turns.
-    It resolves the current entity and subject class, not individual phrases.
-    The LLM remains primary; this only protects ambiguous/low-confidence turns.
-    """
-    text=_norm(message)
+    """Last-resort identity fallback only; semantic topic resolution belongs to Groq."""
     focused_id=state.get("last_focused_application_id") or state.get("last_focused_entity_id")
-    focused_type=state.get("last_focused_entity_type") or ("application" if state.get("last_focused_application_id") else None)
-
-    # If the user names a known business/application explicitly, resolve it from DB.
     if not focused_id:
-        try:
-            rows=platform_db.rows("""SELECT id,business_name,service_name
-                FROM partner_applications
-                WHERE business_name IS NOT NULL
-                ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 100""")
-            matches=[]
-            for row in rows:
-                name=_norm(row.get("business_name"))
-                if name and len(name)>=2 and name in text:
-                    matches.append(row)
-            if len(matches)==1:
-                focused_id=int(matches[0]["id"])
-                focused_type="application"
-                state["last_focused_application_id"]=focused_id
-                state["last_focused_entity_type"]="application"
-                state["last_focused_entity_id"]=focused_id
-        except Exception:
-            pass
-
-    subject_patterns={
-        "documents": r"(փաստաթուղ|դոկումենտ|документ|document)",
-        "price": r"(գին|արժեք|цена|стоимость|price)",
-        "subcategory": r"(ենթակատեգոր|ենթաուղղ|подкатегор|subcategory)",
-        "category": r"(կատեգոր|category|категор)",
-        "direction": r"(ուղղություն|направлен|direction)",
-        "service": r"(ծառայ|услуг|service)",
-        "status": r"(կարգավիճակ|ստատուս|статус|status)",
-        "location": r"(հասցե|քաղաք|մարզ|место|адрес|город|область|location|city|address)",
-        "description": r"(նկարագր|описан|description)"
-    }
-    subject=None
-    for name,pattern in subject_patterns.items():
-        if re.search(pattern,text,re.I|re.U):
-            subject=name
-            break
-
-    # Generic subject fallback when the semantic planner is unavailable/low-confidence.
-    # It must not bind a new catalog/service question to a previously focused application.
-    active=state.get("active_context") or {}
-    active_scope=str(active.get("scope") or "").lower()
-    service_question=bool(re.search(r"(ծառայ|услуг|service|services)",text,re.I|re.U))
-    catalog_question=bool(re.search(r"(կատալոգ|catalog|ենթակատեգոր|подкатегор|subcategory|կատեգոր|category)",text,re.I|re.U))
-    equipment_question=bool(re.search(r"(ծանր\s+տեխնիկ|тяж[а-яё]*\s+техник|heavy\s+equipment|equipment)",text,re.I|re.U))
-    if equipment_question:
-        return _admin_normalize_plan({
-            "intent":"query_database","target":"catalog",
-            "filters":{"name":{"contains":message.strip()}},
-            "data_needed":["categories"],
-            "active_context":{"scope":"catalog","subject":message.strip(),"intent":"query_database","query":message.strip(),
-                              "filters":{"name":{"contains":message.strip()}},"entity_type":"catalog"},
-            "action_required":"read_only","confidence":0.90
-        },message)
-    if (service_question or catalog_question) and not re.search(
-        r"(նրա|նրան|այս|այդ|իր|его|ему|этого|этой|этот|his|her|its|this|that)",text,re.I|re.U
-    ):
-        if service_question and active_scope not in {"catalog","services"}:
-            return _admin_normalize_plan({
-                "intent":"information_request","target":"services",
-                "data_needed":["services","categories"],
-                "tool_requests":[{"name":"get_services","arguments":{}}],
-                "active_context":{"scope":"services","subject":"services","intent":"information_request",
-                                  "query":message.strip(),"filters":{},"entity_type":"service"},
-                "action_required":"read_only","confidence":0.88
-            },message)
-        if catalog_question:
-            return _admin_normalize_plan({
-                "intent":"query_database","target":"catalog",
-                "data_needed":["categories"],
-                "tool_requests":[{"name":"search_catalog","arguments":{"query":message.strip()}}],
-                "active_context":{"scope":"catalog","subject":message.strip(),"intent":"query_database",
-                                  "query":message.strip(),"filters":{},"entity_type":"catalog"},
-                "action_required":"read_only","confidence":0.85
-            },message)
-
-    correctness=bool(re.search(
-        r"(ճիշտ|սխալ|ստուգ|արդյոք|правиль|верн|ошиб|провер|correct|wrong|check|whether|is it)",
-        text,re.I|re.U
-    ))
-
-    if focused_id and focused_type=="application":
-        tools=[
-            {"name":"get_application","arguments":{"application_id":int(focused_id)}}
-        ]
-        data=["application"]
-        field=subject
-        if subject=="documents":
-            tools.append({"name":"get_documents","arguments":{"application_id":int(focused_id)}}); data.append("documents")
-            intent="information_request"
-        elif subject in {"category","subcategory"}:
-            app=_admin_hydrate_application(focused_id) or {}
-            tools.append({"name":"check_application","arguments":{"application_id":int(focused_id)}})
-            tools.append({"name":"check_catalog_match","arguments":{"service_name":str(app.get("service_name") or "")}})
-            data += ["categories","verification"]
-            intent="information_request" if correctness else "show_application_field"
-        elif subject=="direction":
-            tools.append({"name":"check_application","arguments":{"application_id":int(focused_id)}})
-            data += ["categories","verification"]
-            intent="information_request"
-        elif subject:
-            data.append(subject)
-            intent="information_request" if correctness else "show_application_field"
-        else:
-            tools.append({"name":"check_application","arguments":{"application_id":int(focused_id)}})
-            tools.append({"name":"get_documents","arguments":{"application_id":int(focused_id)}})
-            data += ["verification","documents","categories","services","prices"]
-            intent="information_request"
-        return _admin_normalize_plan({
-            "intent":intent,"target":"application","entity_type":"application","entity_id":int(focused_id),
-            "field":field,"data_needed":data,"tool_requests":tools,
-            "action_required":"read_only",
-            "reasoning_summary":"Ընթացիկ հայտի համատեքստը և հարցի իմաստային դաշտը լուծված են։",
-            "confidence":0.9
-        },message)
-
-    return None
+        return None
+    return _admin_normalize_plan({
+        "intent":"information_request",
+        "target":"application",
+        "entity_type":state.get("last_focused_entity_type") or "application",
+        "entity_id":focused_id,
+        "data_needed":["entity"],
+        "action_required":"read_only",
+        "confidence":0.20,
+    },message)
 
 def _admin_fallback_intent(message,focused_id=None):
     text=_norm(message)
@@ -1492,7 +1391,6 @@ async def _admin_refine_tool_context(question, plan, entity_type, entity_id, fac
                     "active_context": facts.get("active_context") or {},
                     "tool_results": accumulated,
                     "plan": plan,
-                    "conversation": _admin_session(_admin_current_admin_id()).get("history",[])[-4:] if _admin_current_admin_id() else [],
                 }
             )
         except Exception:
