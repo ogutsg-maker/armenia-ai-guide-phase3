@@ -1021,7 +1021,7 @@ def _admin_fallback_intent(message,focused_id=None):
     # previous catalog/service search, not to the currently focused application.
     prev_target=str(state.get("last_query_target") or "").lower()
     prev_query=str(state.get("last_query") or "")
-    heavy_subject=bool(re.search(r"(ծանր\\s+տեխնիկ|тяж[а-яё]*\\s+техник|высок[а-яё]*\\s+техник|heavy\\s+equipment|equipment)",text,re.I|re.U))
+    heavy_subject=bool(re.search(r"(ծանր\s+տեխնիկ|тяж[а-яё]*\s+техник|высок[а-яё]*\s+техник|heavy\s+equipment|equipment)",text,re.I|re.U))
     if heavy_subject:
         phrase=message.strip()
         return _admin_normalize_plan({
