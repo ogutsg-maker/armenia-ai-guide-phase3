@@ -8,6 +8,8 @@ receives arbitrary SQL access.
 """
 
 from typing import Any, Dict, List
+from decimal import Decimal
+from datetime import date, datetime
 import platform_db
 
 
@@ -109,12 +111,24 @@ class DataTools:
         return {"tool": name, "data": handler(arguments)}
 
     @staticmethod
-    def _safe_rows(rows: Any) -> List[Dict[str, Any]]:
+    def _safe_value(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {str(k): DataTools._safe_value(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [DataTools._safe_value(v) for v in value]
+        return str(value)
+
+    @classmethod
+    def _safe_rows(cls, rows: Any) -> List[Dict[str, Any]]:
         if not rows:
             return []
-        return platform_db._admin_safe(rows) if hasattr(platform_db, "_admin_safe") else [
-            dict(x) if isinstance(x, dict) else x for x in rows
-        ]
+        return [cls._safe_value(dict(x)) if isinstance(x, dict) else cls._safe_value(x) for x in rows]
 
     def _tool_count(self, args: Dict[str, Any]) -> Dict[str, Any]:
         entity = str(args.get("entity") or "").strip().lower()
@@ -191,11 +205,23 @@ class DataTools:
             partner_id = app.get("partner_id") if app else None
         if not partner_id:
             return {"documents": []}
+        cols = platform_db.rows(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='partner_verification_documents' "
+            "ORDER BY ordinal_position"
+        )
+        names = {str(x.get("column_name")) for x in cols}
+        if "partner_id" not in names:
+            raise DataToolError("documents_schema_missing_partner_id")
+        wanted = [
+            "id","partner_id","application_id","partner_application_id","document_type",
+            "file_name","file_url","status","verification_status","admin_note",
+            "rejection_reason","created_at","updated_at"
+        ]
+        select_cols = [x for x in wanted if x in names]
         rows = platform_db.rows(
-            """SELECT id,partner_id,application_id,document_type,file_name,file_url,
-                      status,verification_status,admin_note,rejection_reason,created_at,updated_at
-               FROM partner_verification_documents
-               WHERE partner_id=%s ORDER BY id DESC LIMIT 50""",
+            "SELECT " + ",".join(select_cols) +
+            " FROM partner_verification_documents WHERE partner_id=%s ORDER BY id DESC LIMIT 50",
             (int(partner_id),),
         )
         if self.role == "partner":
