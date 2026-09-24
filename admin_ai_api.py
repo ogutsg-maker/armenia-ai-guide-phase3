@@ -174,6 +174,20 @@ _ADMIN_SESSION_TTL=30*60
 _CONFIRM_YES={"да","да.","yes","yes.","ok","okay","подтверждаю","подтвердить","հա","այո","այո.","հաստատում եմ"}
 _CONFIRM_NO={"нет","нет.","no","no.","cancel","отмена","отменить","ոչ","ոչ.","չեղարկել"}
 
+def _admin_answer_is_internal_payload(answer):
+    text = str(answer or "").strip()
+    if not text:
+        return True
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, (dict, list)):
+            return True
+    except Exception:
+        pass
+    low = text.casefold()
+    return any(x in low for x in ('"tool_results"', '"application": {', '"documents": [', '"truth": {', '"candidates": [', '"checks": ['))
+
+
 def _admin_safe(value):
     from decimal import Decimal
     from datetime import date, datetime
@@ -1413,6 +1427,8 @@ If no verified error is present, say that clearly. Do not mention AI, prompts, S
 chain-of-thought. Simple question = simple answer; broad inspection = compact structured summary."""},
             {"role":"user","content":payload}],temperature=0,max_tokens=700)
         answer=(resp.choices[0].message.content or "").strip()
+        if _admin_answer_is_internal_payload(answer):
+            return fallback
         return answer or fallback
     except Exception: return fallback
 
