@@ -959,6 +959,44 @@ def _admin_contextual_fallback_plan(message,state):
             subject=name
             break
 
+    # Generic subject fallback when the semantic planner is unavailable/low-confidence.
+    # It must not bind a new catalog/service question to a previously focused application.
+    active=state.get("active_context") or {}
+    active_scope=str(active.get("scope") or "").lower()
+    service_question=bool(re.search(r"(ծառայ|услуг|service|services)",text,re.I|re.U))
+    catalog_question=bool(re.search(r"(կատալոգ|catalog|ենթակատեգոր|подкатегор|subcategory|կատեգոր|category)",text,re.I|re.U))
+    equipment_question=bool(re.search(r"(ծանր\s+տեխնիկ|тяж[а-яё]*\s+техник|heavy\s+equipment|equipment)",text,re.I|re.U))
+    if equipment_question:
+        return _admin_normalize_plan({
+            "intent":"query_database","target":"catalog",
+            "filters":{"name":{"contains":message.strip()}},
+            "data_needed":["categories"],
+            "active_context":{"scope":"catalog","subject":message.strip(),"intent":"query_database","query":message.strip(),
+                              "filters":{"name":{"contains":message.strip()}},"entity_type":"catalog"},
+            "action_required":"read_only","confidence":0.90
+        },message)
+    if (service_question or catalog_question) and not re.search(
+        r"(նրա|նրան|այս|այդ|իր|его|ему|этого|этой|этот|his|her|its|this|that)",text,re.I|re.U
+    ):
+        if service_question and active_scope not in {"catalog","services"}:
+            return _admin_normalize_plan({
+                "intent":"information_request","target":"services",
+                "data_needed":["services","categories"],
+                "tool_requests":[{"name":"get_services","arguments":{}}],
+                "active_context":{"scope":"services","subject":"services","intent":"information_request",
+                                  "query":message.strip(),"filters":{},"entity_type":"service"},
+                "action_required":"read_only","confidence":0.88
+            },message)
+        if catalog_question:
+            return _admin_normalize_plan({
+                "intent":"query_database","target":"catalog",
+                "data_needed":["categories"],
+                "tool_requests":[{"name":"search_catalog","arguments":{"query":message.strip()}}],
+                "active_context":{"scope":"catalog","subject":message.strip(),"intent":"query_database",
+                                  "query":message.strip(),"filters":{},"entity_type":"catalog"},
+                "action_required":"read_only","confidence":0.85
+            },message)
+
     correctness=bool(re.search(
         r"(ճիշտ|սխալ|ստուգ|արդյոք|правиль|верн|ошиб|провер|correct|wrong|check|whether|is it)",
         text,re.I|re.U
