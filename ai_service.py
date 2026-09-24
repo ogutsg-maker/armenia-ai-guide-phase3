@@ -145,6 +145,25 @@ class AIService:
             raise RuntimeError("OPENROUTER_API_KEY is not configured or OpenRouter client is unavailable")
         return self.openrouter_client.chat.completions.create(model=model or self.openrouter_model, messages=messages, temperature=0.2)
 
+    def _groq_completion_json(self, messages, model: str, max_tokens: int):
+        if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
+        kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens,"response_format":{"type":"json_object"}}
+        try:
+            return self.groq_client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            if getattr(exc, "status_code", None) == 404 and self.groq_fallback_model and model != self.groq_fallback_model:
+                kwargs["model"]=self.groq_fallback_model
+                return self.groq_client.chat.completions.create(**kwargs)
+            raise
+
+    def _openai_completion_json(self, messages, model: str, max_tokens: int):
+        if not self.openai_client: raise RuntimeError("OPENAI_API_KEY is not configured or OpenAI client is unavailable")
+        return self.openai_client.chat.completions.create(model=model, messages=messages, temperature=0, max_tokens=max_tokens, response_format={"type":"json_object"})
+
+    def _openrouter_completion_json(self, messages, model: str, max_tokens: int):
+        if not self.openrouter_client: raise RuntimeError("OPENROUTER_API_KEY is not configured or OpenRouter client is unavailable")
+        return self.openrouter_client.chat.completions.create(model=model, messages=messages, temperature=0, max_tokens=max_tokens, response_format={"type":"json_object"})
+
     async def chat_json(self, system_prompt: str, user_text: str, *, max_tokens: int = 900) -> dict:
         """Shared structured-AI gateway: Groq -> OpenAI -> OpenRouter."""
         clean = self.clean_sensitive_data(user_text)
@@ -156,11 +175,11 @@ class AIService:
                 continue
             try:
                 if name == "groq":
-                    response = await asyncio.to_thread(self._groq_completion, messages, model)
+                    response = await asyncio.to_thread(self._groq_completion_json, messages, model, max_tokens)
                 elif name == "openrouter":
-                    response = await asyncio.to_thread(self._openrouter_completion, messages, model)
+                    response = await asyncio.to_thread(self._openrouter_completion_json, messages, model, max_tokens)
                 else:
-                    response = await asyncio.to_thread(self._openai_completion, messages, model)
+                    response = await asyncio.to_thread(self._openai_completion_json, messages, model, max_tokens)
                 data = self._json(self._text(response))
                 if data:
                     return data
