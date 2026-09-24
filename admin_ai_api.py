@@ -1335,6 +1335,17 @@ async def admin_ai_message(admin_id,message):
         reply="Отменено. Никаких изменений не внесено."
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
+    # A bare affirmative/acknowledgement is not an approval command.
+    # Only an existing pending_action may consume confirmation. This prevents
+    # phrases like "այո ճիշտ է" / "да, правильно" from becoming mutations.
+    if not pending and re.fullmatch(
+        r"(?:да|да,?\s*(?:правильно|верно|ок)|yes|yes,?\s*(?:correct|right|ok)|"
+        r"այո|այո,?\s*(?:ճիշտ|լավ|հաստատ)|հա|հա,?\s*(?:ճիշտ|լավ))",
+        normalized, re.IGNORECASE|re.UNICODE):
+        reply="Հասկացա։ Տվյալները չեմ փոխել։" if _admin_detect_language(message)=="am" else "Понял. Данные не изменял."
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply)
+        return reply
+
     waiting=state.get("waiting_for_input")
     if waiting:
         aid=waiting.get("application_id"); field=str(waiting.get("field") or ""); app=_admin_hydrate_application(aid)
