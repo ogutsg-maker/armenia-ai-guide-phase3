@@ -219,7 +219,7 @@ def _admin_hydrate_context(state,limit=12):
         "last_result_facts":state.get("last_result_facts"),
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
-        "query_capabilities":{"targets":["applications","partners","businesses","catalog","catalog_overview","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
+        "query_capabilities":{"targets":["applications","partners","businesses","catalog","master_categories","catalog_overview","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
         "history":state.get("history",[])[-6:]})
 
 
@@ -247,6 +247,7 @@ _ADMIN_QUERY_TARGETS={
  "applications":{"table":"partner_applications a","select":"a.id,a.business_name,a.status,a.service_name,a.price,a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,a.location_marz,a.location_city,a.location_village,a.address,a.phone,a.description,a.created_at,a.updated_at","order":"a.created_at DESC","limit":50,"aliases":{"application","applications","requests","заявки","հայտեր"},"fields":{"status":"a.status","business_name":"a.business_name","service_name":"a.service_name","price":"a.price","direction_name":"a.direction_name","subcategory_name":"a.subcategory_name","location_marz":"a.location_marz","location_city":"a.location_city","location_village":"a.location_village","address":"a.address","phone":"a.phone","description":"a.description","category_id":"a.category_id","master_category_id":"a.master_category_id"}},
  "partners":{"table":"partners p","select":"p.id,p.user_id,p.business_name,p.business_description,p.status,p.verification_status,p.contact_share_policy,p.created_at,p.updated_at","order":"p.created_at DESC","limit":50,"aliases":{"partner","partners","партнеры","գործընկերներ"},"fields":{"status":"p.status","verification_status":"p.verification_status","business_name":"p.business_name","business_description":"p.business_description","location_marz":"__PARTNER_LOCATION_MARZ__","location_city":"__PARTNER_LOCATION_CITY__"}},
  "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
+ "master_categories":{"table":"master_categories m","select":"m.id,m.name_am,m.name_ru,m.name_en,m.slug,m.is_active","order":"m.id ASC","limit":50,"aliases":{"master_categories","master category","master categories","directions","direction","главные категории","направления","ուղղություններ","ուղղություն","գլխավոր կատեգորիաներ","գլխավոր կատեգորիա"},"fields":{"name":"m.name_am","name_am":"m.name_am","name_ru":"m.name_ru","name_en":"m.name_en","slug":"m.slug","is_active":"m.is_active"}},
  "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}, "catalog_overview":{"aliases":{"catalog overview","catalog_overview","կատալոգի ընդհանուր","ընդհանուր կատալոգ","catalog stats","catalog count","direction","directions","master categories","subcategory","subcategories","ուղղություն","ուղղություններ","ենթաուղղություն","ենթաուղղություններ","направления","поднаправления"},"limit":1},
  "services":{"table":"services s LEFT JOIN categories c ON c.id=s.category_id LEFT JOIN master_categories m ON m.id=c.master_category_id LEFT JOIN partners p ON p.id=s.partner_id","select":"s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,p.business_name AS partner_name,c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,c.master_category_id,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id","category_name":"c.name_am","master_category_id":"c.master_category_id"}}}
 _ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
@@ -282,7 +283,7 @@ def _admin_query_build(target,filters,limit=20,sort=None):
  target=_admin_query_target(target)
  if not target:return None,"Неизвестный объект данных."
  if target=="catalog_overview":
-  return ("SELECT (SELECT COUNT(*) FROM master_categories WHERE is_active=TRUE) AS master_categories_count, (SELECT COUNT(*) FROM categories WHERE is_active=TRUE) AS subcategories_count, (SELECT COUNT(*) FROM master_categories) AS master_categories_total, (SELECT COUNT(*) FROM categories) AS subcategories_total", (), target), None
+  return ("SELECT (SELECT COUNT(*) FROM master_categories) AS master_categories_count, (SELECT COUNT(*) FROM categories) AS subcategories_count, (SELECT COUNT(*) FROM master_categories WHERE is_active=TRUE) AS master_categories_active, (SELECT COUNT(*) FROM categories WHERE is_active=TRUE) AS subcategories_active", (), target), None
  spec=_ADMIN_QUERY_TARGETS[target];clauses=[];params=[]
  if spec.get("base_where"):clauses.append(spec["base_where"])
  for field,op,value in _admin_query_filter_items(filters,target):
@@ -374,7 +375,7 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
 
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
- labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","catalog_overview":"📚 Каталог","services":"🛠 Услуги"}
+ labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","master_categories":"📂 Ուղղություններ","catalog_overview":"📚 Катալոգ","services":"🛠 Услуги"}
  if target=="catalog_overview":
   x=rows[0]
   return ("📚 Կատալոգ՝ "+str(x.get("master_categories_count") or 0)+" ուղղություն, "
@@ -386,6 +387,7 @@ def _admin_query_result_text(target,rows,filters,question):
    lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏"+(" · "+loc if loc else ""))
   elif target=="partners":lines.append("#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")+" · verification="+str(x.get("verification_status") or "—"))
   elif target=="businesses":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")+" · "+str(x.get("partner_business_name") or "—"))
+  elif target=="master_categories":lines.append("#"+str(x.get("id"))+" · "+str(x.get("name_am") or x.get("name_ru") or x.get("name_en") or "—"))
   elif target=="services":
    prices=x.get("prices_amd") or []
    price_text=(" · գին="+", ".join(str(p)+" ֏" for p in prices if p is not None)) if prices else " · գին=—"
