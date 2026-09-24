@@ -844,7 +844,7 @@ class AdminAIProviderError(RuntimeError):
         self.errors = errors or []
 
 
-async def _admin_ai_completion(messages, *, max_tokens=700):
+async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
     """Call AI providers in order: Groq, OpenAI, OpenRouter."""
     errors=[]
     providers=[]
@@ -875,9 +875,22 @@ async def _admin_ai_completion(messages, *, max_tokens=700):
                     }
                 kwargs["max_retries"]=0
                 client=AsyncOpenAI(**kwargs)
-            resp=await client.chat.completions.create(
-                model=model,messages=messages,temperature=0,max_tokens=max_tokens
-            )
+            request_kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens}
+            # Structured planner calls use provider-side JSON mode when supported.
+            # This is a transport constraint, not phrase-specific semantic logic.
+            if json_mode:
+                request_kwargs["response_format"]={"type":"json_object"}
+            try:
+                resp=await client.chat.completions.create(**request_kwargs)
+            except Exception as structured_exc:
+                # Some OpenRouter/free models reject response_format. Retry once
+                # without it; provider routing still remains under our control.
+                if json_mode:
+                    resp=await client.chat.completions.create(
+                        model=model,messages=messages,temperature=0,max_tokens=max_tokens
+                    )
+                else:
+                    raise structured_exc
             content=(resp.choices[0].message.content or "").strip()
             if not content:
                 raise RuntimeError("empty AI response")
@@ -993,7 +1006,7 @@ question."""
 
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
-    raw,provider,model=await _admin_ai_completion(messages,max_tokens=700)
+    raw,provider,model=await _admin_ai_completion(messages,max_tokens=700,json_mode=True)
     try: data=json.loads(raw)
     except json.JSONDecodeError:
         start=raw.find("{"); end=raw.rfind("}")
