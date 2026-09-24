@@ -876,6 +876,10 @@ async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
                 kwargs["max_retries"]=0
                 client=AsyncOpenAI(**kwargs)
             request_kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens}
+            # Keep reasoning-token usage low for the OpenRouter planner so the
+            # completion budget is spent on the required ActionPlan JSON.
+            if provider=="openrouter" and json_mode:
+                request_kwargs["reasoning"]={"effort":"low","exclude":True}
             # Structured planner calls use provider-side JSON mode when supported.
             # This is a transport constraint, not phrase-specific semantic logic.
             if json_mode:
@@ -1006,7 +1010,7 @@ question."""
 
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
-    raw,provider,model=await _admin_ai_completion(messages,max_tokens=700,json_mode=True)
+    raw,provider,model=await _admin_ai_completion(messages,max_tokens=1200,json_mode=True)
     try: data=json.loads(raw)
     except json.JSONDecodeError:
         start=raw.find("{"); end=raw.rfind("}")
@@ -1770,12 +1774,6 @@ async def admin_ai_message(admin_id,message):
             state["last_focused_application_id"]=focused_id
     if nav_intent:
         c=nav_intent
-    elif re.search(r"(?:ստուգիր|проверь|check).*(?:հայտ|заявк|application).*(?:ուղղիր|исправ|fix|շտկ)",local_text):
-        c={"intent":"suggest_application_correction","target":"application","application_id":None,"action_required":"suggest_alternatives","confidence":1.0}
-    elif re.search(r"(?:ստուգիր|проверь|check).*(?:ենթակատեգոր|подкатегор|subcategory)",local_text):
-        c={"intent":"show_application_field","target":"application","field":"subcategory","application_id":None,"action_required":"read_only","confidence":1.0}
-    elif re.fullmatch(r"(?:ուղղիր|исправь|շտկիր)(?:\s+(?:սխալները|ошибки|ошибка|errors))?",local_text):
-        c={"intent":"suggest_application_correction","target":"application","application_id":None,"action_required":"suggest_alternatives","confidence":1.0}
     else:
         c=None
     ctx=_admin_hydrate_context(state)
