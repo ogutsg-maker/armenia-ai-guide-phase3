@@ -365,3 +365,21 @@ def build_ai_context(entity_type: str | None = None, entity_id: Any = None, *,
         if entity:
             parts.append(entity)
     return "\n\n".join(parts)
+
+
+# Shared operational context facade.
+# The legacy builders above remain available for compatibility; the public
+# build_ai_context function is redirected to the new shared context layer.
+def build_ai_context(entity_type: str | None = None, entity_id: Any = None, *,
+                     include_platform_index: bool = True, role: str = "admin",
+                     full: bool = False) -> str:
+    from ai_context_layer import build_context, render_context
+    return render_context(
+        build_context(
+            role=role,
+            entity_type=entity_type if entity_type else None,
+            entity_id=entity_id if entity_id not in (None, "") else None,
+            full=full,
+            focus_source="admin" if role == "admin" else "conversation",
+        )
+    )
