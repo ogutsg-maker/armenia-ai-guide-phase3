@@ -85,7 +85,7 @@ async def _ai_json(message: str, language: str, context: dict[str, Any]) -> dict
 Understand Armenian, Russian and English. The partner speaks naturally; never force menus.
 Return ONLY JSON matching the schema.
 Allowed intents:
-show_businesses, show_services, show_orders,
+show_businesses, show_services, show_orders, show_profile, show_addresses, show_documents,
 add_business, update_business, delete_business,
 add_address, update_address, delete_address,
 add_service, update_service, delete_service,
@@ -99,7 +99,7 @@ If ambiguous, use clarify and ask one concise question.
     schema = {
         "type":"object",
         "properties":{
-            "intent":{"type":"string","enum":["show_businesses","show_services","show_orders","add_business","update_business","delete_business","add_address","update_address","delete_address","add_service","update_service","delete_service","clarify"]},
+            "intent":{"type":"string","enum":["show_businesses","show_services","show_orders","show_profile","show_addresses","show_documents","add_business","update_business","delete_business","add_address","update_address","delete_address","add_service","update_service","delete_service","clarify"]},
             "reply":{"type":"string"},
             "needs_confirmation":{"type":"boolean"},
             "business_id":{"type":["integer","null"]},
@@ -325,7 +325,7 @@ async def api_ai_command(request: web.Request):
             command["business_id"] = int(exact[0]["id"])
         elif len(businesses) == 1:
             command["business_id"] = int(businesses[0]["id"])
-    if intent in {"show_businesses","show_services","show_orders"}:
+    if intent in {"show_businesses","show_services","show_orders","show_profile","show_addresses","show_documents"}:
         return await _execute_read(pid,command,ctx)
     if intent=="clarify" or not intent:
         return web.json_response({"ok":True,"reply":str(command.get("reply") or "Пожалуйста, уточните запрос."),"command":command})
@@ -366,6 +366,19 @@ async def _execute_read(pid,c,ctx):
     if intent=="show_businesses":
         lines=["🏢 "+str(x.get("name") or "") for x in ctx["businesses"]]
         return web.json_response({"ok":True,"reply":"\n".join(lines) or "Компаний пока нет.","data":{"businesses":ctx["businesses"]}})
+    if intent=="show_profile":
+        return _json_response({"ok":True,"reply":"Պրոֆիլը հասանելի է։","data":{"context":ctx.get("operational_context",""),"businesses":ctx.get("businesses",[]),"addresses":ctx.get("addresses",[]),"services":ctx.get("services",[])}})
+    if intent=="show_addresses":
+        lines=["📍 "+str(x.get("object_name") or x.get("address") or "—") for x in ctx["addresses"]]
+        return _json_response({"ok":True,"reply":"\\n".join(lines) or "Հասցեներ դեռ չկան։","data":{"addresses":ctx["addresses"]}})
+    if intent=="show_documents":
+        # Document records are intentionally fetched only when requested.
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT id,document_type,status,verification_status,original_filename,created_at,updated_at
+                               FROM partner_verification_documents WHERE partner_id=%s ORDER BY id DESC LIMIT 50""",(pid,))
+                rows=[dict(x) for x in cur.fetchall()]
+        return _json_response({"ok":True,"reply":"\\n".join("📄 #%s — %s — %s" % (x.get("id"),x.get("document_type") or "document",x.get("status") or x.get("verification_status") or "—") for x in rows) or "Փաստաթղթեր դեռ չկան։","data":{"documents":rows}})
     if intent=="show_services":
         lines=["🛠 %s — %s ֏" % (x.get("name") or "", x.get("price") if x.get("price") is not None else "—") for x in ctx["services"]]
         return _json_response({"ok":True,"reply":"\n".join(lines) or "Услуг пока нет.","data":{"services":ctx["services"]}})
