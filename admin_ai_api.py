@@ -946,68 +946,28 @@ def _admin_contextual_fallback_plan(message,state):
         "confidence":0.20,
     },message)
 
-def _admin_fallback_intent(message,focused_id=None):
-    text=_norm(message)
-    has_application=bool(re.search(r"(հայտ|դիմում|заявк|request|application)",text,re.I|re.U))
-    asks_count=bool(re.search(r"(քանի|сколько|how many|count|количеств)",text,re.I|re.U))
-    asks_list=bool(re.search(r"(ինչ|որ|какие|какая|что|what|which|ցույց|show|list|ցուցակ)",text,re.I|re.U))
-    asks_category=bool(re.search(r"(կատեգոր|ենթակատեգոր|category|subcategory|подкатегор)",text,re.I|re.U))
-    asks_documents=bool(re.search(r"(փաստաթուղ|փաստաթուղթ|документ|документы|document|documents)",text,re.I|re.U))
-    asks_services=bool(re.search(r"(ծառայ|услуг|service|services|uslugi)",text,re.I|re.U))
-    asks_inspect=bool(re.search(r"(ստուգ|провер|check|ճիշտ|правильно|correct|ошибк|սխալ|верн)",text,re.I|re.U))
-    if focused_id and asks_documents:
-        return _admin_normalize_plan({"intent":"show_documents","target":"application","entity_id":focused_id,"field":"documents","reasoning_summary":"Փաստաթղթերի մասին հարց՝ ընթացիկ հայտի համատեքստում։","confidence":0.93},message)
-    asks_direction=bool(re.search(r"(ուղղություն|ուղղությունը|направлен|direction)",text,re.I|re.U))
-    if focused_id and asks_direction and asks_inspect:
-        return _admin_normalize_plan({"intent":"information_request","target":"application","entity_type":"application",
-            "entity_id":focused_id,"data_needed":["application","categories","services","verification"],
-            "tool_requests":[
-                {"name":"get_application","arguments":{"application_id":focused_id}},
-                {"name":"check_application","arguments":{"application_id":focused_id}}
-            ],
-            "reasoning_summary":"Ընթացիկ հայտի ուղղության ճիշտ լինելը պետք է ստուգել կատալոգի փաստերով։","confidence":0.93},message)
-    if focused_id and asks_category and asks_inspect:
-        return _admin_normalize_plan({"intent":"inspect_application","target":"application","entity_id":focused_id,"field":"subcategory","reasoning_summary":"Ընթացիկ հայտի կատեգորիայի ճիշտ լինելը պետք է ստուգել՝ առանց փոփոխության։","confidence":0.93},message)
-    if asks_count and re.search(r"(պառտն|գործընկեր|partner|партнер)",text,re.I|re.U):
-        return _admin_normalize_plan({"intent":"show_partner_count","target":"partners","reasoning_summary":"Հարց գործընկերների ընդհանուր քանակի մասին։","confidence":0.94},message)
-    if re.search(r"(կատալոգ|ենթաուղղ|ենթակատեգոր|подкатегор|subcategory|category)",text,re.I|re.U) and re.search(r"(ծանր\s+տեխնիկ|высок[а-яё]*\s+техник|тяж[а-яё]*\s+техник|heavy\s+equipment|equipment\s+rental|վարձույթ|аренд)",text,re.I|re.U):
-        phrase=""
-        m=re.search(r"(ծանր\s+տեխնիկ[այիա]?\s+վարձույթ|тяж[а-яё]*\s+техник[аиы]?\s+(?:в\s+аренду|аренды)|heavy\s+equipment\s+rental|equipment\s+rental)",message,re.I|re.U)
-        phrase=(m.group(1) if m else "heavy equipment rental").strip()
-        return _admin_normalize_plan({"intent":"query_database","target":"catalog","filters":{"name":{"contains":phrase}},"reasoning_summary":"Կատալոգում ենթաուղղության բնական լեզվով որոնում։","confidence":0.94},message)
-    # A short follow-up like "կոնկրետ ծանր տեխնիկայի համար" refers to the
-    # previous catalog/service search, not to the currently focused application.
-    prev_target=str(state.get("last_query_target") or "").lower()
-    prev_query=str(state.get("last_query") or "")
-    heavy_subject=bool(re.search(r"(ծանր\s+տեխնիկ|тяж[а-яё]*\s+техник|высок[а-яё]*\s+техник|heavy\s+equipment|equipment)",text,re.I|re.U))
-    if heavy_subject:
-        phrase=message.strip()
+def _admin_fallback_intent(message,focused_id=None,state=None):
+    """Minimal safety fallback when Groq is unavailable.
+    It must never contain topic-specific semantic dictionaries.
+    """
+    state=state or {}
+    if focused_id:
         return _admin_normalize_plan({
-            "intent":"query_database","target":"catalog",
-            "filters":{"name":{"contains":phrase}},
-            "reasoning_summary":"Կարճ հետևողական հարցը վերաբերում է կատալոգում ծանր տեխնիկայի կոնկրետ ծառայություններին։",
-            "confidence":0.96
+            "intent":"information_request",
+            "target":"application",
+            "entity_type":"application",
+            "entity_id":focused_id,
+            "data_needed":["entity"],
+            "action_required":"read_only",
+            "reasoning_summary":"Fallback to the currently focused entity because semantic planning was unavailable.",
+            "confidence":0.05,
         },message)
-    if asks_services:
-        return _admin_normalize_plan({"intent":"query_database","target":"services","reasoning_summary":"Ծառայությունների ցանկի հարցում։","confidence":0.82},message)
-    if has_application and asks_count:
-        return _admin_normalize_plan({"intent":"show_application_count","target":"applications","reasoning_summary":"Вопрос о количестве заявок.","confidence":0.88},message)
-    if has_application and asks_category and (asks_inspect or "ինչ" in text or "какая" in text):
-        return _admin_normalize_plan({"intent":"show_application_field","target":"application","field":"subcategory","application_id":focused_id,"reasoning_summary":"Запрос о категории или подкатегории текущей заявки.","confidence":0.82},message)
-    if has_application and asks_inspect and re.search(r"(ուղղ|исправ|fix|շտկ)",text,re.I|re.U):
-        return _admin_normalize_plan({"intent":"suggest_application_correction","target":"application","application_id":focused_id,"reasoning_summary":"Нужно проверить заявку и предложить исправление.","confidence":0.86},message)
-    if has_application and (asks_list or re.search(r"(կան|ունենք|есть|имеем|have)",text,re.I|re.U)):
-        return _admin_normalize_plan({"intent":"show_applications","target":"applications","reasoning_summary":"Запрос о наличии или списке заявок.","confidence":0.84},message)
-    if focused_id and re.search(r"(ստուգ|провер|check)",text,re.I|re.U):
-        return _admin_normalize_plan({"intent":"inspect_application","target":"application","application_id":focused_id,"reasoning_summary":"Проверка текущей заявки без изменения данных.","confidence":0.8},message)
-    if focused_id and re.search(r"(ուղղ|исправ|շտկ|fix)",text,re.I|re.U):
-        return _admin_normalize_plan({"intent":"edit_application","target":"application","application_id":focused_id,"field":"subcategory","value_raw":None,"action_required":"suggest_alternatives","reasoning_summary":"Исправление текущего поля требует предложения вариантов.","confidence":0.72},message)
-    m=re.search(r"(?:заявк[ауеи]?|հայտ(?:ը|ի)?|application)\s*#?\s*(\d+)",text)
-    aid=int(m.group(1)) if m else focused_id
-    if aid and re.search(r"(открой|բաց|open|покаж|ցույց)",text,re.I|re.U):
-        return _admin_normalize_plan({"intent":"show_application","target":"application","application_id":aid,"reasoning_summary":"Запрошено открытие конкретной заявки.","confidence":0.86},message)
-    return _admin_normalize_plan({"intent":"unknown","reasoning_summary":"Недостаточно уверенности для безопасного действия.","confidence":0.0},message)
-
+    return _admin_normalize_plan({
+        "intent":"unknown",
+        "action_required":"read_only",
+        "reasoning_summary":"Semantic planner unavailable; no safe semantic fallback exists.",
+        "confidence":0.0,
+    },message)
 
 def _admin_parse_replacement(message):
     """Parse only high-confidence A->B replacement syntax. Never resolves catalog IDs."""
@@ -1713,7 +1673,7 @@ async def admin_ai_message(admin_id,message):
         ctx["preferred_response_language"]=state.get("response_language")
     if c is None:
         try: c=await _admin_ai_json(message,ctx)
-        except Exception: c=_admin_fallback_intent(message,focused_id)
+        except Exception: c=_admin_fallback_intent(message,focused_id,state)
     c=_admin_normalize_plan(c,message)
 
     # One generic context pass handles low-confidence/unknown turns. This is
