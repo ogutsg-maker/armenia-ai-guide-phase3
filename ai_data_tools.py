@@ -343,19 +343,66 @@ class DataTools:
         service = str(args.get("service_name") or "").strip()
         if not service:
             raise DataToolError("service_name_required")
-        candidates = self._tool_search_catalog({"query": service}).get("items", [])
-        seen = {int(x["id"]) for x in candidates if x.get("id") is not None}
 
+        # Semantic catalog matching is deliberately generic: the AI supplies the
+        # service phrase, while this layer resolves multilingual morphology/concepts
+        # against the live catalog. IDs still come only from the database.
         import re
-        tokens = re.findall(r"[A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ]{4,}", service)
-        stop = {"окрашивание", "окраска", "service", "услуга", "ծառայություն"}
-        for token in tokens:
-            if token.casefold() in stop:
-                continue
-            for item in self._tool_search_catalog({"query": token}).get("items", []):
-                iid = item.get("id")
-                if iid is not None and int(iid) not in seen:
-                    seen.add(int(iid))
-                    candidates.append(item)
+        aliases = {
+            "eyebrows": {"брови","бровь","бровей","հոնք","հոնքեր","հոնքերի","eyebrow","eyebrows"},
+            "manicure": {"маникюр","մատնահարդարում","manicure"},
+            "pedicure": {"педикюр","պեդիկյուր","pedicure"},
+            "makeup": {"макияж","визаж","դիմահարդարում","makeup"},
+            "haircut": {"стрижка","стрижку","стрижки","վարսավիր","սանրվածք","haircut"},
+            "hair": {"волосы","волос","мազ","մազեր","hair"},
+            "coloring": {"окрашивание","окраска","окрасить","ներկում","ներկել","coloring","colouring"},
+        }
+        def norm(v):
+            return " ".join(str(v or "").casefold().strip().split())
+        def tokens(v):
+            return set(re.findall(r"[a-zа-яёևա-ֆ0-9-]+", norm(v)))
+        raw=tokens(service)
+        concepts=set(raw)
+        for key, vals in aliases.items():
+            if raw.intersection(vals) or key in raw:
+                concepts.add(key)
+                concepts.update(vals)
 
-        return {"service_name": service, "candidates": candidates[:8], "count": len(candidates)}
+        # First get the live catalog without relying on text search, then score
+        # every active candidate by exact/phrase/concept/token/root overlap.
+        rows=self._tool_search_catalog({}).get("items", [])
+        scored=[]
+        for row in rows:
+            names=[norm(row.get(k)) for k in ("name_am","name_ru","name_en") if row.get(k)]
+            if not names:
+                continue
+            text=" ".join(names)
+            rt=tokens(text)
+            rc=set(rt)
+            for key, vals in aliases.items():
+                if rt.intersection(vals) or key in rt:
+                    rc.add(key); rc.update(vals)
+            score=0
+            if norm(service) in names or any(norm(service)==x for x in names):
+                score=1000
+            elif any(norm(service) in x or x in norm(service) for x in names):
+                score=700
+            concept_overlap=concepts.intersection(rc)
+            if concept_overlap:
+                score=max(score,500+min(len(concept_overlap),5)*20)
+            overlap=raw.intersection(rt)
+            if overlap:
+                score=max(score,300+min(len(overlap),5)*20)
+            roots=0
+            for token in raw:
+                if len(token)<4: continue
+                if any(token in ct or ct in token for ct in rt if len(ct)>=4):
+                    roots+=1
+            if roots:
+                score=max(score,180+min(roots,5)*15)
+            if score:
+                scored.append((score,row))
+        scored.sort(key=lambda x:(x[0],str(x[1].get("name_am") or x[1].get("name_ru") or "").casefold()),reverse=True)
+        candidates=[row for score,row in scored[:8]]
+        return {"service_name":service,"candidates":candidates,"count":len(candidates),
+                "top_score":scored[0][0] if scored else 0}
