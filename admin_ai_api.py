@@ -905,9 +905,26 @@ follow-up from supplied context; never use a hardcoded phrase list to make that 
 The supplied ai_schema is live database metadata. Use only its real table/column/FK names for generic
 tools. Never output SQL or arbitrary identifiers.
 """
-    if isinstance(ctx,dict) and "ai_schema" not in ctx:
+    # Re-planning is intentionally cheaper than the first semantic planning pass.
+    # The first pass needs the live schema; subsequent passes receive only the
+    # compact Data Contracts and active context. This preserves semantic reasoning
+    # while preventing the same schema from being resent on every iteration.
+    is_replanning=bool(isinstance(ctx,dict) and ctx.get("replanning"))
+    if not is_replanning and isinstance(ctx,dict) and "ai_schema" not in ctx:
         ctx=dict(ctx)
         ctx["ai_schema"]=__import__("ai_schema").inspector.get_snapshot()
+
+    if is_replanning:
+        system="""You are the semantic re-planner for the Armenia AI Guide administrator.
+Continue the current natural-language investigation using ONLY the supplied question, active context,
+current plan, and compact tool results. Decide whether another safe business-data tool is actually
+needed. If yes, request only the next necessary tool. If the supplied facts are sufficient, return
+tool_requests as an empty list so the caller can produce the final answer.
+Understand Armenian, Russian, English, mixed language, transliteration, typos and short follow-ups.
+Never invent IDs, SQL, schema names or facts. Python validates and executes every requested tool.
+Do not expose chain-of-thought. Return the same ActionPlan JSON contract, with a short
+reasoning_summary and active_context. Prefer no additional tool when the existing facts answer the
+question."""
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
     try:
@@ -915,11 +932,18 @@ tools. Never output SQL or arbitrary identifiers.
             resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,
                 max_tokens=420,response_format={"type":"json_object"})
         except Exception as json_mode_error:
-            if "response_format" not in str(json_mode_error).lower() and "json_object" not in str(json_mode_error).lower():
+            error_text=str(json_mode_error).lower()
+            # Never make an extra paid/requested call after a Groq rate-limit response.
+            if "429" in error_text or "rate limit" in error_text or "too many requests" in error_text:
+                raise
+            if "response_format" not in error_text and "json_object" not in error_text:
                 raise
             resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=420)
     except Exception as first:
-        if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in str(first).lower()):
+        error_text=str(first).lower()
+        if "429" in error_text or "rate limit" in error_text or "too many requests" in error_text:
+            raise
+        if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in error_text):
             resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=420)
         else: raise
     raw=(resp.choices[0].message.content or "").strip()
@@ -1315,12 +1339,55 @@ def _admin_tool_context(plan, entity_type, entity_id):
     return {"tool_results":results}
 
 
+def _admin_compact_tool_result_for_replanning(result, question=""):
+    """Keep re-planning context factual but small.
+
+    The full Data Contract remains available to the final answer layer. Re-planning
+    only needs identifiers, names, statuses, prices, category/location fields and
+    a bounded set of other fields to decide the next tool.
+    """
+    if not isinstance(result,dict):
+        return result
+    out={
+        "status":result.get("status"),
+        "tool_executed":result.get("tool_executed"),
+        "extracted_records_count":result.get("extracted_records_count"),
+        "system_notice":result.get("system_notice"),
+    }
+    data=result.get("data")
+    if isinstance(data,list):
+        compact=[]
+        priority=("id","row_index","name","name_am","name_ru","name_en","business_name",
+                  "service_name","status","verification_status","price","price_amd","prices_amd",
+                  "category_id","category_name","category_name_am","category_name_ru","subcategory_name",
+                  "master_category_id","master_name_am","master_name_ru","city","location_city",
+                  "marz","location_marz","address","document_type")
+        for row in data[:20]:
+            if not isinstance(row,dict):
+                compact.append(row); continue
+            fields=row.get("fields") if isinstance(row.get("fields"),dict) else row
+            picked={}
+            for key in priority:
+                if key in fields and fields[key] not in (None,""):
+                    picked[key]=fields[key]
+            if not picked:
+                for key,value in list(fields.items())[:10]:
+                    picked[str(key)]=value
+            compact.append({"row_index":row.get("row_index"),"table":row.get("table"),
+                            "fields":_admin_safe(picked)})
+        out["data"]=compact
+    elif isinstance(data,dict):
+        out["data"]=_admin_safe({str(k):v for k,v in list(data.items())[:16]})
+    else:
+        out["data"]=_admin_safe(data)
+    return out
+
+
 async def _admin_refine_tool_context(question, plan, entity_type, entity_id, facts):
     """Bounded semantic Re-planning loop.
 
-    Each pass sees the accumulated Data Contracts and may request additional
-    safe tools. No chain-of-thought is persisted; only a short reasoning_summary
-    and factual tool results are retained.
+    The first planner has the live schema. Re-planners receive compact Data Contracts
+    only, so the same database schema and large result payload are not resent.
     """
     if not isinstance(facts,dict):
         return facts
@@ -1334,29 +1401,18 @@ async def _admin_refine_tool_context(question, plan, entity_type, entity_id, fac
                 "data":item.get("data"),
             },ensure_ascii=False,default=str,sort_keys=True)[:1200])
 
-    max_steps=6
+    # Two re-planning passes + the initial planner + final answer = at most four
+    # model calls for one semantic request. Increase only after measuring usage.
+    max_steps=2
     for _step in range(max_steps):
-        ctx={
-            "active_context": facts.get("active_context") or {},
-            "question": question,
-            "plan": plan,
-            "tool_results": accumulated,
-            "available_tools": DataTools("admin").available_tools()+[
-                {"name":"SEARCH","description":"schema-validated read-only table search"},
-                {"name":"ANALYZE","description":"schema/FK analysis of one record"},
-                {"name":"CHECK","description":"read-only consistency check"},
-                {"name":"COMPARE","description":"compare selected records"},
-                {"name":"SUGGEST","description":"find candidate records by text"},
-            ],
-        }
+        compact_results=[_admin_compact_tool_result_for_replanning(x,question) for x in accumulated]
         try:
             replanned=await _admin_ai_json(
                 question,
                 {
                     "replanning": True,
                     "active_context": facts.get("active_context") or {},
-                    "tool_results": accumulated,
-                    "ai_schema": __import__("ai_schema").inspector.get_snapshot(),
+                    "tool_results": compact_results,
                     "plan": plan,
                 }
             )
