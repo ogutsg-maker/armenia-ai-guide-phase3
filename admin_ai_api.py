@@ -759,10 +759,23 @@ def _application_field_answer(aid,field):
     if field=="service":
         return "🛠 Услуга: «"+str(app.get("service_name") or "—")+"»"
     if field=="documents":
+        # The application row may not carry a document_id. Documents are linked
+        # through partner_verification_documents, so inspect the canonical relation.
+        docs=_admin_semantic_documents(aid)
+        if isinstance(docs,list) and docs:
+            lines=["📄 Փաստաթղթեր՝ "+str(len(docs))]
+            for d in docs[:20]:
+                did=d.get("id") or d.get("document_id") or "—"
+                dtype=d.get("document_type") or d.get("type") or "Փաստաթուղթ"
+                status=d.get("status") or d.get("verification_status") or "—"
+                lines.append("• #"+str(did)+" · "+str(dtype)+" · "+str(status))
+            if len(docs)>20:
+                lines.append("… և ևս "+str(len(docs)-20)+" փաստաթուղթ")
+            return "\n".join(lines)
         doc_id=app.get("document_id")
         if doc_id:
-            return "📄 Փաստաթուղթ\n🆔 ID: "+str(doc_id)+"\n📌 Հայտի փաստաթղթի ID-ն առկա է։ Եթե պետք է, կարող եմ ստուգել դրա ընթացիկ հաստատման կարգավիճակը։"
-        return "📄 Փաստաթուղթ\n⚠️ Հայտում փաստաթղթի ID նշված չէ։"
+            return "📄 Փաստաթուղթ\n🆔 ID: "+str(doc_id)+"\n📌 Հայտի փաստաթղթի ID-ն առկա է, բայց կապված փաստաթուղթ չգտնվեց։"
+        return "📄 Փաստաթղթեր\nℹ️ Այս հայտի համար կապված փաստաթուղթ չի գտնվել。"
     return "Ուղղեք, թե հայտի որ դաշտն եք ուզում տեսնել."
 
 def _admin_state_preview(action):
@@ -850,7 +863,7 @@ async def _admin_ai_completion(messages, *, max_tokens=700):
         try:
             if provider=="groq":
                 from groq import AsyncGroq
-                client=AsyncGroq(api_key=key)
+                client=AsyncGroq(api_key=key, max_retries=0)
             else:
                 from openai import AsyncOpenAI
                 kwargs={"api_key":key}
