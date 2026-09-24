@@ -326,11 +326,11 @@ async def api_ai_command(request: web.Request):
     # Resolve an existing service from the live partner context before mutation.
     # AI still decides the intent; Python only verifies the target entity.
     if intent in {"update_service", "delete_service"} and not command.get("service_id"):
-        wanted = re.sub(r"\\s+", " ", str(command.get("name") or "").casefold()).strip()
+        wanted = re.sub(r"\s+", " ", str(command.get("name") or "").casefold()).strip()
         if wanted:
             candidates = []
             for svc in ctx.get("services", []):
-                service_name = re.sub(r"\\s+", " ", str(svc.get("name") or "").casefold()).strip()
+                service_name = re.sub(r"\s+", " ", str(svc.get("name") or "").casefold()).strip()
                 if service_name and (service_name == wanted or wanted in service_name or service_name in wanted):
                     candidates.append(svc)
             if len(candidates) == 1:
