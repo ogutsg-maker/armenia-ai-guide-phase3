@@ -167,6 +167,12 @@ async def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
     if db is None or ai is None:return
     from platform_schema import ensure_platform_schema; ensure_platform_schema()
+    # Hydrate the AI schema contract from the live Supabase/PostgreSQL database
+    # only after the platform schema is initialized. This is metadata-only and
+    # never grants the model arbitrary SQL access.
+    from ai_schema import inspector as ai_schema_inspector
+    ai_schema_inspector.hydrate()
+    app["ai_schema_snapshot"] = ai_schema_inspector.get_snapshot()
     from partner_directions_api import ensure_partner_direction_schema,register_partner_direction_routes
     ensure_partner_direction_schema()
     from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()
