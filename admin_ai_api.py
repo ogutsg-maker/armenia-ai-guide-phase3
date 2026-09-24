@@ -10,6 +10,7 @@ from platform_db import proposals, review_proposal, edit_proposal, add_clarifica
 from potential_partner_ai import PotentialPartnerAI
 from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
+from ai_data_tools import DataTools, DataToolError
 
 
 def _norm(text):
@@ -1074,16 +1075,28 @@ def _admin_application_truth(app, documents=None, category=None):
             "approval_rule_note":"Չլրացված phone/description դաշտերը ինքնին սխալ չեն համարվում, քանի դեռ backend-ում դրանց պարտադիր լինելու կանոն չկա։"}
 
 def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
+    """Build factual context through the role-aware DataTools facade.
+    Existing specialized checks remain available as a compatibility fallback.
+    """
     result={}
+    tools=DataTools("admin")
     if entity_type=="application" and entity_id:
-        app=_admin_hydrate_application(entity_id)
+        try:
+            result["application"]=tools.execute("get_application",{"application_id":int(entity_id)}).get("data",{}).get("application")
+            result["documents"]=tools.execute("get_documents",{"application_id":int(entity_id)}).get("data",{}).get("documents",[])
+        except DataToolError:
+            pass
+        app=result.get("application") or _admin_hydrate_application(entity_id)
         if not app: return {}
         result["application"]=app
         needed=set(data_needed or [])
         if not needed: needed={"application","documents","partner","categories","services","verification"}
-        result["documents"]=_admin_semantic_documents(entity_id)
+        if not result.get("documents"):
+            result["documents"]=_admin_semantic_documents(entity_id)
         if app.get("partner_id") and ("partner" in needed or "verification" in needed):
             try:
+                result["partner"]=tools.execute("get_partner",{"partner_id":int(app["partner_id"])}).get("data",{}).get("partner")
+            except DataToolError:
                 result["partner"]=_admin_safe(platform_db.one("""SELECT id,user_id,status,verification_status,
                     business_name,business_description,contact_share_policy,created_at,updated_at
                     FROM partners WHERE id=%s""",(int(app["partner_id"]),)))
@@ -1101,10 +1114,13 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
         result["truth"]=_admin_application_truth(app,result.get("documents"),result.get("category"))
         if app.get("category_id") and ("services" in needed or "service" in needed):
             try:
-                result["services"]=_admin_safe(platform_db.rows(
-                    "SELECT id,name,category_id,created_at FROM services WHERE category_id=%s ORDER BY id DESC LIMIT 50",
-                    (int(app["category_id"]),)))
-            except Exception: result["services"]=[]
+                result["services"]=tools.execute("get_services",{"category_id":int(app["category_id"])}).get("data",{}).get("items",[])
+            except DataToolError:
+                try:
+                    result["services"]=_admin_safe(platform_db.rows(
+                        "SELECT id,name,category_id,created_at FROM services WHERE category_id=%s ORDER BY id DESC LIMIT 50",
+                        (int(app["category_id"]),)))
+                except Exception: result["services"]=[]
         return result
     if entity_type=="partner" and entity_id:
         try:
