@@ -337,7 +337,33 @@ class DataTools:
         docs = self._tool_get_documents({"application_id": aid})["documents"]
         checks.append({"field": "documents", "value": len(docs),
                        "severity": "ok" if docs else "warning"})
-        return {"application_id": int(aid), "found": True, "checks": checks}
+
+        # Verify the stored category against its parent direction when both
+        # IDs exist. This is a reusable business rule, not a phrase-specific fix.
+        category_id=app.get("category_id")
+        master_id=app.get("master_category_id")
+        if category_id is not None:
+            category=platform_db.one(
+                """SELECT id,master_category_id,name_am,name_ru,name_en,is_active
+                   FROM categories WHERE id=%s""",(int(category_id),)
+            )
+            if category:
+                checks.append({"field":"category","value":category,
+                               "severity":"ok" if category.get("is_active") else "error"})
+                if master_id is not None and category.get("master_category_id") is not None:
+                    try:
+                        same=int(master_id)==int(category["master_category_id"])
+                        checks.append({"field":"direction_category_match","value":same,
+                                       "severity":"ok" if same else "error"})
+                    except (TypeError,ValueError):
+                        pass
+            else:
+                checks.append({"field":"category","value":category_id,"severity":"error",
+                               "message":"Stored category does not exist in the active catalog."})
+        return {"application_id": int(aid), "found": True, "checks": checks,
+                "direction_name":app.get("direction_name"),
+                "master_category_id":master_id,
+                "subcategory_name":app.get("subcategory_name")}
 
     def _tool_check_catalog_match(self, args: Dict[str, Any]) -> Dict[str, Any]:
         service = str(args.get("service_name") or "").strip()
