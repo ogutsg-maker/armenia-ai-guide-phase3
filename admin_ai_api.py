@@ -1659,6 +1659,24 @@ async def admin_ai_message(admin_id,message):
         if contextual:
             c=contextual
 
+    # Generic catalog statistics intent: supports RU/AM/EN, transliteration and mixed language.
+    count_text=_norm(message)
+    has_count=bool(re.search(r"(сколько|количеств|count|how many|քանի|ինչքան|քանակ|skolko)", count_text, re.I|re.U))
+    has_cat=bool(re.search(r"(категор|category|categories|կատեգոր|կատեգորիա|ուղղություն|направлен)", count_text, re.I|re.U))
+    has_subcat=bool(re.search(r"(подкатегор|subcategory|subcategories|ենթակատեգոր|ենթակատեգորիա|ենթաուղղ)", count_text, re.I|re.U))
+    if has_count and (has_cat or has_subcat):
+        req=[]
+        if has_cat:
+            req.append({"name":"count","arguments":{"entity":"directions"}})
+        if has_subcat:
+            req.append({"name":"count","arguments":{"entity":"subcategories"}})
+        c=_admin_normalize_plan({
+            "intent":"catalog_counts","target":"catalog_overview",
+            "tool_requests":req,"data_needed":["catalog_overview"],
+            "action_required":"read_only","confidence":1.0,
+            "response_language":_admin_detect_language(message)
+        },message)
+
     state["last_action"]={"intent":c.get("intent"),"target":c.get("target"),"reasoning_summary":c.get("reasoning_summary"),"confidence":c.get("confidence")}
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
 
