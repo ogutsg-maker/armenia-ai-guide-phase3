@@ -927,25 +927,27 @@ reasoning_summary and active_context. Prefer no additional tool when the existin
 question."""
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
+    # Keep the planner to one Groq request. Some Groq/model combinations reject
+    # response_format=json_object with HTTP 400; retrying that failure consumed another
+    # request and could turn a valid semantic turn into the generic fallback. The prompt
+    # already requires a JSON object, and the parser below accepts a fenced/extracted object.
     try:
-        try:
-            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,
-                max_tokens=420,response_format={"type":"json_object"})
-        except Exception as json_mode_error:
-            error_text=str(json_mode_error).lower()
-            # Never make an extra paid/requested call after a Groq rate-limit response.
-            if "429" in error_text or "rate limit" in error_text or "too many requests" in error_text:
-                raise
-            if "response_format" not in error_text and "json_object" not in error_text:
-                raise
-            resp=await client.chat.completions.create(model=model,messages=messages,temperature=0,max_tokens=420)
+        resp=await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0,
+            max_tokens=700,
+        )
     except Exception as first:
         error_text=str(first).lower()
         if "429" in error_text or "rate limit" in error_text or "too many requests" in error_text:
             raise
         if model!="openai/gpt-oss-20b" and ("404" in str(first) or "model" in error_text):
-            resp=await client.chat.completions.create(model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=420)
-        else: raise
+            resp=await client.chat.completions.create(
+                model="openai/gpt-oss-20b",messages=messages,temperature=0,max_tokens=700
+            )
+        else:
+            raise
     raw=(resp.choices[0].message.content or "").strip()
     try: data=json.loads(raw)
     except json.JSONDecodeError:
