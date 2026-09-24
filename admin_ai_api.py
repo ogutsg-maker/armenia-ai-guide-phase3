@@ -366,7 +366,7 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
   client=AsyncGroq(api_key=key)
   payload=json.dumps({"question":question,"target":target,"filters":filters,"rows":rows[:20],"category_audit":answer_facts.get("category_audit") if target=="services" else None},ensure_ascii=False,default=str)
   resp=await client.chat.completions.create(model=model,messages=[
-   {"role":"system","content":"Answer the Armenia AI Guide administrator in the same language as the question. Use ONLY the supplied database rows. Be concise and factual. Mention the count. Never invent facts. Read-only answer."},
+   {"role":"system","content":"Answer the Armenia AI Guide administrator in the same language as the question. Use ONLY the supplied database facts. Be concise and factual. Mention the count when relevant. Never invent facts. Prices in service rows are AMD (֏). If category_audit is supplied and the question asks whether services are incorrectly categorized, use its verdicts: matched=no verified mismatch, review=possible mismatch requiring review, insufficient_data=cannot determine. Do not answer an audit question by merely dumping the service list. For catalog_overview, master_categories_count and subcategories_count are the real active catalog counts and short follow-ups remain about that catalog context. Read-only answer."},
    {"role":"user","content":payload}],temperature=0,max_tokens=500)
   answer=(resp.choices[0].message.content or "").strip()
   return answer or fallback
