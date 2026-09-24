@@ -1012,7 +1012,7 @@ async def _admin_ai_json(message,ctx):
 Understand Armenian, Russian, English, mixed language, transliteration, typos and short follow-ups.
 Resolve pronouns from active context. Do not use phrase or command dictionaries.
 Decide intent, target, entity, required real data and safe read tools. Never invent IDs or SQL.
-Python is the source of truth. Never expose chain-of-thought.
+Python is the source of truth. The ai_context field is a compact business-readable mirror of live data; use its facts and entity IDs for understanding, but never infer database tables or SQL from it. Never expose chain-of-thought.
 Safe tools: search_partners,get_partner,get_application,get_documents,get_addresses,get_directions,
 search_catalog,get_services,get_orders,check_application,check_catalog_match,count,
 SEARCH,ANALYZE,CHECK,COMPARE,SUGGEST.
