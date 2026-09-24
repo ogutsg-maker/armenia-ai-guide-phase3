@@ -314,7 +314,7 @@ async def api_ai_command(request: web.Request):
     # Groq returning business_id when the partner has already named the company
     # in natural language (for example: "для моей компании BYUTI").
     if intent == "add_service" and not command.get("business_id"):
-        msg_norm = re.sub(r"\\s+", " ", message.casefold()).strip()
+        msg_norm = re.sub(r"\s+", " ", message.casefold()).strip()
         businesses = ctx.get("businesses", [])
         exact = [
             b for b in businesses
@@ -370,7 +370,7 @@ async def _execute_read(pid,c,ctx):
         return _json_response({"ok":True,"reply":"Պրոֆիլը հասանելի է։","data":{"context":ctx.get("operational_context",""),"businesses":ctx.get("businesses",[]),"addresses":ctx.get("addresses",[]),"services":ctx.get("services",[])}})
     if intent=="show_addresses":
         lines=["📍 "+str(x.get("object_name") or x.get("address") or "—") for x in ctx["addresses"]]
-        return _json_response({"ok":True,"reply":"\\n".join(lines) or "Հասցեներ դեռ չկան։","data":{"addresses":ctx["addresses"]}})
+        return _json_response({"ok":True,"reply":"\n".join(lines) or "Հասցեներ դեռ չկան։","data":{"addresses":ctx["addresses"]}})
     if intent=="show_documents":
         # Document records are intentionally fetched only when requested.
         with _connect() as conn:
@@ -378,7 +378,7 @@ async def _execute_read(pid,c,ctx):
                 cur.execute("""SELECT id,document_type,status,verification_status,original_filename,created_at,updated_at
                                FROM partner_verification_documents WHERE partner_id=%s ORDER BY id DESC LIMIT 50""",(pid,))
                 rows=[dict(x) for x in cur.fetchall()]
-        return _json_response({"ok":True,"reply":"\\n".join("📄 #%s — %s — %s" % (x.get("id"),x.get("document_type") or "document",x.get("status") or x.get("verification_status") or "—") for x in rows) or "Փաստաթղթեր դեռ չկան։","data":{"documents":rows}})
+        return _json_response({"ok":True,"reply":"\n".join("📄 #%s — %s — %s" % (x.get("id"),x.get("document_type") or "document",x.get("status") or x.get("verification_status") or "—") for x in rows) or "Փաստաթղթեր դեռ չկան։","data":{"documents":rows}})
     if intent=="show_services":
         lines=["🛠 %s — %s ֏" % (x.get("name") or "", x.get("price") if x.get("price") is not None else "—") for x in ctx["services"]]
         return _json_response({"ok":True,"reply":"\n".join(lines) or "Услуг пока нет.","data":{"services":ctx["services"]}})
