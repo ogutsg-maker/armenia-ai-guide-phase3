@@ -1777,6 +1777,10 @@ async def admin_ai_message(admin_id,message):
     is_question=("?" in message or "՞" in message or bool(re.search(r"\b(как|какая|какие|какое|почему|зачем|что|где|сколько|what|which|how|why|where|how many|ինչ|ինչպես|որ|որտեղ|արդյոք|քանի)\b",message.casefold())))
     if is_question and intent in {"edit_application","approve_application","reject_application","clarify_application"}: intent="show_application_field" if field else "inspect_application"
 
+    if intent=="query_database" and c.get("tool_requests"):
+        reply=await _admin_semantic_answer(message,c,state)
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
     if intent=="query_database":
         qtarget=_admin_query_target(target or c.get("target"))
         qfilters=c.get("filters") or {}
