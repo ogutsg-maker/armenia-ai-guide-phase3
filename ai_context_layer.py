@@ -333,7 +333,7 @@ def build_context(*, role: str, actor_id: Any = None, entity_type: str | None = 
                     )
             if entity_type == "application" and item.get("company"):
                 context["relations"].append(
-                    f"application:{int(entity_id)} -> company:{entity_id}"
+                    f"application:{int(entity_id)} -> company:{item['company'].get('id')}"
                 )
     return context
 
