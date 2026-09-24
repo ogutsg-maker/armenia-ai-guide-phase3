@@ -1310,6 +1310,16 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
                     str(app.get("service_name") or ""),app.get("master_category_id"),limit=8)])
             except Exception: result["catalog_candidates"]=[]
         result["truth"]=_admin_application_truth(app,result.get("documents"),result.get("category"))
+        # Application payload may contain the complete set of services supplied
+        # during onboarding. This is distinct from the public catalog/service table.
+        payload=app.get("payload_json") or {}
+        if isinstance(payload,str):
+            try: payload=json.loads(payload)
+            except Exception: payload={}
+        payload_services=payload.get("services") if isinstance(payload,dict) else None
+        if isinstance(payload_services,list):
+            result["application_services"]=_admin_safe(payload_services)
+
         if app.get("category_id") and ("services" in needed or "service" in needed):
             try:
                 result["services"]=tools.execute("get_services",{"category_id":int(app["category_id"])}).get("data",{}).get("items",[])
@@ -1762,9 +1772,9 @@ async def admin_ai_message(admin_id,message):
         try:
             c=await _admin_ai_json(message,ctx)
         except AdminAIProviderError:
-            reply=_admin_localized(_admin_detect_language(message),"ai_unavailable")
-            _admin_history(state,"admin",message); _admin_history(state,"assistant",reply)
-            return reply
+            # Provider outage must not destroy the conversation state. Use the
+            # safe semantic-context fallback; the data layer remains authoritative.
+            c=_admin_fallback_intent(message,focused_id,state)
         except Exception: c=_admin_fallback_intent(message,focused_id,state)
     c=_admin_normalize_plan(c,message)
 
