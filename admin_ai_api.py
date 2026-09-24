@@ -54,6 +54,12 @@ def _admin_normalize_plan(data,message=""):
     raw_needed=data.get("data_needed")
     if not isinstance(raw_needed,list): raw_needed=[]
     data["data_needed"]=[str(x).strip().lower() for x in raw_needed if str(x).strip()]
+    raw_tools=data.get("tool_requests")
+    if not isinstance(raw_tools,list): raw_tools=[]
+    data["tool_requests"]=[
+        {"name":str(x.get("name") or "").strip(),"arguments":x.get("arguments") if isinstance(x.get("arguments"),dict) else {}}
+        for x in raw_tools if isinstance(x,dict) and str(x.get("name") or "").strip()
+    ][:6]
     data["navigation"]=data.get("navigation")
     data["response_language"]=lang
     data["confidence"]=max(0.0,min(1.0,confidence))
@@ -779,9 +785,26 @@ navigation; Python resolves it. filters/sort/limit apply to database queries. ac
 read_only unless a real mutation is explicitly requested. response_language follows the user.
 confidence is an honest estimate.
 
+You also have safe business-data tools. Prefer tool_requests for questions that require entity data
+or checks. Choose only tools appropriate to the administrator role. Never invent tool names or SQL.
+For a focused entity, Python resolves the entity and injects its ID where appropriate. You may request
+several tools when the answer needs several independent facts. Available tools:
+- search_partners: find partners by name/service/city/status
+- get_partner: get one partner's allowed profile
+- get_application: get one application
+- get_documents: get verification documents/status
+- get_addresses: get partner business objects/addresses
+- get_directions: get active top-level directions
+- search_catalog: search active categories/subcategories
+- get_services: get services/prices/catalog links
+- get_orders: get visible orders (may report schema pending)
+- check_application: factual application completeness/status checks
+- check_catalog_match: search catalog candidates for a service
+- count: count partners/applications/services/directions/subcategories
+
 Return ONLY JSON with:
-reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed, field,
-value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
+reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed, tool_requests,
+field, value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
 """
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
