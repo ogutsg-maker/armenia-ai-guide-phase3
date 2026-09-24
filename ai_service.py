@@ -54,6 +54,8 @@ class AIService:
         self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
         self.groq_fallback_model = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile"
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free").strip() or "nvidia/nemotron-3-super-120b-a12b:free"
         self.provider = os.getenv("AI_PROVIDER", "groq").strip().lower() or "groq"
 
         # OpenAI is optional. The current local environment may contain an
@@ -70,6 +72,13 @@ class AIService:
                 print(f"WARNING: OpenAI client disabled: {exc}")
 
         self.groq_client = Groq(api_key=self.groq_key) if self.groq_key else None
+        self.openrouter_client = None
+        if self.openrouter_key:
+            try:
+                self.openrouter_client = OpenAI(api_key=self.openrouter_key, base_url="https://openrouter.ai/api/v1", default_headers={"HTTP-Referer": os.getenv("WEBAPP_BASE_URL", "").strip() or "https://armenia-ai-guide-phase3.onrender.com", "X-Title": "Armenia AI Guide"})
+            except Exception as exc:
+                self.openrouter_client = None
+                print(f"WARNING: OpenRouter client disabled: {exc}")
 
     def _get_setting(self, key: str, default: str) -> str:
         try:
@@ -130,6 +139,38 @@ class AIService:
             if getattr(first_error, "status_code", None) == 404 and self.groq_fallback_model and model != self.groq_fallback_model:
                 return self.groq_client.chat.completions.create(model=self.groq_fallback_model, messages=messages, temperature=0.2)
             raise
+
+    def _openrouter_completion(self, messages, model: str | None = None):
+        if not self.openrouter_client:
+            raise RuntimeError("OPENROUTER_API_KEY is not configured or OpenRouter client is unavailable")
+        return self.openrouter_client.chat.completions.create(model=model or self.openrouter_model, messages=messages, temperature=0.2)
+
+    async def chat_json(self, system_prompt: str, user_text: str, *, max_tokens: int = 900) -> dict:
+        """Shared structured-AI gateway: Groq -> OpenAI -> OpenRouter."""
+        clean = self.clean_sensitive_data(user_text)
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": clean}]
+        providers = [("groq", self.groq_client, self.groq_model), ("openai", self.openai_client, self.openai_model), ("openrouter", self.openrouter_client, self.openrouter_model)]
+        errors = []
+        for name, client, model in providers:
+            if not client:
+                continue
+            try:
+                if name == "groq":
+                    response = await asyncio.to_thread(self._groq_completion, messages, model)
+                elif name == "openrouter":
+                    response = await asyncio.to_thread(self._openrouter_completion, messages, model)
+                else:
+                    response = await asyncio.to_thread(self._openai_completion, messages, model)
+                data = self._json(self._text(response))
+                if data:
+                    return data
+                errors.append(f"{name}: invalid_json")
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                errors.append(f"{name}: {status or type(exc).__name__}: {exc}")
+        if errors:
+            raise RuntimeError("AI providers failed: " + " | ".join(errors)[-1800:])
+        raise RuntimeError("No AI provider is configured")
 
     def _openai_completion(self, messages, model: str | None = None):
         if not self.openai_client:
