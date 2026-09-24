@@ -248,6 +248,8 @@ def _admin_answer_is_internal_payload(answer):
     except Exception:
         pass
     low = text.casefold()
+    if low.startswith("user safety:") or "ai попросит подтверждение" in low or "ai will ask for confirmation" in low:
+        return True
     return any(x in low for x in ('"tool_results"', '"application": {', '"documents": [', '"truth": {', '"candidates": [', '"checks": ['))
 
 
@@ -467,7 +469,7 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
   key=os.getenv("GROQ_API_KEY","").strip()
   if not key:return fallback
   model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
-  client=AsyncGroq(api_key=key)
+  client=AsyncGroq(api_key=key, max_retries=0)
   payload=json.dumps({"question":question,"target":target,"filters":filters,"rows":rows,"category_audit":answer_facts.get("category_audit") if target=="services" else None},ensure_ascii=False,default=str)
   resp=await client.chat.completions.create(model=model,messages=[
    {"role":"system","content":"Answer the Armenia AI Guide administrator in the same language as the question. Use ONLY the supplied database facts. Be concise and factual. Mention the count when relevant. Never invent facts. Prices in service rows are AMD (֏). If category_audit is supplied and the question asks whether services are incorrectly categorized, use its verdicts: matched=no verified mismatch, review=possible mismatch requiring review, insufficient_data=cannot determine. Do not answer an audit question by merely dumping the service list. For catalog_overview, master_categories_count and subcategories_count are the real active catalog counts and short follow-ups remain about that catalog context. Read-only answer."},
@@ -841,7 +843,7 @@ async def _admin_ai_completion(messages, *, max_tokens=700):
         providers.append(("openai",openai_key,os.getenv("OPENAI_MODEL","").strip() or "gpt-4o-mini"))
     openrouter_key=os.getenv("OPENROUTER_API_KEY","").strip()
     if openrouter_key:
-        providers.append(("openrouter",openrouter_key,os.getenv("OPENROUTER_MODEL","").strip() or "openrouter/free"))
+        providers.append(("openrouter",openrouter_key,os.getenv("OPENROUTER_MODEL","").strip() or "nvidia/nemotron-3-super-120b-a12b:free"))
     if not providers:
         raise AdminAIProviderError("No AI provider is configured.")
     for provider,key,model in providers:
@@ -858,6 +860,7 @@ async def _admin_ai_completion(messages, *, max_tokens=700):
                         "HTTP-Referer":os.getenv("OPENROUTER_SITE_URL","https://armenia-ai-guide-phase3.onrender.com"),
                         "X-Title":"Armenia AI Guide",
                     }
+                kwargs["max_retries"]=0
                 client=AsyncOpenAI(**kwargs)
             resp=await client.chat.completions.create(
                 model=model,messages=messages,temperature=0,max_tokens=max_tokens
@@ -885,7 +888,12 @@ that subject even when another application is focused. Only inherit the focused 
 anaphoric/entity follow-ups such as "his documents", "its category", "իսկ նրա փաստաթղթերը", or a direct
 field question about that application. Short follow-ups such as "specifically for heavy equipment",
 "а аренда?", or "а в каких городах?" should refine the active topic rather than fall back to the
-focused application. This is semantic context resolution, not a predefined command list.
+focused application. If the user asks to expand, open, or show the complete details of the
+immediately previous application result (for example "ամբողջական ցույց տուր", "покажи полностью",
+"show the whole one"), treat that as a semantic follow-up to that previous application result:
+choose show_full_application and resolve its application ID from the supplied previous rows. Do not
+require the application number to be repeated. This is semantic context resolution, not a predefined
+phrase list.
 
 Decide the goal, subject/entity, context reference, factual data needed, and whether the request is
 read-only or a mutation. Python is the source of truth: it resolves IDs, permissions and executes
@@ -1724,26 +1732,8 @@ async def admin_ai_message(admin_id,message):
         if current_type=="application":
             focused_id=int(current_id)
             state["last_focused_application_id"]=focused_id
-    if focused_id and re.search(r"(?:покаж|открой|show|open|ցույց|բաց).*(?:полн|целик|всю|ամբողջ|լիարժեք|complete|full)",local_text,re.I|re.U):
-        nav_intent={"intent":"show_full_application","target":"application","application_id":int(focused_id),
-                    "action_required":"read_only","confidence":1.0}
-
-    full_app_match=bool(re.search(
-        r"(?:ամբողջական|ամբողջությամբ|ամբողջ|լիարժեք|ուղղված|полностью|полную|полное|всю|исправленную|целиком|full|complete).*(?:հայտ|заявк|application)|(?:հայտ|заявк|application).*(?:ամբողջական|ամբողջությամբ|ամբողջ|լիարժեք|ուղղված|полностью|полную|полное|всю|исправленную|целиком|full|complete)",
-        local_text,re.IGNORECASE
-    ))
     if nav_intent:
         c=nav_intent
-    elif full_app_match and re.search(r"(?:ցույց|покаж|открой|show|open)",local_text,re.IGNORECASE):
-        id_match=re.search(r"(?:#|№)\s*(\d+)",local_text)
-        requested_aid=int(id_match.group(1)) if id_match else focused_id
-        if not requested_aid and len(state.get("last_shown_applications") or [])==1:
-            try:
-                requested_aid=int(state["last_shown_applications"][0]["id"])
-            except Exception:
-                requested_aid=None
-        c={"intent":"show_full_application","target":"application",
-           "application_id":requested_aid,"action_required":"read_only","confidence":1.0}
     elif re.search(r"(?:ստուգիր|проверь|check).*(?:հայտ|заявк|application).*(?:ուղղիր|исправ|fix|շտկ)",local_text):
         c={"intent":"suggest_application_correction","target":"application","application_id":None,"action_required":"suggest_alternatives","confidence":1.0}
     elif re.search(r"(?:ստուգիր|проверь|check).*(?:ենթակատեգոր|подкатегор|subcategory)",local_text):
@@ -1764,6 +1754,18 @@ async def admin_ai_message(admin_id,message):
             return reply
         except Exception: c=_admin_fallback_intent(message,focused_id,state)
     c=_admin_normalize_plan(c,message)
+
+    # Generic conversational identity resolution: when the semantic planner identifies the
+    # previous result as an application but omits its ID, safely inherit the ID only when
+    # exactly one application row is present in the immediately previous result.
+    if not c.get("entity_id") and str(c.get("entity_type") or c.get("target") or "").lower() in {"application","applications"}:
+        previous_rows=state.get("last_shown_query_rows") or []
+        if len(previous_rows)==1 and isinstance(previous_rows[0],dict) and previous_rows[0].get("id") is not None:
+            try:
+                c["entity_id"]=int(previous_rows[0]["id"])
+                c["application_id"]=int(previous_rows[0]["id"])
+            except (TypeError,ValueError):
+                pass
 
     # One generic context pass handles low-confidence/unknown turns. This is
     # deliberately subject-based (entity + field + semantic goal), not a list
