@@ -871,12 +871,7 @@ async def _admin_ai_completion(messages, *, max_tokens=700):
     raise AdminAIProviderError("All configured AI providers failed.",errors)
 
 async def _admin_ai_json(message,ctx):
-    """Universal semantic planner: meaning first, Python validates and executes."""
-    from groq import AsyncGroq
-    key=os.getenv("GROQ_API_KEY","").strip()
-    if not key: raise RuntimeError("GROQ_API_KEY is not configured")
-    model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
-    client=AsyncGroq(api_key=key)
+    """U
     system="""You are the universal semantic planner for the Armenia AI Guide administrator.
 Understand what the administrator means, not predefined command phrases. Input can be Armenian,
 Russian, English, mixed language, transliteration, typos, colloquial wording, elliptical follow-ups
@@ -1550,12 +1545,6 @@ async def _admin_semantic_answer(question,plan,state):
         "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
     try:
         raw,provider,model=await _admin_ai_completion(messages=[
-    try:
-        from groq import AsyncGroq
-        client=AsyncGroq(api_key=key); model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
-        payload=json.dumps({"question":question,"goal":plan.get("intent"),"entity_type":entity_type,
-            "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
-        raw,provider,model=await _admin_ai_completion(messages=[
             {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
 Answer naturally, directly and humanly in the same language as the question. The question may
 be a short follow-up to the previous result. In that case, answer from the supplied rows and identify
@@ -1578,7 +1567,10 @@ chain-of-thought. Simple question = simple answer; broad inspection = compact st
         if _admin_answer_is_internal_payload(answer):
             return fallback
         return answer or fallback
-    except Exception: return fallback
+    except AdminAIProviderError:
+        return fallback
+    except Exception:
+        return fallback
 
 async def admin_ai_message(admin_id,message):
     message=str(message or "").strip()
