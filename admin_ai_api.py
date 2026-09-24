@@ -1484,6 +1484,27 @@ async def admin_ai_message(admin_id,message):
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
 
     intent=str(c.get("intent") or "unknown").lower()
+
+    # Natural-language inspection shortcut: when an application is already focused,
+    # category correctness is a factual inspection request, never a mutation.
+    category_question=bool(re.search(
+        r"(?:категор|подкатегор|category|subcategory|կատեգոր|ենթակատեգոր|ենթաուղղ).*(?:правиль|верн|correct|ճիշտ|սխալ)|"
+        r"(?:правиль|верн|correct|ճիշտ|սխալ).*(?:категор|подкатегор|category|subcategory|կատեգոր|ենթակատեգոր|ենթաուղղ)",
+        message, re.IGNORECASE|re.UNICODE))
+    if focused_id and category_question and "#" not in message and "№" not in message:
+        c["intent"]="information_request"
+        c["target"]="application"
+        c["entity_type"]="application"
+        c["entity_id"]=int(focused_id)
+        c["data_needed"]=["application","categories","services","verification"]
+        c["tool_requests"]=[
+            {"name":"get_application","arguments":{"application_id":int(focused_id)}},
+            {"name":"check_application","arguments":{"application_id":int(focused_id)}},
+            {"name":"check_catalog_match","arguments":{"service_name":str((_admin_hydrate_application(focused_id) or {}).get("service_name") or "")}}
+        ]
+        c=_admin_normalize_plan(c,message)
+        intent="information_request"
+
     target=str(c.get("target") or "").lower()
     aid=c.get("entity_id") or c.get("application_id") or focused_id
     # The semantic layer owns meaning; Python only resolves identity/navigation and validates execution.
