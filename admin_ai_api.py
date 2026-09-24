@@ -903,123 +903,103 @@ async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
             errors.append({"provider":provider,"model":model,"error":str(exc)[:500]})
     raise AdminAIProviderError("All configured AI providers failed.",errors)
 
+def _admin_planner_context(ctx):
+    """Build a small semantic-planner context. DB schema/results stay in Python."""
+    ctx=ctx if isinstance(ctx,dict) else {}
+    active=ctx.get("active_context") if isinstance(ctx.get("active_context"),dict) else {}
+    rows=ctx.get("last_shown_query_rows") or []
+    compact_rows=[]
+    for row in rows[:6]:
+        if not isinstance(row,dict): continue
+        compact_rows.append({k:row.get(k) for k in (
+            "id","business_name","name","service_name","status","price","category_id",
+            "category_name_am","category_name_ru","category_name_en","master_category_id",
+            "master_name_am","master_name_ru","master_name_en","location_marz","location_city",
+            "address","partner_name","verification_status"
+        ) if k in row})
+    history=ctx.get("history") or []
+    compact_history=[]
+    for item in history[-6:]:
+        if isinstance(item,dict):
+            compact_history.append({
+                "role":str(item.get("role") or "")[:20],
+                "content":str(item.get("content") or "")[:500]
+            })
+    return {
+        "active_context":{
+            "scope":str(active.get("scope") or "")[:80],
+            "subject":str(active.get("subject") or "")[:160],
+            "intent":str(active.get("intent") or "")[:80],
+            "query":str(active.get("query") or "")[:400],
+            "entity_type":str(active.get("entity_type") or "")[:40],
+            "entity_id":active.get("entity_id")
+        },
+        "focused_entity":{
+            "type":str(ctx.get("last_focused_entity_type") or "")[:40],
+            "id":ctx.get("last_focused_entity_id") or ctx.get("last_focused_application_id")
+        },
+        "last_query_target":str(ctx.get("last_query_target") or ctx.get("last_result_kind") or "")[:60],
+        "last_rows":compact_rows,
+        "history":compact_history,
+        "preferred_response_language":ctx.get("preferred_response_language") or ctx.get("response_language")
+    }
+
 async def _admin_ai_json(message,ctx):
-    """Universal semantic planner: meaning first, Python validates and executes."""
-    system="""You are the universal semantic planner for the Armenia AI Guide administrator.
-Understand what the administrator means, not predefined command phrases. Input can be Armenian,
-Russian, English, mixed language, transliteration, typos, colloquial wording, elliptical follow-ups
-or broad natural questions. Use the supplied conversation context. A short follow-up may refer to the immediately previous
-database result by position, ID, field, name, or property (for example asking for "names" after a list
-of IDs). Resolve that reference from last_shown_query_rows, last_query_target, last_result_kind, last_result_facts and active_context before choosing a
-new target. active_context is the current conversation topic and is distinct from the focused application:
-the focused application can remain available as an entity reference while the active topic is the catalog,
-services, partners, etc. If the message introduces a semantically new subject, switch active_context to
-that subject even when another application is focused. Only inherit the focused application for genuine
-anaphoric/entity follow-ups such as "his documents", "its category", "իսկ նրա փաստաթղթերը", or a direct
-field question about that application. Short follow-ups such as "specifically for heavy equipment",
-"а аренда?", or "а в каких городах?" should refine the active topic rather than fall back to the
-focused application. If the user asks to expand, open, or show the complete details of the
-immediately previous application result (for example "ամբողջական ցույց տուր", "покажи полностью",
-"show the whole one"), treat that as a semantic follow-up to that previous application result:
-choose show_full_application and resolve its application ID from the supplied previous rows. Do not
-require the application number to be repeated. This is semantic context resolution, not a predefined
-phrase list.
-
-Decide the goal, subject/entity, context reference, factual data needed, and whether the request is
-read-only or a mutation. Python is the source of truth: it resolves IDs, permissions and executes
-only whitelisted database operations. Never invent IDs or write SQL. Do not expose hidden
-chain-of-thought; reasoning_summary is one short sentence.
-
-Use generic intents when appropriate:
-information_request, inspect_entity, query_database, show_applications, show_application_count,
-show_application, show_application_field, show_documents, edit_application, approve_application,
-reject_application, clarify_application, suggest_application_correction, show_partners,
-show_businesses, show_partner_count, unknown.
-
-For lists/searches/counts/filters use query_database. For ordinary factual questions use
-information_request or inspect_entity.
-For catalog questions, distinguish the catalog itself from services: master_categories means top-level directions, catalog means subcategories, and catalog_overview means aggregate catalog counts. When the administrator asks for all directions/categories or asks for the names after a catalog list, query the corresponding catalog target and use the complete current catalog. Never assume a fixed catalog size or use 20, 22, or 320 as a hard limit. For questions asking how many directions and subcategories exist, use catalog_overview so counts come from the database. For explicit mutations use the appropriate write intent.
-
-Examples of meaning:
-- "քանի գործընկեր ունենք", "сколько партнёров", "how many partners" => show_partner_count.
-- "ունենք ծանր տեխնիկայի վարձույթ ենթաուղղություններում?", "есть ли ... в подкатегориях?" => query_database on catalog with a name contains search; do not use a services filter and do not invent a subcategory.
-- If the administrator asks whether a phrase/category exists in the catalog, use catalog and filters.name with contains, preserving the user phrase.
-- If a query says "subcategory_name" but the target is catalog, treat that as the catalog category name field, not an applications-only field.
-- Count questions must return database counts, not a truncated list.
-entity_type can be application, partner, business, service, catalog, document, order, booking,
-or unknown. entity_id is only an ID explicitly present or safely supplied by context; otherwise
-leave it null. entity_name is the natural name to search. data_needed is a concise list of factual
-datasets/fields needed, such as application, partner, documents, services, categories, verification,
-status, location, prices, orders, bookings. navigation describes first/next/previous/ordinal
-navigation; Python resolves it. filters/sort/limit apply to database queries. action_required is
-read_only unless a real mutation is explicitly requested. response_language follows the user.
-confidence is an honest estimate.
-
-You also have safe business-data tools. Prefer tool_requests for questions that require entity data
-or checks. Choose only tools appropriate to the administrator role. Never invent tool names or SQL.
-For a focused entity, Python resolves the entity and injects its ID where appropriate. You may request
-several tools when the answer needs several independent facts. Available tools:
-- search_partners: find partners by name/service/city/status
-- get_partner: get one partner's allowed profile
-- get_application: get one application
-- get_documents: get verification documents/status
-- get_addresses: get partner business objects/addresses
-- get_directions: get active top-level directions
-- search_catalog: search active categories/subcategories
-- get_services: get services/prices/catalog links
-- get_orders: get visible orders (may report schema pending)
-- check_application: factual application completeness/status checks
-- check_catalog_match: search catalog candidates for a service
-- count: count partners/applications/services/directions/subcategories
-- SEARCH: schema-validated read-only search of one live table
-- ANALYZE: inspect one live record and its FK relationships
-- CHECK: read-only consistency/FK check
-- COMPARE: compare selected records
-- SUGGEST: find candidate records by validated textual fields
-
-Return ONLY JSON with:
-reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed, tool_requests,
-field, value_raw, navigation, filters, sort, limit, action_required, response_language, confidence,
-active_context.
-active_context must contain: scope, subject, intent, query, filters, entity_type, entity_id.
-Treat active_context as semantic conversation state. Decide whether the message is a new topic or a
-follow-up from supplied context; never use a hardcoded phrase list to make that decision.
-The supplied ai_schema is live database metadata. Use only its real table/column/FK names for generic
-tools. Never output SQL or arbitrary identifiers.
-"""
-    # Re-planning is intentionally cheaper than the first semantic planning pass.
-    # The first pass needs the live schema; subsequent passes receive only the
-    # compact Data Contracts and active context. This preserves semantic reasoning
-    # while preventing the same schema from being resent on every iteration.
+    """Universal semantic planner: compact context in, validated tools out."""
     is_replanning=bool(isinstance(ctx,dict) and ctx.get("replanning"))
-    if not is_replanning and isinstance(ctx,dict) and "ai_schema" not in ctx:
-        ctx=dict(ctx)
-        ctx["ai_schema"]=__import__("ai_schema").inspector.get_snapshot()
+    planner_ctx=_admin_planner_context(ctx)
 
     if is_replanning:
-        system="""You are the semantic re-planner for the Armenia AI Guide administrator.
-Continue the current natural-language investigation using ONLY the supplied question, active context,
-current plan, and compact tool results. Decide whether another safe business-data tool is actually
-needed. If yes, request only the next necessary tool. If the supplied facts are sufficient, return
-tool_requests as an empty list so the caller can produce the final answer.
+        system="""You are the semantic re-planner for Armenia AI Guide admin.
 Understand Armenian, Russian, English, mixed language, transliteration, typos and short follow-ups.
-Never invent IDs, SQL, schema names or facts. Python validates and executes every requested tool.
-Do not expose chain-of-thought. Return the same ActionPlan JSON contract, with a short
-reasoning_summary and active_context. Prefer no additional tool when the existing facts answer the
-question."""
+Use ONLY the question, active context, current plan and compact tool results supplied below.
+If the facts already answer the question, return an empty tool_requests list.
+If another fact is needed, request only the next safe tool.
+Never invent IDs, facts, SQL or tool names. Python validates and executes tools.
+Return ONLY the JSON contract requested below. reasoning_summary is one short sentence."""
+    else:
+        system="""You are the universal semantic planner for Armenia AI Guide admin.
+Think like a conversational assistant, not a command matcher. Understand Armenian, Russian, English,
+mixed language, transliteration, typos, colloquial wording and elliptical follow-ups.
+Resolve references such as «նրա փաստաթղթերը», «իսկ կատեգորիան», «а его услуги?» from active context,
+focused entity and the immediately previous result. A new subject changes active context; a genuine
+anaphoric follow-up keeps the referenced entity. Never require the user to repeat an ID when context
+uniquely identifies it.
+Decide what the user wants, what real data is needed, and which safe read tool(s) should retrieve it.
+Python is the source of truth for IDs, permissions and database execution. Never invent IDs or SQL.
+Never expose chain-of-thought; reasoning_summary is one short sentence.
+For counts use count. For applications/partners/services/catalog use the matching search/get tool.
+For checks use check_application or check_catalog_match. For broad questions you may request several
+safe tools. Mutations must be marked action_required=mutation and are handled separately by Python.
 
-    payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
+Available safe tools:
+search_partners, get_partner, get_application, get_documents, get_addresses, get_directions,
+search_catalog, get_services, get_orders, check_application, check_catalog_match, count,
+SEARCH, ANALYZE, CHECK, COMPARE, SUGGEST.
+
+Return ONLY this JSON:
+reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed,
+tool_requests, field, value_raw, navigation, filters, sort, limit, action_required,
+response_language, confidence, active_context.
+active_context={scope,subject,intent,query,filters,entity_type,entity_id}.
+Use only tool names above. Do not output SQL or schema names."""
+
+    payload=json.dumps({"message":str(message or "")[:1500],"context":planner_ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
-    raw,provider,model=await _admin_ai_completion(messages,max_tokens=1200,json_mode=True)
-    try: data=json.loads(raw)
+    raw,provider,model=await _admin_ai_completion(
+        messages,max_tokens=500 if not is_replanning else 350,json_mode=True
+    )
+    try:
+        data=json.loads(raw)
     except json.JSONDecodeError:
         start=raw.find("{"); end=raw.rfind("}")
-        if start<0 or end<=start: raise RuntimeError(f"{provider} returned invalid JSON")
+        if start<0 or end<=start:
+            raise RuntimeError(f"{provider} returned invalid JSON")
         data=json.loads(raw[start:end+1])
-    if not isinstance(data,dict): raise RuntimeError(f"{provider} returned a non-object intent")
+    if not isinstance(data,dict):
+        raise RuntimeError(f"{provider} returned a non-object intent")
     data["ai_provider"]=provider
     return _admin_normalize_plan(data,message)
-
 
 def _admin_contextual_fallback_plan(message,state):
     """Last-resort identity fallback only; semantic topic resolution belongs to Groq."""
