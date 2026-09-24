@@ -1756,7 +1756,7 @@ async def admin_ai_message(admin_id,message):
 
     # High-confidence application navigation/deletion is handled locally.
     # This prevents provider rate limits from breaking basic admin operations.
-    open_match=re.search(r"(?i)\\b(?:открой|открыть|open|բացիր|բացել|ցույց\\s+տուր)\\s*(?:заявку|заявка|application|հայտ)?\\s*#?\\s*(\\d+)\\b", message)
+    open_match=re.search(r"(?i)\b(?:открой|открыть|open|բացիր|բացել|ցույց\s+տուր)\s*(?:заявку|заявка|application|հայտ)?\s*#?\s*(\d+)\b", message)
     if open_match:
         try:
             open_id=int(open_match.group(1))
@@ -1771,10 +1771,10 @@ async def admin_ai_message(admin_id,message):
             reply="Не удалось открыть заявку."
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    delete_match=re.search(r"(?i)\\b(?:удали|удалить|удалите|delete|remove|հեռացրու|հեռացնել|ջնջիր|ջնջել)\\b", message)
+    delete_match=re.search(r"(?i)\b(?:удали|удалить|удалите|delete|remove|հեռացրու|հեռացնել|ջնջիր|ջնջել)\b", message)
     if delete_match:
         ids=[]
-        explicit=[int(x) for x in re.findall(r"#?(\\d+)",message)]
+        explicit=[int(x) for x in re.findall(r"#?(\d+)",message)]
         if explicit:
             ids=explicit
         else:
