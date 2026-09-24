@@ -990,67 +990,48 @@ def _admin_planner_context(ctx):
     }
 
 async def _admin_ai_json(message,ctx):
-    """Universal semantic planner: compact context in, validated tools out."""
+    """Compact universal semantic planner; no phrase-specific intent dictionaries."""
     is_replanning=bool(isinstance(ctx,dict) and ctx.get("replanning"))
     planner_ctx=_admin_planner_context(ctx)
-
-    if is_replanning:
-        system="""You are the semantic re-planner for Armenia AI Guide admin.
+    system="""You are the universal semantic planner for Armenia AI Guide admin.
 Understand Armenian, Russian, English, mixed language, transliteration, typos and short follow-ups.
-Use ONLY the question, active context, current plan and compact tool results supplied below.
-If the facts already answer the question, return an empty tool_requests list.
-If another fact is needed, request only the next safe tool.
-Never invent IDs, facts, SQL or tool names. Python validates and executes tools.
-Return ONLY the JSON contract requested below. reasoning_summary is one short sentence."""
-    else:
-        system="""You are the universal semantic planner for Armenia AI Guide admin.
-Think like a conversational assistant, not a command matcher. Understand Armenian, Russian, English,
-mixed language, transliteration, typos, colloquial wording and elliptical follow-ups.
-Resolve references such as «նրա փաստաթղթերը», «իսկ կատեգորիան», «а его услуги?» from active context,
-focused entity and the immediately previous result. A new subject changes active context; a genuine
-anaphoric follow-up keeps the referenced entity. Never require the user to repeat an ID when context
-uniquely identifies it.
-Semantic examples (examples, not command syntax):
-- asking how many partners means entity=partners and intent=count;
-- asking which documents the focused application has means entity=application and data_needed=documents;
-- asking for all services of the focused application means entity=application and data_needed=application_services;
-- asking whether its category is correct means entity=application and data_needed=category plus a catalog/check;
-- asking how many directions and subcategories are in the database means target=catalog_overview and a live catalog count.
-Do not copy these phrases literally; infer the same intent from equivalent Armenian/Russian/English wording.
-Decide what the user wants, what real data is needed, and which safe read tool(s) should retrieve it.
-Python is the source of truth for IDs, permissions and database execution. Never invent IDs or SQL.
-Never expose chain-of-thought; reasoning_summary is one short sentence.
-For counts use count. For applications/partners/services/catalog use the matching search/get tool.
-For checks use check_application or check_catalog_match. For broad questions you may request several
-safe tools. Mutations must be marked action_required=mutation and are handled separately by Python.
-
-Available safe tools:
-search_partners, get_partner, get_application, get_documents, get_addresses, get_directions,
-search_catalog, get_services, get_orders, check_application, check_catalog_match, count,
-SEARCH, ANALYZE, CHECK, COMPARE, SUGGEST.
-
-Return ONLY this JSON:
-reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed,
-tool_requests, field, value_raw, navigation, filters, sort, limit, action_required,
-response_language, confidence, active_context.
+Resolve pronouns from active context. Do not use phrase or command dictionaries.
+Decide intent, target, entity, required real data and safe read tools. Never invent IDs or SQL.
+Python is the source of truth. Never expose chain-of-thought.
+Safe tools: search_partners,get_partner,get_application,get_documents,get_addresses,get_directions,
+search_catalog,get_services,get_orders,check_application,check_catalog_match,count,
+SEARCH,ANALYZE,CHECK,COMPARE,SUGGEST.
+Counts are database questions and must use count. Catalog overview means live counts of directions
+and subcategories. Document/service/category follow-ups inherit the uniquely focused entity.
+Checks request the appropriate check tool. Mutations use action_required=mutation and are handled separately.
+Return ONLY one JSON object with:
+reasoning_summary,intent,target,entity_type,entity_id,entity_name,data_needed,tool_requests,
+field,value_raw,navigation,filters,sort,limit,action_required,response_language,confidence,active_context.
 active_context={scope,subject,intent,query,filters,entity_type,entity_id}.
-Use only tool names above. Do not output SQL or schema names."""
-
-    payload=json.dumps({"message":str(message or "")[:1500],"context":planner_ctx},ensure_ascii=False,default=str)
-    messages=[{"role":"system","content":system},{"role":"user","content":payload}]
+reasoning_summary is at most one short sentence."""
+    payload=json.dumps({
+        "message":str(message or "")[:1500],
+        "context":planner_ctx,
+        "previous_tool_results":ctx.get("compact_tool_results",[]) if isinstance(ctx,dict) else []
+    },ensure_ascii=False,default=str)
     raw,provider,model=await _admin_ai_completion(
-        messages,max_tokens=500 if not is_replanning else 350,json_mode=True
+        [{"role":"system","content":system},{"role":"user","content":payload}],
+        max_tokens=350 if is_replanning else 500,
+        json_mode=True,
     )
+    raw=(raw or "").strip()
     try:
         data=json.loads(raw)
     except json.JSONDecodeError:
-        start=raw.find("{"); end=raw.rfind("}")
+        start=raw.find("{")
+        end=raw.rfind("}")
         if start<0 or end<=start:
-            raise RuntimeError(f"{provider} returned invalid JSON")
+            raise RuntimeError(f"{provider} returned invalid planner JSON")
         data=json.loads(raw[start:end+1])
     if not isinstance(data,dict):
-        raise RuntimeError(f"{provider} returned a non-object intent")
+        raise RuntimeError(f"{provider} returned non-object planner output")
     data["ai_provider"]=provider
+    data["ai_model"]=model
     return _admin_normalize_plan(data,message)
 
 def _admin_contextual_fallback_plan(message,state):
