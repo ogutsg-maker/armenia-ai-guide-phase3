@@ -64,6 +64,11 @@ def data_contract(
     system_notice: str | None = None,
 ) -> dict[str, Any]:
     rows = data if isinstance(data, list) else []
+    # Final contract boundary: nothing non-JSON-safe may cross into the
+    # Re-planning context, regardless of which tool produced it.
+    rows = clean_db_value(rows)
+    if not isinstance(rows, list):
+        rows = []
     out = {
         "status": status if status in {"success", "error", "incomplete"} else "error",
         "tool_executed": str(tool_executed),
