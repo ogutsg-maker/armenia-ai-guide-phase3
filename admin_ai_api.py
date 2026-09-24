@@ -1543,8 +1543,7 @@ async def _admin_semantic_answer(question,plan,state):
         fallback=_admin_safe_human_fallback(facts, question, plan, target, entity_type)
     payload=json.dumps({"question":question,"goal":plan.get("intent"),"entity_type":entity_type,
         "entity_id":entity_id,"data_needed":needed,"facts":facts},ensure_ascii=False,default=str)
-    try:
-        raw,provider,model=await _admin_ai_completion(messages=[
+    answer_messages=[
             {"role":"system","content":"""You are the final answer layer for the Armenia AI Guide administrator.
 Answer naturally, directly and humanly in the same language as the question. The question may
 be a short follow-up to the previous result. In that case, answer from the supplied rows and identify
@@ -1562,7 +1561,9 @@ dump a Markdown table or raw database structure. If the user asks whether someth
 state the factual status, then verified problems, then missing information that is merely informational. If `category_audit` is supplied, use its verdicts: `matched` means no verified category mismatch in the supplied catalog evidence, `review` means a possible mismatch that needs review, and `insufficient_data` means the system cannot determine it. Do not replace an audit question with a generic service list.
 If no verified error is present, say that clearly. Do not mention AI, prompts, SQL, internal tools or
 chain-of-thought. Simple question = simple answer; broad inspection = compact structured summary."""},
-            {"role":"user","content":payload}],max_tokens=700)
+            {"role":"user","content":payload}]
+    try:
+        raw,provider,model=await _admin_ai_completion(messages=answer_messages,max_tokens=700)
         answer=raw.strip()
         if _admin_answer_is_internal_payload(answer):
             return fallback
