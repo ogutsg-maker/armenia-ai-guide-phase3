@@ -74,6 +74,9 @@ def _admin_normalize_plan(data,message=""):
     try: data["limit"]=max(1,int(data.get("limit",20) or 20))
     except Exception: data["limit"]=20
     data.setdefault("action_required","read_only")
+    if isinstance(data.get("active_context"),dict):
+        ac=data["active_context"]
+        data["active_context"]={"scope":str(ac.get("scope") or "")[:80],"subject":str(ac.get("subject") or "")[:200],"intent":str(ac.get("intent") or "")[:80],"query":str(ac.get("query") or "")[:500],"filters":ac.get("filters") if isinstance(ac.get("filters"),dict) else {},"entity_type":str(ac.get("entity_type") or "")[:40],"entity_id":ac.get("entity_id")}
     return data
 
 def _admin(request):
@@ -258,7 +261,9 @@ def _admin_safe(value):
 def _admin_session(admin_id):
     sid=int(admin_id); now=time.time(); state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
-        state={"last_focused_application_id":None,"last_focused_field":None,"last_focused_entity_type":None,"last_focused_entity_id":None,"last_shown_applications":[],"current_list":[],"current_position":None,
+        state={"last_focused_application_id":None,"last_focused_field":None,"last_focused_entity_type":None,"last_focused_entity_id":None,
+               "active_context":{"scope":"","subject":"","intent":"","query":"","filters":{},"entity_type":"","entity_id":None},
+               "response_language":None,"last_shown_applications":[],"current_list":[],"current_position":None,
                "last_query":None,"last_query_target":None,"last_shown_query_rows":[],"last_result_kind":None,"last_result_facts":None,"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"last_error_context":None,"retry_count":0,"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
@@ -295,6 +300,8 @@ def _admin_hydrate_context(state,limit=12):
         "last_shown_query_rows":state.get("last_shown_query_rows",[]),
         "last_result_kind":state.get("last_result_kind"),
         "last_result_facts":state.get("last_result_facts"),
+        "active_context":state.get("active_context") or {},
+        "response_language":state.get("response_language"),
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
         "query_capabilities":{"targets":["applications","partners","businesses","catalog","master_categories","catalog_overview","services"],"catalog_behavior":"master_categories and catalog return the complete current catalog without an artificial row limit; catalog_overview returns live database counts","operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
@@ -821,9 +828,15 @@ Understand what the administrator means, not predefined command phrases. Input c
 Russian, English, mixed language, transliteration, typos, colloquial wording, elliptical follow-ups
 or broad natural questions. Use the supplied conversation context. A short follow-up may refer to the immediately previous
 database result by position, ID, field, name, or property (for example asking for "names" after a list
-of IDs). Resolve that reference from last_shown_query_rows, last_query_target, last_result_kind and last_result_facts before choosing a
-new target. If the previous result is an aggregate/catalog overview, preserve that subject for short
-follow-ups unless the administrator clearly introduces a new subject. This is semantic context resolution, not a predefined command list.
+of IDs). Resolve that reference from last_shown_query_rows, last_query_target, last_result_kind, last_result_facts and active_context before choosing a
+new target. active_context is the current conversation topic and is distinct from the focused application:
+the focused application can remain available as an entity reference while the active topic is the catalog,
+services, partners, etc. If the message introduces a semantically new subject, switch active_context to
+that subject even when another application is focused. Only inherit the focused application for genuine
+anaphoric/entity follow-ups such as "his documents", "its category", "իսկ նրա փաստաթղթերը", or a direct
+field question about that application. Short follow-ups such as "specifically for heavy equipment",
+"а аренда?", or "а в каких городах?" should refine the active topic rather than fall back to the
+focused application. This is semantic context resolution, not a predefined command list.
 
 Decide the goal, subject/entity, context reference, factual data needed, and whether the request is
 read-only or a mutation. Python is the source of truth: it resolves IDs, permissions and executes
@@ -1130,7 +1143,10 @@ def _admin_resolve_semantic_entity(plan,state):
     focused_type=state.get("last_focused_entity_type")
     focused_id=state.get("last_focused_entity_id") or state.get("last_focused_application_id")
     if not entity_name and focused_id:
-        return focused_type or "application",int(focused_id)
+        # A focused application must not hijack a newly introduced catalog,
+        # partner, service, or other non-application topic.
+        if not entity_type or entity_type in {str(focused_type or "").lower(),"application"}:
+            return focused_type or "application",int(focused_id)
     if not entity_name: return None,None
     q="%"+entity_name+"%"; candidates=[]
     try:
@@ -1505,6 +1521,19 @@ async def admin_ai_message(admin_id,message):
     if not message: return "Գրեք, թե ինչ պետք է ստուգեմ կամ փոխեմ։"
     state=_admin_session(admin_id); normalized=_norm(message)
 
+    # A language-only turn changes presentation language, not the conversation topic.
+    if re.fullmatch(r"(?:հայերեն|հայերենով|հայերեն պատասխանիր|պատասխանիր հայերեն|по[- ]русски|на русском|ответь по[- ]русски|in english|answer in english|english please)",normalized,re.I|re.U):
+        state["response_language"]="am" if re.search(r"հայերեն",normalized,re.I|re.U) else ("en" if "english" in normalized else "ru")
+        prior=state.get("last_query") or (state.get("active_context") or {}).get("query")
+        if prior:
+            ac=state.get("active_context") or {}
+            follow_plan=_admin_normalize_plan({"intent":ac.get("intent") or "information_request","target":ac.get("scope") or state.get("last_query_target") or "","entity_type":ac.get("entity_type") or "","entity_id":ac.get("entity_id"),"entity_name":ac.get("subject") or "","filters":ac.get("filters") or {},"response_language":state["response_language"],"action_required":"read_only","confidence":1.0},prior)
+            try: reply=await _admin_semantic_answer(prior,follow_plan,state)
+            except Exception: reply="Հասկացա։ Այսուհետ կպատասխանեմ հայերեն։" if state["response_language"]=="am" else ("Понял. Дальше отвечу по-русски." if state["response_language"]=="ru" else "Understood. I’ll answer in English.")
+        else:
+            reply="Հասկացա։ Այսուհետ կպատասխանեմ հայերեն։" if state["response_language"]=="am" else ("Понял. Дальше отвечу по-русски." if state["response_language"]=="ru" else "Understood. I’ll answer in English.")
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
     # Local state machine: confirmation and slot filling never call Groq.
     pending=state.get("pending_action")
     if pending and normalized in _CONFIRM_YES:
@@ -1667,6 +1696,8 @@ async def admin_ai_message(admin_id,message):
     else:
         c=None
     ctx=_admin_hydrate_context(state)
+    if state.get("response_language"):
+        ctx["preferred_response_language"]=state.get("response_language")
     if c is None:
         try: c=await _admin_ai_json(message,ctx)
         except Exception: c=_admin_fallback_intent(message,focused_id)
@@ -1698,6 +1729,13 @@ async def admin_ai_message(admin_id,message):
             "response_language":_admin_detect_language(message)
         },message)
 
+    ac=c.get("active_context")
+    if isinstance(ac,dict):
+        state["active_context"]=_admin_safe({"scope":ac.get("scope") or c.get("target") or "","subject":ac.get("subject") or c.get("entity_name") or "","intent":ac.get("intent") or c.get("intent") or "","query":ac.get("query") or message[:500],"filters":ac.get("filters") if isinstance(ac.get("filters"),dict) else (c.get("filters") or {}),"entity_type":ac.get("entity_type") or c.get("entity_type") or "","entity_id":ac.get("entity_id") if ac.get("entity_id") not in (None,"") else c.get("entity_id")})
+    else:
+        target_hint=str(c.get("target") or "").lower(); entity_hint=str(c.get("entity_type") or "").lower()
+        if target_hint in {"catalog","master_categories","catalog_overview","partners","businesses","services"} or entity_hint in {"catalog","partner","business","service"}:
+            state["active_context"]=_admin_safe({"scope":target_hint or entity_hint,"subject":str(c.get("entity_name") or "")[:200],"intent":str(c.get("intent") or ""),"query":message[:500],"filters":c.get("filters") if isinstance(c.get("filters"),dict) else {},"entity_type":entity_hint,"entity_id":c.get("entity_id")})
     state["last_action"]={"intent":c.get("intent"),"target":c.get("target"),"reasoning_summary":c.get("reasoning_summary"),"confidence":c.get("confidence")}
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
 
