@@ -10,6 +10,7 @@ from platform_db import proposals, review_proposal, edit_proposal, add_clarifica
 from potential_partner_ai import PotentialPartnerAI
 from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
+from ai_data_tools import DataTools, DataToolError
 
 
 def _norm(text):
@@ -53,6 +54,12 @@ def _admin_normalize_plan(data,message=""):
     raw_needed=data.get("data_needed")
     if not isinstance(raw_needed,list): raw_needed=[]
     data["data_needed"]=[str(x).strip().lower() for x in raw_needed if str(x).strip()]
+    raw_tools=data.get("tool_requests")
+    if not isinstance(raw_tools,list): raw_tools=[]
+    data["tool_requests"]=[
+        {"name":str(x.get("name") or "").strip(),"arguments":x.get("arguments") if isinstance(x.get("arguments"),dict) else {}}
+        for x in raw_tools if isinstance(x,dict) and str(x.get("name") or "").strip()
+    ][:6]
     data["navigation"]=data.get("navigation")
     data["response_language"]=lang
     data["confidence"]=max(0.0,min(1.0,confidence))
@@ -778,9 +785,26 @@ navigation; Python resolves it. filters/sort/limit apply to database queries. ac
 read_only unless a real mutation is explicitly requested. response_language follows the user.
 confidence is an honest estimate.
 
+You also have safe business-data tools. Prefer tool_requests for questions that require entity data
+or checks. Choose only tools appropriate to the administrator role. Never invent tool names or SQL.
+For a focused entity, Python resolves the entity and injects its ID where appropriate. You may request
+several tools when the answer needs several independent facts. Available tools:
+- search_partners: find partners by name/service/city/status
+- get_partner: get one partner's allowed profile
+- get_application: get one application
+- get_documents: get verification documents/status
+- get_addresses: get partner business objects/addresses
+- get_directions: get active top-level directions
+- search_catalog: search active categories/subcategories
+- get_services: get services/prices/catalog links
+- get_orders: get visible orders (may report schema pending)
+- check_application: factual application completeness/status checks
+- check_catalog_match: search catalog candidates for a service
+- count: count partners/applications/services/directions/subcategories
+
 Return ONLY JSON with:
-reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed, field,
-value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
+reasoning_summary, intent, target, entity_type, entity_id, entity_name, data_needed, tool_requests,
+field, value_raw, navigation, filters, sort, limit, action_required, response_language, confidence.
 """
     payload=json.dumps({"message":message,"context":ctx},ensure_ascii=False,default=str)
     messages=[{"role":"system","content":system},{"role":"user","content":payload}]
@@ -1074,16 +1098,28 @@ def _admin_application_truth(app, documents=None, category=None):
             "approval_rule_note":"Չլրացված phone/description դաշտերը ինքնին սխալ չեն համարվում, քանի դեռ backend-ում դրանց պարտադիր լինելու կանոն չկա։"}
 
 def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
+    """Build factual context through the role-aware DataTools facade.
+    Existing specialized checks remain available as a compatibility fallback.
+    """
     result={}
+    tools=DataTools("admin")
     if entity_type=="application" and entity_id:
-        app=_admin_hydrate_application(entity_id)
+        try:
+            result["application"]=tools.execute("get_application",{"application_id":int(entity_id)}).get("data",{}).get("application")
+            result["documents"]=tools.execute("get_documents",{"application_id":int(entity_id)}).get("data",{}).get("documents",[])
+        except DataToolError:
+            pass
+        app=result.get("application") or _admin_hydrate_application(entity_id)
         if not app: return {}
         result["application"]=app
         needed=set(data_needed or [])
         if not needed: needed={"application","documents","partner","categories","services","verification"}
-        result["documents"]=_admin_semantic_documents(entity_id)
+        if not result.get("documents"):
+            result["documents"]=_admin_semantic_documents(entity_id)
         if app.get("partner_id") and ("partner" in needed or "verification" in needed):
             try:
+                result["partner"]=tools.execute("get_partner",{"partner_id":int(app["partner_id"])}).get("data",{}).get("partner")
+            except DataToolError:
                 result["partner"]=_admin_safe(platform_db.one("""SELECT id,user_id,status,verification_status,
                     business_name,business_description,contact_share_policy,created_at,updated_at
                     FROM partners WHERE id=%s""",(int(app["partner_id"]),)))
@@ -1101,10 +1137,13 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
         result["truth"]=_admin_application_truth(app,result.get("documents"),result.get("category"))
         if app.get("category_id") and ("services" in needed or "service" in needed):
             try:
-                result["services"]=_admin_safe(platform_db.rows(
-                    "SELECT id,name,category_id,created_at FROM services WHERE category_id=%s ORDER BY id DESC LIMIT 50",
-                    (int(app["category_id"]),)))
-            except Exception: result["services"]=[]
+                result["services"]=tools.execute("get_services",{"category_id":int(app["category_id"])}).get("data",{}).get("items",[])
+            except DataToolError:
+                try:
+                    result["services"]=_admin_safe(platform_db.rows(
+                        "SELECT id,name,category_id,created_at FROM services WHERE category_id=%s ORDER BY id DESC LIMIT 50",
+                        (int(app["category_id"]),)))
+                except Exception: result["services"]=[]
         return result
     if entity_type=="partner" and entity_id:
         try:
@@ -1125,6 +1164,70 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
     return result
 
 
+def _admin_tool_context(plan, entity_type, entity_id):
+    """Execute only model-selected, role-allowed data tools and return factual results."""
+    requests=plan.get("tool_requests") or []
+    if not requests:
+        return {}
+    tools=DataTools("admin")
+    results=[]
+    for req in requests:
+        name=str(req.get("name") or "").strip()
+        args=dict(req.get("arguments") or {})
+        # Python owns identity resolution; the model never supplies raw SQL or permissions.
+        if entity_id:
+            if entity_type=="application" and name in {"get_application","get_documents","check_application"}:
+                args.setdefault("application_id",int(entity_id))
+            elif entity_type=="partner" and name in {"get_partner","get_documents","get_addresses","get_services"}:
+                args.setdefault("partner_id",int(entity_id))
+            elif entity_type=="business" and name=="get_addresses":
+                args.setdefault("business_id",int(entity_id))
+        try:
+            results.append(tools.execute(name,args))
+        except DataToolError as exc:
+            results.append({"tool":name,"error":str(exc)})
+        except Exception as exc:
+            results.append({"tool":name,"error":"tool_execution_failed","detail":str(exc)[:180]})
+    return {"tool_results":results}
+
+
+async def _admin_refine_tool_context(question, plan, entity_type, entity_id, facts):
+    """Second semantic planning pass after real data arrives."""
+    key=os.getenv("GROQ_API_KEY","").strip()
+    if not key:
+        return facts
+    try:
+        from groq import AsyncGroq
+        client=AsyncGroq(api_key=key)
+        model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
+        available=DataTools("admin").available_tools()
+        payload=json.dumps({
+            "question":question,"entity_type":entity_type,"entity_id":entity_id,
+            "plan":plan,"facts":facts,"available_tools":available
+        },ensure_ascii=False,default=str)
+        resp=await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role":"system","content":"You are the second planning pass for the Armenia AI Guide admin assistant. You already received real database results. Decide whether they are sufficient. If not, request only additional safe business-data tools needed to complete the answer. Never request SQL, never invent tools, never invent IDs. Prefer the smallest number of additional calls. Return ONLY JSON with tool_requests and done."},
+                {"role":"user","content":payload}
+            ],
+            temperature=0,max_tokens=500
+        )
+        raw=(resp.choices[0].message.content or "").strip()
+        data=json.loads(raw)
+        requests=data.get("tool_requests") if isinstance(data,dict) else []
+        if not isinstance(requests,list) or not requests:
+            return facts
+        extra=_admin_tool_context({"tool_requests":requests[:4]},entity_type,entity_id)
+        if not extra:
+            return facts
+        merged=dict(facts) if isinstance(facts,dict) else {"initial":facts}
+        merged["additional_tool_results"]=extra.get("tool_results",[])
+        return merged
+    except Exception:
+        return facts
+
+
 async def _admin_semantic_answer(question,plan,state):
     entity_type,entity_id=_admin_resolve_semantic_entity(plan,state)
     # A follow-up can naturally refer to the immediately previous query result.
@@ -1138,7 +1241,11 @@ async def _admin_semantic_answer(question,plan,state):
         if entity_type=="application": state["last_focused_application_id"]=entity_id
     needed=plan.get("data_needed") or []
     target=_admin_query_target(plan.get("target"))
-    facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state) if entity_id else {}
+    facts=_admin_tool_context(plan,entity_type,entity_id)
+    if facts:
+        facts=await _admin_refine_tool_context(question,plan,entity_type,entity_id,facts)
+    if not facts and entity_id:
+        facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state)
     if not facts and target:
         # If the user is asking a follow-up about the previous result, reuse those exact
         # rows instead of issuing a broader unrelated query.
