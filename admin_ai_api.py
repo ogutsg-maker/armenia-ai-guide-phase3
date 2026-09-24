@@ -192,6 +192,40 @@ def _admin_safe_human_fallback(facts, question, plan, target="", entity_type="")
                 parts.append(part)
         if parts:
             return "\n\n".join(parts)
+    # Prefer the exact requested fact family before the generic application summary.
+    # This keeps natural follow-ups focused even when a provider returns broad facts.
+    requested=set(str(x).casefold() for x in (plan.get("data_needed") or []))
+    if isinstance(facts,dict):
+        if "documents" in requested and isinstance(facts.get("documents"),list):
+            docs=facts.get("documents") or []
+            if not docs: return "📄 Այս հայտի համար կապված փաստաթուղթ չի գտնվել։"
+            lines=["📄 Փաստաթղթեր՝ "+str(len(docs))]
+            for d in docs[:20]:
+                if not isinstance(d,dict): continue
+                did=d.get("id") or d.get("document_id") or "—"
+                dtype=d.get("document_type") or d.get("type") or "Փաստաթուղթ"
+                status=d.get("status") or d.get("verification_status") or "—"
+                lines.append("• #"+str(did)+" · "+str(dtype)+" · "+str(status))
+            return "\n".join(lines)
+        if ("services" in requested or "application_services" in requested) and isinstance(facts.get("application_services"),list):
+            services=facts.get("application_services") or []
+            if not services: return "🛠 Այս հայտում ծառայություններ չեն նշված։"
+            lines=["🛠 Ծառայություններ՝ "+str(len(services))]
+            for n,s in enumerate(services[:30],1):
+                if not isinstance(s,dict): continue
+                name=s.get("name") or s.get("service_name") or "—"
+                price=s.get("price")
+                lines.append(str(n)+". "+str(name)+(" · "+str(price)+" ֏" if price not in (None,"") else ""))
+            return "\n".join(lines)
+        if {"category","subcategory","catalog"} & requested:
+            audit=facts.get("category_audit")
+            if isinstance(audit,list) and audit:
+                item=audit[0]; verdict=item.get("verdict"); stored=item.get("category_name") or "—"; direction=item.get("direction") or "—"
+                if verdict=="matched": return "📂 Կատեգորիան համապատասխանում է ակտիվ կատալոգին։\n🧭 "+str(direction)+"\n🏷 "+str(stored)
+                if verdict=="review": return "📂 Կատեգորիան պահանջում է լրացուցիչ ստուգում։\n🧭 "+str(direction)+"\n🏷 "+str(stored)
+                return "📂 Կատեգորիայի համապատասխանությունը հաստատելու համար բավարար տվյալ չկա։\n🏷 "+str(stored)
+            cat=facts.get("category")
+            if isinstance(cat,dict): return "📂 "+str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en") or "—")
     if isinstance(facts, dict) and isinstance(facts.get("application"), dict):
         app=facts["application"]; lines=[
             "📨 Հայտ #"+str(app.get("id") or "—"),
@@ -965,6 +999,13 @@ Resolve references such as «նրա փաստաթղթերը», «իսկ կատե�
 focused entity and the immediately previous result. A new subject changes active context; a genuine
 anaphoric follow-up keeps the referenced entity. Never require the user to repeat an ID when context
 uniquely identifies it.
+Semantic examples (examples, not command syntax):
+- asking how many partners means entity=partners and intent=count;
+- asking which documents the focused application has means entity=application and data_needed=documents;
+- asking for all services of the focused application means entity=application and data_needed=application_services;
+- asking whether its category is correct means entity=application and data_needed=category plus a catalog/check;
+- asking how many directions and subcategories are in the database means target=catalog_overview and a live catalog count.
+Do not copy these phrases literally; infer the same intent from equivalent Armenian/Russian/English wording.
 Decide what the user wants, what real data is needed, and which safe read tool(s) should retrieve it.
 Python is the source of truth for IDs, permissions and database execution. Never invent IDs or SQL.
 Never expose chain-of-thought; reasoning_summary is one short sentence.
@@ -1522,8 +1563,28 @@ async def _admin_semantic_answer(question,plan,state):
         state["last_focused_entity_id"]=entity_id
         if entity_type=="application": state["last_focused_application_id"]=entity_id
     needed=plan.get("data_needed") or []
+    # Convert the planner semantic data request into authoritative reads. No phrase matching.
+    if entity_type=="application" and entity_id and needed:
+        plan.setdefault("tool_requests", [])
+        requested={str(x).casefold() for x in needed}
+        names={str(r.get("name") or "") for r in plan["tool_requests"] if isinstance(r,dict)}
+        if "documents" in requested and "get_documents" not in names:
+            plan["tool_requests"].append({"name":"get_documents","arguments":{"application_id":int(entity_id)}})
+        if {"services","application_services"} & requested and not ({"get_services","get_application"} & names):
+            plan["tool_requests"].append({"name":"get_application","arguments":{"application_id":int(entity_id)}})
+        if {"category","subcategory","catalog"} & requested and not ({"check_application","check_catalog_match"} & names):
+            plan["tool_requests"].append({"name":"check_application","arguments":{"application_id":int(entity_id)}})
     target=_admin_query_target(plan.get("target"))
-    facts=_admin_tool_context(plan,entity_type,entity_id)
+    if target=="catalog_overview" and not plan.get("tool_requests"):
+        rows,error=_admin_query_rows("catalog_overview",{},1,None)
+        facts={"rows":rows or []}
+        if error: facts={"error":error}
+    elif target=="partners" and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners"} and not plan.get("tool_requests"):
+        rows,error=_admin_query_rows("partners",{},50,None)
+        facts={"entity":"partners","count":len(rows or [])}
+        if error: facts={"error":error}
+    else:
+        facts=_admin_tool_context(plan,entity_type,entity_id)
     if facts:
         facts=await _admin_refine_tool_context(question,plan,entity_type,entity_id,facts)
     if not facts and entity_id:
