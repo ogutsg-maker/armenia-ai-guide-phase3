@@ -557,6 +557,17 @@ async def _admin_execute(command):
         if not a: return "Заявка #"+str(aid)+" не найдена."
         loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
         return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
+    # All read-only semantic intents belong to the conversational data path.
+    # Do not force them through the legacy command vocabulary.
+    action_required=str(c.get("action_required") or "read_only").strip().lower()
+    if action_required not in {"mutation","write","confirm"} and intent not in {
+        "edit_application","approve_application","reject_application","clarify_application"
+    }:
+        try:
+            reply=await _admin_semantic_answer(message,c,state)
+        except Exception:
+            reply=_admin_localized(c.get("response_language","ru"),"safe_error")
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
     if intent=="query_database":
         return await _admin_query_answer(str(command.get("question") or ""),command.get("target") or "applications",command.get("filters") or {},command.get("limit") or 20,command.get("sort"))
     if intent=="show_full_application":
