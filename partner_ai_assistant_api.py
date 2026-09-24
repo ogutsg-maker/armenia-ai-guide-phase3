@@ -282,6 +282,19 @@ async def api_ai_command(request: web.Request):
             _PENDING.pop(token, None)
             result = await _execute_mutation(pid, command, ctx)
             if isinstance(result, web.Response):
+                # Rebuild the partner context after every confirmed mutation.
+                # The next AI turn therefore always sees fresh business data.
+                try:
+                    fresh_ctx = _context(pid)
+                    result.headers["X-AI-Context-Refreshed"] = "1"
+                    result.headers["X-AI-Context-Version"] = "live"
+                    result.headers["X-AI-Context-Entities"] = str(
+                        len(fresh_ctx.get("businesses", []))
+                        + len(fresh_ctx.get("services", []))
+                        + len(fresh_ctx.get("addresses", []))
+                    )
+                except Exception:
+                    pass
                 return result
 
     # Natural-language cancellation of the last pending action.
