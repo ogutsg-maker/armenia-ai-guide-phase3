@@ -15,6 +15,7 @@ from typing import Any
 
 from aiohttp import web
 from notify import notify
+from ai_service import AIService
 
 from config import BOT_TOKEN
 from database import _connect
@@ -65,22 +66,11 @@ def _partner(uid: int) -> int:
     return int(row["id"])
 
 
-def _groq_client():
-    key = os.getenv("GROQ_API_KEY", "").strip()
-    if not key:
-        return None
-    try:
-        from groq import AsyncGroq
-        return AsyncGroq(api_key=key)
-    except Exception:
-        return None
-
+def _shared_ai_service():
+    """Use the application-wide provider gateway instead of a partner-only Groq client."""
+    return AIService()
 
 async def _ai_json(message: str, language: str, context: dict[str, Any]) -> dict[str, Any]:
-    client = _groq_client()
-    if client is None:
-        return {"intent": "clarify", "reply": {"hy": "AI ծառայությունը ժամանակավորապես հասանելի չէ։", "ru": "AI сейчас недоступен.", "en": "AI is temporarily unavailable."}.get(language, "AI is temporarily unavailable.")}
-    model = os.getenv("GROQ_MODEL", "").strip() or "openai/gpt-oss-20b"
     system = """You are the universal right-hand assistant inside Armenia AI Guide partner cabinet.
 Understand Armenian, Russian and English. The partner speaks naturally; never force menus.
 Return ONLY JSON matching the schema.
@@ -95,85 +85,15 @@ set needs_confirmation=true. Read-only intents do not need confirmation.
 For add_service extract name, price, description, business_id, object_id when clearly known.
 For update/delete identify an existing entity by id only when the context supports it.
 If ambiguous, use clarify and ask one concise question.
+Return a JSON object with exactly these keys:
+intent, reply, needs_confirmation, business_id, object_id, service_id, name, description, phone, city, marz, address, price, contact_phone, reason.
+Use null for unknown scalar values. The current partner context is supplied in the user message.
 """
-    schema = {
-        "type":"object",
-        "properties":{
-            "intent":{"type":"string","enum":["show_businesses","show_services","show_orders","show_profile","show_addresses","show_documents","add_business","update_business","delete_business","add_address","update_address","delete_address","add_service","update_service","delete_service","clarify"]},
-            "reply":{"type":"string"},
-            "needs_confirmation":{"type":"boolean"},
-            "business_id":{"type":["integer","null"]},
-            "object_id":{"type":["integer","null"]},
-            "service_id":{"type":["integer","null"]},
-            "name":{"type":["string","null"]},
-            "description":{"type":["string","null"]},
-            "phone":{"type":["string","null"]},
-            "city":{"type":["string","null"]},
-            "marz":{"type":["string","null"]},
-            "address":{"type":["string","null"]},
-            "price":{"type":["number","null"]},
-            "contact_phone":{"type":["string","null"]},
-            "reason":{"type":["string","null"]}
-        },
-        "required":["intent","reply","needs_confirmation","business_id","object_id","service_id","name","description","phone","city","marz","address","price","contact_phone","reason"],
-        "additionalProperties":False
-    }
     prompt = json.dumps({"message":message,"language":language,"context":context}, ensure_ascii=False, default=str)
-    request_kwargs = dict(
-        temperature=0,
-        max_tokens=900,
-        response_format={"type":"json_object"},
-        messages=[
-            {"role":"system","content":system},
-            {"role":"user","content":prompt}
-        ],
-    )
     try:
-        resp = await client.chat.completions.create(model=model, **request_kwargs)
-    except Exception as first_exc:
-        # Groq model IDs change over time. If Render still has a retired
-        # GROQ_MODEL (for example llama-3.1-8b-instant), retry once with the
-        # currently supported GPT-OSS 20B model.
-        if model != "openai/gpt-oss-20b" and ("404" in str(first_exc) or "model" in str(first_exc).lower()):
-            resp = await client.chat.completions.create(model="openai/gpt-oss-20b", **request_kwargs)
-        else:
-            raise
-    raw = resp.choices[0].message.content or ""
-    raw = raw.strip()
-    if raw.startswith("\`\`\`"):
-        raw = re.sub(r"^\`\`\`(?:json)?\\s*", "", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\\s*\`\`\`$", "", raw).strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        start, end = raw.find("{"), raw.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                data = json.loads(raw[start:end + 1])
-            except json.JSONDecodeError:
-                data = None
-        else:
-            data = None
-    if not isinstance(data, dict):
-        repair = await client.chat.completions.create(
-            model=model,
-            temperature=0,
-            max_tokens=700,
-            response_format={"type":"json_object"},
-            messages=[
-                {"role":"system","content":"Return ONLY one valid JSON object. No markdown, no explanation."},
-                {"role":"user","content":"Convert this failed output into a valid JSON object matching the requested assistant schema: " + raw[:5000]}
-            ],
-        )
-        repaired = (repair.choices[0].message.content or "").strip()
-        try:
-            data = json.loads(repaired)
-        except json.JSONDecodeError as exc:
-            raise ValueError("invalid_ai_response") from exc
-    if not isinstance(data, dict):
-        raise ValueError("invalid_ai_response")
-    return data
-
+        return await _shared_ai_service().chat_json(system, prompt, max_tokens=900)
+    except Exception:
+        return {"intent": "clarify", "reply": {"hy": "AI ծառայությունը ժամանակավորապես հասանելի չէ։", "ru": "AI сейчас временно недоступен. Попробуйте ещё раз позже.", "en": "AI is temporarily unavailable. Please try again later."}.get(language, "AI is temporarily unavailable. Please try again later.")}
 
 def _context(pid: int) -> dict[str, Any]:
     with _connect() as conn:
