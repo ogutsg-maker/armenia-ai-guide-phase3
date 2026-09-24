@@ -323,6 +323,24 @@ async def api_ai_command(request: web.Request):
     command["message"]=message
     intent=command.get("intent")
 
+    # Resolve an existing service from the live partner context before mutation.
+    # AI still decides the intent; Python only verifies the target entity.
+    if intent in {"update_service", "delete_service"} and not command.get("service_id"):
+        wanted = re.sub(r"\\s+", " ", str(command.get("name") or "").casefold()).strip()
+        if wanted:
+            candidates = []
+            for svc in ctx.get("services", []):
+                service_name = re.sub(r"\\s+", " ", str(svc.get("name") or "").casefold()).strip()
+                if service_name and (service_name == wanted or wanted in service_name or service_name in wanted):
+                    candidates.append(svc)
+            if len(candidates) == 1:
+                command["service_id"] = int(candidates[0]["id"])
+                command["business_id"] = int(candidates[0]["business_id"])
+    if intent in {"update_service", "delete_service"} and command.get("service_id"):
+        svc = next((x for x in ctx.get("services", []) if int(x.get("id")) == int(command["service_id"])), None)
+        if svc:
+            command["business_id"] = int(svc["business_id"])
+
     # Resolve an explicitly named company deterministically. Do not depend on
     # Groq returning business_id when the partner has already named the company
     # in natural language (for example: "для моей компании BYUTI").
