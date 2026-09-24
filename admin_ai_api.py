@@ -1681,6 +1681,10 @@ async def admin_ai_message(admin_id,message):
     state["last_action_failed"]=False; state["last_error"]=None; state["last_error_context"]=None
 
     intent=str(c.get("intent") or "unknown").lower()
+    if intent=="catalog_counts":
+        c["intent"]="information_request"
+        c["target"]="catalog_overview"
+        intent="information_request"
 
     # Natural-language inspection shortcut: when an application is already focused,
     # category correctness is a factual inspection request, never a mutation.
