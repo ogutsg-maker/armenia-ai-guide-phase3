@@ -7,8 +7,12 @@ supplies executable SQL. Identifiers are accepted only when present in the live
 Schema Inspector snapshot; values always go through psycopg parameters.
 """
 
+import json
 import logging
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import platform_db
 from ai_schema import inspector
@@ -25,6 +29,31 @@ SENSITIVE_COLUMNS = {
 }
 
 MAX_LIMIT = 50
+
+def clean_db_value(value: Any) -> Any:
+    """Convert every psycopg/PostgreSQL value into JSON-safe AI-contract data."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): clean_db_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [clean_db_value(v) for v in value]
+    # psycopg can expose PostgreSQL/custom extension types that are not JSON
+    # serializable. Never let such a value break a Re-planning turn.
+    try:
+        json.dumps(value, ensure_ascii=False)
+        return value
+    except (TypeError, ValueError):
+        return str(value)
+
+def clean_db_row_for_ai(row: dict[str, Any] | None) -> dict[str, Any]:
+    return {str(k): clean_db_value(v) for k, v in (row or {}).items()}
 
 
 def data_contract(
@@ -150,7 +179,7 @@ class AdminDataTools:
                 {
                     "row_index": idx,
                     "table": table,
-                    "fields": platform_db._safe(row) if hasattr(platform_db, "_safe") else row,
+                    "fields": clean_db_row_for_ai(row),
                 }
                 for idx, row in enumerate(rows)
             ]
@@ -266,7 +295,7 @@ class AdminDataTools:
             )
             return data_contract(
                 tool_executed="COMPARE",
-                data=[{"row_index": i, "table": table, "fields": row} for i, row in enumerate(rows)],
+                data=[{"row_index": i, "table": table, "fields": clean_db_row_for_ai(row)} for i, row in enumerate(rows)],
             )
         except Exception as exc:
             return data_contract(tool_executed="COMPARE", status="error",
