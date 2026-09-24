@@ -181,7 +181,7 @@ def _admin_session(admin_id):
     sid=int(admin_id); now=time.time(); state=_ADMIN_SESSIONS.get(sid)
     if not state or now-float(state.get("updated_at",0))>_ADMIN_SESSION_TTL:
         state={"last_focused_application_id":None,"last_focused_field":None,"last_focused_entity_type":None,"last_focused_entity_id":None,"last_shown_applications":[],"current_list":[],"current_position":None,
-               "last_query":None,"last_query_target":None,"last_shown_query_rows":[],"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"last_error_context":None,"retry_count":0,"updated_at":now}
+               "last_query":None,"last_query_target":None,"last_shown_query_rows":[],"last_result_kind":None,"last_result_facts":None,"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"last_error_context":None,"retry_count":0,"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
     return state
@@ -215,9 +215,11 @@ def _admin_hydrate_context(state,limit=12):
         "last_query":state.get("last_query"),
         "last_query_target":state.get("last_query_target"),
         "last_shown_query_rows":state.get("last_shown_query_rows",[])[:20],
+        "last_result_kind":state.get("last_result_kind"),
+        "last_result_facts":state.get("last_result_facts"),
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
-        "query_capabilities":{"targets":["applications","partners","businesses","catalog","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
+        "query_capabilities":{"targets":["applications","partners","businesses","catalog","catalog_overview","services"],"operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
         "history":state.get("history",[])[-6:]})
 
 
@@ -245,8 +247,8 @@ _ADMIN_QUERY_TARGETS={
  "applications":{"table":"partner_applications a","select":"a.id,a.business_name,a.status,a.service_name,a.price,a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,a.location_marz,a.location_city,a.location_village,a.address,a.phone,a.description,a.created_at,a.updated_at","order":"a.created_at DESC","limit":50,"aliases":{"application","applications","requests","заявки","հայտեր"},"fields":{"status":"a.status","business_name":"a.business_name","service_name":"a.service_name","price":"a.price","direction_name":"a.direction_name","subcategory_name":"a.subcategory_name","location_marz":"a.location_marz","location_city":"a.location_city","location_village":"a.location_village","address":"a.address","phone":"a.phone","description":"a.description","category_id":"a.category_id","master_category_id":"a.master_category_id"}},
  "partners":{"table":"partners p","select":"p.id,p.user_id,p.business_name,p.business_description,p.status,p.verification_status,p.contact_share_policy,p.created_at,p.updated_at","order":"p.created_at DESC","limit":50,"aliases":{"partner","partners","партнеры","գործընկերներ"},"fields":{"status":"p.status","verification_status":"p.verification_status","business_name":"p.business_name","business_description":"p.business_description","location_marz":"__PARTNER_LOCATION_MARZ__","location_city":"__PARTNER_LOCATION_CITY__"}},
  "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
- "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"},
- "services":{"table":"services s LEFT JOIN categories c ON c.id=s.category_id LEFT JOIN master_categories m ON m.id=c.master_category_id","select":"s.id,s.name,s.category_id,c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,c.master_category_id,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id","category_name":"c.name_am","master_category_id":"c.master_category_id"}}}
+ "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":100,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}, "catalog_overview":{"aliases":{"catalog overview","catalog_overview","կատալոգի ընդհանուր","ընդհանուր կատալոգ","catalog stats","catalog count"},"limit":1},
+ "services":{"table":"services s LEFT JOIN categories c ON c.id=s.category_id LEFT JOIN master_categories m ON m.id=c.master_category_id LEFT JOIN partners p ON p.id=s.partner_id","select":"s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,p.business_name AS partner_name,c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,c.master_category_id,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id","category_name":"c.name_am","master_category_id":"c.master_category_id"}}}
 _ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
 _ADMIN_STATUS_ALIASES={"applications":{"pending":["pending_admin","pending_partner","document_pending"],"moderation":["pending_admin"]},"partners":{"pending":["pending"],"moderation":["pending","pending_verification"]},"businesses":{}}
 def _admin_normalize_location(field,value):
@@ -279,6 +281,8 @@ def _admin_query_filter_items(filters,target=None):
 def _admin_query_build(target,filters,limit=20,sort=None):
  target=_admin_query_target(target)
  if not target:return None,"Неизвестный объект данных."
+ if target=="catalog_overview":
+  return ("SELECT (SELECT COUNT(*) FROM master_categories WHERE is_active=TRUE) AS master_categories_count, (SELECT COUNT(*) FROM categories WHERE is_active=TRUE) AS subcategories_count, (SELECT COUNT(*) FROM master_categories) AS master_categories_total, (SELECT COUNT(*) FROM categories) AS subcategories_total", (), target), None
  spec=_ADMIN_QUERY_TARGETS[target];clauses=[];params=[]
  if spec.get("base_where"):clauses.append(spec["base_where"])
  for field,op,value in _admin_query_filter_items(filters,target):
@@ -319,41 +323,15 @@ def _admin_query_build(target,filters,limit=20,sort=None):
    order_sql=sort_col+" "+sd.upper()
  sql="SELECT "+spec["select"]+" FROM "+spec["table"]+where+" ORDER BY "+order_sql+" LIMIT %s";params.append(limit)
  return (sql,tuple(params),target),None
-def _admin_service_price_map(service_ids):
-    """Read partner-service prices using the actual live schema, without assuming column names.
-    Prices belong to partner service records, not the catalog master service row.
-    """
-    ids=[int(x) for x in (service_ids or []) if str(x).isdigit()]
-    if not ids:
-        return {}
-    try:
-        cols=platform_db.rows("""SELECT column_name FROM information_schema.columns
-            WHERE table_schema='public' AND table_name='partner_services'
-            ORDER BY ordinal_position""")
-    except Exception:
-        return {}
-    names={str(x.get("column_name") or "").lower() for x in cols or []}
-    sid=next((x for x in ("service_id","services_id","catalog_service_id") if x in names),None)
-    price=next((x for x in ("price","price_amd","base_price","amount") if x in names),None)
-    if not sid or not price:
-        return {}
-    try:
-        rows=platform_db.rows(
-            f"SELECT {sid} AS service_id,{price} AS price FROM partner_services WHERE {sid}=ANY(%s)",
-            (ids,))
-    except Exception:
-        try:
-            placeholders=",".join(["%s"]*len(ids))
-            rows=platform_db.rows(
-                f"SELECT {sid} AS service_id,{price} AS price FROM partner_services WHERE {sid} IN ({placeholders})",
-                tuple(ids))
-        except Exception:
-            return {}
+def _admin_service_price_map(service_rows):
+    """Use the actual partner-specific service price stored on services.price."""
     result={}
-    for row in rows or []:
-        k=row.get("service_id")
-        if k is None: continue
-        result.setdefault(int(k),[]).append(row.get("price"))
+    for row in service_rows or []:
+        try: sid=int(row.get("id"))
+        except (TypeError,ValueError): continue
+        price=row.get("price")
+        if price not in (None,""):
+            result[sid]=[price]
     return result
 
 def _admin_query_rows(target,filters,limit=20,sort=None):
@@ -363,13 +341,15 @@ def _admin_query_rows(target,filters,limit=20,sort=None):
  try:
   rows=platform_db.rows(sql,params)
   if target=="services" and rows:
-   price_map=_admin_service_price_map([x.get("id") for x in rows])
+   price_map=_admin_service_price_map(rows)
    for x in rows:
     vals=price_map.get(int(x["id"])) if x.get("id") is not None else None
     x["prices_amd"]=vals or []
     x["price_amd"]=vals[0] if vals and len(vals)==1 else None
+    x["currency"]="AMD" if vals else None
   return rows,None
  except Exception as exc:return None,"Չհաջողվեց կատարել որոնումը՝ "+str(exc)[:180]
+
 async def _admin_query_answer(question,target,filters,limit=20,sort=None):
  rows,error=_admin_query_rows(target,filters,limit,sort)
  if error:return "⚠️ "+error
@@ -391,7 +371,11 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
 
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
- labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","services":"🛠 Услуги"}
+ labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","catalog_overview":"📚 Каталог","services":"🛠 Услуги"}
+ if target=="catalog_overview":
+  x=rows[0]
+  return ("📚 Կատալոգ՝ "+str(x.get("master_categories_count") or 0)+" ուղղություն, "
+          +str(x.get("subcategories_count") or 0)+" ենթաուղղություն։")
  lines=[labels.get(target,"🔎 Результат")+" ("+str(len(rows))+"):"]
  for x in rows[:20]:
   if target=="applications":
@@ -402,7 +386,7 @@ def _admin_query_result_text(target,rows,filters,question):
   elif target=="services":
    prices=x.get("prices_amd") or []
    price_text=(" · գին="+", ".join(str(p)+" ֏" for p in prices if p is not None)) if prices else " · գին=—"
-   lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—")+" · "+str(x.get("category_name_am") or x.get("category_name_ru") or x.get("category_name_en") or "—")+price_text)
+   lines.append("#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · category="+str(x.get("category_id") or "—")+" · "+str(x.get("category_name_am") or x.get("category_name_ru") or x.get("category_name_en") or "—")+price_text+(" · "+str(x.get("partner_name")) if x.get("partner_name") else ""))
   else:lines.append("#"+str(x.get("id"))+" · "+str(x.get("name_am") or x.get("name_ru") or x.get("name_en") or "—")+" · "+str(x.get("master_name_am") or x.get("master_name_ru") or "—"))
  return "\n".join(lines)
 
@@ -736,8 +720,9 @@ Understand what the administrator means, not predefined command phrases. Input c
 Russian, English, mixed language, transliteration, typos, colloquial wording, elliptical follow-ups
 or broad natural questions. Use the supplied conversation context. A short follow-up may refer to the immediately previous
 database result by position, ID, field, name, or property (for example asking for "names" after a list
-of IDs). Resolve that reference from last_shown_query_rows and last_query_target before choosing a
-new target. This is semantic context resolution, not a predefined command list.
+of IDs). Resolve that reference from last_shown_query_rows, last_query_target, last_result_kind and last_result_facts before choosing a
+new target. If the previous result is an aggregate/catalog overview, preserve that subject for short
+follow-ups unless the administrator clearly introduces a new subject. This is semantic context resolution, not a predefined command list.
 
 Decide the goal, subject/entity, context reference, factual data needed, and whether the request is
 read-only or a mutation. Python is the source of truth: it resolves IDs, permissions and executes
@@ -1126,6 +1111,12 @@ async def _admin_semantic_answer(question,plan,state):
             rows,error=_admin_query_rows(target,plan.get("filters") or {},plan.get("limit") or 20,plan.get("sort"))
         facts={"target":target,"rows":rows or []}
         if error: facts={"error":error}
+    if not facts and state.get("last_result_facts"):
+        facts=_admin_safe(state.get("last_result_facts"))
+        if isinstance(facts,dict):
+            facts.setdefault("target",previous_target or target or "query_result")
+        state["last_query_target"]=previous_target
+        state["last_query"]=question[:500]
     if not facts and previous_rows:
         facts={"target":previous_target or target or "query_result","rows":previous_rows}
         state["last_query_target"]=previous_target
@@ -1134,12 +1125,18 @@ async def _admin_semantic_answer(question,plan,state):
     if not facts:
         return _admin_localized(plan.get("response_language","ru"),"unknown")
 
-    # Persist the factual rows that generated this answer. They become the context
-    # for the next natural-language follow-up.
-    if isinstance(facts,dict) and isinstance(facts.get("rows"),list):
+    # Persist the factual result that generated this answer. It becomes semantic context
+    # for the next natural-language follow-up, including aggregate results with no row list.
+    if isinstance(facts,dict):
         state["last_query_target"]=target or plan.get("target")
-        state["last_shown_query_rows"]=_admin_safe(facts.get("rows")[:20])
         state["last_query"]=question[:500]
+        if isinstance(facts.get("rows"),list):
+            state["last_shown_query_rows"]=_admin_safe(facts.get("rows")[:20])
+            state["last_result_kind"]="rows"
+            state["last_result_facts"]=None
+        else:
+            state["last_result_kind"]=target or plan.get("target") or "facts"
+            state["last_result_facts"]=_admin_safe(facts)
     fallback=json.dumps(facts,ensure_ascii=False,default=str)
     if isinstance(facts,dict) and "rows" in facts:
         if (target or entity_type)=="services":
@@ -1159,7 +1156,7 @@ be a short follow-up to the previous result. In that case, answer from the suppl
 the requested property (such as names, IDs, categories, prices, statuses) from those rows. If the user
 gives a numeric ID that appears in the previous rows, resolve it against those rows; do not ask the
 user to restate the request.
-Use ONLY the supplied database facts and the supplied truth/check results. Service prices may be supplied separately from catalog service rows as `prices_amd`; when present, these are the actual stored partner-service prices in AMD (֏). Do not say that prices are unavailable if `prices_amd` contains values. The truth/check results are authoritative for
+Use ONLY the supplied database facts and the supplied truth/check results. Service prices are supplied on the actual partner-specific `services` rows as `prices_amd` / `price_amd`; these are stored prices in AMD (֏). Do not say that prices are unavailable when a value is present. For catalog overview facts, `master_categories_count` is the real number of active directions and `subcategories_count` is the real number of active subcategories; preserve that subject for short follow-ups. The truth/check results are authoritative for
 whether something is actually wrong. Do NOT turn an empty field into an error, mandatory field, or
 approval problem unless the supplied facts explicitly prove that rule. Do not invent business rules,
 approval consequences, currency, prices, categories, or document status.
@@ -1167,7 +1164,7 @@ All application/service prices in these facts are in AMD (֏) unless the facts e
 currency. Never call an AMD amount dollars, euros, or another currency.
 For a "show/open" request, prefer a compact human-readable summary with the important fields; do not
 dump a Markdown table or raw database structure. If the user asks whether something is "normal", first
-state the factual status, then verified problems, then missing information that is merely informational.
+state the factual status, then verified problems, then missing information that is merely informational. If `category_audit` is supplied, use its verdicts: `matched` means no verified category mismatch in the supplied catalog evidence, `review` means a possible mismatch that needs review, and `insufficient_data` means the system cannot determine it. Do not replace an audit question with a generic service list.
 If no verified error is present, say that clearly. Do not mention AI, prompts, SQL, internal tools or
 chain-of-thought. Simple question = simple answer; broad inspection = compact structured summary."""},
             {"role":"user","content":payload}],temperature=0,max_tokens=700)
