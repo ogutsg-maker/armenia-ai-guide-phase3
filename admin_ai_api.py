@@ -1164,6 +1164,33 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
     return result
 
 
+def _admin_tool_context(plan, entity_type, entity_id):
+    """Execute only model-selected, role-allowed data tools and return factual results."""
+    requests=plan.get("tool_requests") or []
+    if not requests:
+        return {}
+    tools=DataTools("admin")
+    results=[]
+    for req in requests:
+        name=str(req.get("name") or "").strip()
+        args=dict(req.get("arguments") or {})
+        # Python owns identity resolution; the model never supplies raw SQL or permissions.
+        if entity_id:
+            if entity_type=="application" and name in {"get_application","get_documents","check_application"}:
+                args.setdefault("application_id",int(entity_id))
+            elif entity_type=="partner" and name in {"get_partner","get_documents","get_addresses","get_services"}:
+                args.setdefault("partner_id",int(entity_id))
+            elif entity_type=="business" and name=="get_addresses":
+                args.setdefault("business_id",int(entity_id))
+        try:
+            results.append(tools.execute(name,args))
+        except DataToolError as exc:
+            results.append({"tool":name,"error":str(exc)})
+        except Exception as exc:
+            results.append({"tool":name,"error":"tool_execution_failed","detail":str(exc)[:180]})
+    return {"tool_results":results}
+
+
 async def _admin_semantic_answer(question,plan,state):
     entity_type,entity_id=_admin_resolve_semantic_entity(plan,state)
     # A follow-up can naturally refer to the immediately previous query result.
@@ -1177,7 +1204,9 @@ async def _admin_semantic_answer(question,plan,state):
         if entity_type=="application": state["last_focused_application_id"]=entity_id
     needed=plan.get("data_needed") or []
     target=_admin_query_target(plan.get("target"))
-    facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state) if entity_id else {}
+    facts=_admin_tool_context(plan,entity_type,entity_id)
+    if not facts and entity_id:
+        facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state)
     if not facts and target:
         # If the user is asking a follow-up about the previous result, reuse those exact
         # rows instead of issuing a broader unrelated query.
