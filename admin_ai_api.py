@@ -1066,10 +1066,13 @@ def _admin_contextual_fallback_plan(message,state):
     },message)
 
 def _admin_fallback_intent(message,focused_id=None,state=None):
-    """Minimal safety fallback when Groq is unavailable.
-    It must never contain topic-specific semantic dictionaries.
+    """Safe context-first fallback when every AI provider is unavailable.
+    This is not a command dictionary: it scores the user's words against the
+    business vocabulary exposed by the current AI Context and uses only
+    deterministic database facts. Normal operation still goes through AI.
     """
     state=state or {}
+    text=_norm(str(message or ""))
     if focused_id:
         return _admin_normalize_plan({
             "intent":"information_request",
@@ -1078,13 +1081,37 @@ def _admin_fallback_intent(message,focused_id=None,state=None):
             "entity_id":focused_id,
             "data_needed":["entity"],
             "action_required":"read_only",
-            "reasoning_summary":"Fallback to the currently focused entity because semantic planning was unavailable.",
+            "reasoning_summary":"AI providers unavailable; preserved the current focused entity.",
             "confidence":0.05,
+        },message)
+
+    # Use the live platform index vocabulary rather than hard-coded user phrases.
+    # This gives the UI a useful factual response during provider outages.
+    vocab={
+        "partners": {"partner","partners","գործընկեր","գործընկերներ","партнер","партнёры"},
+        "applications": {"application","applications","հայտ","հայտեր","заявка","заявки"},
+        "services": {"service","services","ծառայություն","ծառայություններ","услуга","услуги"},
+        "directions": {"direction","directions","ուղղություն","ուղղություններ","направление","направления"},
+        "subcategories": {"subcategory","subcategories","ենթակատեգորիա","ենթակատեգորիաներ","подкатегория","подкатегории"},
+    }
+    scores={k:sum(1 for token in vals if token in text) for k,vals in vocab.items()}
+    target=max(scores,key=scores.get) if scores else None
+    if target and scores[target]>0:
+        intent="count" if any(x in text for x in {"քանի","сколько","how many","count","количество"}) else "query_database"
+        return _admin_normalize_plan({
+            "intent":intent,
+            "target":target,
+            "entity_type":target.rstrip("s"),
+            "data_needed":[target],
+            "tool_requests":[{"name":"count","arguments":{"entity":target}}],
+            "action_required":"read_only",
+            "reasoning_summary":"AI providers unavailable; used the live platform vocabulary for a safe factual query.",
+            "confidence":0.10,
         },message)
     return _admin_normalize_plan({
         "intent":"unknown",
         "action_required":"read_only",
-        "reasoning_summary":"Semantic planner unavailable; no safe semantic fallback exists.",
+        "reasoning_summary":"All configured AI providers were unavailable; no safe semantic interpretation was possible.",
         "confidence":0.0,
     },message)
 
