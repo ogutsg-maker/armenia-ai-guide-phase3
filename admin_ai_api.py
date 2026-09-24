@@ -11,6 +11,7 @@ from potential_partner_ai import PotentialPartnerAI
 from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 from ai_data_tools import DataTools, DataToolError
+from ai_datatools import AdminDataTools, data_contract
 
 
 def _norm(text):
@@ -301,6 +302,7 @@ def _admin_hydrate_context(state,limit=12):
         "last_result_kind":state.get("last_result_kind"),
         "last_result_facts":state.get("last_result_facts"),
         "active_context":state.get("active_context") or {},
+        "ai_schema":__import__("ai_schema").inspector.get_snapshot(),
         "response_language":state.get("response_language"),
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
@@ -1400,67 +1402,135 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
 
 
 def _admin_tool_context(plan, entity_type, entity_id):
-    """Execute only model-selected, role-allowed data tools and return factual results."""
+    """Execute model-selected safe tools and normalize every result to one Data Contract."""
     requests=plan.get("tool_requests") or []
     if not requests:
         return {}
-    tools=DataTools("admin")
+    business_tools=DataTools("admin")
+    universal_tools=AdminDataTools()
     results=[]
-    for req in requests:
+    for req in requests[:6]:
         name=str(req.get("name") or "").strip()
         args=dict(req.get("arguments") or {})
-        # Python owns identity resolution; the model never supplies raw SQL or permissions.
+
+        # Python owns identity resolution; the model never supplies raw SQL.
         if entity_id:
             if entity_type=="application" and name in {"get_application","get_documents","check_application"}:
                 args.setdefault("application_id",int(entity_id))
             elif entity_type=="partner" and name in {"get_partner","get_documents","get_addresses","get_services"}:
                 args.setdefault("partner_id",int(entity_id))
-            elif entity_type=="business" and name=="get_addresses":
-                args.setdefault("business_id",int(entity_id))
+
         try:
-            results.append(tools.execute(name,args))
+            if name in {"SEARCH","ANALYZE","CHECK","COMPARE","SUGGEST"}:
+                if name=="SEARCH":
+                    result=universal_tools.search(args.get("table"),args.get("filters") or {},
+                                                  args.get("columns"),args.get("limit",20))
+                elif name in {"ANALYZE","CHECK"}:
+                    result=(universal_tools.analyze if name=="ANALYZE" else universal_tools.check)(
+                        args.get("table"),args.get("record_id",entity_id),args.get("aspects") or [])
+                elif name=="COMPARE":
+                    result=universal_tools.compare(args.get("table"),args.get("ids") or [],args.get("columns"))
+                else:
+                    result=universal_tools.suggest(args.get("table"),args.get("query") or "",args.get("columns"))
+                results.append(result)
+                continue
+
+            raw=business_tools.execute(name,args)
+            payload=raw.get("data") if isinstance(raw,dict) else raw
+            if isinstance(payload,list):
+                records=[{"row_index":i,"table":name,"fields":item} for i,item in enumerate(payload)]
+            else:
+                records=[{"row_index":0,"table":name,"fields":payload}]
+            results.append(data_contract(tool_executed=name,data=records))
         except DataToolError as exc:
-            results.append({"tool":name,"error":str(exc)})
+            results.append(data_contract(tool_executed=name,status="error",system_notice=str(exc)))
         except Exception as exc:
-            results.append({"tool":name,"error":"tool_execution_failed","detail":str(exc)[:180]})
+            results.append(data_contract(tool_executed=name,status="error",
+                                         system_notice="tool_execution_failed:"+str(exc)[:250]))
     return {"tool_results":results}
 
 
 async def _admin_refine_tool_context(question, plan, entity_type, entity_id, facts):
-    """Second semantic planning pass after real data arrives."""
-    key=os.getenv("GROQ_API_KEY","").strip()
-    if not key:
+    """Bounded semantic Re-planning loop.
+
+    Each pass sees the accumulated Data Contracts and may request additional
+    safe tools. No chain-of-thought is persisted; only a short reasoning_summary
+    and factual tool results are retained.
+    """
+    if not isinstance(facts,dict):
         return facts
-    try:
-        from groq import AsyncGroq
-        client=AsyncGroq(api_key=key)
-        model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
-        available=DataTools("admin").available_tools()
-        payload=json.dumps({
-            "question":question,"entity_type":entity_type,"entity_id":entity_id,
-            "plan":plan,"facts":facts,"available_tools":available
-        },ensure_ascii=False,default=str)
-        resp=await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role":"system","content":"You are the second planning pass for the Armenia AI Guide admin assistant. You already received real database results. Decide whether they are sufficient. If not, request only additional safe business-data tools needed to complete the answer. Never request SQL, never invent tools, never invent IDs. Prefer the smallest number of additional calls. Return ONLY JSON with tool_requests and done."},
-                {"role":"user","content":payload}
+
+    accumulated=list(facts.get("tool_results") or [])
+    seen=set()
+    for item in accumulated:
+        if isinstance(item,dict):
+            seen.add(json.dumps({
+                "tool":item.get("tool_executed"),
+                "data":item.get("data"),
+            },ensure_ascii=False,default=str,sort_keys=True)[:1200])
+
+    max_steps=6
+    for _step in range(max_steps):
+        ctx={
+            "active_context": facts.get("active_context") or {},
+            "question": question,
+            "plan": plan,
+            "tool_results": accumulated,
+            "available_tools": DataTools("admin").available_tools()+[
+                {"name":"SEARCH","description":"schema-validated read-only table search"},
+                {"name":"ANALYZE","description":"schema/FK analysis of one record"},
+                {"name":"CHECK","description":"read-only consistency check"},
+                {"name":"COMPARE","description":"compare selected records"},
+                {"name":"SUGGEST","description":"find candidate records by text"},
             ],
-            temperature=0,max_tokens=500
+        }
+        try:
+            replanned=await _admin_ai_json(
+                question,
+                {
+                    "replanning": True,
+                    "active_context": facts.get("active_context") or {},
+                    "tool_results": accumulated,
+                    "plan": plan,
+                    "conversation": _admin_session(_admin_current_admin_id()).get("history",[])[-4:] if _admin_current_admin_id() else [],
+                }
+            )
+        except Exception:
+            break
+
+        requests=replanned.get("tool_requests") or []
+        if not requests:
+            break
+
+        fresh=_admin_tool_context(
+            {"tool_requests":requests},
+            entity_type,
+            entity_id,
         )
-        raw=(resp.choices[0].message.content or "").strip()
-        data=json.loads(raw)
-        requests=data.get("tool_requests") if isinstance(data,dict) else []
-        if not isinstance(requests,list) or not requests:
-            return facts
-        extra=_admin_tool_context({"tool_requests":requests[:4]},entity_type,entity_id)
-        if not extra:
-            return facts
-        merged=dict(facts) if isinstance(facts,dict) else {"initial":facts}
-        merged["additional_tool_results"]=extra.get("tool_results",[])
+        new_results=fresh.get("tool_results") or []
+        if not new_results:
+            break
+
+        added=0
+        for result in new_results:
+            signature=json.dumps({
+                "tool":result.get("tool_executed"),
+                "data":result.get("data"),
+            },ensure_ascii=False,default=str,sort_keys=True)[:2000]
+            if signature not in seen:
+                seen.add(signature)
+                accumulated.append(result)
+                added+=1
+        plan=replanned
+        if not added:
+            break
+
+    if accumulated:
+        merged=dict(facts)
+        merged["tool_results"]=accumulated
+        merged["replanning_steps"]=len(accumulated)
         return merged
-    except Exception:
-        return facts
+    return facts
 
 
 async def _admin_semantic_answer(question,plan,state):
@@ -1749,24 +1819,6 @@ async def admin_ai_message(admin_id,message):
         if contextual:
             c=contextual
 
-    # Generic catalog statistics intent: supports RU/AM/EN, transliteration and mixed language.
-    count_text=_norm(message)
-    has_count=bool(re.search(r"(сколько|количеств|count|how many|քանի|ինչքան|քանակ|skolko)", count_text, re.I|re.U))
-    has_cat=bool(re.search(r"(категор|category|categories|կատեգոր|կատեգորիա|ուղղություն|направлен)", count_text, re.I|re.U))
-    has_subcat=bool(re.search(r"(подкатегор|subcategory|subcategories|ենթակատեգոր|ենթակատեգորիա|ենթաուղղ)", count_text, re.I|re.U))
-    if has_count and (has_cat or has_subcat):
-        req=[]
-        if has_cat:
-            req.append({"name":"count","arguments":{"entity":"directions"}})
-        if has_subcat:
-            req.append({"name":"count","arguments":{"entity":"subcategories"}})
-        c=_admin_normalize_plan({
-            "intent":"catalog_counts","target":"catalog_overview",
-            "tool_requests":req,"data_needed":["catalog_overview"],
-            "action_required":"read_only","confidence":1.0,
-            "response_language":_admin_detect_language(message)
-        },message)
-
     ac=c.get("active_context")
     if isinstance(ac,dict):
         state["active_context"]=_admin_safe({"scope":ac.get("scope") or c.get("target") or "","subject":ac.get("subject") or c.get("entity_name") or "","intent":ac.get("intent") or c.get("intent") or "","query":ac.get("query") or message[:500],"filters":ac.get("filters") if isinstance(ac.get("filters"),dict) else (c.get("filters") or {}),"entity_type":ac.get("entity_type") or c.get("entity_type") or "","entity_id":ac.get("entity_id") if ac.get("entity_id") not in (None,"") else c.get("entity_id")})
@@ -1781,26 +1833,6 @@ async def admin_ai_message(admin_id,message):
     if intent=="catalog_counts":
         c["intent"]="information_request"
         c["target"]="catalog_overview"
-        intent="information_request"
-
-    # Natural-language inspection shortcut: when an application is already focused,
-    # category correctness is a factual inspection request, never a mutation.
-    category_question=bool(re.search(
-        r"(?:категор|подкатегор|category|subcategory|կատեգոր|ենթակատեգոր|ենթաուղղ).*(?:правиль|верн|correct|ճիշտ|սխալ)|"
-        r"(?:правиль|верн|correct|ճիշտ|սխալ).*(?:категор|подкатегор|category|subcategory|կատեգոր|ենթակատեգոր|ենթաուղղ)",
-        message, re.IGNORECASE|re.UNICODE))
-    if focused_id and category_question and "#" not in message and "№" not in message:
-        c["intent"]="information_request"
-        c["target"]="application"
-        c["entity_type"]="application"
-        c["entity_id"]=int(focused_id)
-        c["data_needed"]=["application","categories","services","verification"]
-        c["tool_requests"]=[
-            {"name":"get_application","arguments":{"application_id":int(focused_id)}},
-            {"name":"check_application","arguments":{"application_id":int(focused_id)}},
-            {"name":"check_catalog_match","arguments":{"service_name":str((_admin_hydrate_application(focused_id) or {}).get("service_name") or "")}}
-        ]
-        c=_admin_normalize_plan(c,message)
         intent="information_request"
 
     target=str(c.get("target") or "").lower()
