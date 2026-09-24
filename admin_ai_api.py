@@ -12,6 +12,7 @@ from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 from ai_data_tools import DataTools, DataToolError
 from ai_datatools import AdminDataTools, data_contract
+from ai_context_builder import build_ai_context
 
 
 def _norm(text):
@@ -949,7 +950,7 @@ async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
     raise AdminAIProviderError("All configured AI providers failed.",errors)
 
 def _admin_planner_context(ctx):
-    """Build a small semantic-planner context. DB schema/results stay in Python."""
+    """Build compact semantic context from business entities, not DB internals."""
     ctx=ctx if isinstance(ctx,dict) else {}
     active=ctx.get("active_context") if isinstance(ctx.get("active_context"),dict) else {}
     rows=ctx.get("last_shown_query_rows") or []
@@ -970,6 +971,19 @@ def _admin_planner_context(ctx):
                 "role":str(item.get("role") or "")[:20],
                 "content":str(item.get("content") or "")[:500]
             })
+
+    focused_type=str(ctx.get("last_focused_entity_type") or active.get("entity_type") or "").strip()
+    focused_id=ctx.get("last_focused_entity_id") or ctx.get("last_focused_application_id") or active.get("entity_id")
+    ai_context=""
+    try:
+        ai_context=build_ai_context(
+            focused_type or None,
+            focused_id,
+            include_platform_index=not bool(focused_id),
+        )
+    except Exception:
+        ai_context=""
+
     return {
         "active_context":{
             "scope":str(active.get("scope") or "")[:80],
@@ -980,9 +994,10 @@ def _admin_planner_context(ctx):
             "entity_id":active.get("entity_id")
         },
         "focused_entity":{
-            "type":str(ctx.get("last_focused_entity_type") or "")[:40],
-            "id":ctx.get("last_focused_entity_id") or ctx.get("last_focused_application_id")
+            "type":focused_type[:40],
+            "id":focused_id
         },
+        "ai_context":ai_context[:14000],
         "last_query_target":str(ctx.get("last_query_target") or ctx.get("last_result_kind") or "")[:60],
         "last_rows":compact_rows,
         "history":compact_history,
@@ -1012,7 +1027,8 @@ reasoning_summary is at most one short sentence."""
     payload=json.dumps({
         "message":str(message or "")[:1500],
         "context":planner_ctx,
-        "previous_tool_results":ctx.get("compact_tool_results",[]) if isinstance(ctx,dict) else []
+        "previous_tool_results":ctx.get("compact_tool_results",[]) if isinstance(ctx,dict) else [],
+        "ai_context":planner_ctx.get("ai_context","")
     },ensure_ascii=False,default=str)
     raw,provider,model=await _admin_ai_completion(
         [{"role":"system","content":system},{"role":"user","content":payload}],
