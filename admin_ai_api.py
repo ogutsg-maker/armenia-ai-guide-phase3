@@ -352,7 +352,7 @@ def _admin_hydrate_context(state,limit=12):
 
 def _admin_context(limit=30,include_catalog=False):
     applications=platform_db.rows("""SELECT a.*,p.user_id FROM partner_applications a JOIN partners p ON p.id=a.partner_id
-        WHERE a.status NOT IN ('approved','pending_partner') ORDER BY a.created_at DESC LIMIT %s""",(int(limit),))
+        WHERE a.status NOT IN ('approved','pending_partner','deleted') ORDER BY a.created_at DESC LIMIT %s""",(int(limit),))
     for a in applications:
         payload=a.get("payload_json") or {}
         if isinstance(payload,str):
@@ -371,7 +371,7 @@ def _admin_context(limit=30,include_catalog=False):
 # Dynamic Admin Query / Skills layer
 # =====================================================================
 _ADMIN_QUERY_TARGETS={
- "applications":{"table":"partner_applications a","select":"a.id,a.business_name,a.status,a.service_name,a.price,a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,a.location_marz,a.location_city,a.location_village,a.address,a.phone,a.description,a.created_at,a.updated_at","order":"a.created_at DESC","limit":50,"aliases":{"application","applications","requests","заявки","հայտեր"},"fields":{"status":"a.status","business_name":"a.business_name","service_name":"a.service_name","price":"a.price","direction_name":"a.direction_name","subcategory_name":"a.subcategory_name","location_marz":"a.location_marz","location_city":"a.location_city","location_village":"a.location_village","address":"a.address","phone":"a.phone","description":"a.description","category_id":"a.category_id","master_category_id":"a.master_category_id"}},
+ "applications":{"table":"partner_applications a","select":"a.id,a.business_name,a.status,a.service_name,a.price,a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,a.location_marz,a.location_city,a.location_village,a.address,a.phone,a.description,a.created_at,a.updated_at","order":"a.created_at DESC","base_where":"a.status <> 'deleted'","limit":50,"aliases":{"application","applications","requests","заявки","հայտեր"},"fields":{"status":"a.status","business_name":"a.business_name","service_name":"a.service_name","price":"a.price","direction_name":"a.direction_name","subcategory_name":"a.subcategory_name","location_marz":"a.location_marz","location_city":"a.location_city","location_village":"a.location_village","address":"a.address","phone":"a.phone","description":"a.description","category_id":"a.category_id","master_category_id":"a.master_category_id"}},
  "partners":{"table":"partners p","select":"p.id,p.user_id,p.business_name,p.business_description,p.status,p.verification_status,p.contact_share_policy,p.created_at,p.updated_at","order":"p.created_at DESC","limit":50,"aliases":{"partner","partners","партнеры","գործընկերներ"},"fields":{"status":"p.status","verification_status":"p.verification_status","business_name":"p.business_name","business_description":"p.business_description","location_marz":"__PARTNER_LOCATION_MARZ__","location_city":"__PARTNER_LOCATION_CITY__"}},
  "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
  "master_categories":{"table":"master_categories m","select":"m.id,m.name_am,m.name_ru,m.name_en,m.slug,m.is_active","order":"m.id ASC","limit":0,"aliases":{"master_categories","master category","master categories","directions","direction","главные категории","направления","ուղղություններ","ուղղություն","գլխավոր կատեգորիաներ","գլխավոր կատեգորիա"},"fields":{"name":"m.name_am","name_am":"m.name_am","name_ru":"m.name_ru","name_en":"m.name_en","slug":"m.slug","is_active":"m.is_active"}},
@@ -822,6 +822,9 @@ def _admin_state_preview(action):
                       "name":"service_name","service":"service_name","price":"price",
                       "description":"description","note":"admin_note"}.get(field))
         return "📨 Заявка #"+str(aid)+"\n🔧 "+str(field)+" : «"+str(old or "—")+"» → «"+str(action.get("new_value") or "—")+"»"
+    if action.get("intent")=="delete_applications":
+        ids=action.get("application_ids") or []
+        return "🗑 Удалить заявки: "+", ".join("#"+str(x) for x in ids)+"\n⚠️ Заявки будут скрыты из активного списка."
     if action.get("intent")=="approve_application":
         return "📨 Заявка #"+str(aid)+"\n✅ Перевести заявку на этап документа"
     if action.get("intent")=="reject_application":
@@ -831,6 +834,23 @@ def _admin_state_preview(action):
     return "Действие не определено."
 
 async def _admin_execute_state_action(action):
+    if action.get("intent")=="delete_applications":
+        ids=action.get("application_ids") or []
+        clean=[]
+        for value in ids:
+            try:
+                iv=int(value)
+                if iv>0 and iv not in clean:
+                    clean.append(iv)
+            except (TypeError,ValueError):
+                pass
+        if not clean:
+            return "Չկա ջնջման ենթակա հայտ։"
+        platform_db.execute(
+            "UPDATE partner_applications SET status='deleted',updated_at=NOW() WHERE id = ANY(%s) AND status <> 'deleted'",
+            (clean,)
+        )
+        return "✓ Ջնջված հայտեր՝ "+", ".join("#"+str(x) for x in clean)+"."
     aid=int(action.get("application_id") or 0)
     if action.get("intent")=="edit_application":
         field=action.get("field")
@@ -1734,6 +1754,44 @@ async def admin_ai_message(admin_id,message):
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply)
         return reply
 
+    # High-confidence application navigation/deletion is handled locally.
+    # This prevents provider rate limits from breaking basic admin operations.
+    open_match=re.search(r"(?i)\\b(?:открой|открыть|open|բացիր|բացել|ցույց\\s+տուր)\\s*(?:заявку|заявка|application|հայտ)?\\s*#?\\s*(\\d+)\\b", message)
+    if open_match:
+        try:
+            open_id=int(open_match.group(1))
+            if _admin_hydrate_application(open_id):
+                state["last_focused_application_id"]=open_id
+                state["last_focused_entity_type"]="application"
+                state["last_focused_entity_id"]=open_id
+                reply=await _admin_execute({"intent":"open_application","application_id":open_id})
+            else:
+                reply="Заявка #"+str(open_id)+" не найдена."
+        except Exception:
+            reply="Не удалось открыть заявку."
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
+    delete_match=re.search(r"(?i)\\b(?:удали|удалить|удалите|delete|remove|հեռացրու|հեռացնել|ջնջիր|ջնջել)\\b", message)
+    if delete_match:
+        ids=[]
+        explicit=[int(x) for x in re.findall(r"#?(\\d+)",message)]
+        if explicit:
+            ids=explicit
+        else:
+            rows=state.get("last_shown_query_rows") or []
+            if rows:
+                ids=[int(row["id"]) for row in rows if isinstance(row,dict) and str(row.get("id") or "").isdigit()]
+            if not ids:
+                ids=[int(row["id"]) for row in (state.get("current_list") or []) if isinstance(row,dict) and str(row.get("id") or "").isdigit()]
+        ids=list(dict.fromkeys(ids))
+        if not ids:
+            reply="Укажите номер заявки или сначала покажите заявки."
+            _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+        action={"intent":"delete_applications","application_ids":ids}
+        state["pending_action"]=_admin_safe(action)
+        reply="🤖 Подготовил действие:\n\n"+_admin_state_preview(action)+"\n\nПодтвердить удаление? «да» / «нет»"
+        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+
     # Route ordinary read-only conversation through the semantic planner before legacy command handlers.
     try:
         plan_raw=await _admin_ai_json(message,state)
@@ -2022,7 +2080,7 @@ async def admin_ai_message(admin_id,message):
         reply="🔎 Нашёл исправление для заявки #"+str(aid)+":\n\n"+_admin_state_preview(action)+"\n\nПодтвердить? «да» / «нет»"
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    if intent not in {"edit_application","approve_application","reject_application","clarify_application"}:
+    if intent not in {"edit_application","approve_application","reject_application","clarify_application","delete_applications"}:
         reply="Я понял запрос не полностью. Скажите: «покажи заявки», «сколько заявок?», «открой #36», «проверь подкатегорию» или «цена неправильная»."
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
