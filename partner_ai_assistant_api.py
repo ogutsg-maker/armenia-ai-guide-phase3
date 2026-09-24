@@ -280,6 +280,22 @@ async def api_ai_command(request: web.Request):
         if pending:
             _, token, command = max(pending, key=lambda item: item[0])
             _PENDING.pop(token, None)
+            # Re-resolve the pending entity against the latest live context.
+            # The original AI response may have omitted service_id/name.
+            pending_intent = command.get("intent")
+            if pending_intent in {"update_service", "delete_service"}:
+                pending_name = re.sub(r"\s+", " ", str(command.get("name") or "").casefold()).strip()
+                if not pending_name:
+                    pending_name = re.sub(r"\s+", " ", str(command.get("message") or "").casefold()).strip()
+                candidates = []
+                for svc in ctx.get("services", []):
+                    svc_name = re.sub(r"\s+", " ", str(svc.get("name") or "").casefold()).strip()
+                    if svc_name and svc_name in pending_name:
+                        candidates.append(svc)
+                if len(candidates) == 1:
+                    command["service_id"] = int(candidates[0]["id"])
+                    command["business_id"] = int(candidates[0]["business_id"])
+                    command["name"] = candidates[0].get("name")
             result = await _execute_mutation(pid, command, ctx)
             if isinstance(result, web.Response):
                 # Rebuild the partner context after every confirmed mutation.
@@ -325,9 +341,23 @@ async def api_ai_command(request: web.Request):
 
     # Resolve an existing service from the live partner context before mutation.
     # AI still decides the intent; Python only verifies the target entity.
-    if intent in {"update_service", "delete_service"} and not command.get("service_id"):
+    # The message itself is also used as a deterministic entity hint. This is
+    # important for short requests such as "Удали педикюр": the model may return
+    # delete_service without a name, while the live context contains exactly one
+    # matching service.
+    if intent in {"update_service", "delete_service"}:
         wanted = re.sub(r"\s+", " ", str(command.get("name") or "").casefold()).strip()
-        if wanted:
+        if not wanted:
+            msg_norm = re.sub(r"\s+", " ", message.casefold()).strip()
+            matches_from_message = []
+            for svc in ctx.get("services", []):
+                service_name = re.sub(r"\s+", " ", str(svc.get("name") or "").casefold()).strip()
+                if service_name and service_name in msg_norm:
+                    matches_from_message.append(svc)
+            if len(matches_from_message) == 1:
+                wanted = re.sub(r"\s+", " ", str(matches_from_message[0].get("name") or "").casefold()).strip()
+                command["name"] = matches_from_message[0].get("name")
+        if wanted and not command.get("service_id"):
             candidates = []
             for svc in ctx.get("services", []):
                 service_name = re.sub(r"\s+", " ", str(svc.get("name") or "").casefold()).strip()
@@ -336,10 +366,11 @@ async def api_ai_command(request: web.Request):
             if len(candidates) == 1:
                 command["service_id"] = int(candidates[0]["id"])
                 command["business_id"] = int(candidates[0]["business_id"])
-    if intent in {"update_service", "delete_service"} and command.get("service_id"):
-        svc = next((x for x in ctx.get("services", []) if int(x.get("id")) == int(command["service_id"])), None)
-        if svc:
-            command["business_id"] = int(svc["business_id"])
+        if command.get("service_id"):
+            svc = next((x for x in ctx.get("services", []) if int(x.get("id")) == int(command["service_id"])), None)
+            if svc:
+                command["business_id"] = int(svc["business_id"])
+                command["name"] = svc.get("name") or command.get("name")
 
     # Resolve an explicitly named company deterministically. Do not depend on
     # Groq returning business_id when the partner has already named the company
