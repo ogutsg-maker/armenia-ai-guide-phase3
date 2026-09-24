@@ -1191,6 +1191,43 @@ def _admin_tool_context(plan, entity_type, entity_id):
     return {"tool_results":results}
 
 
+async def _admin_refine_tool_context(question, plan, entity_type, entity_id, facts):
+    """Second semantic planning pass after real data arrives."""
+    key=os.getenv("GROQ_API_KEY","").strip()
+    if not key:
+        return facts
+    try:
+        from groq import AsyncGroq
+        client=AsyncGroq(api_key=key)
+        model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
+        available=DataTools("admin").available_tools()
+        payload=json.dumps({
+            "question":question,"entity_type":entity_type,"entity_id":entity_id,
+            "plan":plan,"facts":facts,"available_tools":available
+        },ensure_ascii=False,default=str)
+        resp=await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role":"system","content":"You are the second planning pass for the Armenia AI Guide admin assistant. You already received real database results. Decide whether they are sufficient. If not, request only additional safe business-data tools needed to complete the answer. Never request SQL, never invent tools, never invent IDs. Prefer the smallest number of additional calls. Return ONLY JSON with tool_requests and done."},
+                {"role":"user","content":payload}
+            ],
+            temperature=0,max_tokens=500
+        )
+        raw=(resp.choices[0].message.content or "").strip()
+        data=json.loads(raw)
+        requests=data.get("tool_requests") if isinstance(data,dict) else []
+        if not isinstance(requests,list) or not requests:
+            return facts
+        extra=_admin_tool_context({"tool_requests":requests[:4]},entity_type,entity_id)
+        if not extra:
+            return facts
+        merged=dict(facts) if isinstance(facts,dict) else {"initial":facts}
+        merged["additional_tool_results"]=extra.get("tool_results",[])
+        return merged
+    except Exception:
+        return facts
+
+
 async def _admin_semantic_answer(question,plan,state):
     entity_type,entity_id=_admin_resolve_semantic_entity(plan,state)
     # A follow-up can naturally refer to the immediately previous query result.
@@ -1205,6 +1242,8 @@ async def _admin_semantic_answer(question,plan,state):
     needed=plan.get("data_needed") or []
     target=_admin_query_target(plan.get("target"))
     facts=_admin_tool_context(plan,entity_type,entity_id)
+    if facts:
+        facts=await _admin_refine_tool_context(question,plan,entity_type,entity_id,facts)
     if not facts and entity_id:
         facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state)
     if not facts and target:
