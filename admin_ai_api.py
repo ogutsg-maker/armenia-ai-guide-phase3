@@ -216,6 +216,14 @@ def _admin_safe_human_fallback(facts, question, plan, target="", entity_type="")
         return "📚 Ենթակատեգորիաների քանակը՝ "+str(facts["subcategories_count"])+"։"
     if isinstance(facts,dict) and "rows" in facts:
         return _admin_query_result_text(target or entity_type or "query_result",facts.get("rows") or [],plan.get("filters") or {},question)
+    if isinstance(facts,dict) and isinstance(facts.get("candidates"), list):
+        cands=facts.get("candidates") or []
+        if cands:
+            top=cands[0]
+            name=top.get("name_am") or top.get("name_ru") or top.get("name_en") or "—"
+            reason=top.get("match_reason")
+            return "🔎 Կատալոգի համապատասխանություն՝ «"+str(name)+"»"+(" · օբյեկտի համընկնում" if reason=="object_match" else "")+"։"
+
     if isinstance(facts,dict) and facts.get("entity") and facts.get("count") is not None:
         labels={"directions":"կատեգորիա","subcategories":"ենթակատեգորիա","partners":"գործընկեր","applications":"հայտ","services":"ծառայություն"}
         return "📊 "+labels.get(str(facts.get("entity")),str(facts.get("entity")))+"՝ "+str(facts.get("count"))+"։"
