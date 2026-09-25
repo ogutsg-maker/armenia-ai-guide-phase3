@@ -12,9 +12,7 @@ class ClientAI:
             try: ctx = json.loads(ctx)
             except Exception: ctx = {}
         add_ai_message(session['id'], 'user', text)
-        cats = rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug
-                      FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-                      WHERE c.is_active=TRUE AND COALESCE(m.is_active,TRUE)=TRUE ORDER BY c.id""")
+        cats = search_catalog(limit=500)
         analysis = await self.ai.analyze_request(text, cats)
         location = analysis.city or analysis.village or analysis.marz or analysis.location
         if not ctx.get('request_id'):
@@ -24,9 +22,7 @@ class ClientAI:
             update_service_request(ctx['request_id'], analysis.category_id, 'searching', analysis.summary, location, analysis.model_dump())
         candidates = self._find_candidates(analysis)
         if ctx.get('request_id'):
-            execute('DELETE FROM request_candidates WHERE request_id=%s', (ctx['request_id'],))
-            for rank,c in enumerate(candidates,1):
-                execute('INSERT INTO request_candidates(request_id,partner_id,service_id,rank_score,match_reason) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING', (ctx['request_id'],c['partner_id'],c['service_id'],100-rank*5,self._match_reason(analysis,lang)))
+            replace_request_candidates(ctx['request_id'], candidates, self._match_reason(analysis,lang))
         ctx['last_analysis'] = analysis.model_dump(); ctx['stage'] = 'options_found' if candidates else 'clarifying'
         reply = self._options_reply(candidates, lang) if candidates else self._clarify(ctx, analysis, lang)
         update_session(session['id'], ctx)
