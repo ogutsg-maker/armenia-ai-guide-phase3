@@ -27,6 +27,17 @@ def test_ai_context_has_no_sql_calls():
     assert "delete " not in text
 
 
+def test_ai_context_builder_has_no_sql_calls():
+    tree = _tree("ai_context_builder.py")
+    forbidden = {"execute", "one", "rows", "cursor", "commit"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            assert node.func.attr not in forbidden, f"direct DB call in AI Context Builder: {node.func.attr}"
+    text = (ROOT / "ai_context_builder.py").read_text(encoding="utf-8").lower()
+    for keyword in ("select ", "insert ", "update ", "delete "):
+        assert keyword not in text
+
+
 def test_ai_tools_has_no_sql_calls():
     tree = _tree("ai_data_tools.py")
     forbidden = {"execute", "one", "rows", "cursor", "commit"}
