@@ -44,6 +44,19 @@ def execute(sql, params=(), returning=False):
 
 def json_dump(v): return json.dumps(v or {}, ensure_ascii=False)
 
+
+def transaction(callback):
+    """Run repository operations on one PostgreSQL transaction.
+
+    The callback receives a dict-row cursor and must return a JSON-safe value.
+    Exceptions roll back the whole transaction; the connection is never leaked.
+    """
+    with _conn() as c:
+        with c.cursor() as cur:
+            result = callback(cur)
+        c.commit()
+        return _safe(result)
+
 # Partner
 
 def get_partner_by_user(user_id): return one('SELECT * FROM partners WHERE user_id=%s',(user_id,))
