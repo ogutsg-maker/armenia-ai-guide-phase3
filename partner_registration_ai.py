@@ -496,6 +496,28 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             continue
         m = price_re.search(clause)
         if not m:
+            # Some partners omit the currency for a clearly service-priced clause,
+            # e.g. "Մեկօրյա տուրը սկսած 8000". Accept only when the clause
+            # contains a service/tour signal; never treat arbitrary numbers as prices.
+            m_plain = re.search(
+                r"(?P<name>.+?)\\s*(?:՝|:|—|–|-|\\b(?:սկսած|արժե|գինն\\s+է|from|starting\\s+at)\\b)\\s*(?P<price>\\d[\\d\\s.,]*)\\s*$",
+                clause, flags=re.I
+            )
+            if not m_plain or not re.search(
+                r"տուր|տուրեր|շրջագայ|էքսկուրս|ծառայ|tour|trip|travel|excursion|услуг|тур",
+                m_plain.group("name"), flags=re.I
+            ):
+                continue
+            class _PlainPrice:
+                def __init__(self, name, price):
+                    self._name=name; self._price=price
+                def group(self, key):
+                    return self._name if key=="name" else self._price
+            m = _PlainPrice(m_plain.group("name"), m_plain.group("price"))
+            currency_re_match = False
+        else:
+            currency_re_match = True
+        if not m:
             continue
         name = _norm(m.group("name")).strip(" —–-:;")
         low_name = name.lower()
