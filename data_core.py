@@ -182,7 +182,7 @@ def search_services(
     max_price: float | None = None,
     limit: int = 100,
 ):
-    where = ["s.status <> 'archived'"]
+    where = ["s.status='approved'", "p.status='approved'", "EXISTS (SELECT 1 FROM partner_direction_categories pdc JOIN partner_directions pd ON pd.id=pdc.partner_direction_id WHERE pdc.category_id=s.category_id AND pd.partner_id=s.partner_id AND pd.status='approved')"]
     params: list[Any] = []
     if partner_id is not None:
         where.append("s.partner_id=%s")
