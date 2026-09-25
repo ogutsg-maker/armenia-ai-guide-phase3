@@ -526,17 +526,33 @@ async def serve_index(request: web.Request):
         return web.json_response({"ok": False, "error": "welcome.html_not_found"}, status=500)
     return web.FileResponse(path)
 
-async def serve_welcome(request: web.Request):
-    path = WEB_APPS_DIR / "welcome.html"
+async def _serve_html_file(request: web.Request, filename: str):
+    path = WEB_APPS_DIR / filename
     if not path.is_file():
-        return web.json_response({"ok": False, "error": "welcome.html_not_found"}, status=500)
-    return web.FileResponse(path)
+        logger.error("❌ WebApp file missing for %s: %s", request.path, path)
+        return web.json_response({"ok": False, "error": f"{filename}_not_found"}, status=500)
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.exception("❌ Cannot read WebApp file %s", path)
+        return web.json_response({"ok": False, "error": "webapp_read_failed", "detail": str(exc)}, status=500)
+    logger.info("📤 WebApp %s -> %s bytes for %s", filename, len(content.encode("utf-8")), request.path)
+    return web.Response(
+        text=content,
+        content_type="text/html",
+        charset="utf-8",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+async def serve_welcome(request: web.Request):
+    return await _serve_html_file(request, "welcome.html")
 
 async def serve_partner(request: web.Request):
-    path = WEB_APPS_DIR / "partner.html"
-    if not path.is_file():
-        return web.json_response({"ok": False, "error": "partner.html_not_found"}, status=500)
-    return web.FileResponse(path)
+    return await _serve_html_file(request, "partner.html")
 
 def log_webapp_files():
     for name in ("welcome.html", "partner.html"):
