@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="hy"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Armenia AI Guide — Partner</title><script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080c18;color:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:820px;margin:auto;padding:16px 12px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.brand{font-size:21px;font-weight:800}.sub{font-size:9px;letter-spacing:.2em;color:#9da8bc;margin-top:3px}
+.back{background:#ffffff10;border:1px solid #ffffff18;color:#fff;border-radius:12px;padding:9px 12px}.panel{background:#ffffff08;border:1px solid #ffffff12;border-radius:22px;overflow:hidden}
+.head{padding:18px;border-bottom:1px solid #ffffff10}.head h1{margin:0 0 6px;font-size:23px}.muted{color:#aeb7c8;line-height:1.45;font-size:14px}
+.chat{max-height:48vh;min-height:220px;overflow:auto;padding:16px}.msg{max-width:90%;padding:12px 14px;border-radius:17px;margin-bottom:10px;white-space:pre-wrap;line-height:1.45;font-size:14px}.ai{background:#ffffff0d;border-top-left-radius:5px}.user{margin-left:auto;background:#6257d8;border-top-right-radius:5px}
+.composer{padding:10px;border-top:1px solid #ffffff10;display:flex;gap:8px}textarea{flex:1;min-height:48px;max-height:130px;resize:none;background:#ffffff0b;border:1px solid #ffffff18;border-radius:14px;color:#fff;padding:12px;font:inherit;outline:0}
+.send{width:54px;border:0;border-radius:14px;background:#9d8cff;color:#07101d;font-weight:800}.status{padding:10px;text-align:center;color:#aeb7c8;font-size:12px}.error{color:#ffb4b4}.hidden{display:none!important}
+.form{padding:16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:620px){.grid{grid-template-columns:1fr}}
+label{display:block;color:#cbd3e1;font-size:12px;margin:0 0 5px}.field{margin-bottom:11px}input,select{width:100%;height:44px;background:#ffffff0b;border:1px solid #ffffff18;border-radius:12px;color:#fff;padding:10px;font:inherit;outline:0}select option{background:#111827;color:#fff}
+.section{border-top:1px solid #ffffff10;padding-top:14px;margin-top:14px}.section h3{margin:0 0 10px;font-size:16px}.hint{font-size:12px;color:#8f9aae;margin-bottom:10px}
+.service{border:1px solid #ffffff14;border-radius:12px;padding:8px;margin-bottom:7px}.service-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(110px,.8fr) minmax(120px,.8fr) 34px;gap:6px;align-items:end}.service label{font-size:11px;margin-bottom:3px}.service input,.service select{height:40px;padding:8px;font-size:13px}.service .smallbtn{height:40px;padding:8px 9px}@media(max-width:620px){.service-grid{grid-template-columns:minmax(0,1fr) minmax(90px,.75fr) 34px}.service-grid>div:nth-child(3){grid-column:1/3}.service-grid .wide,.service-grid .scwrap{grid-column:auto}}
+.smallbtn,.primary{border:0;border-radius:12px;padding:10px 13px;font-weight:800;cursor:pointer}.smallbtn{background:#ffffff12;color:#fff}.primary{width:100%;margin-top:10px;height:48px;background:#9d8cff;color:#07101d}.danger{background:#ff5f6d22;color:#ffb4b4}
+.doc{border:1px solid #ffffff14;border-radius:14px;padding:12px}.doc input{height:auto;padding:8px 0;border:0;background:transparent}.notice{border:1px solid #f0c75e44;background:#f0c75e12;border-radius:12px;padding:10px;color:#e9d79a;font-size:12px;margin-bottom:12px}
+</style></head><body><div class="wrap"><div class="top"><div><div class="brand">✦ Armenia AI Guide</div><div class="sub">ARMENIA · AI CONCIERGE</div></div><button class="back" onclick="try{Telegram.WebApp.close()}catch(e){history.back()}">‹</button></div>
+<div class="panel"><div class="head"><h1>🏢 Գործընկերոջ հայտ</h1><div class="muted">Պատմեք ձեր բիզնեսի մասին ազատ ձևով՝ ինչպես է կոչվում, որտեղ է գտնվում, ինչ ծառայություններ եք մատուցում և ինչ գներով։ Կարող եք նշել նաև հասցեն և աշխատանքային ժամերը։ AI-ը կկառուցի հայտը, իսկ դուք կկարողանաք ստուգել և խմբագրել տվյալները։</div></div>
+<div id="chat" class="chat"></div><div id="composer" class="composer"><textarea id="input" placeholder="Օրինակ՝ ունեմ համակարգչային սպասարկման ծառայություն Հրազդանում..."></textarea><button id="send" class="send">➤</button></div>
+<div id="formWrap" class="form hidden"></div><div id="status" class="status">Միացում…</div></div></div>
+<script>
+let entryAllowed=false;
+try{entryAllowed=sessionStorage.getItem('aig_partner_entry')==='welcome';sessionStorage.removeItem('aig_partner_entry')}catch(e){}
+if(!entryAllowed){location.replace('/welcome.html');throw new Error('Direct partner entry blocked');}
+const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const initData=tg?.initData||'',uid=Number(tg?.initDataUnsafe?.user?.id||0);
+const chat=document.getElementById('chat'),input=document.getElementById('input'),send=document.getElementById('send'),status=document.getElementById('status'),composer=document.getElementById('composer'),formWrap=document.getElementById('formWrap');let busy=false,application=null,draftApplication=null;
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function add(role,text){const d=document.createElement('div');d.className='msg '+role;d.textContent=String(text??'');chat.appendChild(d);chat.scrollTop=chat.scrollHeight}
+async function jsonResponse(r){const text=await r.text();try{return JSON.parse(text)}catch(e){const clean=text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();throw new Error('HTTP '+r.status+(clean?' — '+clean.slice(0,300):' — Սերվերը չվերադարձավ JSON'))}}
+async function api(path,body,method='POST'){const opt={method,headers:{'X-Telegram-Init-Data':initData}};if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body)}const r=await fetch(path,opt);const d=await jsonResponse(r);if(!r.ok||d.ok===false)throw new Error(d.detail||d.message||d.error||((d.fields&&d.fields.length)?d.fields.join(', '):'HTTP '+r.status));return d}
+function payload(){let p={};try{p=typeof application.payload_json==='string'?JSON.parse(application.payload_json||'{}'):(application.payload_json||{})}catch(e){}return p}
+function renderForm(){
+ const p=payload();
+ const value=(key,...alts)=>{for(const src of [application,p]){for(const k of [key,...alts]){const v=src&&src[k];if(v!==undefined&&v!==null&&String(v).trim()!=='')return v}}return ''};
+ const rawServices=Array.isArray(p.services)&&p.services.length?p.services:(Array.isArray(application.services)?application.services:[]);
+ const services=rawServices.filter(s=>s&&typeof s==='object'&&String(s.name||s.service_name||'').trim()).map(s=>({
+   ...s,
+   name:String(s.name||s.service_name||'').trim(),
+   price:s.price??null,
+   price_type:s.price_type||'fixed',
+   matched_subcategory_id:s.matched_subcategory_id??s.subcategory_id??s.category_id??null
+ }));
+ if(!services.length){
+   const legacyName=String(application.service_name||p.service_name||'').trim();
+   if(legacyName) services.push({name:legacyName,price:application.price??p.price??null,price_type:'fixed',matched_subcategory_id:application.category_id??p.category_id??null});
+ }
+ formWrap.innerHTML='<div class="notice">AI-ի կողմից լրացված տվյալները կարող եք ամբողջությամբ փոխել։ Հայտը ադմինին չի ուղարկվի մինչև «Համաձայն եմ / Ուղարկել հայտը» կոճակը սեղմելը։</div>'+
+ '<div class="grid">'+field('business_name','Բիզնես / կազմակերպության անուն',value('business_name'))+
+ field('location_marz','Մարզ',value('location_marz','marz','region'))+field('location_city','Քաղաք / բնակավայր',value('location_city','city'))+
+ field('location_village','Գյուղ / համայնք',value('location_village','village'))+field('address','Ամբողջական հասցե',value('address'))+
+ field('phone','Հեռախոս',value('phone'))+field('working_hours','Աշխատանքային ժամեր',value('working_hours'))+'</div>'+
+ '<div class="section"><h3>🛠 Ծառայություններ և գներ</h3><div class="hint">AI-ը ավտոմատ կհասկանա ձեր նշած ծառայությունները։ Դուք կարող եք ստուգել և անհրաժեշտության դեպքում ուղղել ծառայության անունն ու գինը։</div><div id="services"></div><button class="smallbtn" onclick="addService()">＋ Ավելացնել ծառայություն</button></div>'+
+ '<div class="section">'+field('description','Նկարագրություն',value('description'),true)+'</div>'+
+ '<div class="section"><h3>📄 Հաստատող փաստաթուղթ</h3><div class="doc"><div class="hint">Կցեք բիզնեսը/ծառայությունը հաստատող փաստաթուղթ (PDF, JPG, PNG, WEBP, մինչև 10 MB).</div><input id="document" type="file" accept="image/*,.pdf,.jpg,.jpeg,.png,.webp"><div id="docState" class="hint">'+(application.document_id?'✅ Փաստաթուղթը արդեն կցված է':'')+'</div></div></div>'+
+ '<button class="primary" onclick="saveAndSubmit()">✓ Համաձայն եմ / Ուղարկել հայտը</button>';
+ const box=document.getElementById('services');box.innerHTML='';services.forEach(s=>addService(s));if(!services.length)addService({});
+}
+function field(id,label,value,area){const required=id==='business_name';const labelText=label+(required?' *':'');return '<div class="field" '+(area?'style="grid-column:1/-1"':'')+'><label>'+labelText+'</label>'+(area?'<textarea id="'+id+'" style="width:100%;min-height:90px;background:#ffffff0b;border:1px solid #ffffff18;border-radius:12px;color:#fff;padding:10px;font:inherit">'+esc(value)+'</textarea>':'<input id="'+id+'" '+(required?'required ':'')+'value="'+esc(value)+'">')+'</div>'}
+function addService(s={}){const box=document.getElementById('services');const div=document.createElement('div');div.className='service';div.innerHTML='<div class="service-grid"><div><label>Ծառայություն</label><input class="sn" value="'+esc(s.name||'')+'"></div><div><label>Գին</label><input class="sp" type="number" min="0" step="1" value="'+esc(s.price??'')+'"></div><div><label>Տեսակ</label><select class="st"><option value="fixed" '+(s.price_type==='fixed'?'selected':'')+'>Ֆիքսված</option><option value="from" '+(s.price_type==='from'?'selected':'')+'>Սկսած</option></select></div><button class="smallbtn danger" onclick="this.closest(\'.service\').remove()">✕</button></div>';box.appendChild(div)}
+ async function openApplication(a){application=a||{};draftApplication=null;composer.classList.add('hidden');chat.classList.add('hidden');renderForm();formWrap.classList.remove('hidden');status.textContent='Լրացրեք հայտը և ուղարկեք այն ադմինին'}
+async function continueDraft(){if(!draftApplication)return;await openApplication(draftApplication)}
+async function loadDraft(){try{const d=await api('/api/master/'+uid+'/applications',undefined,'GET');const a=(d.applications||[]).find(x=>['pending_partner','sent_back'].includes(String(x.status)));if(a){draftApplication=a;const sentBack=String(a.status)==='sent_back';status.innerHTML='<button class="smallbtn" onclick="continueDraft()">'+(sentBack?'↩ Ուղղել վերադարձված հայտը':'📋 Շարունակել պահպանված հայտը')+'</button>';}}catch(e){draftApplication=null}}
+async function start(){if(!initData){status.textContent='Բացեք այս բաժինը Telegram հավելվածում';return}try{await loadDraft();const d=await api('/api/webapp/partner/start');add('ai',String(d.message||'Պատմեք ձեր բիզնեսի մասին։').replace(/<[^>]*>/g,''));status.textContent=draftApplication?'Կարող եք շարունակել AI-ի հետ կամ բացել պահպանված հայտը':'Գրանցումը սկսված է';input.focus()}catch(e){status.innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
+async function sendMessage(){const text=input.value.trim();if(!text||busy)return;busy=true;send.disabled=true;add('user',text);input.value='';status.textContent='AI-ը վերլուծում է…';try{const d=await api('/api/webapp/partner/message',{text});if(d.message)add('ai',d.message);if(d.open_form&&d.application_id){const aiProfile=(d.profile&&typeof d.profile==='object')?d.profile:{};let serverApp={id:d.application_id};let serverPayload={};try{const q=await api('/api/master/'+uid+'/applications/'+d.application_id,undefined,'GET');serverApp=q.application||serverApp;serverPayload=typeof serverApp.payload_json==='string'?JSON.parse(serverApp.payload_json||'{}'):(serverApp.payload_json||{})}catch(e){}const services=Array.isArray(aiProfile.services)&&aiProfile.services.length?aiProfile.services:(Array.isArray(serverPayload.services)?serverPayload.services:[]);application={...serverApp,...aiProfile,
+business_name:aiProfile.business_name||serverApp.business_name||serverPayload.business_name||'',
+location_marz:aiProfile.marz||aiProfile.region||serverApp.location_marz||serverPayload.location_marz||serverPayload.marz||serverPayload.region||'',
+location_city:aiProfile.city||serverApp.location_city||serverPayload.location_city||serverPayload.city||'',
+location_village:aiProfile.village||serverApp.location_village||serverPayload.location_village||serverPayload.village||'',
+address:aiProfile.address||serverApp.address||serverPayload.address||'',
+phone:aiProfile.phone||serverApp.phone||serverPayload.phone||'',
+working_hours:aiProfile.working_hours||serverApp.working_hours||serverPayload.working_hours||'',
+master_category_id:aiProfile.master_category_id||aiProfile.ai_master_category_id||serverApp.master_category_id||serverPayload.master_category_id||serverPayload.ai_master_category_id||'',
+category_id:aiProfile.category_id||aiProfile.ai_category_id||serverApp.category_id||serverPayload.category_id||serverPayload.ai_category_id||'',
+direction_name:aiProfile.direction||serverApp.direction_name||serverPayload.direction||serverPayload.direction_name||'',
+description:aiProfile.description||serverApp.description||serverPayload.description||'',
+payload_json:JSON.stringify({...serverPayload,...aiProfile,services})};application.services=services;await openApplication(application)}}catch(e){add('ai','⚠️ '+e.message);status.textContent='Կարող եք շարունակել'}finally{busy=false;send.disabled=false}}
+send.onclick=sendMessage;input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
+async function saveAndSubmit(){try{const businessName=document.getElementById('business_name').value.trim();if(!businessName)throw new Error('Խնդրում ենք նշել բիզնեսի անունը / Please enter the business name');const services=[...document.querySelectorAll('.service')].map(x=>({name:x.querySelector('.sn').value.trim(),price:x.querySelector('.sp').value?Number(x.querySelector('.sp').value):null,price_type:x.querySelector('.st').value,matched_subcategory_id:null})).filter(x=>x.name);if(!services.length)throw new Error('Ավելացրեք առնվազն մեկ ծառայություն');const data={business_name:document.getElementById('business_name').value.trim(),location_marz:document.getElementById('location_marz').value.trim(),location_city:document.getElementById('location_city').value.trim(),location_village:document.getElementById('location_village').value.trim(),address:document.getElementById('address').value.trim(),phone:document.getElementById('phone').value.trim(),working_hours:document.getElementById('working_hours').value.trim(),direction_name:'',master_category_id:null,subcategory_name:'',category_id:null,service_name:services[0].name,price:services[0].price,description:document.getElementById('description').value.trim(),payload:{...payload(),working_hours:document.getElementById('working_hours').value.trim(),services}};status.textContent='Պահպանում եմ…';await api('/api/master/'+uid+'/applications/'+application.id,data);const file=document.getElementById('document').files[0];if(file){const fd=new FormData();fd.append('file',file,file.name);fd.append('document_type','business_verification');const rr=await fetch('/api/master/'+uid+'/applications/'+application.id+'/document',{method:'POST',headers:{'X-Telegram-Init-Data':initData},body:fd});const dd=await jsonResponse(rr);if(!rr.ok||dd.ok===false)throw new Error(dd.detail||dd.error||'Փաստաթուղթը չբեռնվեց')}const result=await api('/api/master/'+uid+'/applications/'+application.id+'/submit',{location_marz:document.getElementById('location_marz').value.trim(),location_city:document.getElementById('location_city').value.trim(),phone:document.getElementById('phone').value.trim()});application=result.application;formWrap.innerHTML='<div class="notice">✅ Հայտը ուղարկված է ադմինիստրատորի ստուգմանը։ Եթե ադմինը վերադարձնի այն, նույն հայտը նորից կբացվի ուղղման համար։</div>';status.textContent='⏳ Սպասում է ադմինիստրատորի ստուգմանը'}catch(e){status.innerHTML='<span class="error">⚠️ '+esc(e.message)+'</span>'}}
+start();
+</script></body></html>
