@@ -1,0 +1,25 @@
+name: Architecture checks
+
+on:
+  push:
+    branches:
+      - architecture/ai-context-data-core
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  python-syntax-and-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Install test runner
+        run: python -m pip install pytest
+      - name: Run architecture guardrails
+        run: python -m pytest -q tests/test_architecture_boundaries.py
