@@ -670,10 +670,14 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
                    FROM services WHERE partner_id=%s AND (status IS NULL OR status<>'deleted')
                    ORDER BY id DESC LIMIT 100""",(eid,))
             if _table_exists("partner_objects"):
-                out["addresses"]=rows(
-                    """SELECT id,business_id,object_name,address,city,marz,phone
-                       FROM partner_objects WHERE partner_id=%s
-                       ORDER BY business_id,id LIMIT 100""",(eid,))
+                if role == "client":
+                    out["addresses"]=rows(
+                        "SELECT id,business_id,object_name,address,city,marz FROM partner_objects "
+                        "WHERE partner_id=%s ORDER BY business_id,id LIMIT 100",(eid,))
+                else:
+                    out["addresses"]=rows(
+                        "SELECT id,business_id,object_name,address,city,marz,phone FROM partner_objects "
+                        "WHERE partner_id=%s ORDER BY business_id,id LIMIT 100",(eid,))
         return out
 
     if kind in {"company","business"}:
