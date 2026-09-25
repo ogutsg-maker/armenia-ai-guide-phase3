@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 
-from data_core import active_session, create_session, add_ai_message, update_session, one
+from data_core import active_session, create_session, add_ai_message, update_session, active_negotiation_id_for_user
 from client_ai import ClientAI
 from partner_ai import PartnerAI
 
@@ -38,11 +38,7 @@ class AIRouter:
 
     def _active_negotiation_id(self, user_id: int) -> int | None:
         try:
-            row = one("""SELECT id FROM negotiations
-                       WHERE (client_id=%s OR partner_id=(SELECT id FROM partners WHERE user_id=%s))
-                         AND status IN ('active','pending','negotiating')
-                       ORDER BY updated_at DESC LIMIT 1""", (user_id, user_id))
-            return row["id"] if row else None
+            return active_negotiation_id_for_user(int(user_id))
         except Exception:
             return None
 
