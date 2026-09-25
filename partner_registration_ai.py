@@ -208,7 +208,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
     if not out.get("business_name"):
         name_patterns = [
-            r"[«\"']([^«»\"']{1,100})[»\"']\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
+            r"[«\"']([^«»\"']{1,100})[»\"']\s+(?:անունով\s+)?(?:սրահ|բիզնես|կազմակերպություն|ընկերություն)",
             r"([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'_-]{0,60})\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
             r"(?:salon|салон|studio|студия)\s+([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})",
         ]
@@ -271,6 +271,10 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
     if out.get("marz"):
         out["marz"] = _norm(out.get("marz"))
+
+    # Keep a useful human-readable description when the model leaves it empty.
+    if not out.get("description") and raw:
+        out["description"] = raw
 
     if not out.get("marz") and out.get("city"):
         city_key = _normalize_place_name(out["city"]).lower()
@@ -483,7 +487,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
 
     # Handle common price-list separators. This keeps every price-bearing item
     # atomic even when Groq returns only a partial service array.
-    clauses = re.split(r"[,;\n/]+", text)
+    clauses = re.split(r"[,;\n/։.!?]+", text)
     found = []
     currency_re = r"(?:դրամ(?:ից|ով|ի)?|դր\.?|֏|amd|dram|драм(?:ов|а)?|амд)"
     price_re = re.compile(
