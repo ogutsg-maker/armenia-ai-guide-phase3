@@ -557,7 +557,30 @@ def update_negotiation(negotiation_id: int, state: dict[str, Any],
     )
 
 
-def update_request_status(request_id: int, status: str):
+def update_request_status(request_id: int, status: str,
+                         actor_role: str = "admin", actor_id: int | None = None):
+    role = str(actor_role or "admin").strip().lower()
+    if role == "client":
+        allowed = one(
+            """SELECT 1 FROM service_requests sr
+               WHERE sr.id=%s AND sr.client_id=%s""",
+            (int(request_id), int(actor_id)) if actor_id is not None else (int(request_id), -1),
+        )
+    elif role == "partner":
+        partner = get_partner_by_user(int(actor_id)) if actor_id is not None else None
+        allowed = one(
+            """SELECT 1 FROM service_requests sr
+               JOIN negotiations n ON n.request_id=sr.id
+               WHERE sr.id=%s AND n.partner_id=%s""",
+            (int(request_id), int(partner["id"])) if partner else (int(request_id), -1),
+        )
+    elif role == "admin":
+        allowed = {"ok": 1}
+    else:
+        return None
+    if not allowed:
+        return None
+
     return execute(
         "UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s RETURNING *",
         (str(status), int(request_id)), True,
