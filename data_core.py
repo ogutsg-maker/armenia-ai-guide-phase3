@@ -771,6 +771,26 @@ def create_booking_checkin(booking_id: int, token: str):
         (int(booking_id),str(token)),True)
 
 
+def get_partner_booking_display(partner_id: int):
+    partner = one("""SELECT id,business_name,business_description,contact_share_policy,
+                            contact_sharing_enabled,profile_json
+                     FROM partners WHERE id=%s""",(int(partner_id),))
+    if not partner: return None
+    locations = rows("""SELECT marz,city,village,address,location_type
+                        FROM partner_objects WHERE partner_id=%s ORDER BY id LIMIT 5""",
+                     (int(partner_id),))
+    return {"partner":partner,"locations":locations}
+
+def get_approved_service_options(service_id: int, option_ids: list[int]):
+    if not option_ids: return []
+    return rows("SELECT * FROM service_options WHERE id=ANY(%s) AND service_id=%s AND is_active=TRUE",
+                (option_ids,int(service_id)))
+
+def get_active_package(service_id: int, package_id: int):
+    return one("SELECT * FROM service_packages WHERE id=%s AND service_id=%s AND is_active=TRUE",
+               (int(package_id),int(service_id)))
+
+
 # ---------------------------------------------------------------------------
 # Client request / candidate persistence
 # ---------------------------------------------------------------------------
