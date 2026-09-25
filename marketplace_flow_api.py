@@ -438,8 +438,9 @@ async def direct_booking(request):
         return web.json_response({'ok':False,'error':'booking_creation_conflict'},status=409)
     booking=persisted['booking']
     payment=persisted['payment']
-    data_core.add_booking_financial_entries(partner_id,booking['id'],commission,partner_amount,currency)
-    check=data_core.create_booking_checkin(booking['id'],secrets.token_urlsafe(24))
+    check=persisted.get('checkin')
+    if not check:
+        return web.json_response({'ok':False,'error':'booking_checkin_not_created'},status=500)
 
     display = data_core.get_partner_booking_display(partner_id)
     if not display:
