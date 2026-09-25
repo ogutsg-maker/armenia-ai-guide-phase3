@@ -657,14 +657,13 @@ async def idram_result(request):
         booking=reconciled.get('booking')
         booking_id=payment.get('booking_id')
         # Best-effort notify the partner about the confirmed payment.
-            try:
-                from notify import notify
-                owner=_one("SELECT user_id FROM partners WHERE id=%s",(payment.get('partner_id'),))
-                if owner and owner.get('user_id'):
-                    await notify(request.app,int(owner['user_id']),title='\U0001f4b3 \u041e\u043f\u043b\u0430\u0442\u0430 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0430',body=f"\u0411\u0440\u043e\u043d\u044c \u2116{booking_id} \u043e\u043f\u043b\u0430\u0447\u0435\u043d\u0430.",kind='payment_confirmed',audience='partner',data={'booking_id':booking_id})
-            except Exception:
-                pass
-    return web.Response(text='OK')
+        try:
+            from notify import notify
+            owner=_one("SELECT user_id FROM partners WHERE id=%s",(payment.get('partner_id'),))
+            if owner and owner.get('user_id'):
+                await notify(request.app,int(owner['user_id']),title='💳 Оплата подтверждена',body=f"Бронь №{booking_id} оплачена.",kind='payment_confirmed',audience='partner',data={'booking_id':booking_id})
+        except Exception:
+            pass
 
 
 def _idram_return_page(title,body):
