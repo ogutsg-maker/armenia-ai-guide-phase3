@@ -612,10 +612,26 @@ def operational_stats() -> dict[str, Any]:
     return stats
 
 
-def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[str, Any] | None:
+def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
+                 role: str = "admin", actor_id: int | None = None) -> dict[str, Any] | None:
     """Return a role-neutral verified entity graph for AI Context."""
     eid = int(entity_id)
     kind = str(entity_type or "").strip().lower()
+    role = str(role or "admin").strip().lower()
+
+    # AI Context is role-scoped: entity graphs must not become a side door
+    # around the normal Data Tools permissions.
+    if role == "partner" and actor_id is not None:
+        if kind == "partner":
+            assert_partner_owns_partner(eid, int(actor_id))
+        elif kind in {"company", "business"}:
+            assert_partner_owns_company(eid, int(actor_id))
+        elif kind == "service":
+            assert_partner_owns_service(eid, int(actor_id))
+    elif role == "client" and kind in {"application", "partner", "company", "business", "service", "order"}:
+        # Client Context may contain only marketplace-visible approved data.
+        if kind == "application":
+            return None
 
     if kind == "application":
         app = one(
@@ -646,6 +662,9 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[
         if full:
             out["services"]=rows(
                 """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
+                   FROM services WHERE partner_id=%s AND status='approved'
+                   ORDER BY id DESC LIMIT 100""",(eid,)) if role == "client" else rows(
+                """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
                    FROM services WHERE partner_id=%s AND (status IS NULL OR status<>'deleted')
                    ORDER BY id DESC LIMIT 100""",(eid,))
             if _table_exists("partner_objects"):
@@ -665,6 +684,9 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[
                    FROM partner_objects WHERE business_id=%s
                    ORDER BY id LIMIT 50""",(eid,))
         out["services"]=rows(
+            """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
+               FROM services WHERE business_id=%s AND status='approved'
+               ORDER BY id DESC LIMIT 100""",(eid,)) if role == "client" else rows(
             """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
                FROM services WHERE business_id=%s AND (status IS NULL OR status<>'deleted')
                ORDER BY id DESC LIMIT 100""",(eid,))
