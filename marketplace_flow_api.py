@@ -3,7 +3,6 @@ from __future__ import annotations
 import json, os, secrets, logging
 from decimal import Decimal
 from datetime import datetime, date
-import psycopg
 from aiohttp import web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 from booking_schema import ensure_booking_schema
@@ -11,38 +10,6 @@ import qr_util
 from idram import IdramProvider
 from ai_negotiator import AINegotiator
 import data_core
-
-def _db_url():
-    value=os.getenv('DATABASE_URL','').strip()
-    if not value: raise RuntimeError('DATABASE_URL is not configured')
-    return value
-
-def _safe(v):
-    if isinstance(v,(datetime,date)): return v.isoformat()
-    if isinstance(v,Decimal): return float(v)
-    if isinstance(v,dict): return {k:_safe(x) for k,x in v.items()}
-    if isinstance(v,(list,tuple)): return [_safe(x) for x in v]
-    return v
-
-def _rows(sql,params=()):
-    with psycopg.connect(_db_url(), prepare_threshold=None) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql,params); cols=[d.name for d in cur.description] if cur.description else []
-            rows=[_safe(dict(zip(cols,row))) for row in cur.fetchall()]
-    return rows
-
-def _one(sql,params=()):
-    rows=_rows(sql,params); return rows[0] if rows else None
-
-def _exec(sql,params=(),returning=False):
-    with psycopg.connect(_db_url(), prepare_threshold=None) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql,params); result=None
-            if returning:
-                row=cur.fetchone(); cols=[d.name for d in cur.description] if cur.description else []
-                result=_safe(dict(zip(cols,row))) if row else None
-        conn.commit()
-    return result
 
 def _uid(request):
     raw=request.headers.get('X-Telegram-Init-Data','').strip()
@@ -55,40 +22,7 @@ def _uid(request):
 def _json(value): return json.dumps(value or {},ensure_ascii=False)
 
 def _commission(service):
-    """Resolve the tariff with a 3-level cascade:
-       1) per-service override (admin set it on the service),
-       2) subcategory override (categories.commission_*),
-       3) direction default (master_categories.commission_* = "initial settings").
-    NULL at a level means "inherit the level below it".
-    """
-    # 1) per-service override
-    stype=service.get('commission_type')
-    if stype:
-        try:sval=float(service.get('commission_value') or 0)
-        except Exception:sval=0.0
-        return str(stype),max(0.0,sval)
-    # 2)+3) subcategory override, else direction default
-    cat_id=service.get('category_id')
-    if cat_id:
-        row=_one("""
-            SELECT COALESCE(c.commission_type, m.commission_type, 'on_top') AS ctype,
-                   COALESCE(c.commission_value, m.commission_value, 10)      AS cvalue
-            FROM categories c
-            LEFT JOIN master_categories m ON m.id=c.master_category_id
-            WHERE c.id=%s
-        """,(cat_id,))
-        if row:
-            ctype=str(row.get('ctype') or 'on_top')
-            try:value=float(row.get('cvalue') or 0)
-            except Exception:value=0.0
-            return ctype,max(0.0,value)
-    data=service.get('data_json') or {}
-    if isinstance(data,str):
-        try:data=json.loads(data)
-        except Exception:data={}
-    try:rate=float(data.get('commission_percent',10))
-    except Exception:rate=10.0
-    return 'on_top',max(0.0,min(100.0,rate))
+    return data_core.resolve_service_commission(service)
 
 def _price_and_commission(final_price,service):
     ctype,value=_commission(service)
@@ -102,32 +36,28 @@ def _price_and_commission(final_price,service):
     return commission,round(final_price+commission,2),round(final_price,2)
 
 async def client_search(request):
-    uid=_uid(request); data=await request.json(); q=str(data.get('query') or data.get('text') or '').strip(); city=str(data.get('city') or '').strip(); category_id=int(data.get('category_id') or 0)
-    params=[]; where=["s.status='approved'","p.status='approved'","pd.status='approved'"]
-    if q:
-        like=f'%{q}%'; params += [like]*5
-        where.append("(LOWER(s.name) LIKE LOWER(%s) OR LOWER(s.description) LIKE LOWER(%s) OR LOWER(p.business_name) LIKE LOWER(%s) OR LOWER(c.name_am) LIKE LOWER(%s) OR LOWER(c.name_ru) LIKE LOWER(%s))")
-    if city: params.append(city); where.append("EXISTS(SELECT 1 FROM partner_locations pl WHERE pl.partner_id=p.id AND LOWER(COALESCE(pl.city,''))=LOWER(%s))")
-    if category_id: params.append(category_id); where.append('s.category_id=%s')
-    sql=f"""SELECT s.id service_id,s.partner_id,s.category_id,s.name service_name,s.description,s.price,s.currency,s.duration_minutes,s.data_json,p.business_name,p.business_description,p.contact_share_policy,c.name_am category_name_am,c.name_ru category_name_ru,COALESCE((SELECT pl.city FROM partner_locations pl WHERE pl.partner_id=p.id ORDER BY pl.id LIMIT 1),'') city,COALESCE((SELECT pl.marz FROM partner_locations pl WHERE pl.partner_id=p.id ORDER BY pl.id LIMIT 1),'') marz FROM services s JOIN partners p ON p.id=s.partner_id JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id LEFT JOIN categories c ON c.id=s.category_id WHERE {' AND '.join(where)} GROUP BY s.id,p.id,c.id,p.business_name,p.business_description,p.contact_share_policy ORDER BY s.created_at DESC LIMIT 20"""
-    items=_rows(sql,tuple(params))
-    for item in items: item.pop('data_json',None); item.pop('business_description',None)
+    uid=_uid(request); data=await request.json()
+    q=str(data.get('query') or data.get('text') or '').strip()
+    city=str(data.get('city') or '').strip()
+    category_id=int(data.get('category_id') or 0)
+    items=data_core.marketplace_client_search(q,city,category_id)
     return web.json_response({'ok':True,'items':items,'query':q,'client_id':uid})
 
 async def create_request(request):
-    uid=_uid(request); data=await request.json(); summary=str(data.get('summary') or data.get('query') or '').strip(); city=str(data.get('city') or '').strip() or None; lang=str(data.get('language') or 'hy')[:5]; profile=data.get('preferences') or {}
-    item=_exec("INSERT INTO service_requests(client_id,status,language,city,summary,preferences_json) VALUES(%s,'searching',%s,%s,%s,%s::jsonb) RETURNING *",(uid,lang,city,summary,_json(profile)),True)
+    uid=_uid(request); data=await request.json()
+    summary=str(data.get('summary') or data.get('query') or '').strip()
+    city=str(data.get('city') or '').strip() or None
+    lang=str(data.get('language') or 'hy')[:5]
+    profile=data.get('preferences') or {}
+    item=data_core.create_service_request(uid,None,'searching',lang,city,summary,profile)
     return web.json_response({'ok':True,'request':item})
 
 async def select_candidate(request):
-    uid=_uid(request); rid=int(request.match_info['request_id']); data=await request.json(); service_id=int(data.get('service_id') or 0)
-    item=_one("SELECT sr.id request_id,sr.status,s.id service_id,s.partner_id,s.name service_name,s.price,s.currency,s.duration_minutes,p.business_name,p.contact_share_policy FROM service_requests sr JOIN services s ON s.id=%s JOIN partners p ON p.id=s.partner_id WHERE sr.id=%s AND sr.client_id=%s AND s.status='approved' AND p.status='approved'",(service_id,rid,uid))
-    if not item:return web.json_response({'ok':False,'error':'candidate_not_found'},status=404)
-    _exec("INSERT INTO request_candidates(request_id,partner_id,service_id,rank_score,status) VALUES(%s,%s,%s,100,'selected') ON CONFLICT(request_id,partner_id,service_id) DO UPDATE SET status='selected'",(rid,item['partner_id'],service_id))
-    negotiation=_exec("INSERT INTO negotiations(request_id,client_id,partner_id,state_json) VALUES(%s,%s,%s,%s::jsonb) RETURNING *",(rid,uid,item['partner_id'],_json({'service_id':service_id,'service_name':item['service_name'],'price':float(item['price'] or 0),'currency':item['currency'],'client_agreed':False,'partner_agreed':False})),True)
-    _exec("UPDATE service_requests SET status='negotiating',updated_at=NOW() WHERE id=%s",(rid,))
-    _exec("INSERT INTO negotiation_messages(negotiation_id,sender_role,message,data_json) VALUES(%s,'ai',%s,%s::jsonb)",(negotiation['id'],f"Ընտրված ծառայությունն է՝ {item['service_name']}։ Գինը՝ {item['price']} {item['currency']}։ Կարող եք գրել ձեր ցանկությունները։",_json({'type':'selection'})))
-    return web.json_response({'ok':True,'negotiation':negotiation,'candidate':item})
+    uid=_uid(request); rid=int(request.match_info['request_id']); data=await request.json()
+    service_id=int(data.get('service_id') or 0)
+    result=data_core.marketplace_create_negotiation_selection(rid,uid,service_id)
+    if not result:return web.json_response({'ok':False,'error':'candidate_not_found'},status=404)
+    return web.json_response({'ok':True,**result})
 
 async def negotiation_get(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
@@ -180,9 +110,8 @@ async def negotiation_client_message(request):
     return await negotiation_get(request)
 
 async def partner_negotiations(request):
-    uid=_uid(request); partner=_one('SELECT * FROM partners WHERE user_id=%s',(uid,))
-    if not partner:return web.json_response({'ok':False,'error':'partner_not_found'},status=404)
-    items=_rows("SELECT n.id,n.request_id,n.status,n.state_json,n.updated_at,sr.summary,sr.city,s.name service_name,p.business_name FROM negotiations n JOIN service_requests sr ON sr.id=n.request_id LEFT JOIN services s ON s.id=(n.state_json->>'service_id')::bigint JOIN partners p ON p.id=n.partner_id WHERE n.partner_id=%s AND n.status='active' ORDER BY n.updated_at DESC",(partner['id'],))
+    uid=_uid(request); items=data_core.marketplace_partner_negotiations(uid)
+    if items is None:return web.json_response({'ok':False,'error':'partner_not_found'},status=404)
     return web.json_response({'ok':True,'items':items})
 
 async def partner_negotiation_messages(request):
@@ -197,7 +126,7 @@ async def partner_reply(request):
     if not n:return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
     negotiator=AINegotiator(_get_ai(request))
     await negotiator.handle(n,'partner',uid,text,**_negotiator_hooks())
-    return web.json_response({'ok':True,'messages':_rows('SELECT * FROM negotiation_messages WHERE negotiation_id=%s ORDER BY id',(nid,))})
+    return web.json_response({'ok':True,'messages':data_core.get_negotiation_messages(nid, actor_role='partner', actor_id=uid)})
 
 async def partner_agree(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
