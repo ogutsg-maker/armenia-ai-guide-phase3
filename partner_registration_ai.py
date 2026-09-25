@@ -483,12 +483,12 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
 
     # Handle common price-list separators. This keeps every price-bearing item
     # atomic even when Groq returns only a partial service array.
-    clauses = re.split(r"[,;\\n/]+", text)
+    clauses = re.split(r"[,;\n/]+", text)
     found = []
-    currency_re = r"(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)"
+    currency_re = r"(?:դրամ(?:ից|ով|ի)?|դր\.?|֏|amd|dram|драм(?:ов|а)?|амд)"
     price_re = re.compile(
         rf"(?P<name>.+?)\s*(?:՝|:|—|–|-|\b(?:սկսվում\s+են|սկսվում\s+է|արժե|գինն\s+է|от|from|starting\s+at)\b)?\s*"
-        rf"(?P<price>\\d[\\d\s.,]*)\s*(?P<currency>{currency_re})\b", flags=re.I
+        rf"(?P<price>\d[\d\s.,]*)\s*(?P<currency>{currency_re})\b", flags=re.I
     )
     for clause in clauses:
         clause = _norm(clause).strip(" —–-:;")
@@ -524,7 +524,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             continue
         full = clause.lower()
         is_from = bool("ից" in full or re.search(r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I))
-        is_per_unit = bool(re.search(r"\b(?:քմ|քառակուսի\s*մետր|кв\\.?\s*м|за\s+кв\\.?\s*м|պարապմունք|занят(?:ие|ия)|за\s+занятие)\b", full, re.I))
+        is_per_unit = bool(re.search(r"\b(?:քմ|քառակուսի\s*մետր|кв\.?\s*м|за\s+кв\.?\s*м|պարապմունք|занят(?:ие|ия)|за\s+занятие)\b", full, re.I))
         price_type = ("from_per_unit" if is_from else "fixed_per_unit") if is_per_unit else ("from" if is_from else "fixed")
         arm_clean = {
             "սանրվածքները": "Սանրվածք", "սանրվածքը": "Սանրվածք",
