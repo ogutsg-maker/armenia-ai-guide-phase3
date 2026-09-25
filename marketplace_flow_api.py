@@ -150,14 +150,22 @@ def _get_ai(request):
         ai=GroqAI(); request.app['ai']=ai
     return ai
 
-def _negotiator_hooks():
-    """DB hooks bound to this module's psycopg helpers for AINegotiator."""
+def _negotiator_hooks(actor_role, actor_id):
+    """DB hooks bound to the current negotiation actor."""
     def insert_msg(nid,role,sender_id,text):
         return data_core.append_negotiation_message(nid,role,sender_id,text)
     def update_neg(nid,state,status):
-        return data_core.update_negotiation(nid,state,status)
+        return data_core.update_negotiation(
+            nid,state,status,actor_role=actor_role,actor_id=actor_id
+        )
     def update_request(rid,status):
-        return data_core.update_request_status(rid,status)
+        # Request status is changed only through an already authorized
+        # negotiation actor; do not expose a free-form request write to AI.
+        n=data_core.get_negotiation(
+            next((int(rid) for _ in [0]), 0),
+            actor_role=actor_role,actor_id=actor_id
+        )
+        return data_core.update_request_status(rid,status) if n else None
     def insert_ai_msg(nid,role,text,data):
         return data_core.append_negotiation_message(nid,role,None,text,data)
     return dict(insert_msg=insert_msg,update_neg=update_neg,update_request=update_request,insert_ai_msg=insert_ai_msg)
