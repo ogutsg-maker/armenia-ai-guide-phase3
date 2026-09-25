@@ -622,19 +622,24 @@ async def partner_checkin(request):
     data=await request.json()
     token=str(data.get('token') or '').strip()
     if not token:return web.json_response({'ok':False,'error':'token_required'},status=400)
-    row=_one("""SELECT bc.*,b.status booking_status,b.partner_id,b.client_id,b.service_name,b.agreed_price,b.currency,p.business_name
-              FROM booking_checkins bc JOIN bookings b ON b.id=bc.booking_id
-              JOIN partners p ON p.id=b.partner_id
-              WHERE bc.token=%s AND p.user_id=%s""",(token,uid))
-    if not row:return web.json_response({'ok':False,'error':'checkin_token_invalid'},status=404)
-    if row.get('status')=='checked_in':return web.json_response({'ok':True,'already_checked_in':True,'checkin':row})
-    if row.get('booking_status') not in ('paid','confirmed'):return web.json_response({'ok':False,'error':'booking_not_paid','booking_status':row.get('booking_status')},status=409)
-    check=_exec("UPDATE booking_checkins SET status='checked_in',checked_in_at=NOW(),checked_in_by=%s WHERE id=%s AND status='active' RETURNING *",(uid,row['id']),True)
-    if not check:
-        current=_one("SELECT * FROM booking_checkins WHERE id=%s",(row['id'],))
-        return web.json_response({'ok':True,'already_checked_in':True,'checkin':current})
-    _exec("UPDATE bookings SET status='completed',updated_at=NOW() WHERE id=%s",(row['booking_id'],))
-    return web.json_response({'ok':True,'already_checked_in':False,'checkin':check,'booking':_one("SELECT * FROM bookings WHERE id=%s",(row['booking_id'],)),'service_name':row['service_name'],'agreed_price':row['agreed_price'],'currency':row['currency'],'business_name':row['business_name']})
+    # Data Core verifies token + partner ownership + booking state.
+    result=data_core.checkin_booking(int(data.get('booking_id') or 0), uid, token) if data.get('booking_id') else None
+    if not result:
+        return web.json_response({'ok':False,'error':'checkin_token_invalid'},status=404)
+    if result.get('error'):
+        return web.json_response({'ok':False,'error':result['error'],'booking_status':result.get('booking_status')},status=409)
+    check=result.get('checkin')
+    booking=result.get('booking')
+    return web.json_response({
+        'ok':True,
+        'already_checked_in':result.get('already_checked_in',False),
+        'checkin':check,
+        'booking':booking,
+        'service_name':result.get('service_name'),
+        'agreed_price':result.get('agreed_price'),
+        'currency':result.get('currency'),
+        'business_name':result.get('business_name'),
+    })
 
 async def cancel_booking_client(request):
     return await _cancel_booking(request,'client')
