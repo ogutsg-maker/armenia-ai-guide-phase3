@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from platform_db import create_session, active_session, add_ai_message, update_session, execute, rows
+from data_core import create_session, active_session, add_ai_message, update_session, search_catalog, create_service_request, update_service_request, search_services, replace_request_candidates
 
 class ClientAI:
     def __init__(self, ai): self.ai = ai
@@ -12,21 +12,17 @@ class ClientAI:
             try: ctx = json.loads(ctx)
             except Exception: ctx = {}
         add_ai_message(session['id'], 'user', text)
-        cats = rows("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug
-                      FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-                      WHERE c.is_active=TRUE AND COALESCE(m.is_active,TRUE)=TRUE ORDER BY c.id""")
+        cats = search_catalog(limit=500)
         analysis = await self.ai.analyze_request(text, cats)
         location = analysis.city or analysis.village or analysis.marz or analysis.location
         if not ctx.get('request_id'):
-            req = execute('INSERT INTO service_requests(client_id,category_id,status,language,city,summary,preferences_json) VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *', (user_id, analysis.category_id, 'searching', analysis.language, location, analysis.summary, json.dumps(analysis.model_dump(), ensure_ascii=False)), True)
+            req = create_service_request(user_id, analysis.category_id, 'searching', analysis.language, location, analysis.summary, analysis.model_dump())
             ctx['request_id'] = req['id'] if req else None
         else:
-            execute("UPDATE service_requests SET category_id=%s,status='searching',summary=%s,city=%s,preferences_json=%s::jsonb,updated_at=NOW() WHERE id=%s", (analysis.category_id, analysis.summary, location, json.dumps(analysis.model_dump(), ensure_ascii=False), ctx['request_id']))
+            update_service_request(ctx['request_id'], analysis.category_id, 'searching', analysis.summary, location, analysis.model_dump())
         candidates = self._find_candidates(analysis)
         if ctx.get('request_id'):
-            execute('DELETE FROM request_candidates WHERE request_id=%s', (ctx['request_id'],))
-            for rank,c in enumerate(candidates,1):
-                execute('INSERT INTO request_candidates(request_id,partner_id,service_id,rank_score,match_reason) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING', (ctx['request_id'],c['partner_id'],c['service_id'],100-rank*5,self._match_reason(analysis,lang)))
+            replace_request_candidates(ctx['request_id'], candidates, self._match_reason(analysis,lang))
         ctx['last_analysis'] = analysis.model_dump(); ctx['stage'] = 'options_found' if candidates else 'clarifying'
         reply = self._options_reply(candidates, lang) if candidates else self._clarify(ctx, analysis, lang)
         update_session(session['id'], ctx)
@@ -34,21 +30,16 @@ class ClientAI:
         return reply
 
     def _find_candidates(self, analysis):
-        clauses=["s.status='approved'","c.is_active=TRUE","pd.status='approved'","p.status='approved'"]; params=[]
-        if analysis.category_id: clauses.append('s.category_id=%s'); params.append(analysis.category_id)
-        if analysis.budget_max is not None: clauses.append('(s.price IS NULL OR s.price<=%s)'); params.append(analysis.budget_max)
-        if analysis.budget_min is not None: clauses.append('(s.price IS NULL OR s.price>=%s)'); params.append(analysis.budget_min)
-        location=analysis.city or analysis.village or analysis.marz or analysis.location
-        if location:
-            clauses.append("EXISTS (SELECT 1 FROM partner_locations pl WHERE pl.partner_id=p.id AND pl.is_active=TRUE AND (LOWER(COALESCE(pl.city,''))=LOWER(%s) OR LOWER(COALESCE(pl.village,''))=LOWER(%s) OR LOWER(COALESCE(pl.marz,''))=LOWER(%s) OR COALESCE(pl.is_all_armenia,FALSE)=TRUE))")
-            params += [location,location,location]
-        sql=f'''SELECT DISTINCT s.id service_id,s.partner_id,s.name service_name,s.price,s.duration_minutes,c.id category_id,p.business_name
-                FROM services s JOIN categories c ON c.id=s.category_id JOIN partners p ON p.id=s.partner_id
-                JOIN partner_direction_categories pdc ON pdc.category_id=c.id
-                JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id AND pd.status='approved'
-                WHERE {' AND '.join(clauses)} ORDER BY CASE WHEN s.price IS NULL THEN 1 ELSE 0 END,s.created_at DESC LIMIT 3'''
-        try: return rows(sql,tuple(params))
-        except Exception: return []
+        location = analysis.city or analysis.village or analysis.marz or analysis.location
+        try:
+            return search_services(
+                category_id=analysis.category_id,
+                city=location or "",
+                max_price=analysis.budget_max,
+                limit=3,
+            )
+        except Exception:
+            return []
 
     def _match_reason(self,analysis,lang):
         if analysis.budget_max is not None: return {'hy':'Համապատասխանում է ծառայության և բյուջեի պահանջներին։','ru':'Соответствует услуге и указанному бюджету.','en':'Matches the requested service and budget.'}.get(lang,'Matches your request.')

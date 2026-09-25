@@ -154,7 +154,12 @@ class IdramProvider:
         metadata = metadata or {}
 
         if not self.is_live:
-            txn = "TEST-IDRAM-" + secrets.token_hex(6)
+            # Deterministic test transaction per bill/order: retries for the
+            # same business operation cannot manufacture a different provider
+            # transaction identity.
+            txn = "TEST-IDRAM-" + hashlib.sha256(
+                f"{bill_no}:{amount:.2f}:{currency}".encode("utf-8")
+            ).hexdigest()[:16]
             return PaymentIntent(
                 transaction_id=txn,
                 bill_no=bill_no,
