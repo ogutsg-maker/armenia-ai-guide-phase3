@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 
-from platform_db import active_session, create_session, add_ai_message, update_session, one
+from data_core import active_session, create_session, add_ai_message, update_session, one
 from client_ai import ClientAI
 from partner_ai import PartnerAI
 
