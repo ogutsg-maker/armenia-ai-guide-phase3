@@ -532,6 +532,7 @@ async def idram_result(request):
                 await notify(request.app,int(owner['user_id']),title='💳 Оплата подтверждена',body=f"Бронь №{booking_id} оплачена.",kind='payment_confirmed',audience='partner',data={'booking_id':booking_id})
         except Exception:
             pass
+    return web.Response(text='OK')
 
 
 def _idram_return_page(title,body):
