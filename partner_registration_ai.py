@@ -208,7 +208,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
 
     if not out.get("business_name"):
         name_patterns = [
-            r"[«\"']([^«»\"']{1,100})[»\"']\s+(?:անունով\s+)?(?:սրահ|բիզնես|կազմակերպություն|ընկերություն)",
+            r"[«\"']([^«»\"']{1,100})[»\"']\s+(?:անունով\s+)?(?:սրահ|բիզնես|կազմակերպություն|(?:տուրիստական\s+)?ընկերություն)",
             r"([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'_-]{0,60})\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
             r"(?:salon|салон|studio|студия)\s+([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9 .&'_-]{1,80})",
         ]
@@ -504,7 +504,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             # e.g. "Մեկօրյա տուրը սկսած 8000". Accept only when the clause
             # contains a service/tour signal; never treat arbitrary numbers as prices.
             m_plain = re.search(
-                r"(?P<name>.+?)\\s*(?:՝|:|—|–|-|\\b(?:սկսած|արժե|գինն\\s+է|from|starting\\s+at)\\b)\\s*(?P<price>\\d[\\d\\s.,]*)\\s*$",
+                r"(?P<name>.+?)\s*(?:՝|:|—|–|-|\b(?:սկսած|արժե|գինն\s+է|from|starting\s+at)\b)\s*(?P<price>\d[\d\s.,]*)\s*$",
                 clause, flags=re.I
             )
             if not m_plain or not re.search(
