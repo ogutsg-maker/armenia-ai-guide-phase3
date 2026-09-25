@@ -10,7 +10,7 @@ receives arbitrary SQL access.
 from typing import Any, Dict, List
 from decimal import Decimal
 from datetime import date, datetime
-import platform_db
+import data_core as platform_db
 
 
 ROLES = {"admin", "partner", "client", "potential_partner"}
