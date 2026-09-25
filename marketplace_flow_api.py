@@ -461,7 +461,7 @@ async def direct_booking(request):
     # Best-effort partner notification (never fail the booking on notify errors).
     try:
         from notify import notify
-        owner = _one("SELECT user_id FROM partners WHERE id=%s", (partner_id,))
+        owner = data_core.get_partner(partner_id)
         if owner and owner.get('user_id'):
             await notify(
                 request.app, int(owner['user_id']),
