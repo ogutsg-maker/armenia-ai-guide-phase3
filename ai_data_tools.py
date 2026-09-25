@@ -181,7 +181,20 @@ class DataTools:
         return {"items": rows, "count": len(rows)}
 
     def _tool_get_orders(self, args):
-        raise DataToolError("orders_tool_pending_schema_mapping")
+        order_id = args.get("order_id")
+        status = str(args.get("status") or "").strip() or None
+        if order_id is not None:
+            order = data_core.get_order(
+                int(order_id), actor_role=self.role, actor_id=self.actor_id
+            )
+            return {"order": order}
+        rows = data_core.search_orders(
+            actor_role=self.role,
+            actor_id=self.actor_id,
+            status=status,
+            limit=min(max(int(args.get("limit") or 50), 1), 100),
+        )
+        return {"items": rows, "count": len(rows)}
 
     def _tool_check_application(self, args):
         aid = args.get("application_id")
