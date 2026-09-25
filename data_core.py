@@ -506,10 +506,6 @@ def operational_stats() -> dict[str, Any]:
         stats["documents"].get("pending", 0) + stats["documents"].get("under_review", 0)
     )
 
-    if _table_exists("services"):
-        row = one("SELECT COUNT(DISTINCT city) AS n FROM services WHERE city IS NOT NULL AND TRIM(city)<>''")
-        if row:
-            stats["geography"]["service_cities"] = int(row.get("n") or 0)
 
     if _table_exists("partner_objects"):
         row = one("SELECT COUNT(DISTINCT city) AS n FROM partner_objects WHERE city IS NOT NULL AND TRIM(city)<>''")
