@@ -200,16 +200,35 @@ async def partner_reply(request):
     return web.json_response({'ok':True,'messages':_rows('SELECT * FROM negotiation_messages WHERE negotiation_id=%s ORDER BY id',(nid,))})
 
 async def partner_agree(request):
-    uid=_uid(request); nid=int(request.match_info['negotiation_id']); n=_one("SELECT n.* FROM negotiations n JOIN partners p ON p.id=n.partner_id WHERE n.id=%s AND p.user_id=%s AND n.status='active'",(nid,uid))
-    if not n:return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
-    st=_state(n); st['partner_agreed']=True
+    uid=_uid(request); nid=int(request.match_info['negotiation_id'])
+    n=data_core.get_negotiation(nid, actor_role='partner', actor_id=uid)
+    if not n or n.get('status') != 'active':
+        return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
+
+    st=_state(n)
+    st['partner_agreed']=True
     if st.get('client_agreed'):
-        _exec("UPDATE negotiations SET state_json=%s::jsonb,status='agreed',updated_at=NOW() WHERE id=%s",(_json(st),nid)); _exec("UPDATE service_requests SET status='confirmed',updated_at=NOW() WHERE id=%s",(n['request_id'],))
+        updated=data_core.update_negotiation(
+            nid,st,'agreed',actor_role='partner',actor_id=uid
+        )
+        if not updated:
+            return web.json_response({'ok':False,'error':'agreement_requires_final_price'},status=400)
+        data_core.update_request_status(
+            n['request_id'],'confirmed',actor_role='partner',actor_id=uid
+        )
         message='Համաձայն եմ։ Երկու կողմն էլ համաձայն են։ Կարող ենք ամրագրել։'
+        status='agreed'
     else:
-        _exec("UPDATE negotiations SET state_json=%s::jsonb,updated_at=NOW() WHERE id=%s",(_json(st),nid)); message='Համաձայն եմ պայմաններին։ Սպասում ենք հաճախորդի վերջնական համաձայնությանը։'
-    _exec("INSERT INTO negotiation_messages(negotiation_id,sender_role,sender_id,message) VALUES(%s,'partner',%s,%s)",(nid,uid,message))
-    return web.json_response({'ok':True,'status':'agreed' if st.get('client_agreed') else 'waiting_client'})
+        updated=data_core.update_negotiation(
+            nid,st,None,actor_role='partner',actor_id=uid
+        )
+        if not updated:
+            return web.json_response({'ok':False,'error':'negotiation_update_failed'},status=400)
+        message='Համաձայն եմ պայմաններին։ Սպասում ենք հաճախորդի վերջնական համաձայնությանը։'
+        status='waiting_client'
+
+    data_core.append_negotiation_message(nid,'partner',uid,message)
+    return web.json_response({'ok':True,'status':status})
 
 async def test_payment(request):
     # Test payment is strictly based on the final mutually agreed negotiation price.
