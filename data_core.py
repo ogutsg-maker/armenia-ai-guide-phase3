@@ -259,7 +259,7 @@ def get_partner_addresses(partner_id: int, actor_user_id: int | None = None, lim
     if not _table_exists("partner_objects"):
         return []
     return rows(
-        """SELECT id,partner_id,business_id,object_name,address,city,marz,phone,is_active
+        """SELECT id,partner_id,business_id,object_name,address,city,marz,phone
            FROM partner_objects
            WHERE partner_id=%s
            ORDER BY business_id,id LIMIT %s""",
