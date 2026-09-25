@@ -485,14 +485,28 @@ def operational_stats() -> dict[str, Any]:
 
     if _table_exists("partner_verification_documents"):
         stats["documents"]["total"] = _count_table("partner_verification_documents") or 0
-        for status in ("pending", "under_review", "approved", "rejected"):
-            value = _count_table(
-                "partner_verification_documents",
-                "(status=%s OR verification_status=%s)",
-                (status, status),
+        doc_cols = {
+            str(x.get("column_name"))
+            for x in rows(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='partner_verification_documents'"
             )
-            if value is not None:
-                stats["documents"][status] = value
+        }
+        for status in ("pending", "under_review", "approved", "rejected"):
+            clauses = []
+            params = []
+            if "status" in doc_cols:
+                clauses.append("status=%s"); params.append(status)
+            if "verification_status" in doc_cols:
+                clauses.append("verification_status=%s"); params.append(status)
+            if clauses:
+                value = _count_table(
+                    "partner_verification_documents",
+                    "(" + " OR ".join(clauses) + ")",
+                    tuple(params),
+                )
+                if value is not None:
+                    stats["documents"][status] = value
 
     if _table_exists("bookings"):
         stats["orders"]["total"] = _count_table("bookings") or 0
