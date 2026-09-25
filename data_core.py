@@ -660,7 +660,8 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
         if role == "client" and partner.get("status") != "approved": return None
         if role == "client": partner = {k: partner.get(k) for k in ("id","business_name","business_description","status")}
         out={"type":"partner","id":eid,"profile":partner}
-        out["companies"]=list_companies(eid)
+        out["companies"]=([dict(x, phone=None) for x in list_companies(eid)]
+                          if role == "client" else list_companies(eid))
         if full:
             out["services"]=rows(
                 """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
@@ -683,6 +684,11 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
     if kind in {"company","business"}:
         company=get_company(eid)
         if not company: return None
+        if role == "client" and company.get("partner_id") is not None:
+            partner = get_partner(int(company["partner_id"]))
+            if not partner or partner.get("status") != "approved":
+                return None
+            company = {k: company.get(k) for k in ("id","partner_id","name","description","status","partner_name")}
         out={"type":"company","id":eid,"profile":company}
         if _table_exists("partner_objects"):
             out["addresses"]=rows(
