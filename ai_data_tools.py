@@ -135,7 +135,11 @@ class DataTools:
             if partner_id is None:
                 raise DataToolError("partner_id_required")
         actor = self.actor_id if self.role == "partner" else None
-        return {"items": data_core.get_partner_addresses(int(partner_id), actor_user_id=actor)}
+        return {"items": data_core.get_partner_addresses(
+            int(partner_id),
+            actor_user_id=actor,
+            public_only=self.role == "client",
+        )}
 
     def _tool_get_directions(self, args):
         rows = data_core.active_directions()
