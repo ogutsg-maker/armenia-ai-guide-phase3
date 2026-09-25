@@ -695,6 +695,57 @@ def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
     return {"payment": payment, "booking": booking, "already_paid": False}
 
 
+def get_approved_service_for_booking(service_id: int):
+    return one(
+        """SELECT s.* FROM services s
+           JOIN partners p ON p.id=s.partner_id
+           JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id
+           JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id
+           WHERE s.id=%s AND s.status='approved' AND p.status='approved' AND pd.status='approved'""",
+        (int(service_id),),
+    )
+
+def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
+                           package_id: int | None, status: str, price: float,
+                           currency: str, commission: float, partner_amount: float,
+                           scheduled_at=None, client_note: str = "",
+                           intent=None, metadata: dict | None = None):
+    if not request_row or not request_row.get("id"):
+        return None
+    booking = execute(
+        """INSERT INTO bookings(
+             request_id,negotiation_id,client_id,partner_id,service_id,package_id,
+             status,service_name,agreed_price,currency,commission_amount,partner_amount,
+             scheduled_at,client_note,data_json)
+           SELECT %s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb
+           WHERE pg_advisory_xact_lock(%s) IS NULL
+           RETURNING *""",
+        (int(request_row["id"]),int(client_id),int(service["partner_id"]),int(service["id"]),
+         package_id,status,service["name"],float(price),currency,float(commission),
+         float(partner_amount),scheduled_at,client_note,
+         json.dumps(metadata or {},ensure_ascii=False),int(request_row["id"])),
+        True,
+    )
+    if not booking:
+        return None
+    payment = execute(
+        """INSERT INTO payments(
+             booking_id,client_id,partner_id,payment_type,status,amount,currency,
+             provider,provider_payment_id,data_json)
+           VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb)
+           RETURNING *""",
+        (int(booking["id"]),int(client_id),int(service["partner_id"]),
+         getattr(intent,"status",status),float(commission),currency,
+         getattr(intent,"provider",None),getattr(intent,"transaction_id",None),
+         json.dumps({
+             "mode":getattr(intent,"mode",None),
+             "bill_no":getattr(intent,"bill_no",None),
+             "payment_url":getattr(intent,"payment_url",None),
+         },ensure_ascii=False)),True,
+    )
+    return {"booking":booking,"payment":payment}
+
+
 # ---------------------------------------------------------------------------
 # Client request / candidate persistence
 # ---------------------------------------------------------------------------
