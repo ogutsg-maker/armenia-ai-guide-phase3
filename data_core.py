@@ -647,9 +647,9 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
         out={"type":"application","id":eid,"profile":app}
         out["documents"]=get_documents(application_id=eid,limit=30)
         if app.get("business_id"):
-            out["company"]=get_ai_entity("company",int(app["business_id"]),full=full)
+            out["company"]=get_ai_entity("company",int(app["business_id"]),full=full,role=role,actor_id=actor_id)
         if app.get("partner_id"):
-            out["partner"]=get_ai_entity("partner",int(app["partner_id"]),full=False)
+            out["partner"]=get_ai_entity("partner",int(app["partner_id"]),full=False,role=role,actor_id=actor_id)
         return out
 
     if kind == "partner":
@@ -657,6 +657,8 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
                               verification_status,contact_share_policy,created_at,updated_at
                        FROM partners WHERE id=%s""",(eid,))
         if not partner: return None
+        if role == "client" and partner.get("status") != "approved": return None
+        if role == "client": partner = {k: partner.get(k) for k in ("id","business_name","business_description","status")}
         out={"type":"partner","id":eid,"profile":partner}
         out["companies"]=list_companies(eid)
         if full:
@@ -693,13 +695,16 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
         return out
 
     if kind == "service":
-        return get_service(eid)
+        service = get_service(eid)
+        if role == "client" and (not service or service.get("status") != "approved"):
+            return None
+        return service
 
     if kind in {"category","subcategory"}:
         return get_catalog_category(eid)
 
     if kind == "order":
-        return one("SELECT * FROM bookings WHERE id=%s",(eid,)) if _table_exists("bookings") else None
+        return get_order(eid, actor_role=role, actor_id=actor_id)
     return None
 
 
