@@ -514,17 +514,45 @@ def update_negotiation(negotiation_id: int, state: dict[str, Any],
     current = get_negotiation(negotiation_id, actor_role=actor_role, actor_id=actor_id)
     if not current:
         return None
-    if status:
+
+    current_status = str(current.get("status") or "").strip().lower()
+    requested_status = current_status if status is None else str(status).strip().lower()
+
+    # Explicit state machine: callers cannot jump between arbitrary states.
+    allowed = {
+        "active": {"active", "agreed", "cancelled", "rejected"},
+        "agreed": {"agreed"},
+        "cancelled": {"cancelled"},
+        "rejected": {"rejected"},
+    }
+    if requested_status not in allowed.get(current_status, {current_status}):
+        return None
+
+    next_state = dict(state or {})
+    if requested_status == "agreed":
+        final_price = next_state.get("final_price", next_state.get("agreed_price"))
+        if final_price is None:
+            return None
+        try:
+            if float(final_price) <= 0:
+                return None
+        except (TypeError, ValueError):
+            return None
+        next_state["final_price"] = float(final_price)
+
+    if status is not None:
         return execute(
-            """UPDATE negotiations SET state_json=%s::jsonb,status=%s,updated_at=NOW()
-               WHERE id=%s RETURNING *""",
-            (json.dumps(state or {}, ensure_ascii=False), str(status), int(negotiation_id)),
+            """UPDATE negotiations
+               SET state_json=%s::jsonb,status=%s,updated_at=NOW()
+               WHERE id=%s AND status=%s RETURNING *""",
+            (json.dumps(next_state, ensure_ascii=False), requested_status,
+             int(negotiation_id), current_status),
             True,
         )
     return execute(
         """UPDATE negotiations SET state_json=%s::jsonb,updated_at=NOW()
-           WHERE id=%s RETURNING *""",
-        (json.dumps(state or {}, ensure_ascii=False), int(negotiation_id)),
+           WHERE id=%s AND status=%s RETURNING *""",
+        (json.dumps(next_state, ensure_ascii=False), int(negotiation_id), current_status),
         True,
     )
 
