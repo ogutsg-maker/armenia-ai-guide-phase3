@@ -1,79 +1,34 @@
 from __future__ import annotations
 
-"""Safe, role-aware data tools for the conversational AI core.
+"""Role-aware business tools exposed to the AI core.
 
-The model selects tools by semantic intent. Tool implementations remain Python-owned:
-they validate role/arguments and read/write through the platform DB layer. The model never
-receives arbitrary SQL access.
+All persistence and schema access is delegated to Data Core. This module owns
+tool authorization and argument validation, not SQL.
 """
 
-from typing import Any, Dict, List
-from decimal import Decimal
 from datetime import date, datetime
+from decimal import Decimal
+import re
+from typing import Any, Dict, List
+
 import data_core
 
 
 ROLES = {"admin", "partner", "client", "potential_partner"}
 
-# These are descriptions exposed to the model. They intentionally describe business
-# capabilities, not database tables or SQL.
 TOOL_DEFINITIONS = {
-    "search_partners": {
-        "description": "Find partners/businesses matching a name, service, city, region or status.",
-        "roles": {"admin", "client"},
-    },
-    "get_partner": {
-        "description": "Get the allowed profile data for one partner.",
-        "roles": {"admin", "partner", "client"},
-    },
-    "get_application": {
-        "description": "Get a partner application and its current review state.",
-        "roles": {"admin"},
-    },
-    "get_documents": {
-        "description": "Get verification documents and their statuses for a partner/application.",
-        "roles": {"admin", "partner"},
-    },
-    "get_addresses": {
-        "description": "Get business objects and addresses available to the current role.",
-        "roles": {"admin", "partner", "client"},
-    },
-    "get_directions": {
-        "description": "Get directions/master categories related to an entity or the catalog.",
-        "roles": {"admin", "partner", "client"},
-    },
-    "search_catalog": {
-        "description": "Search active catalog categories/subcategories by name or parent direction.",
-        "roles": {"admin", "partner", "client"},
-    },
-    "get_services": {
-        "description": "Get services, prices and catalog links visible to the current role.",
-        "roles": {"admin", "partner", "client"},
-    },
-    "get_orders": {
-        "description": "Get orders visible to the current role.",
-        "roles": {"admin", "partner", "client"},
-    },
-    "check_application": {
-        "description": "Run factual consistency/completeness checks on an application.",
-        "roles": {"admin"},
-    },
-    "check_catalog_match": {
-        "description": "Check whether a service maps plausibly to an active catalog category.",
-        "roles": {"admin", "partner"},
-    },
-    "count": {
-        "description": "Count a supported business entity without exposing SQL. `directions` means active master categories; `subcategories` means active catalog subcategories.",
-        "roles": {"admin", "partner", "client"},
-    },
-}
-
-_COUNT_SQL = {
-    "partners": "SELECT COUNT(*) AS count FROM partners",
-    "applications": "SELECT COUNT(*) AS count FROM partner_applications",
-    "services": "SELECT COUNT(*) AS count FROM services",
-    "directions": "SELECT COUNT(*) AS count FROM master_categories WHERE is_active=TRUE",
-    "subcategories": "SELECT COUNT(*) AS count FROM categories WHERE is_active=TRUE",
+    "search_partners": {"description": "Find partners/businesses matching a name, service, city, region or status.", "roles": {"admin", "client"}},
+    "get_partner": {"description": "Get the allowed profile data for one partner.", "roles": {"admin", "partner", "client"}},
+    "get_application": {"description": "Get a partner application and its current review state.", "roles": {"admin"}},
+    "get_documents": {"description": "Get verification documents and their statuses for a partner/application.", "roles": {"admin", "partner"}},
+    "get_addresses": {"description": "Get business objects and addresses available to the current role.", "roles": {"admin", "partner", "client"}},
+    "get_directions": {"description": "Get active master directions from the catalog.", "roles": {"admin", "partner", "client"}},
+    "search_catalog": {"description": "Search active catalog categories/subcategories by name or parent direction.", "roles": {"admin", "partner", "client"}},
+    "get_services": {"description": "Get services, prices and catalog links visible to the current role.", "roles": {"admin", "partner", "client"}},
+    "get_orders": {"description": "Get orders visible to the current role.", "roles": {"admin", "partner", "client"}},
+    "check_application": {"description": "Run factual consistency/completeness checks on an application.", "roles": {"admin"}},
+    "check_catalog_match": {"description": "Check whether a service maps plausibly to an active catalog category.", "roles": {"admin", "partner"}},
+    "count": {"description": "Count a supported business entity without exposing SQL. directions means active master categories; subcategories means active catalog subcategories.", "roles": {"admin", "partner", "client"}},
 }
 
 
@@ -82,7 +37,7 @@ class DataToolError(Exception):
 
 
 class DataTools:
-    """Role-aware facade between AI and the platform database."""
+    """Controlled facade between AI and Data Core."""
 
     def __init__(self, role: str, actor_id: int | None = None):
         role = str(role or "").strip().lower()
@@ -100,15 +55,14 @@ class DataTools:
 
     def execute(self, name: str, arguments: Dict[str, Any] | None = None) -> Dict[str, Any]:
         name = str(name or "").strip()
-        arguments = arguments if isinstance(arguments, dict) else {}
+        args = arguments if isinstance(arguments, dict) else {}
         spec = TOOL_DEFINITIONS.get(name)
         if not spec or self.role not in spec["roles"]:
             raise DataToolError("tool_not_allowed")
-
         handler = getattr(self, "_tool_" + name, None)
         if not handler:
             raise DataToolError("tool_not_implemented")
-        return {"tool": name, "data": handler(arguments)}
+        return {"tool": name, "data": self._safe_value(handler(args))}
 
     @staticmethod
     def _safe_value(value: Any) -> Any:
@@ -120,324 +74,167 @@ class DataTools:
             return value.isoformat()
         if isinstance(value, dict):
             return {str(k): DataTools._safe_value(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, (list, tuple, set)):
             return [DataTools._safe_value(v) for v in value]
         return str(value)
 
-    @classmethod
-    def _safe_rows(cls, rows: Any) -> List[Dict[str, Any]]:
-        if not rows:
-            return []
-        return [cls._safe_value(dict(x)) if isinstance(x, dict) else cls._safe_value(x) for x in rows]
-
-    def _tool_count(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_count(self, args):
         entity = str(args.get("entity") or "").strip().lower()
-        sql = _COUNT_SQL.get(entity)
-        if not sql:
+        if entity not in {"partners", "applications", "services", "directions", "subcategories", "companies"}:
             raise DataToolError("unsupported_count_entity")
-        row = data_core.one(sql) or {}
-        return {"entity": entity, "count": int(row.get("count") or 0)}
+        return {"entity": entity, "count": data_core.count(entity)}
 
-    def _tool_search_partners(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        q = str(args.get("query") or "").strip()
-        city = str(args.get("city") or "").strip()
-        limit = min(max(int(args.get("limit") or 20), 1), 50)
-        where = ["p.status <> 'archived'"]
-        params: List[Any] = []
-        if q:
-            where.append("(p.business_name ILIKE %s OR p.business_description ILIKE %s)")
-            params += [f"%{q}%", f"%{q}%"]
-        if city:
-            where.append("""EXISTS (
-                SELECT 1 FROM partner_applications pa
-                WHERE pa.partner_id=p.id AND pa.location_city ILIKE %s
-            )""")
-            params.append(f"%{city}%")
-        rows = data_core.rows(
-            """SELECT p.id,p.business_name,p.status,p.verification_status,p.business_description
-               FROM partners p WHERE """ + " AND ".join(where) +
-            " ORDER BY p.id DESC LIMIT %s",
-            tuple(params + [limit]),
+    def _tool_search_partners(self, args):
+        rows = data_core.search_partners(
+            query=str(args.get("query") or "").strip(),
+            city=str(args.get("city") or "").strip(),
+            limit=min(max(int(args.get("limit") or 20), 1), 100),
         )
-        return {"items": self._safe_rows(rows), "count": len(rows)}
+        return {"items": rows, "count": len(rows)}
 
-    def _tool_get_partner(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_get_partner(self, args):
         partner_id = args.get("partner_id")
         if partner_id is None:
             raise DataToolError("partner_id_required")
-        row = data_core.one(
-            """SELECT id,user_id,status,verification_status,business_name,
-                      business_description,contact_share_policy,created_at,updated_at
-               FROM partners WHERE id=%s""",
-            (int(partner_id),),
-        )
+        row = data_core.get_partner(int(partner_id))
         if not row:
             return {"partner": None}
-        # A partner may read only their own private profile; clients receive
-        # the public-safe subset.
         if self.role == "partner":
             if self.actor_id is None or int(row.get("user_id") or 0) != self.actor_id:
                 raise DataToolError("partner_access_denied")
         if self.role == "client":
             row = {k: row.get(k) for k in ("id", "business_name", "business_description", "status")}
-        return {"partner": self._safe_rows([row])[0]}
+        return {"partner": row}
 
-    def _tool_get_application(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_get_application(self, args):
         aid = args.get("application_id")
         if aid is None:
             raise DataToolError("application_id_required")
-        row = data_core.one(
-            """SELECT a.*,p.user_id,p.business_name AS partner_business_name
-               FROM partner_applications a
-               LEFT JOIN partners p ON p.id=a.partner_id
-               WHERE a.id=%s""",
-            (int(aid),),
-        )
-        return {"application": self._safe_rows([row])[0] if row else None}
+        return {"application": data_core.get_application(int(aid))}
 
-    def _tool_get_documents(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_get_documents(self, args):
         aid = args.get("application_id")
         partner_id = args.get("partner_id")
-        if not aid and not partner_id:
+        if aid is None and partner_id is None:
             raise DataToolError("application_or_partner_required")
-        if aid:
-            app = data_core.one("SELECT partner_id FROM partner_applications WHERE id=%s", (int(aid),))
+        if aid is not None:
+            app = data_core.get_application(int(aid))
             partner_id = app.get("partner_id") if app else None
         if not partner_id:
             return {"documents": []}
-        cols = data_core.rows(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema='public' AND table_name='partner_verification_documents' "
-            "ORDER BY ordinal_position"
-        )
-        names = {str(x.get("column_name")) for x in cols}
-        if "partner_id" not in names:
-            raise DataToolError("documents_schema_missing_partner_id")
-        wanted = [
-            "id","partner_id","application_id","partner_application_id","document_type",
-            "file_name","file_url","status","verification_status","admin_note",
-            "rejection_reason","created_at","updated_at"
-        ]
-        select_cols = [x for x in wanted if x in names]
-        rows = data_core.rows(
-            "SELECT " + ",".join(select_cols) +
-            " FROM partner_verification_documents WHERE partner_id=%s ORDER BY id DESC LIMIT 50",
-            (int(partner_id),),
-        )
         if self.role == "partner":
-            partner = data_core.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
-            if not partner or self.actor_id is None or int(partner.get("user_id") or 0) != self.actor_id:
-                raise DataToolError("partner_access_denied")
-        return {"documents": self._safe_rows(rows)}
+            data_core.assert_partner_owns_partner(int(partner_id), int(self.actor_id or 0))
+        return {"documents": data_core.get_documents(partner_id=int(partner_id), limit=50)}
 
-    def _tool_get_addresses(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_get_addresses(self, args):
         partner_id = args.get("partner_id")
         if partner_id is None:
-            raise DataToolError("partner_id_required")
-        if self.role == "partner":
-            partner = data_core.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
-            if not partner or self.actor_id is None or int(partner.get("user_id") or 0) != self.actor_id:
-                raise DataToolError("partner_access_denied")
-        rows = data_core.rows(
-            """SELECT id,partner_id,name,description,phone,status
-               FROM partner_businesses WHERE partner_id=%s AND status<>'archived'
-               ORDER BY id DESC LIMIT 100""",
-            (int(partner_id),),
-        )
-        return {"items": self._safe_rows(rows)}
+            if self.role == "partner" and self.actor_id is not None:
+                partner = data_core.get_partner_by_user(self.actor_id)
+                partner_id = partner.get("id") if partner else None
+            if partner_id is None:
+                raise DataToolError("partner_id_required")
+        actor = self.actor_id if self.role == "partner" else None
+        return {"items": data_core.get_partner_addresses(int(partner_id), actor_user_id=actor)}
 
-    def _tool_get_directions(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        rows = data_core.rows(
-            """SELECT id,name_am,name_ru,name_en,slug,is_active
-               FROM master_categories WHERE is_active=TRUE ORDER BY id"""
-        )
-        return {"items": self._safe_rows(rows), "count": len(rows)}
+    def _tool_get_directions(self, args):
+        rows = data_core.active_directions()
+        return {"items": rows, "count": len(rows)}
 
-    def _tool_search_catalog(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        q = str(args.get("query") or "").strip()
-        master_id = args.get("master_category_id")
-        where = ["c.is_active=TRUE", "m.is_active=TRUE"]
-        params: List[Any] = []
-        if q:
-            where.append("""(
-                c.name_am ILIKE %s OR c.name_ru ILIKE %s OR c.name_en ILIKE %s OR
-                c.slug ILIKE %s OR m.name_am ILIKE %s OR m.name_ru ILIKE %s OR m.name_en ILIKE %s
-            )""")
-            params += [f"%{q}%"] * 7
-        if master_id is not None:
-            where.append("c.master_category_id=%s")
-            params.append(int(master_id))
-        rows = data_core.rows(
-            """SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,
-                      m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en
-               FROM categories c JOIN master_categories m ON m.id=c.master_category_id
-               WHERE """ + " AND ".join(where) + " ORDER BY c.id",
-            tuple(params),
+    def _tool_search_catalog(self, args):
+        rows = data_core.search_catalog(
+            query=str(args.get("query") or "").strip(),
+            master_category_id=int(args["master_category_id"]) if args.get("master_category_id") is not None else None,
+            limit=min(max(int(args.get("limit") or 100), 1), 500),
         )
-        return {"items": self._safe_rows(rows), "count": len(rows)}
+        return {"items": rows, "count": len(rows)}
 
-    def _tool_get_services(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_get_services(self, args):
         partner_id = args.get("partner_id")
-        category_id = args.get("category_id")
-        where = ["s.status <> 'archived'"]
-        params: List[Any] = []
-        if partner_id is not None:
-            if self.role == "partner":
-                partner = data_core.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
-                if not partner or self.actor_id is None or int(partner.get("user_id") or 0) != self.actor_id:
-                    raise DataToolError("partner_access_denied")
-            where.append("s.partner_id=%s")
-            params.append(int(partner_id))
-        elif self.role == "partner":
+        if self.role == "partner":
             if self.actor_id is None:
                 raise DataToolError("actor_required")
-            where.append("p.user_id=%s")
-            params.append(self.actor_id)
-        if category_id is not None:
-            where.append("s.category_id=%s")
-            params.append(int(category_id))
-        rows = data_core.rows(
-            """SELECT s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,
-                      p.business_name AS partner_name,c.name_am AS category_name_am,
-                      c.name_ru AS category_name_ru,c.name_en AS category_name_en,
-                      c.master_category_id
-               FROM services s
-               LEFT JOIN categories c ON c.id=s.category_id
-               LEFT JOIN partners p ON p.id=s.partner_id
-               WHERE """ + " AND ".join(where) + " ORDER BY s.id DESC LIMIT 100""",
-            tuple(params),
-        )
-        if self.role == "client":
-            rows = [
-                {k: x.get(k) for k in ("id","partner_id","business_id","name","category_id",
-                                        "price","status","partner_name","category_name_am",
-                                        "category_name_ru","category_name_en","master_category_id")}
-                for x in rows
-            ]
-        return {"items": self._safe_rows(rows), "count": len(rows)}
+            if partner_id is None:
+                partner = data_core.get_partner_by_user(self.actor_id)
+                partner_id = partner.get("id") if partner else None
+            if partner_id is None:
+                raise DataToolError("partner_not_found")
+            actor = self.actor_id
+        else:
+            actor = None
 
-    def _tool_get_orders(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        # Order schema differs across project stages. Keep this tool intentionally
-        # conservative until the canonical orders table/API is finalized.
+        if self.role == "client":
+            rows = data_core.search_services(
+                partner_id=int(partner_id) if partner_id is not None else None,
+                category_id=int(args["category_id"]) if args.get("category_id") is not None else None,
+                city=str(args.get("city") or "").strip(),
+                max_price=float(args["max_price"]) if args.get("max_price") is not None else None,
+                limit=min(max(int(args.get("limit") or 100), 1), 200),
+            )
+        else:
+            rows = data_core.list_services(
+                partner_id=int(partner_id) if partner_id is not None else None,
+                category_id=int(args["category_id"]) if args.get("category_id") is not None else None,
+                actor_user_id=actor,
+                limit=min(max(int(args.get("limit") or 100), 1), 200),
+            )
+        return {"items": rows, "count": len(rows)}
+
+    def _tool_get_orders(self, args):
         raise DataToolError("orders_tool_pending_schema_mapping")
 
-    def _tool_check_application(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_check_application(self, args):
         aid = args.get("application_id")
         if aid is None:
             raise DataToolError("application_id_required")
-        app = self._tool_get_application({"application_id": aid})["application"]
-        if not app:
-            return {"application_id": int(aid), "checks": [], "found": False}
-        checks = []
-        checks.append({"field": "status", "value": app.get("status"), "severity": "info"})
-        checks.append({"field": "service", "value": bool(str(app.get("service_name") or "").strip()),
-                       "severity": "ok" if app.get("service_name") else "warning"})
-        checks.append({"field": "price", "value": app.get("price"),
-                       "severity": "ok" if app.get("price") not in (None, "") else "warning"})
-        docs = self._tool_get_documents({"application_id": aid})["documents"]
-        checks.append({"field": "documents", "value": len(docs),
-                       "severity": "ok" if docs else "warning"})
+        return data_core.check_application(int(aid))
 
-        # Verify the stored category against its parent direction when both
-        # IDs exist. This is a reusable business rule, not a phrase-specific fix.
-        category_id=app.get("category_id")
-        master_id=app.get("master_category_id")
-        if category_id is not None:
-            category=data_core.one(
-                """SELECT id,master_category_id,name_am,name_ru,name_en,is_active
-                   FROM categories WHERE id=%s""",(int(category_id),)
-            )
-            if category:
-                checks.append({"field":"category","value":category,
-                               "severity":"ok" if category.get("is_active") else "error"})
-                if master_id is not None and category.get("master_category_id") is not None:
-                    try:
-                        same=int(master_id)==int(category["master_category_id"])
-                        checks.append({"field":"direction_category_match","value":same,
-                                       "severity":"ok" if same else "error"})
-                    except (TypeError,ValueError):
-                        pass
-            else:
-                checks.append({"field":"category","value":category_id,"severity":"error",
-                               "message":"Stored category does not exist in the active catalog."})
-        return {"application_id": int(aid), "found": True, "checks": checks,
-                "direction_name":app.get("direction_name"),
-                "master_category_id":master_id,
-                "subcategory_name":app.get("subcategory_name")}
-
-    def _tool_check_catalog_match(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    def _tool_check_catalog_match(self, args):
         service = str(args.get("service_name") or "").strip()
         if not service:
             raise DataToolError("service_name_required")
 
-        # Semantic catalog matching is deliberately generic: the AI supplies the
-        # service phrase, while this layer resolves multilingual morphology/concepts
-        # against the live catalog. IDs still come only from the database.
-        import re
         aliases = {
             "eyebrows": {"брови","бровь","бровей","հոնք","հոնքեր","հոնքերի","eyebrow","eyebrows"},
             "manicure": {"маникюр","մատնահարդարում","manicure"},
             "pedicure": {"педикюр","պեդիկյուր","pedicure"},
             "makeup": {"макияж","визаж","դիմահարդարում","makeup"},
             "haircut": {"стрижка","стрижку","стрижки","վարսավիր","սանրվածք","haircut"},
-            "hair": {"волосы","волос","мազ","մազեր","hair"},
+            "hair": {"волосы","волос","մազ","մազեր","hair"},
             "coloring": {"окрашивание","окраска","окрасить","ներկում","ներկել","coloring","colouring"},
         }
-        def norm(v):
-            return " ".join(str(v or "").casefold().strip().split())
-        def tokens(v):
-            return set(re.findall(r"[a-zа-яёևա-ֆ0-9-]+", norm(v)))
-        raw=tokens(service)
-        concepts=set(raw)
+        def norm(v): return " ".join(str(v or "").casefold().strip().split())
+        def tokens(v): return set(re.findall(r"[a-zа-яёևա-ֆ0-9-]+", norm(v)))
+        raw=tokens(service); concepts=set(raw)
         for key, vals in aliases.items():
             if raw.intersection(vals) or key in raw:
-                concepts.add(key)
-                concepts.update(vals)
+                concepts.add(key); concepts.update(vals)
 
-        # First get the live catalog without relying on text search, then score
-        # every active candidate by exact/phrase/concept/token/root overlap.
         rows=self._tool_search_catalog({}).get("items", [])
         scored=[]
         for row in rows:
             names=[norm(row.get(k)) for k in ("name_am","name_ru","name_en") if row.get(k)]
-            if not names:
-                continue
-            text=" ".join(names)
-            rt=tokens(text)
-            rc=set(rt)
+            if not names: continue
+            rt=tokens(" ".join(names)); rc=set(rt)
             for key, vals in aliases.items():
                 if rt.intersection(vals) or key in rt:
                     rc.add(key); rc.update(vals)
-            # Separate subject/object concepts from generic operations. Object matches
-            # must dominate: "eyebrow coloring" belongs to eyebrows, not generic hair coloring.
             object_keys={"eyebrows","manicure","pedicure","makeup","haircut","hair"}
             operation_keys={"coloring"}
-            object_overlap=concepts.intersection(rc).intersection(object_keys)
-            operation_overlap=concepts.intersection(rc).intersection(operation_keys)
+            obj=concepts.intersection(rc).intersection(object_keys)
+            op=concepts.intersection(rc).intersection(operation_keys)
             score=0
-            if norm(service) in names or any(norm(service)==x for x in names):
-                score=1000
-            elif any(norm(service) in x or x in norm(service) for x in names):
-                score=700
-            if object_overlap:
-                score=max(score,650+min(len(object_overlap),3)*80)
-            if operation_overlap:
-                score=max(score,320+min(len(operation_overlap),2)*25)
-            concept_overlap=concepts.intersection(rc)
-            if concept_overlap:
-                score=max(score,400+min(len(concept_overlap),5)*20)
-            overlap=raw.intersection(rt)
-            if overlap:
-                score=max(score,260+min(len(overlap),5)*20)
-            roots=0
-            for token in raw:
-                if len(token)<4: continue
-                if any(token in ct or ct in token for ct in rt if len(ct)>=4):
-                    roots+=1
-            if roots:
-                score=max(score,150+min(roots,5)*15)
-            if score:
-                scored.append((score,row,object_overlap,operation_overlap))
+            if norm(service) in names: score=1000
+            elif any(norm(service) in x or x in norm(service) for x in names): score=700
+            if obj: score=max(score,650+min(len(obj),3)*80)
+            if op: score=max(score,320+min(len(op),2)*25)
+            overlap=concepts.intersection(rc)
+            if overlap: score=max(score,400+min(len(overlap),5)*20)
+            raw_overlap=raw.intersection(rt)
+            if raw_overlap: score=max(score,260+min(len(raw_overlap),5)*20)
+            roots=sum(1 for token in raw if len(token)>=4 and any(token in ct or ct in token for ct in rt if len(ct)>=4))
+            if roots: score=max(score,150+min(roots,5)*15)
+            if score: scored.append((score,row,obj,op))
         scored.sort(key=lambda x:(x[0],len(x[2]),-len(x[3]),str(x[1].get("name_am") or x[1].get("name_ru") or "").casefold()),reverse=True)
         candidates=[]
         for score,row,obj,op in scored[:8]:
@@ -446,7 +243,11 @@ class DataTools:
             item["operation_matches"]=sorted(op)
             item["match_reason"]="object_match" if obj else ("operation_match" if op else "text_match")
             candidates.append(item)
-        return {"service_name":service,"candidates":candidates,"count":len(candidates),
-                "top_score":scored[0][0] if scored else 0,
-                "top_object_matches":sorted(scored[0][2]) if scored else [],
-                "top_operation_matches":sorted(scored[0][3]) if scored else []}
+        return {
+            "service_name":service,
+            "candidates":candidates,
+            "count":len(candidates),
+            "top_score":scored[0][0] if scored else 0,
+            "top_object_matches":sorted(scored[0][2]) if scored else [],
+            "top_operation_matches":sorted(scored[0][3]) if scored else [],
+        }
