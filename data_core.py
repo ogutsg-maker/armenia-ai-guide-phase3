@@ -342,6 +342,175 @@ def replace_request_candidates(request_id: int, candidates: list[dict[str, Any]]
         )
 
 
+
+# ---------------------------------------------------------------------------
+# Operational AI context reads
+# ---------------------------------------------------------------------------
+# These methods keep schema knowledge inside Data Core. AI Context should call
+# these named business reads instead of composing SQL itself.
+
+def _table_exists(table_name: str) -> bool:
+    row = one(
+        "SELECT 1 AS ok FROM information_schema.tables "
+        "WHERE table_schema='public' AND table_name=%s LIMIT 1",
+        (str(table_name),),
+    )
+    return bool(row)
+
+
+def _count_table(table_name: str, where: str = "", params: Iterable[Any] = ()) -> int | None:
+    if not _table_exists(table_name):
+        return None
+    # table_name is selected only from application-owned call sites below.
+    sql = f'SELECT COUNT(*) AS n FROM "public"."{table_name}"'
+    if where:
+        sql += " WHERE " + where
+    row = one(sql, tuple(params))
+    return int((row or {}).get("n") or 0)
+
+
+def operational_stats() -> dict[str, Any]:
+    """Return verified platform statistics for AI Context/Admin AI."""
+    stats: dict[str, Any] = {
+        "platform": {}, "catalog": {}, "geography": {},
+        "applications": {}, "documents": {}, "orders": {}, "work_queue": {},
+    }
+    for key, table, where in (
+        ("partners", "partners", ""),
+        ("companies", "partner_businesses", "status <> 'archived'"),
+        ("services", "services", "status IS NULL OR status <> 'deleted'"),
+        ("clients", "users", "role = 'client'"),
+        ("applications", "partner_applications", ""),
+        ("directions", "master_categories", "is_active = TRUE"),
+        ("subcategories", "categories", "is_active = TRUE"),
+    ):
+        value = _count_table(table, where)
+        if value is not None:
+            if key in {"directions", "subcategories"}:
+                stats["catalog"][key] = value
+            elif key == "clients":
+                stats["platform"][key] = value
+            elif key == "applications":
+                stats["applications"]["total"] = value
+            else:
+                stats["platform"][key] = value
+
+    for status in ("pending_admin", "approved", "rejected"):
+        value = _count_table("partner_applications", "status=%s", (status,))
+        if value is not None:
+            stats["applications"][status] = value
+
+    if _table_exists("partner_verification_documents"):
+        stats["documents"]["total"] = _count_table("partner_verification_documents") or 0
+        for status in ("pending", "under_review", "approved", "rejected"):
+            value = _count_table(
+                "partner_verification_documents",
+                "(status=%s OR verification_status=%s)",
+                (status, status),
+            )
+            if value is not None:
+                stats["documents"][status] = value
+
+    if _table_exists("bookings"):
+        stats["orders"]["total"] = _count_table("bookings") or 0
+        for status in ("new", "pending", "confirmed", "active", "completed", "cancelled", "canceled"):
+            value = _count_table("bookings", "status=%s", (status,))
+            if value:
+                stats["orders"][status] = value
+
+    stats["work_queue"]["applications_to_review"] = stats["applications"].get("pending_admin", 0)
+    stats["work_queue"]["documents_to_review"] = (
+        stats["documents"].get("pending", 0) + stats["documents"].get("under_review", 0)
+    )
+
+    if _table_exists("services"):
+        row = one("SELECT COUNT(DISTINCT city) AS n FROM services WHERE city IS NOT NULL AND TRIM(city)<>''")
+        if row:
+            stats["geography"]["service_cities"] = int(row.get("n") or 0)
+
+    if _table_exists("partner_objects"):
+        row = one("SELECT COUNT(DISTINCT city) AS n FROM partner_objects WHERE COALESCE(is_active,TRUE)=TRUE AND city IS NOT NULL AND TRIM(city)<>''")
+        if row:
+            stats["geography"]["cities"] = int(row.get("n") or 0)
+        row = one("SELECT COUNT(DISTINCT marz) AS n FROM partner_objects WHERE COALESCE(is_active,TRUE)=TRUE AND marz IS NOT NULL AND TRIM(marz)<>''")
+        if row:
+            stats["geography"]["marzes"] = int(row.get("n") or 0)
+
+    for table in ("payments", "financial_transactions", "transactions", "partner_payouts", "commissions"):
+        if _table_exists(table):
+            stats.setdefault("finance", {})["records"] = _count_table(table) or 0
+            break
+    return stats
+
+
+def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[str, Any] | None:
+    """Return a role-neutral verified entity graph for AI Context."""
+    eid = int(entity_id)
+    kind = str(entity_type or "").strip().lower()
+
+    if kind == "application":
+        app = one(
+            """SELECT a.id,a.partner_id,a.business_id,a.business_name,a.status,a.service_name,a.price,
+                      a.direction_name,a.master_category_id,a.subcategory_name,a.category_id,
+                      a.location_marz,a.location_city,a.location_village,a.address,a.phone,
+                      a.description,a.object_name,a.object_id,a.created_at,a.updated_at,a.payload_json,
+                      p.business_name AS partner_name
+               FROM partner_applications a LEFT JOIN partners p ON p.id=a.partner_id
+               WHERE a.id=%s""", (eid,))
+        if not app:
+            return None
+        out={"type":"application","id":eid,"profile":app}
+        out["documents"]=get_documents(application_id=eid,limit=30)
+        if app.get("business_id"):
+            out["company"]=get_ai_entity("company",int(app["business_id"]),full=full)
+        if app.get("partner_id"):
+            out["partner"]=get_ai_entity("partner",int(app["partner_id"]),full=False)
+        return out
+
+    if kind == "partner":
+        partner=one("""SELECT id,user_id,business_name,business_description,status,
+                              verification_status,contact_share_policy,created_at,updated_at
+                       FROM partners WHERE id=%s""",(eid,))
+        if not partner: return None
+        out={"type":"partner","id":eid,"profile":partner}
+        out["companies"]=list_companies(eid)
+        if full:
+            out["services"]=rows(
+                """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
+                   FROM services WHERE partner_id=%s AND (status IS NULL OR status<>'deleted')
+                   ORDER BY id DESC LIMIT 100""",(eid,))
+            if _table_exists("partner_objects"):
+                out["addresses"]=rows(
+                    """SELECT id,business_id,object_name,address,city,marz,phone,is_active
+                       FROM partner_objects WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
+                       ORDER BY business_id,id LIMIT 100""",(eid,))
+        return out
+
+    if kind in {"company","business"}:
+        company=get_company(eid)
+        if not company: return None
+        out={"type":"company","id":eid,"profile":company}
+        if _table_exists("partner_objects"):
+            out["addresses"]=rows(
+                """SELECT id,business_id,object_name,address,city,marz,phone,is_active
+                   FROM partner_objects WHERE business_id=%s AND COALESCE(is_active,TRUE)=TRUE
+                   ORDER BY id LIMIT 50""",(eid,))
+        out["services"]=rows(
+            """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
+               FROM services WHERE business_id=%s AND (status IS NULL OR status<>'deleted')
+               ORDER BY id DESC LIMIT 100""",(eid,))
+        return out
+
+    if kind == "service":
+        return get_service(eid)
+
+    if kind in {"category","subcategory"}:
+        return get_catalog_category(eid)
+
+    if kind == "order":
+        return one("SELECT * FROM bookings WHERE id=%s",(eid,)) if _table_exists("bookings") else None
+    return None
+
 # ---------------------------------------------------------------------------
 # AI session / history
 # ---------------------------------------------------------------------------
