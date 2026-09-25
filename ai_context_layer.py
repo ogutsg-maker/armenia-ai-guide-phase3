@@ -12,7 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-import data_core as platform_db
+import data_core
 
 
 def _safe(value: Any) -> Any:
@@ -31,14 +31,14 @@ def _safe(value: Any) -> Any:
 
 def _rows(sql: str, params=()):
     try:
-        return [_safe(x) for x in (platform_db.rows(sql, params) or [])]
+        return [_safe(x) for x in (data_core.rows(sql, params) or [])]
     except Exception:
         return []
 
 
 def _one(sql: str, params=()):
     try:
-        row = platform_db.one(sql, params)
+        row = data_core.one(sql, params)
         return _safe(row) if row else None
     except Exception:
         return None
