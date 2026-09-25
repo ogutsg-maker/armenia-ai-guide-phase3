@@ -487,7 +487,7 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     found = []
     currency_re = r"(?:դրամ(?:ից|ով|ի)?|դր\.?|֏|amd|dram|драм(?:ов|а)?|амд)"
     price_re = re.compile(
-        rf"(?P<name>.+?)\s*(?:՝|:|—|–|-|\b(?:սկսվում\s+են|սկսվում\s+է|արժե|գինն\s+է|от|from|starting\s+at)\b)?\s*"
+        rf"(?P<name>.+?)\s*(?:՝|:|—|–|-|\b(?:սկսվում\s+են|սկսվում\s+է|սկսած|արժե|գինն\s+է|от|from|starting\s+at)\b)?\s*"
         rf"(?P<price>\d[\d\s.,]*)\s*(?P<currency>{currency_re})\b", flags=re.I
     )
     for clause in clauses:
