@@ -48,9 +48,13 @@ def _render_stats(stats: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _entity(entity_type: str, entity_id: Any, *, full: bool = False) -> dict[str, Any] | None:
+def _entity(entity_type: str, entity_id: Any, *, full: bool = False,
+            role: str = "admin", actor_id: Any = None) -> dict[str, Any] | None:
     try:
-        return _safe(data_core.get_ai_entity(entity_type, int(entity_id), full=full))
+        return _safe(data_core.get_ai_entity(
+            entity_type, int(entity_id), full=full,
+            role=role, actor_id=int(actor_id) if actor_id is not None else None,
+        ))
     except (TypeError, ValueError, LookupError):
         return None
     except Exception:
@@ -86,7 +90,7 @@ def build_context(*, role: str, actor_id: Any = None,
     }
 
     if entity_type and entity_id not in (None, ""):
-        item = _entity(entity_type, entity_id, full=full)
+        item = _entity(entity_type, entity_id, full=full, role=role, actor_id=actor_id)
         if item:
             key = f"{str(entity_type).lower()}:{normalized_id}"
             context["entities"][key] = item
