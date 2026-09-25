@@ -521,7 +521,7 @@ def update_negotiation(negotiation_id: int, state: dict[str, Any],
     # Explicit state machine: callers cannot jump between arbitrary states.
     allowed = {
         "active": {"active", "agreed", "cancelled", "rejected"},
-        "agreed": {"agreed"},
+        "agreed": {"agreed", "cancelled"},
         "cancelled": {"cancelled"},
         "rejected": {"rejected"},
     }
