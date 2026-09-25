@@ -721,41 +721,83 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
                            currency: str, commission: float, partner_amount: float,
                            scheduled_at=None, client_note: str = "",
                            intent=None, metadata: dict | None = None):
+    """Atomically persist a direct booking and its payment/ledger/check-in rows.
+
+    The provider invoice may exist before this DB transaction starts. If any DB
+    step fails, PostgreSQL rolls back all booking-side rows and the caller can
+    safely retry/reconcile using the same service request/external bill number.
+    """
     if not request_row or not request_row.get("id"):
         return None
-    booking = execute(
-        """INSERT INTO bookings(
-             request_id,negotiation_id,client_id,partner_id,service_id,package_id,
-             status,service_name,agreed_price,currency,commission_amount,partner_amount,
-             scheduled_at,client_note,data_json)
-           SELECT %s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb
-           WHERE pg_advisory_xact_lock(%s) IS NULL
-           RETURNING *""",
-        (int(request_row["id"]),int(client_id),int(service["partner_id"]),int(service["id"]),
-         package_id,status,service["name"],float(price),currency,float(commission),
-         float(partner_amount),scheduled_at,client_note,
-         json.dumps(metadata or {},ensure_ascii=False),int(request_row["id"])),
-        True,
-    )
-    if not booking:
-        return None
-    payment = execute(
-        """INSERT INTO payments(
-             booking_id,client_id,partner_id,payment_type,status,amount,currency,
-             provider,provider_payment_id,data_json)
-           VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb)
-           RETURNING *""",
-        (int(booking["id"]),int(client_id),int(service["partner_id"]),
-         getattr(intent,"status",status),float(commission),currency,
-         getattr(intent,"provider",None),getattr(intent,"transaction_id",None),
-         json.dumps({
-             "mode":getattr(intent,"mode",None),
-             "bill_no":getattr(intent,"bill_no",None),
-             "payment_url":getattr(intent,"payment_url",None),
-         },ensure_ascii=False)),True,
-    )
-    return {"booking":booking,"payment":payment}
+    request_id = int(request_row["id"])
+    booking_status = str(status or "pending_payment")
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+    token = __import__("secrets").token_urlsafe(24)
 
+    def _tx(cur):
+        cur.execute(
+            """SELECT id FROM bookings WHERE request_id=%s FOR UPDATE""",
+            (request_id,),
+        )
+        existing = cur.fetchone()
+        if existing:
+            cur.execute("SELECT * FROM bookings WHERE id=%s", (int(existing["id"]),))
+            booking = cur.fetchone()
+            cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1", (int(existing["id"]),))
+            payment = cur.fetchone()
+            return {"booking": booking, "payment": payment, "checkin": None, "already_exists": True}
+
+        cur.execute(
+            """INSERT INTO bookings(
+                 request_id,negotiation_id,client_id,partner_id,service_id,package_id,
+                 status,service_name,agreed_price,currency,commission_amount,partner_amount,
+                 scheduled_at,client_note,data_json)
+               VALUES(%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+               RETURNING *""",
+            (request_id, int(client_id), int(service["partner_id"]), int(service["id"]),
+             package_id, booking_status, service["name"], float(price), currency,
+             float(commission), float(partner_amount), scheduled_at, client_note, metadata_json),
+        )
+        booking = cur.fetchone()
+        cur.execute(
+            """INSERT INTO payments(
+                 booking_id,client_id,partner_id,payment_type,status,amount,currency,
+                 provider,provider_payment_id,data_json)
+               VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb)
+               RETURNING *""",
+            (int(booking["id"]), int(client_id), int(service["partner_id"]),
+             getattr(intent, "status", booking_status), float(commission), currency,
+             getattr(intent, "provider", None), getattr(intent, "transaction_id", None),
+             json.dumps({"mode": getattr(intent, "mode", None),
+                         "bill_no": getattr(intent, "bill_no", None),
+                         "payment_url": getattr(intent, "payment_url", None)}, ensure_ascii=False)),
+        )
+        payment = cur.fetchone()
+        cur.execute(
+            """INSERT INTO partner_financial_ledger
+               (partner_id,booking_id,entry_type,amount,currency,description)
+               VALUES(%s,%s,'commission',%s,%s,%s),
+                     (%s,%s,'partner_due',%s,%s,%s)""",
+            (int(service["partner_id"]), int(booking["id"]), float(commission), currency,
+             "Direct booking platform commission",
+             int(service["partner_id"]), int(booking["id"]), float(partner_amount), currency,
+             "Partner amount after platform commission"),
+        )
+        cur.execute(
+            "INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",
+            (int(booking["id"]), token),
+        )
+        checkin = cur.fetchone()
+        cur.execute(
+            "UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
+            ("booked" if getattr(intent, "status", booking_status) == "paid" else "pending_payment", request_id),
+        )
+        return {"booking": booking, "payment": payment, "checkin": checkin, "already_exists": False}
+
+    try:
+        return platform_db.transaction(_tx)
+    except Exception:
+        return None
 
 def create_direct_booking_request(client_id: int, summary: str, preferences: dict):
     return execute(
