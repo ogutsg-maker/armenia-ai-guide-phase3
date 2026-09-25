@@ -251,9 +251,27 @@ async def test_payment(request):
     txn=intent.transaction_id
     booking_status='paid' if intent.status=='paid' else 'pending_payment'
     booking=_exec(
-        "INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,status,service_name,agreed_price,currency,commission_amount,partner_amount,data_json) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",
-        (n['request_id'],nid,uid,n['partner_id'],service_id,booking_status,service['name'],price,service['currency'],commission,partner_amount,
-         _json({'payment_mode':intent.provider,'payment_status':intent.status,'test_transaction':txn,'service_price':price,'commission_tariff':{'type':_commission(service)[0],'value':_commission(service)[1]}}),),True)
+        """INSERT INTO bookings(
+               request_id,negotiation_id,client_id,partner_id,service_id,status,
+               service_name,agreed_price,currency,commission_amount,partner_amount,data_json
+           )
+           SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb
+           WHERE pg_advisory_xact_lock(%s) IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM bookings WHERE negotiation_id=%s
+             )
+           RETURNING *""",
+        (n['request_id'],nid,uid,n['partner_id'],service_id,booking_status,service['name'],
+         price,service['currency'],commission,partner_amount,
+         _json({'payment_mode':intent.provider,'payment_status':intent.status,'test_transaction':txn,
+                'service_price':price,'commission_tariff':{'type':_commission(service)[0],'value':_commission(service)[1]}}),
+         nid,nid),True)
+    if not booking:
+        booking=_one("SELECT * FROM bookings WHERE negotiation_id=%s ORDER BY id DESC LIMIT 1",(nid,))
+        payment=_one("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(booking['id'],)) if booking else None
+        check=_one("SELECT * FROM booking_checkins WHERE booking_id=%s",(booking['id'],)) if booking else None
+        return web.json_response({'ok':True,'payment':payment,'booking':booking,'checkin':check,
+                                  'qr':qr_util.qr_data_uri(check['token']) if check else None})
     payment=_exec(
         "INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,provider,provider_payment_id,data_json) VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",
         (booking['id'],uid,n['partner_id'],intent.status,commission,service['currency'],intent.provider,txn,
