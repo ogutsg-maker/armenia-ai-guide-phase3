@@ -220,6 +220,88 @@ def search_services(
     )
 
 
+
+# ---------------------------------------------------------------------------
+# Named AI tool reads
+# ---------------------------------------------------------------------------
+
+def list_services(partner_id: int | None = None, category_id: int | None = None,
+                  actor_user_id: int | None = None, approved_only: bool = False,
+                  limit: int = 100):
+    if actor_user_id is not None:
+        assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    where = ["s.status <> 'archived'"]
+    params: list[Any] = []
+    if approved_only:
+        where += ["s.status='approved'", "p.status='approved'"]
+    if partner_id is not None:
+        where.append("s.partner_id=%s"); params.append(int(partner_id))
+    if category_id is not None:
+        where.append("s.category_id=%s"); params.append(int(category_id))
+    params.append(max(1, min(int(limit or 100), 200)))
+    return rows(
+        """SELECT s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,
+                  p.business_name AS partner_name,c.name_am AS category_name_am,
+                  c.name_ru AS category_name_ru,c.name_en AS category_name_en,
+                  c.master_category_id
+           FROM services s
+           LEFT JOIN categories c ON c.id=s.category_id
+           LEFT JOIN partners p ON p.id=s.partner_id
+           WHERE """ + " AND ".join(where) +
+        " ORDER BY s.id DESC LIMIT %s", tuple(params)
+    )
+
+
+def get_partner_addresses(partner_id: int, actor_user_id: int | None = None, limit: int = 100):
+    if actor_user_id is not None:
+        assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    if not _table_exists("partner_objects"):
+        return []
+    return rows(
+        """SELECT id,partner_id,business_id,object_name,address,city,marz,phone,is_active
+           FROM partner_objects
+           WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
+           ORDER BY business_id,id LIMIT %s""",
+        (int(partner_id), max(1, min(int(limit or 100), 200))),
+    )
+
+
+def check_application(application_id: int) -> dict[str, Any]:
+    app = get_application(int(application_id))
+    if not app:
+        return {"application_id": int(application_id), "found": False, "checks": []}
+    checks = [
+        {"field": "status", "value": app.get("status"), "severity": "info"},
+        {"field": "service", "value": bool(str(app.get("service_name") or "").strip()),
+         "severity": "ok" if app.get("service_name") else "warning"},
+        {"field": "price", "value": app.get("price"),
+         "severity": "ok" if app.get("price") not in (None, "") else "warning"},
+    ]
+    docs = get_documents(application_id=int(application_id))
+    checks.append({"field": "documents", "value": len(docs),
+                    "severity": "ok" if docs else "warning"})
+    category_id = app.get("category_id")
+    master_id = app.get("master_category_id")
+    if category_id is not None:
+        category = get_catalog_category(int(category_id))
+        if category:
+            checks.append({"field": "category", "value": category,
+                           "severity": "ok" if category.get("is_active") else "error"})
+            if master_id is not None and category.get("master_category_id") is not None:
+                try:
+                    same = int(master_id) == int(category["master_category_id"])
+                    checks.append({"field": "direction_category_match", "value": same,
+                                   "severity": "ok" if same else "error"})
+                except (TypeError, ValueError):
+                    pass
+        else:
+            checks.append({"field": "category", "value": category_id, "severity": "error",
+                           "message": "Stored category does not exist in the catalog."})
+    return {"application_id": int(application_id), "found": True, "checks": checks,
+            "direction_name": app.get("direction_name"),
+            "master_category_id": master_id,
+            "subcategory_name": app.get("subcategory_name")}
+
 # ---------------------------------------------------------------------------
 # Applications / documents
 # ---------------------------------------------------------------------------
