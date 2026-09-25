@@ -253,11 +253,22 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
     )
 
 
-def get_partner_addresses(partner_id: int, actor_user_id: int | None = None, limit: int = 100):
+def get_partner_addresses(partner_id: int, actor_user_id: int | None = None,
+                          public_only: bool = False, limit: int = 100):
     if actor_user_id is not None:
         assert_partner_owns_partner(int(partner_id), int(actor_user_id))
     if not _table_exists("partner_objects"):
         return []
+    if public_only:
+        return rows(
+            """SELECT po.id,po.partner_id,po.business_id,po.object_name,
+                      po.address,po.city,po.marz
+               FROM partner_objects po
+               JOIN partners p ON p.id=po.partner_id
+               WHERE po.partner_id=%s AND p.status='approved'
+               ORDER BY po.business_id,po.id LIMIT %s""",
+            (int(partner_id), max(1, min(int(limit or 100), 200))),
+        )
     return rows(
         """SELECT id,partner_id,business_id,object_name,address,city,marz,phone
            FROM partner_objects
