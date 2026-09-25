@@ -593,6 +593,19 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[
         return one("SELECT * FROM bookings WHERE id=%s",(eid,)) if _table_exists("bookings") else None
     return None
 
+
+def active_negotiation_id_for_user(user_id: int) -> int | None:
+    """Return the latest active negotiation visible to this Telegram user."""
+    row = one(
+        """SELECT id FROM negotiations
+           WHERE (client_id=%s OR partner_id=(SELECT id FROM partners WHERE user_id=%s))
+             AND status IN ('active','pending','negotiating')
+           ORDER BY updated_at DESC LIMIT 1""",
+        (int(user_id), int(user_id)),
+    )
+    return int(row["id"]) if row and row.get("id") is not None else None
+
+
 # ---------------------------------------------------------------------------
 # AI session / history
 # ---------------------------------------------------------------------------
