@@ -10,6 +10,7 @@ from booking_schema import ensure_booking_schema
 import qr_util
 from idram import IdramProvider
 from ai_negotiator import AINegotiator
+import data_core
 
 def _db_url():
     value=os.getenv('DATABASE_URL','').strip()
@@ -129,9 +130,10 @@ async def select_candidate(request):
     return web.json_response({'ok':True,'negotiation':negotiation,'candidate':item})
 
 async def negotiation_get(request):
-    uid=_uid(request); nid=int(request.match_info['negotiation_id']); n=_one('SELECT * FROM negotiations WHERE id=%s AND client_id=%s',(nid,uid))
+    uid=_uid(request); nid=int(request.match_info['negotiation_id'])
+    n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
     if not n:return web.json_response({'ok':False,'error':'negotiation_not_found'},status=404)
-    return web.json_response({'ok':True,'negotiation':n,'messages':_rows('SELECT id,sender_role,sender_id,message,data_json,created_at FROM negotiation_messages WHERE negotiation_id=%s ORDER BY id',(nid,))})
+    return web.json_response({'ok':True,'negotiation':n,'messages':data_core.get_negotiation_messages(nid, actor_role='client', actor_id=uid)})
 
 def _state(n):
     s=n.get('state_json') or {}
@@ -151,19 +153,19 @@ def _get_ai(request):
 def _negotiator_hooks():
     """DB hooks bound to this module's psycopg helpers for AINegotiator."""
     def insert_msg(nid,role,sender_id,text):
-        _exec("INSERT INTO negotiation_messages(negotiation_id,sender_role,sender_id,message) VALUES(%s,%s,%s,%s)",(nid,role,sender_id,text))
+        return data_core.append_negotiation_message(nid,role,sender_id,text)
     def update_neg(nid,state,status):
-        _exec("UPDATE negotiations SET state_json=%s::jsonb,status=%s,updated_at=NOW() WHERE id=%s",(_json(state),status,nid))
+        return data_core.update_negotiation(nid,state,status)
     def update_request(rid,status):
-        _exec("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",(status,rid))
+        return data_core.update_request_status(rid,status)
     def insert_ai_msg(nid,role,text,data):
-        _exec("INSERT INTO negotiation_messages(negotiation_id,sender_role,message,data_json) VALUES(%s,%s,%s,%s::jsonb)",(nid,role,text,_json(data or {})))
+        return data_core.append_negotiation_message(nid,role,None,text,data)
     return dict(insert_msg=insert_msg,update_neg=update_neg,update_request=update_request,insert_ai_msg=insert_ai_msg)
 
 async def negotiation_client_message(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id']); data=await request.json(); text=str(data.get('message') or '').strip()
     if not text:return web.json_response({'ok':False,'error':'message_required'},status=400)
-    n=_one("SELECT * FROM negotiations WHERE id=%s AND client_id=%s AND status='active'",(nid,uid))
+    n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
     if not n:return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
     negotiator=AINegotiator(_get_ai(request))
     await negotiator.handle(n,'client',uid,text,**_negotiator_hooks())
@@ -176,14 +178,14 @@ async def partner_negotiations(request):
     return web.json_response({'ok':True,'items':items})
 
 async def partner_negotiation_messages(request):
-    uid=_uid(request); nid=int(request.match_info['negotiation_id']); n=_one("SELECT n.* FROM negotiations n JOIN partners p ON p.id=n.partner_id WHERE n.id=%s AND p.user_id=%s",(nid,uid))
+    uid=_uid(request); nid=int(request.match_info['negotiation_id']); n=data_core.get_negotiation(nid, actor_role='partner', actor_id=uid)
     if not n:return web.json_response({'ok':False,'error':'negotiation_not_found'},status=404)
-    return web.json_response({'ok':True,'negotiation':n,'messages':_rows('SELECT * FROM negotiation_messages WHERE negotiation_id=%s ORDER BY id',(nid,))})
+    return web.json_response({'ok':True,'negotiation':n,'messages':data_core.get_negotiation_messages(nid, actor_role='partner', actor_id=uid)})
 
 async def partner_reply(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id']); data=await request.json(); text=str(data.get('message') or '').strip()
     if not text:return web.json_response({'ok':False,'error':'message_required'},status=400)
-    n=_one("SELECT n.* FROM negotiations n JOIN partners p ON p.id=n.partner_id WHERE n.id=%s AND p.user_id=%s AND n.status='active'",(nid,uid))
+    n=data_core.get_negotiation(nid, actor_role='partner', actor_id=uid)
     if not n:return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
     negotiator=AINegotiator(_get_ai(request))
     await negotiator.handle(n,'partner',uid,text,**_negotiator_hooks())
