@@ -675,7 +675,7 @@ def active_negotiation_id_for_user(user_id: int) -> int | None:
     row = one(
         """SELECT id FROM negotiations
            WHERE (client_id=%s OR partner_id=(SELECT id FROM partners WHERE user_id=%s))
-             AND status IN ('active','pending','negotiating')
+             AND status IN ('active')
            ORDER BY updated_at DESC LIMIT 1""",
         (int(user_id), int(user_id)),
     )
