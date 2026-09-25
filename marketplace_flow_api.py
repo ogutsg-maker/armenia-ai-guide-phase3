@@ -1,6 +1,6 @@
 """End-to-end Armenia AI Guide marketplace flow."""
 from __future__ import annotations
-import json, os, secrets, logging
+import json, os, logging
 from decimal import Decimal
 from datetime import datetime, date
 from aiohttp import web
@@ -160,106 +160,60 @@ async def partner_agree(request):
     return web.json_response({'ok':True,'status':status})
 
 async def test_payment(request):
-    # Test payment is strictly based on the final mutually agreed negotiation price.
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
     n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
     if not n or n.get('status') != 'agreed':
         return web.json_response({'ok':False,'error':'negotiation_not_agreed'},status=400)
-
-    # Idempotency: repeated taps return the existing booking/payment/QR.
-    existing=_one("SELECT * FROM bookings WHERE negotiation_id=%s ORDER BY id DESC LIMIT 1",(nid,))
+    existing=data_core.marketplace_existing_payment(nid)
     if existing:
-        payment=_one("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(existing['id'],))
-        check=_one("SELECT * FROM booking_checkins WHERE booking_id=%s",(existing['id'],))
-        partner=_one("SELECT id,business_name,business_description,contact_share_policy,contact_sharing_enabled,profile_json FROM partners WHERE id=%s",(existing['partner_id'],))
-        locations=_rows("SELECT marz,city,village,address,location_type FROM partner_locations WHERE partner_id=%s ORDER BY id LIMIT 5",(existing['partner_id'],))
-        return web.json_response({'ok':True,'payment':payment,'booking':existing,'checkin':check,'qr':qr_util.qr_data_uri(check['token']) if check else None,'partner':{'business_name':partner['business_name'],'locations':locations,'contact':{}}})
-
+        check=existing.get('checkin')
+        display=data_core.get_partner_booking_display(existing['booking']['partner_id'])
+        partner=display['partner'] if display else {}
+        locations=display['locations'] if display else []
+        return web.json_response({'ok':True,'payment':existing.get('payment'),'booking':existing['booking'],
+                                  'checkin':check,'qr':qr_util.qr_data_uri(check['token']) if check else None,
+                                  'partner':{'business_name':partner.get('business_name'),'locations':locations,'contact':{}}})
     st=_state(n)
-    final_price = st.get('final_price', st.get('agreed_price'))
-    if final_price is None:
-        return web.json_response({'ok':False,'error':'negotiation_final_price_missing'},status=400)
-    try:
-        final_price=float(final_price)
-    except (TypeError,ValueError):
-        return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
-    if final_price <= 0:
-        return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
+    try: final_price=float(st.get('final_price',st.get('agreed_price')))
+    except (TypeError,ValueError): return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
+    if final_price<=0:return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
     service_id=int(st.get('service_id') or 0)
-    service=_one("SELECT * FROM services WHERE id=%s AND partner_id=%s AND status='approved'",(service_id,n['partner_id']))
-    if not service:
-        return web.json_response({'ok':False,'error':'service_not_available'},status=404)
-    raw_price=final_price
-    try:
-        price=float(raw_price)
-    except (TypeError,ValueError):
-        price=0.0
-    if price<=0:
-        return web.json_response({'ok':False,'error':'agreed_price_invalid'},status=400)
-
-    commission, customer_total, partner_amount=_price_and_commission(price,service)
+    service=data_core.marketplace_service_for_partner(service_id,int(n['partner_id']))
+    if not service:return web.json_response({'ok':False,'error':'service_not_available'},status=404)
+    commission,customer_total,partner_amount=_price_and_commission(final_price,service)
     idram=IdramProvider()
-    intent=idram.create_invoice(
-        amount=commission,currency=service['currency'],
-        description=f"Platform commission: {service['name']}",
-        order_id=nid,metadata={'service_id':service_id,'negotiation_id':nid},
-    )
-    txn=intent.transaction_id
-    booking_status='paid' if intent.status=='paid' else 'pending_payment'
-    booking=_exec(
-        """INSERT INTO bookings(
-               request_id,negotiation_id,client_id,partner_id,service_id,status,
-               service_name,agreed_price,currency,commission_amount,partner_amount,data_json
-           )
-           SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb
-           WHERE pg_advisory_xact_lock(%s) IS NULL
-             AND NOT EXISTS (
-                 SELECT 1 FROM bookings WHERE negotiation_id=%s
-             )
-           RETURNING *""",
-        (n['request_id'],nid,uid,n['partner_id'],service_id,booking_status,service['name'],
-         price,service['currency'],commission,partner_amount,
-         _json({'payment_mode':intent.provider,'payment_status':intent.status,'test_transaction':txn,
-                'service_price':price,'commission_tariff':{'type':_commission(service)[0],'value':_commission(service)[1]}}),
-         nid,nid),True)
-    if not booking:
-        booking=_one("SELECT * FROM bookings WHERE negotiation_id=%s ORDER BY id DESC LIMIT 1",(nid,))
-        payment=_one("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(booking['id'],)) if booking else None
-        check=_one("SELECT * FROM booking_checkins WHERE booking_id=%s",(booking['id'],)) if booking else None
-        return web.json_response({'ok':True,'payment':payment,'booking':booking,'checkin':check,
-                                  'qr':qr_util.qr_data_uri(check['token']) if check else None})
-    payment=_exec(
-        "INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,provider,provider_payment_id,data_json) VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",
-        (booking['id'],uid,n['partner_id'],intent.status,commission,service['currency'],intent.provider,txn,
-         _json({'mode':intent.mode,'bill_no':intent.bill_no,'payment_url':intent.payment_url})),True)
-    _exec("UPDATE service_requests SET status='booked',updated_at=NOW() WHERE id=%s",(n['request_id'],))
-    _exec("INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) VALUES(%s,%s,'commission',%s,%s,%s)",(n['partner_id'],booking['id'],commission,service['currency'],'Test Idram platform commission'))
-    _exec("INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) VALUES(%s,%s,'partner_due',%s,%s,%s)",(n['partner_id'],booking['id'],partner_amount,service['currency'],'Partner amount after platform commission'))
-    check=_exec("INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",(booking['id'],secrets.token_urlsafe(24)),True)
-
-    partner=_one("SELECT id,business_name,business_description,contact_share_policy,contact_sharing_enabled,profile_json FROM partners WHERE id=%s",(n['partner_id'],))
-    locations=_rows("SELECT marz,city,village,address,location_type FROM partner_locations WHERE partner_id=%s ORDER BY id LIMIT 5",(n['partner_id'],))
+    intent=idram.create_invoice(amount=commission,currency=service['currency'],
+        description=f"Platform commission: {service['name']}",order_id=nid,
+        metadata={'service_id':service_id,'negotiation_id':nid})
+    persisted=data_core.marketplace_persist_negotiation_booking(
+        request_id=int(n['request_id']),negotiation_id=nid,client_id=uid,partner_id=int(n['partner_id']),
+        service=service,status=('paid' if intent.status=='paid' else 'pending_payment'),
+        price=final_price,currency=service['currency'],commission=commission,
+        partner_amount=partner_amount,intent=intent)
+    if not persisted:return web.json_response({'ok':False,'error':'booking_creation_conflict'},status=409)
+    booking,payment,check=persisted['booking'],persisted['payment'],persisted['checkin']
+    display=data_core.get_partner_booking_display(int(n['partner_id']))
+    if not display:return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
+    partner,locations=display['partner'],display['locations']
     profile=partner.get('profile_json') or {}
     if isinstance(profile,str):
         try: profile=json.loads(profile)
         except Exception: profile={}
-    contact={}
-    if partner.get('contact_sharing_enabled'):
-        contact={k:profile.get(k) for k in ('phone','website','telegram') if profile.get(k)}
-    details={'business_name':partner['business_name'],'locations':locations,'contact':contact,'service':service['name'],'price':price,'currency':service['currency'],'booking_id':booking['id']}
-
+    contact={k:profile.get(k) for k in ('phone','website','telegram') if partner.get('contact_sharing_enabled') and profile.get(k)}
     try:
         from notify import notify
-        owner=_one("SELECT user_id FROM partners WHERE id=%s",(n['partner_id'],))
+        owner=data_core.marketplace_partner_owner(int(n['partner_id']))
         if owner and owner.get('user_id'):
-            await notify(request.app,int(owner['user_id']),title='🛒 Новая бронь',body=f"«{service['name']}» — {price:.0f} {service['currency']} (№{booking['id']}).",kind='booking_new',audience='partner',data={'booking_id':booking['id'],'service_id':service_id})
-    except Exception:
-        pass
-    try:
-        qr_uri=qr_util.qr_data_uri(check['token'])
-    except Exception:
-        qr_uri=None
-    return web.json_response({'ok':True,'payment':payment,'booking':booking,'checkin':check,'qr':qr_uri,'partner':details})
+            await notify(request.app,int(owner['user_id']),title='🛒 Новая бронь',
+                         body=f"«{service['name']}» — {final_price:.0f} {service['currency']} (№{booking['id']}).",
+                         kind='booking_new',audience='partner',data={'booking_id':booking['id'],'service_id':service_id})
+    except Exception: pass
+    try: qr_uri=qr_util.qr_data_uri(check['token'])
+    except Exception: qr_uri=None
+    return web.json_response({'ok':True,'payment':payment,'booking':booking,'checkin':check,'qr':qr_uri,
+                              'partner':{'business_name':partner['business_name'],'locations':locations,
+                                         'contact':contact,'service':service['name'],'price':customer_total,
+                                         'currency':service['currency'],'booking_id':booking['id']}})
 
 def _parse_scheduled_at(value):
     """Accept an ISO-8601 string; return it normalised or None on any problem."""
@@ -470,7 +424,7 @@ async def _cancel_booking(request, actor):
         return web.json_response({'ok':False,'error':'booking_not_found'},status=404)
     if booking.get('status') in ('cancelled','refunded','completed'):
         return web.json_response({'ok':False,'error':'booking_not_cancellable','status':booking.get('status')},status=409)
-    partner=_one("SELECT profile_json,user_id FROM partners WHERE id=%s",(booking['partner_id'],)) or {}
+    partner=data_core.marketplace_partner_profile(int(booking['partner_id'])) or {}
     profile=_partner_profile(partner)
     policy=profile.get('cancellation_policy','moderate')
     # Partner-initiated cancellations always fully refund the client.
@@ -489,8 +443,9 @@ async def _cancel_booking(request, actor):
         data_core.update_payment_status_for_booking(
             booking_id, 'refunded' if pct>=100 else 'partial_refund'
         )
-        _exec("INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) VALUES(%s,%s,'refund',%s,%s,%s)",(booking['partner_id'],booking_id,-refund_amount,currency,f'Refund on cancellation ({actor}, {pct:.0f}%)'))
-    _exec("INSERT INTO booking_cancellations(booking_id,cancelled_by,reason,refund_amount) VALUES(%s,%s,%s,%s)",(booking_id,actor,reason,refund_amount))
+    data_core.marketplace_cancel_side_effects(
+        int(booking['partner_id']),booking_id,actor,reason,refund_amount,currency
+    )
     # Notify the counterparty (best-effort).
     try:
         from notify import notify
