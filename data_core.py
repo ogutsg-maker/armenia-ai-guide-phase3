@@ -667,6 +667,34 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
             "business_name": row["business_name"]}
 
 
+def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
+    payment = one("SELECT * FROM payments WHERE id=%s", (int(payment_id),))
+    if not payment:
+        return None
+    if str(payment.get("status") or "").lower() == "paid":
+        return {"payment": payment, "already_paid": True}
+    updated = execute(
+        """UPDATE payments SET status='paid',provider_payment_id=COALESCE(%s,provider_payment_id),updated_at=NOW()
+           WHERE id=%s AND status<>'paid' RETURNING *""",
+        (transaction_id, int(payment_id)), True)
+    if not updated:
+        return {"payment": one("SELECT * FROM payments WHERE id=%s",(int(payment_id),)), "already_paid": True}
+    payment = updated
+    booking_id = payment.get("booking_id")
+    booking = None
+    if booking_id:
+        booking = execute(
+            """UPDATE bookings SET status='paid',updated_at=NOW()
+               WHERE id=%s AND status IN ('pending_payment','confirmed')
+               RETURNING *""",
+            (int(booking_id),), True)
+        booking = booking or one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
+        if booking and booking.get("request_id"):
+            execute("""UPDATE service_requests SET status='booked',updated_at=NOW()
+                       WHERE id=%s AND status<>'booked'""",(int(booking["request_id"]),),False)
+    return {"payment": payment, "booking": booking, "already_paid": False}
+
+
 # ---------------------------------------------------------------------------
 # Client request / candidate persistence
 # ---------------------------------------------------------------------------
