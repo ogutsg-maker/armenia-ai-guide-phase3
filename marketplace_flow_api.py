@@ -21,7 +21,13 @@ def _uid(request):
 
 def _json(value): return json.dumps(value or {},ensure_ascii=False)
 
-# Backward-compatible DB helper aliases for legacy route modules.\n# The actual database gateway is Data Core; these aliases keep old modules\n# from importing removed SQL helpers from this orchestration module.\n_one = data_core.one\n_rows = data_core.rows\n_exec = data_core.execute\n
+# Backward-compatible DB helper aliases for legacy route modules.
+# The actual database gateway is Data Core; these aliases keep old modules
+# from importing removed SQL helpers from this orchestration module.
+_one = data_core.one
+_rows = data_core.rows
+_exec = data_core.execute
+
 def _commission(service):
     return data_core.resolve_service_commission(service)
 
