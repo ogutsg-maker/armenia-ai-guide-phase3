@@ -206,8 +206,8 @@ async def partner_agree(request):
 async def test_payment(request):
     # Test payment is strictly based on the final mutually agreed negotiation price.
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
-    n=_one("SELECT * FROM negotiations WHERE id=%s AND client_id=%s AND status='agreed'",(nid,uid))
-    if not n:
+    n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
+    if not n or n.get('status') != 'agreed':
         return web.json_response({'ok':False,'error':'negotiation_not_agreed'},status=400)
 
     # Idempotency: repeated taps return the existing booking/payment/QR.
