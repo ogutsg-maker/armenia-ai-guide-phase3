@@ -402,6 +402,8 @@ async def direct_booking(request):
     req = data_core.create_direct_booking_request(
         uid, summary, {'direct': True, 'service_id': service_id}
     )
+    if not req or not req.get('id'):
+        return web.json_response({'ok':False,'error':'booking_request_conflict'},status=409)
 
     # --- Charge the platform commission via the Idram provider layer ---
     idram = IdramProvider()
@@ -625,7 +627,7 @@ async def idram_result(request):
         logging.warning('Idram callback rejected: %s (bill=%s)',result.reason,result.bill_no)
         return web.Response(text='ERR')
     bill_no=str(result.bill_no or '')
-    payment=_one("SELECT * FROM payments WHERE data_json->>'bill_no'=%s ORDER BY id DESC LIMIT 1",(bill_no,))
+    payment=data_core.get_payment_by_bill_no(bill_no)
     if not payment:
         # Nothing to reconcile, but still ack so Idram does not retry forever.
         logging.warning('Idram callback: no payment for bill %s',bill_no)
@@ -640,7 +642,7 @@ async def idram_result(request):
         # Best-effort notify the partner about the confirmed payment.
         try:
             from notify import notify
-            owner=_one("SELECT user_id FROM partners WHERE id=%s",(payment.get('partner_id'),))
+            owner=data_core.get_partner(int(payment.get('partner_id') or 0)) if payment.get('partner_id') else None
             if owner and owner.get('user_id'):
                 await notify(request.app,int(owner['user_id']),title='💳 Оплата подтверждена',body=f"Бронь №{booking_id} оплачена.",kind='payment_confirmed',audience='partner',data={'booking_id':booking_id})
         except Exception:
