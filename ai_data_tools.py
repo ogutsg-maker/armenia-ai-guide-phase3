@@ -97,6 +97,8 @@ class DataTools:
         if partner_id is None:
             raise DataToolError("partner_id_required")
         row = data_core.get_partner(int(partner_id))
+        if self.role == "client" and (not row or row.get("status") != "approved"):
+            return {"partner": None}
         if not row:
             return {"partner": None}
         if self.role == "partner":
