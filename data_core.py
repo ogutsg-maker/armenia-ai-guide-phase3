@@ -564,7 +564,7 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[
                    ORDER BY id DESC LIMIT 100""",(eid,))
             if _table_exists("partner_objects"):
                 out["addresses"]=rows(
-                    """SELECT id,business_id,object_name,address,city,marz,phone,is_active
+                    """SELECT id,business_id,object_name,address,city,marz,phone
                        FROM partner_objects WHERE partner_id=%s
                        ORDER BY business_id,id LIMIT 100""",(eid,))
         return out
@@ -575,7 +575,7 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[
         out={"type":"company","id":eid,"profile":company}
         if _table_exists("partner_objects"):
             out["addresses"]=rows(
-                """SELECT id,business_id,object_name,address,city,marz,phone,is_active
+                """SELECT id,business_id,object_name,address,city,marz,phone
                    FROM partner_objects WHERE business_id=%s
                    ORDER BY id LIMIT 50""",(eid,))
         out["services"]=rows(
