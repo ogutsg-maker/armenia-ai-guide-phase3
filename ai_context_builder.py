@@ -12,7 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-import platform_db
+import data_core as platform_db
 
 
 def _safe(value: Any) -> Any:
