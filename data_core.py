@@ -695,6 +695,17 @@ def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
     return {"payment": payment, "booking": booking, "already_paid": False}
 
 
+def get_payment_by_bill_no(bill_no: str):
+    """Return the latest payment associated with an external Idram bill number."""
+    value = str(bill_no or "").strip()
+    if not value:
+        return None
+    return one(
+        "SELECT * FROM payments WHERE data_json->>'bill_no'=%s ORDER BY id DESC LIMIT 1",
+        (value,),
+    )
+
+
 def get_approved_service_for_booking(service_id: int):
     return one(
         """SELECT s.* FROM services s
