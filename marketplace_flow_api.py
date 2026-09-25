@@ -166,7 +166,7 @@ async def negotiation_client_message(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id']); data=await request.json(); text=str(data.get('message') or '').strip()
     if not text:return web.json_response({'ok':False,'error':'message_required'},status=400)
     n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
-    if not n:return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
+    if not n or n.get('status') != 'active':return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
     negotiator=AINegotiator(_get_ai(request))
     await negotiator.handle(n,'client',uid,text,**_negotiator_hooks())
     return await negotiation_get(request)
