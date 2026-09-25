@@ -355,16 +355,7 @@ async def direct_booking(request):
     service_id = int(request.match_info['service_id'])
     data = await request.json()
 
-    service = _one(
-        """
-        SELECT s.* FROM services s
-        JOIN partners p ON p.id=s.partner_id
-        JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id
-        JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id
-        WHERE s.id=%s AND s.status='approved' AND p.status='approved' AND pd.status='approved'
-        """,
-        (service_id,),
-    )
+    service = data_core.get_approved_service_for_booking(service_id)
     if not service:
         return web.json_response({'ok': False, 'error': 'service_not_available'}, status=404)
     partner_id = service['partner_id']
@@ -373,10 +364,7 @@ async def direct_booking(request):
     package = None
     package_id = data.get('package_id')
     if package_id:
-        package = _one(
-            "SELECT * FROM service_packages WHERE id=%s AND service_id=%s AND is_active=TRUE",
-            (int(package_id), service_id),
-        )
+        package = data_core.get_active_package(service_id, int(package_id))
         if not package:
             return web.json_response({'ok': False, 'error': 'package_not_available'}, status=404)
 
@@ -396,10 +384,7 @@ async def direct_booking(request):
     chosen_options = []
     options_total = 0.0
     if option_ids:
-        chosen_options = _rows(
-            "SELECT * FROM service_options WHERE id=ANY(%s) AND service_id=%s AND is_active=TRUE",
-            (option_ids, service_id),
-        )
+        chosen_options = data_core.get_approved_service_options(service_id, option_ids)
         if len(chosen_options) != len(set(option_ids)):
             return web.json_response({'ok': False, 'error': 'option_not_available'}, status=404)
         options_total = sum(float(o.get('price_delta') or 0) for o in chosen_options)
@@ -454,15 +439,11 @@ async def direct_booking(request):
     data_core.add_booking_financial_entries(partner_id,booking['id'],commission,partner_amount,currency)
     check=data_core.create_booking_checkin(booking['id'],secrets.token_urlsafe(24))
 
-    partner = _one(
-        "SELECT id,business_name,business_description,contact_share_policy,contact_sharing_enabled,profile_json "
-        "FROM partners WHERE id=%s",
-        (partner_id,),
-    )
-    locations = _rows(
-        "SELECT marz,city,village,address,location_type FROM partner_locations WHERE partner_id=%s ORDER BY id LIMIT 5",
-        (partner_id,),
-    )
+    display = data_core.get_partner_booking_display(partner_id)
+    if not display:
+        return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
+    partner = display['partner']
+    locations = display['locations']
     profile = partner.get('profile_json') or {}
     if isinstance(profile, str):
         try:
