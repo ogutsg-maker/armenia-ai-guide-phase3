@@ -22,7 +22,19 @@ label{display:block;color:#cbd3e1;font-size:12px;margin:0 0 5px}.field{margin-bo
 <div id="formWrap" class="form hidden"></div><div id="status" class="status">Միացում…</div></div></div>
 <script>
 let entryAllowed=true;
-const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const initData=tg?.initData||'',uid=Number(tg?.initDataUnsafe?.user?.id||0);
+const bootError=(message)=>{
+  const el=document.getElementById('status');
+  if(el) el.innerHTML='<span class="error">⚠️ '+esc(message)+'</span>';
+  console.error('[Partner WebApp]',message);
+};
+window.addEventListener('error',e=>bootError(e.message||'JavaScript error'));
+window.addEventListener('unhandledrejection',e=>bootError(e.reason?.message||String(e.reason||'Unhandled promise rejection')));
+const tg=window.Telegram?.WebApp;
+try{
+  if(tg && typeof tg.ready==='function') tg.ready();
+  if(tg && typeof tg.expand==='function') tg.expand();
+}catch(e){ console.warn('[Partner WebApp] Telegram init:',e); }
+const initData=tg?.initData||'',uid=Number(tg?.initDataUnsafe?.user?.id||0);
 const chat=document.getElementById('chat'),input=document.getElementById('input'),send=document.getElementById('send'),status=document.getElementById('status'),composer=document.getElementById('composer'),formWrap=document.getElementById('formWrap');let busy=false,application=null,draftApplication=null;
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function add(role,text){const d=document.createElement('div');d.className='msg '+role;d.textContent=String(text??'');chat.appendChild(d);chat.scrollTop=chat.scrollHeight}
@@ -74,7 +86,12 @@ category_id:aiProfile.category_id||aiProfile.ai_category_id||serverApp.category_
 direction_name:aiProfile.direction||serverApp.direction_name||serverPayload.direction||serverPayload.direction_name||'',
 description:aiProfile.description||serverApp.description||serverPayload.description||'',
 payload_json:JSON.stringify({...serverPayload,...aiProfile,services})};application.services=services;await openApplication(application)}}catch(e){add('ai','⚠️ '+e.message);status.textContent='Կարող եք շարունակել'}finally{busy=false;send.disabled=false}}
-send.onclick=sendMessage;input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
+if(!chat||!input||!send||!status||!composer||!formWrap){
+  bootError('WebApp էջը ամբողջությամբ չի բեռնվել');
+}else{
+  send.onclick=sendMessage;
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
+}
 async function saveAndSubmit(){try{const businessName=document.getElementById('business_name').value.trim();if(!businessName)throw new Error('Խնդրում ենք նշել բիզնեսի անունը / Please enter the business name');const services=[...document.querySelectorAll('.service')].map(x=>({name:x.querySelector('.sn').value.trim(),price:x.querySelector('.sp').value?Number(x.querySelector('.sp').value):null,price_type:x.querySelector('.st').value,matched_subcategory_id:null})).filter(x=>x.name);if(!services.length)throw new Error('Ավելացրեք առնվազն մեկ ծառայություն');const data={business_name:document.getElementById('business_name').value.trim(),location_marz:document.getElementById('location_marz').value.trim(),location_city:document.getElementById('location_city').value.trim(),location_village:document.getElementById('location_village').value.trim(),address:document.getElementById('address').value.trim(),phone:document.getElementById('phone').value.trim(),working_hours:document.getElementById('working_hours').value.trim(),direction_name:'',master_category_id:null,subcategory_name:'',category_id:null,service_name:services[0].name,price:services[0].price,description:document.getElementById('description').value.trim(),payload:{...payload(),working_hours:document.getElementById('working_hours').value.trim(),services}};status.textContent='Պահպանում եմ…';await api('/api/master/'+uid+'/applications/'+application.id,data);const file=document.getElementById('document').files[0];if(file){const fd=new FormData();fd.append('file',file,file.name);fd.append('document_type','business_verification');const rr=await fetch('/api/master/'+uid+'/applications/'+application.id+'/document',{method:'POST',headers:{'X-Telegram-Init-Data':initData},body:fd});const dd=await jsonResponse(rr);if(!rr.ok||dd.ok===false)throw new Error(dd.detail||dd.error||'Փաստաթուղթը չբեռնվեց')}const result=await api('/api/master/'+uid+'/applications/'+application.id+'/submit',{location_marz:document.getElementById('location_marz').value.trim(),location_city:document.getElementById('location_city').value.trim(),phone:document.getElementById('phone').value.trim()});application=result.application;formWrap.innerHTML='<div class="notice">✅ Հայտը ուղարկված է ադմինիստրատորի ստուգմանը։ Եթե ադմինը վերադարձնի այն, նույն հայտը նորից կբացվի ուղղման համար։</div>';status.textContent='⏳ Սպասում է ադմինիստրատորի ստուգմանը'}catch(e){status.innerHTML='<span class="error">⚠️ '+esc(e.message)+'</span>'}}
-start();
+setTimeout(()=>{start().catch(e=>bootError(e.message||String(e)))},0);
 </script></body></html>
