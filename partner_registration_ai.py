@@ -190,7 +190,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
     if not out.get("city"):
         # "Հրազդանի Կենտրոնում" means city=Հրազդան, district=Կենտրոն.
         m_city_district = re.search(
-            r"([\u0531-\u058F]{3,})ի\s+([\u0531-\u058F]{3,})(?:ում|ենում|անում)\\b",
+            r"([\u0531-\u058F]{3,})ի\s+([\u0531-\u058F]{3,})(?:ում|ենում|անում)\b",
             raw, flags=re.I
         )
         if m_city_district:
@@ -226,7 +226,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
         if not out.get("business_name"):
             # Compact forms such as "BYUTI սրահ" / "BYUTI salon".
             m = re.search(
-                r"\\b([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'\\-]{1,60})\\s+(?:սրահ|salon|studio|студия)\\b",
+                r"\b([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'\\-]{1,60})\\s+(?:սրահ|salon|studio|студия)\\b",
                 raw, flags=re.I
             )
             if m:
@@ -487,8 +487,8 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     found = []
     currency_re = r"(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)"
     price_re = re.compile(
-        rf"(?P<name>.+?)\\s*(?:՝|:|—|–|-|\\b(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է|от|from|starting\\s+at)\\b)?\\s*"
-        rf"(?P<price>\\d[\\d\\s.,]*)\\s*(?P<currency>{currency_re})\\b", flags=re.I
+        rf"(?P<name>.+?)\s*(?:՝|:|—|–|-|\b(?:սկսվում\s+են|սկսվում\s+է|արժե|գինն\s+է|от|from|starting\s+at)\b)?\s*"
+        rf"(?P<price>\\d[\\d\s.,]*)\s*(?P<currency>{currency_re})\b", flags=re.I
     )
     for clause in clauses:
         clause = _norm(clause).strip(" —–-:;")
@@ -509,13 +509,13 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             if len(parts) == 2:
                 name = _norm(parts[1]).strip(" —–-:;")
         name = re.sub(
-            r"^(?:Ես\\s+[^,;.!?։]*?\\s+)?(?:ունեմ|ունենք|կատարում\\s+ենք|անում\\s+ենք|մատուցում\\s+ենք|"
-            r"առաջարկում\\s+ենք|мы\\s+делаем|оказываем|предлагаем|we\\s+(?:do|offer|provide))\\s+",
+            r"^(?:Ես\s+[^,;.!?։]*?\s+)?(?:ունեմ|ունենք|կատարում\s+ենք|անում\s+ենք|մատուցում\s+ենք|"
+            r"առաջարկում\s+ենք|мы\s+делаем|оказываем|предлагаем|we\s+(?:do|offer|provide))\s+",
             "", name, flags=re.I
         ).strip()
-        name = re.sub(r"^(?:սրահում|մեզ\\s+մոտ)\\s+", "", name, flags=re.I).strip()
-        name = re.sub(r"^(?:ինչպես\\s+նաև|նաև|և|ու)\\s+", "", name, flags=re.I).strip()
-        name = re.sub(r"^.*(?:հիմնական ծառայություններն են|ծառայություններն են)\\s*[՝:]\\s*", "", name, flags=re.I)
+        name = re.sub(r"^(?:սրահում|մեզ\s+մոտ)\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"^(?:ինչպես\s+նաև|նաև|և|ու)\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"^.*(?:հիմնական ծառայություններն են|ծառայություններն են)\s*[՝:]\s*", "", name, flags=re.I)
         if not name:
             continue
         try:
@@ -523,8 +523,8 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         except ValueError:
             continue
         full = clause.lower()
-        is_from = bool("ից" in full or re.search(r"\\b(?:от|from|starting\\s+at|սկսվում\\s+են|սկսվում\\s+է)\\b", full, re.I))
-        is_per_unit = bool(re.search(r"\\b(?:քմ|քառակուսի\\s*մետր|кв\\.?\\s*м|за\\s+кв\\.?\\s*м|պարապմունք|занят(?:ие|ия)|за\\s+занятие)\\b", full, re.I))
+        is_from = bool("ից" in full or re.search(r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I))
+        is_per_unit = bool(re.search(r"\b(?:քմ|քառակուսի\s*մետր|кв\\.?\s*м|за\s+кв\\.?\s*м|պարապմունք|занят(?:ие|ия)|за\s+занятие)\b", full, re.I))
         price_type = ("from_per_unit" if is_from else "fixed_per_unit") if is_per_unit else ("from" if is_from else "fixed")
         arm_clean = {
             "սանրվածքները": "Սանրվածք", "սանրվածքը": "Սանրվածք",
