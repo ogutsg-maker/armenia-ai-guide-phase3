@@ -414,11 +414,8 @@ async def direct_booking(request):
 
     # --- Request row (keeps analytics/history consistent with the AI path) ---
     summary = f"Direct booking: {service['name']}"
-    req = _exec(
-        "INSERT INTO service_requests(client_id,status,language,summary,preferences_json) "
-        "VALUES(%s,'booked','hy',%s,%s::jsonb) RETURNING *",
-        (uid, summary, _json({'direct': True, 'service_id': service_id})),
-        True,
+    req = data_core.create_direct_booking_request(
+        uid, summary, {'direct': True, 'service_id': service_id}
     )
 
     # --- Charge the platform commission via the Idram provider layer ---
@@ -431,56 +428,31 @@ async def direct_booking(request):
     )
     txn = intent.transaction_id
 
-    booking = _exec(
-        "INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,package_id,"
-        "status,service_name,agreed_price,currency,commission_amount,partner_amount,scheduled_at,"
-        "client_note,data_json) "
-        "VALUES(%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",
-        (
-            req['id'], uid, partner_id, service_id,
-            int(package_id) if package_id else None,
-            ('paid' if intent.status=='paid' else 'pending_payment'),
-            service['name'], price, currency, commission, partner_amount,
-            scheduled_at, client_note,
-            _json({
-                'booking_channel': 'storefront_direct',
-                'payment_mode': intent.provider,
-                'payment_status': intent.status,
-                'test_transaction': txn,
-                'service_price': price,
-                'commission_tariff': {'type': _commission(service)[0], 'value': _commission(service)[1]},
-                'package': ({'id': package['id'], 'name': package['name'],
-                             'price': float(package['price'] or 0)} if package else None),
-                'options': [{'id': o['id'], 'name': o['name'],
-                             'price_delta': float(o.get('price_delta') or 0)} for o in chosen_options],
-            }),
-        ),
-        True,
+    persisted = data_core.persist_direct_booking(
+        client_id=uid, service=service, request_row=req,
+        package_id=int(package_id) if package_id else None,
+        status=('paid' if intent.status=='paid' else 'pending_payment'),
+        price=price, currency=currency, commission=commission,
+        partner_amount=partner_amount, scheduled_at=scheduled_at,
+        client_note=client_note,
+        intent=intent,
+        metadata={
+            'booking_channel':'storefront_direct',
+            'payment_mode':intent.provider,
+            'payment_status':intent.status,
+            'test_transaction':txn,
+            'service_price':price,
+            'commission_tariff':{'type':_commission(service)[0],'value':_commission(service)[1]},
+            'package':({'id':package['id'],'name':package['name'],'price':float(package['price'] or 0)} if package else None),
+            'options':[{'id':o['id'],'name':o['name'],'price_delta':float(o.get('price_delta') or 0)} for o in chosen_options],
+        },
     )
-    payment = _exec(
-        "INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,"
-        "provider,provider_payment_id,data_json) "
-        "VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *",
-        (booking['id'], uid, partner_id, intent.status, commission, currency,
-         intent.provider, txn,
-         _json({'mode': intent.mode, 'bill_no': intent.bill_no, 'payment_url': intent.payment_url})),
-        True,
-    )
-    _exec(
-        "INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) "
-        "VALUES(%s,%s,'commission',%s,%s,%s)",
-        (partner_id, booking['id'], commission, currency, 'Direct booking platform commission'),
-    )
-    _exec(
-        "INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) "
-        "VALUES(%s,%s,'partner_due',%s,%s,%s)",
-        (partner_id, booking['id'], partner_amount, currency, 'Partner amount after platform commission'),
-    )
-    check = _exec(
-        "INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",
-        (booking['id'], secrets.token_urlsafe(24)),
-        True,
-    )
+    if not persisted:
+        return web.json_response({'ok':False,'error':'booking_creation_conflict'},status=409)
+    booking=persisted['booking']
+    payment=persisted['payment']
+    data_core.add_booking_financial_entries(partner_id,booking['id'],commission,partner_amount,currency)
+    check=data_core.create_booking_checkin(booking['id'],secrets.token_urlsafe(24))
 
     partner = _one(
         "SELECT id,business_name,business_description,contact_share_policy,contact_sharing_enabled,profile_json "
