@@ -526,6 +526,26 @@ async def serve_index(request: web.Request):
         return web.json_response({"ok": False, "error": "welcome.html_not_found"}, status=500)
     return web.FileResponse(path)
 
+async def serve_welcome(request: web.Request):
+    path = WEB_APPS_DIR / "welcome.html"
+    if not path.is_file():
+        return web.json_response({"ok": False, "error": "welcome.html_not_found"}, status=500)
+    return web.FileResponse(path)
+
+async def serve_partner(request: web.Request):
+    path = WEB_APPS_DIR / "partner.html"
+    if not path.is_file():
+        return web.json_response({"ok": False, "error": "partner.html_not_found"}, status=500)
+    return web.FileResponse(path)
+
+def log_webapp_files():
+    for name in ("welcome.html", "partner.html"):
+        path = WEB_APPS_DIR / name
+        try:
+            logger.info("📄 WebApp %s: %s bytes (%s)", name, path.stat().st_size, path)
+        except OSError:
+            logger.error("❌ WebApp file missing: %s", path)
+
 
 async def telegram_webhook(request: web.Request):
     try:
@@ -552,10 +572,13 @@ async def _webapp_cache_middleware(request: web.Request, handler):
 
 async def main():
     logger.info("🚀 Запуск Armenia AI Guide — AI-first runtime")
+    log_webapp_files()
     app = web.Application(middlewares=[telegram_partner_auth_middleware, _webapp_cache_middleware])
     app.router.add_get("/health", health)
     app.router.add_post("/telegram/webhook", telegram_webhook)
     app.router.add_get("/", serve_index)
+    app.router.add_get("/welcome.html", serve_welcome)
+    app.router.add_get("/partner.html", serve_partner)
     app.router.add_get("/api/webapp/session", api_webapp_session)
     app.router.add_post("/api/webapp/role", api_webapp_role)
     app.router.add_post("/api/webapp/partner/start", api_webapp_partner_start)
