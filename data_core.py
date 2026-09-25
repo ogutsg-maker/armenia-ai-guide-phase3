@@ -195,7 +195,7 @@ def search_services(
         params.append(float(max_price))
     if city:
         where.append("""EXISTS (
-            SELECT 1 FROM partner_locations pl
+            SELECT 1 FROM partner_objects pl
             WHERE pl.partner_id=p.id
               AND (LOWER(COALESCE(pl.city,''))=LOWER(%s)
                 OR LOWER(COALESCE(pl.village,''))=LOWER(%s)
@@ -207,7 +207,7 @@ def search_services(
     params.append(max(1, min(int(limit or 100), 200)))
     return rows(
         """SELECT DISTINCT s.id,s.partner_id,s.business_id,s.name,s.category_id,
-                  s.price,s.status,s.duration_minutes,p.business_name AS partner_name,
+                  s.price,s.status,p.business_name AS partner_name,
                   b.name AS company_name,c.name_am AS category_name_am,
                   c.name_ru AS category_name_ru,c.name_en AS category_name_en,
                   c.master_category_id
