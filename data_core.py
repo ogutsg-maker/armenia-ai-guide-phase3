@@ -587,6 +587,52 @@ def update_request_status(request_id: int, status: str,
     )
 
 
+def get_booking(booking_id: int, actor_role: str = "admin", actor_id: int | None = None):
+    role = str(actor_role or "admin").strip().lower()
+    where = ["b.id=%s"]; params=[int(booking_id)]
+    if role == "client":
+        where.append("b.client_id=%s"); params.append(int(actor_id) if actor_id is not None else -1)
+    elif role == "partner":
+        partner = get_partner_by_user(int(actor_id)) if actor_id is not None else None
+        if not partner: return None
+        where.append("b.partner_id=%s"); params.append(int(partner["id"]))
+    elif role != "admin":
+        return None
+    return one("SELECT b.* FROM bookings b WHERE " + " AND ".join(where), tuple(params))
+
+def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
+                   new_status: str, reason: str = "", refund_amount: float = 0.0):
+    booking = get_booking(booking_id, actor_role=actor_role, actor_id=actor_id)
+    if not booking: return None
+    current = str(booking.get("status") or "").lower()
+    if current in {"cancelled", "refunded", "completed"}: return None
+    target = str(new_status or "").lower()
+    if target not in {"cancelled", "refunded"}: return None
+    updated = execute(
+        """UPDATE bookings SET status=%s,updated_at=NOW()
+           WHERE id=%s AND status=%s RETURNING *""",
+        (target, int(booking_id), current), True)
+    if not updated: return None
+    if booking.get("request_id"):
+        execute("UPDATE service_requests SET status='cancelled',updated_at=NOW() WHERE id=%s",
+                (int(booking["request_id"]),), False)
+    if booking.get("negotiation_id"):
+        update_negotiation(int(booking["negotiation_id"]), {}, "cancelled",
+                           actor_role=actor_role, actor_id=actor_id)
+    execute(
+        """INSERT INTO booking_cancellations
+           (booking_id,cancelled_by,reason,refund_amount)
+           VALUES(%s,%s,%s,%s)""",
+        (int(booking_id), str(actor_role), str(reason or "")[:500], float(refund_amount or 0)), False)
+    return updated
+
+def update_payment_status_for_booking(booking_id: int, status: str):
+    return execute(
+        "UPDATE payments SET status=%s,updated_at=NOW() WHERE booking_id=%s AND payment_type='commission' RETURNING *",
+        (str(status), int(booking_id)), True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Client request / candidate persistence
 # ---------------------------------------------------------------------------
