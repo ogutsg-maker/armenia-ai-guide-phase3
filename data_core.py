@@ -1188,3 +1188,216 @@ def assert_partner_owns_service(service_id: int, actor_user_id: int):
         raise LookupError("service_not_found")
     assert_partner_owns_partner(int(service["partner_id"]), int(actor_user_id))
     return service
+
+
+# ---------------------------------------------------------------------------
+# Marketplace API gateways
+# ---------------------------------------------------------------------------
+
+def resolve_service_commission(service: dict[str, Any]):
+    stype = service.get("commission_type")
+    if stype:
+        try:
+            value = float(service.get("commission_value") or 0)
+        except Exception:
+            value = 0.0
+        return str(stype), max(0.0, value)
+    cat_id = service.get("category_id")
+    if cat_id:
+        row = one("""SELECT COALESCE(c.commission_type,m.commission_type,'on_top') AS ctype,
+                            COALESCE(c.commission_value,m.commission_value,10) AS cvalue
+                     FROM categories c
+                     LEFT JOIN master_categories m ON m.id=c.master_category_id
+                     WHERE c.id=%s""",(int(cat_id),))
+        if row:
+            try:
+                value=float(row.get("cvalue") or 0)
+            except Exception:
+                value=0.0
+            return str(row.get("ctype") or "on_top"), max(0.0,value)
+    data=service.get("data_json") or {}
+    if isinstance(data,str):
+        try: data=json.loads(data)
+        except Exception: data={}
+    try: rate=float(data.get("commission_percent",10))
+    except Exception: rate=10.0
+    return "on_top", max(0.0,min(100.0,rate))
+
+
+def marketplace_client_search(query="", city="", category_id=0, limit=20):
+    q=str(query or "").strip(); city=str(city or "").strip(); category_id=int(category_id or 0)
+    params=[]; where=["s.status='approved'","p.status='approved'","pd.status='approved'"]
+    if q:
+        like=f"%{q}%"; params += [like]*5
+        where.append("(LOWER(s.name) LIKE LOWER(%s) OR LOWER(s.description) LIKE LOWER(%s) OR LOWER(p.business_name) LIKE LOWER(%s) OR LOWER(c.name_am) LIKE LOWER(%s) OR LOWER(c.name_ru) LIKE LOWER(%s))")
+    if city:
+        params.append(city)
+        where.append("""EXISTS(SELECT 1 FROM partner_objects po WHERE po.partner_id=p.id
+                         AND (LOWER(COALESCE(po.city,''))=LOWER(%s)
+                           OR LOWER(COALESCE(po.village,''))=LOWER(%s)
+                           OR LOWER(COALESCE(po.marz,''))=LOWER(%s)
+                           OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
+                           OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'))""")
+        params.extend([city,city])
+    if category_id:
+        params.append(category_id); where.append("s.category_id=%s")
+    sql="""SELECT s.id service_id,s.partner_id,s.category_id,s.name service_name,s.description,s.price,
+                  s.currency,s.data_json,p.business_name,p.business_description,p.contact_share_policy,
+                  c.name_am category_name_am,c.name_ru category_name_ru,
+                  COALESCE((SELECT po.city FROM partner_objects po WHERE po.partner_id=p.id ORDER BY po.id LIMIT 1),'') city,
+                  COALESCE((SELECT po.marz FROM partner_objects po WHERE po.partner_id=p.id ORDER BY po.id LIMIT 1),'') marz
+           FROM services s JOIN partners p ON p.id=s.partner_id
+           JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id
+           JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id
+           LEFT JOIN categories c ON c.id=s.category_id
+           WHERE """+" AND ".join(where)+""" GROUP BY s.id,p.id,c.id,p.business_name,p.business_description,
+                  p.contact_share_policy ORDER BY s.created_at DESC LIMIT %s"""
+    params.append(max(1,min(int(limit or 20),50)))
+    result=rows(sql,tuple(params))
+    for item in result:
+        item.pop("data_json",None); item.pop("business_description",None)
+    return result
+
+
+def marketplace_partner_negotiations(user_id:int):
+    partner=get_partner_by_user(int(user_id))
+    if not partner: return None
+    return rows("""SELECT n.id,n.request_id,n.status,n.state_json,n.updated_at,sr.summary,sr.city,
+                          s.name service_name,p.business_name
+                   FROM negotiations n JOIN service_requests sr ON sr.id=n.request_id
+                   LEFT JOIN services s ON s.id=(n.state_json->>'service_id')::bigint
+                   JOIN partners p ON p.id=n.partner_id
+                   WHERE n.partner_id=%s AND n.status='active'
+                   ORDER BY n.updated_at DESC""",(int(partner["id"]),))
+
+
+def marketplace_booking_bundle(booking_id:int, partner_id:int|None=None):
+    booking=one("SELECT * FROM bookings WHERE id=%s"+(" AND partner_id=%s" if partner_id else ""),
+                (int(booking_id),int(partner_id)) if partner_id else (int(booking_id),))
+    if not booking: return None
+    payment=one("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(int(booking["id"]),))
+    check=one("SELECT * FROM booking_checkins WHERE booking_id=%s",(int(booking["id"]),))
+    return {"booking":booking,"payment":payment,"checkin":check}
+
+
+def marketplace_booking_by_negotiation(negotiation_id:int):
+    return one("SELECT * FROM bookings WHERE negotiation_id=%s ORDER BY id DESC LIMIT 1",(int(negotiation_id),))
+
+
+def marketplace_partner_profile(partner_id:int):
+    return one("""SELECT id,business_name,business_description,contact_share_policy,
+                         contact_sharing_enabled,profile_json,user_id
+                  FROM partners WHERE id=%s""",(int(partner_id),))
+
+
+def marketplace_partner_locations(partner_id:int):
+    return rows("""SELECT marz,city,village,address,location_type
+                   FROM partner_objects WHERE partner_id=%s ORDER BY id LIMIT 5""",(int(partner_id),))
+
+
+def marketplace_partner_owner(partner_id:int):
+    return one("SELECT user_id FROM partners WHERE id=%s",(int(partner_id),))
+
+
+def marketplace_service_for_partner(service_id:int,partner_id:int):
+    return one("SELECT * FROM services WHERE id=%s AND partner_id=%s AND status='approved'",
+               (int(service_id),int(partner_id)))
+
+
+def marketplace_payment_bundle_for_booking(booking_id:int):
+    return marketplace_booking_bundle(int(booking_id))
+
+
+def marketplace_cancel_side_effects(partner_id:int,booking_id:int,actor:str,reason:str,refund_amount:float,currency:str):
+    execute("""INSERT INTO partner_financial_ledger
+               (partner_id,booking_id,entry_type,amount,currency,description)
+               VALUES(%s,%s,'refund',%s,%s,%s)""",
+            (int(partner_id),int(booking_id),-float(refund_amount),currency,
+             f"Refund on cancellation ({actor})"),False)
+    execute("""INSERT INTO booking_cancellations
+               (booking_id,cancelled_by,reason,refund_amount)
+               VALUES(%s,%s,%s,%s)""",
+            (int(booking_id),actor,reason,float(refund_amount)),False)
+    return True
+
+
+def marketplace_existing_payment(negotiation_id:int):
+    booking=marketplace_booking_by_negotiation(int(negotiation_id))
+    if not booking: return None
+    return marketplace_booking_bundle(int(booking["id"]))
+
+
+def marketplace_partner_search_context(partner_id:int):
+    return {"partner":marketplace_partner_profile(int(partner_id)),
+            "locations":marketplace_partner_locations(int(partner_id))}
+
+
+def marketplace_create_negotiation_selection(request_id:int,client_id:int,service_id:int):
+    item=one("""SELECT sr.id request_id,sr.status,s.id service_id,s.partner_id,s.name service_name,
+                       s.price,s.currency,p.business_name,p.contact_share_policy
+                FROM service_requests sr JOIN services s ON s.id=%s
+                JOIN partners p ON p.id=s.partner_id
+                WHERE sr.id=%s AND sr.client_id=%s AND s.status='approved' AND p.status='approved'""",
+             (int(service_id),int(request_id),int(client_id)))
+    if not item: return None
+    execute("""INSERT INTO request_candidates(request_id,partner_id,service_id,rank_score,status)
+              VALUES(%s,%s,%s,100,'selected')
+              ON CONFLICT(request_id,partner_id,service_id) DO UPDATE SET status='selected'""",
+            (int(request_id),int(item["partner_id"]),int(service_id)),False)
+    negotiation=execute("""INSERT INTO negotiations(request_id,client_id,partner_id,state_json)
+                           VALUES(%s,%s,%s,%s::jsonb) RETURNING *""",
+        (int(request_id),int(client_id),int(item["partner_id"]),
+         json.dumps({"service_id":int(service_id),"service_name":item["service_name"],
+                     "price":float(item["price"] or 0),"currency":item["currency"],
+                     "client_agreed":False,"partner_agreed":False},ensure_ascii=False)),True)
+    execute("UPDATE service_requests SET status='negotiating',updated_at=NOW() WHERE id=%s",(int(request_id),),False)
+    execute("""INSERT INTO negotiation_messages(negotiation_id,sender_role,message,data_json)
+               VALUES(%s,'ai',%s,%s::jsonb)""",
+            (int(negotiation["id"]),
+             f"Ընտրված ծառայությունն է՝ {item['service_name']}։ Գինը՝ {item['price']} {item['currency']}։ Կարող եք գրել ձեր ցանկությունները։",
+             json.dumps({"type":"selection"},ensure_ascii=False)),False)
+    return {"negotiation":negotiation,"candidate":item}
+
+
+def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,client_id:int,
+                                            partner_id:int,service:dict,status:str,price:float,
+                                            currency:str,commission:float,partner_amount:float,
+                                            intent=None):
+    token=__import__("secrets").token_urlsafe(24)
+    def _tx(cur):
+        cur.execute("SELECT id FROM bookings WHERE negotiation_id=%s FOR UPDATE",(int(negotiation_id),))
+        existing=cur.fetchone()
+        if existing:
+            bid=int(existing["id"])
+            cur.execute("SELECT * FROM bookings WHERE id=%s",(bid,)); booking=cur.fetchone()
+            cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); payment=cur.fetchone()
+            cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s",(bid,)); check=cur.fetchone()
+            return {"booking":booking,"payment":payment,"checkin":check,"already_exists":True}
+        cur.execute("""INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,status,
+                         service_name,agreed_price,currency,commission_amount,partner_amount,data_json)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
+                    (int(request_id),int(negotiation_id),int(client_id),int(partner_id),int(service["id"]),
+                     status,service["name"],float(price),currency,float(commission),float(partner_amount),
+                     json.dumps({"payment_mode":getattr(intent,"provider",None),
+                                 "payment_status":getattr(intent,"status",status),
+                                 "test_transaction":getattr(intent,"transaction_id",None),
+                                 "service_price":float(price)},ensure_ascii=False)))
+        booking=cur.fetchone()
+        cur.execute("""INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,
+                         provider,provider_payment_id,data_json)
+                       VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
+                    (int(booking["id"]),int(client_id),int(partner_id),getattr(intent,"status",status),
+                     float(commission),currency,getattr(intent,"provider",None),
+                     getattr(intent,"transaction_id",None),json.dumps({"mode":getattr(intent,"mode",None),
+                     "bill_no":getattr(intent,"bill_no",None),"payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
+        payment=cur.fetchone()
+        cur.execute("""INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description)
+                       VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
+                    (int(partner_id),int(booking["id"]),float(commission),currency,"Test Idram platform commission",
+                     int(partner_id),int(booking["id"]),float(partner_amount),currency,"Partner amount after platform commission"))
+        cur.execute("INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",(int(booking["id"]),token))
+        check=cur.fetchone()
+        cur.execute("UPDATE service_requests SET status='booked',updated_at=NOW() WHERE id=%s",(int(request_id),))
+        return {"booking":booking,"payment":payment,"checkin":check,"already_exists":False}
+    try: return platform_db.transaction(_tx)
+    except Exception: return None
