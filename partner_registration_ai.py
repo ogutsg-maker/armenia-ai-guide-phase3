@@ -188,12 +188,21 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
         if m_city:
             out["city"] = m_city.group(1).strip()
     if not out.get("city"):
+        # "Հրազդանի Կենտրոնում" means city=Հրազդան, district=Կենտրոն.
+        m_city_district = re.search(
+            r"([\u0531-\u058F]{3,})ի\s+([\u0531-\u058F]{3,})(?:ում|ենում|անում)\\b",
+            raw, flags=re.I
+        )
+        if m_city_district:
+            out["city"] = _normalize_place_name(m_city_district.group(1))
+            out["district"] = _norm(m_city_district.group(2))
+    if not out.get("city"):
         for pattern in city_patterns:
             m = re.search(pattern, raw, flags=re.I)
             if not m:
                 continue
             candidate = m.group(1).strip(" .,;:()")
-            if candidate.lower() not in {"the", "city", "ես"} and len(candidate) >= 3:
+            if candidate.lower() not in {"the", "city", "ես", "կենտրոն"} and len(candidate) >= 3:
                 out["city"] = candidate
                 break
 
@@ -214,6 +223,14 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                 if candidate:
                     out["business_name"] = candidate
                     break
+        if not out.get("business_name"):
+            # Compact forms such as "BYUTI սրահ" / "BYUTI salon".
+            m = re.search(
+                r"\\b([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'\\-]{1,60})\\s+(?:սրահ|salon|studio|студия)\\b",
+                raw, flags=re.I
+            )
+            if m:
+                out["business_name"] = _norm(m.group(1)).strip(" .,;:()«»\"'")
 
     # Deterministic recovery of contact/location facts if Groq fails.
     if not out.get("phone"):
@@ -455,7 +472,7 @@ Return ONLY genuinely missing services."""
 
 
 def _recover_services_from_history(history: list[dict]) -> list[dict]:
-    """Recover explicit service/price facts without depending on the LLM."""
+    """Deterministically recover every explicit price-bearing service from history."""
     text = " ".join(
         _norm(x.get("content") or "")
         for x in history
@@ -463,21 +480,24 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     )
     if not text:
         return []
+
+    # Handle common price-list separators. This keeps every price-bearing item
+    # atomic even when Groq returns only a partial service array.
+    clauses = re.split(r"[,;\\n/]+", text)
     found = []
-    for clause in re.split(r"[,;.!?։\n]+", text):
+    currency_re = r"(?:դրամ(?:ից|ով|ի)?|դր\\.?|֏|amd|dram|драм(?:ов|а)?|амд)"
+    price_re = re.compile(
+        rf"(?P<name>.+?)\\s*(?:՝|:|—|–|-|\\b(?:սկսվում\\s+են|սկսվում\\s+է|արժե|գինն\\s+է|от|from|starting\\s+at)\\b)?\\s*"
+        rf"(?P<price>\\d[\\d\\s.,]*)\\s*(?P<currency>{currency_re})\\b", flags=re.I
+    )
+    for clause in clauses:
         clause = _norm(clause).strip(" —–-:;")
         if not clause:
             continue
-        m = re.search(
-            r"(?P<name>.+?)\s*(?:\u055D|:|—|–|-|\b(?:սկսվում\s+են|սկսվում\s+է|արժե|գինն\s+է|от|from|starting\s+at)\b)?\s*"
-            r"(?P<price>\d[\d\s.,]*)\s*(?P<currency>դրամ(?:ից)?|֏|amd|dram)\b",
-            clause, flags=re.I
-        )
+        m = price_re.search(clause)
         if not m:
             continue
         name = _norm(m.group("name")).strip(" —–-:;")
-        # Remove an introductory list label before the actual service, e.g.
-        # «Հիմնական ծառայություններն են՝ ավտոմեքենայի ախտորոշում».
         low_name = name.lower()
         intro_markers = (
             "հիմնական ծառայություններն են", "ծառայություններն են",
@@ -488,31 +508,14 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             parts = re.split(r"[՝:]", name, maxsplit=1)
             if len(parts) == 2:
                 name = _norm(parts[1]).strip(" —–-:;")
-        # Remove conversational wrappers so a whole sentence can never become
-        # the service name (e.g. "Ռազդանում ունեմ BYUTI անունով սրահ").
         name = re.sub(
-            r"^(?:Ես\s+[^,;.!?։]*?\s+)?(?:ունեմ|ունենք|կատարում\s+ենք|անում\s+ենք|մատուցում\s+ենք|"
-            r"առաջարկում\s+ենք|мы\s+делаем|оказываем|предлагаем|we\s+(?:do|offer|provide))\s+",
+            r"^(?:Ես\\s+[^,;.!?։]*?\\s+)?(?:ունեմ|ունենք|կատարում\\s+ենք|անում\\s+ենք|մատուցում\\s+ենք|"
+            r"առաջարկում\\s+ենք|мы\\s+делаем|оказываем|предлагаем|we\\s+(?:do|offer|provide))\\s+",
             "", name, flags=re.I
         ).strip()
-        name = re.sub(r"^(?:սրահում|մեզ\s+մոտ)\s+", "", name, flags=re.I).strip()
-        name = re.sub(r"^(?:ինչպես\s+նաև|նաև|և|ու)\s+", "", name, flags=re.I).strip()
-        # Armenian conversational/inflected forms -> clean service noun.
-        arm_clean = {
-            "սանրվածքները": "Սանրվածք", "սանրվածքը": "Սանրվածք",
-            "գունավորումը": "Գունավորում", "գունավորումը": "Գունավորում",
-            "ոճավորումը": "Ոճավորում", "ոճավորումը": "Ոճավորում",
-            "մատնահարդարումը": "Մատնահարդարում",
-            "պեդիկյուրը": "Պեդիկյուր", "պեդիկյուրը": "Պեդիկյուր",
-            "դիմահարդարումը": "Դիմահարդարում",
-        }
-        clean_key = name.lower().strip("՝:- ")
-        if clean_key in arm_clean:
-            name = arm_clean[clean_key]
-        else:
-            # Keep only the final noun-like fragment if punctuation/connector
-            # text survived extraction; never keep a location or business intro.
-            name = re.sub(r"^(?:և|ու|ինչպես\s+նաև|then|and|и|а|also)\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"^(?:սրահում|մեզ\\s+մոտ)\\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"^(?:ինչպես\\s+նաև|նաև|և|ու)\\s+", "", name, flags=re.I).strip()
+        name = re.sub(r"^.*(?:հիմնական ծառայություններն են|ծառայություններն են)\\s*[՝:]\\s*", "", name, flags=re.I)
         if not name:
             continue
         try:
@@ -520,26 +523,24 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         except ValueError:
             continue
         full = clause.lower()
-        is_from = bool(
-            "ից" in full or re.search(
-                r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I
-            )
-        )
-        is_per_unit = bool(
-            re.search(r"\b(?:քմ|քառակուսի\s*մետր|кв\.?\s*м|за\s+кв\.?\s*м|պարապմունք|занят(?:ие|ия)|за\s+занятие)\b", full, re.I)
-        )
-        if is_per_unit:
-            price_type = "from_per_unit" if is_from else "fixed_per_unit"
-        else:
-            price_type = "from" if is_from else "fixed"
+        is_from = bool("ից" in full or re.search(r"\\b(?:от|from|starting\\s+at|սկսվում\\s+են|սկսվում\\s+է)\\b", full, re.I))
+        is_per_unit = bool(re.search(r"\\b(?:քմ|քառակուսի\\s*մետր|кв\\.?\\s*м|за\\s+кв\\.?\\s*м|պարապմունք|занят(?:ие|ия)|за\\s+занятие)\\b", full, re.I))
+        price_type = ("from_per_unit" if is_from else "fixed_per_unit") if is_per_unit else ("from" if is_from else "fixed")
+        arm_clean = {
+            "սանրվածքները": "Սանրվածք", "սանրվածքը": "Սանրվածք",
+            "գունավորումը": "Գունավորում", "ոճավորումը": "Ոճավորում",
+            "մատնահարդարումը": "Մատնահարդարում", "պեդիկյուրը": "Պեդիկյուր",
+            "դիմահարդարումը": "Դիմահարդարում",
+        }
+        name = arm_clean.get(name.lower().strip("՝:- "), name)
         found.append({"name": name, "raw_sub_direction": name, "price": price, "price_type": price_type, "matched_subcategory_id": None})
+
     result=[]; seen=set()
     for item in found:
         key=(item["name"].lower(),item["price"],item["price_type"])
         if key not in seen:
             seen.add(key); result.append(item)
     return result
-
 
 def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[dict]:
     """Deterministic safety net when Groq catalog matching rejects a request.
