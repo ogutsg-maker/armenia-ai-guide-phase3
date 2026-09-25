@@ -461,6 +461,81 @@ def search_orders(actor_role: str = "admin", actor_id: int | None = None,
     )
 
 
+def get_negotiation(negotiation_id: int, actor_role: str = "admin",
+                    actor_id: int | None = None):
+    """Return a negotiation visible to the actor."""
+    role = str(actor_role or "admin").strip().lower()
+    where = ["n.id=%s"]
+    params: list[Any] = [int(negotiation_id)]
+    if role == "client":
+        where.append("n.client_id=%s")
+        params.append(int(actor_id)) if actor_id is not None else params.append(-1)
+    elif role == "partner":
+        partner = get_partner_by_user(int(actor_id)) if actor_id is not None else None
+        if not partner:
+            return None
+        where.append("n.partner_id=%s")
+        params.append(int(partner["id"]))
+    elif role != "admin":
+        return None
+    return one(
+        "SELECT n.* FROM negotiations n WHERE " + " AND ".join(where),
+        tuple(params),
+    )
+
+
+def get_negotiation_messages(negotiation_id: int, actor_role: str = "admin",
+                             actor_id: int | None = None, limit: int = 500):
+    if not get_negotiation(negotiation_id, actor_role=actor_role, actor_id=actor_id):
+        return []
+    return rows(
+        "SELECT id,sender_role,sender_id,message,data_json,created_at "
+        "FROM negotiation_messages WHERE negotiation_id=%s ORDER BY id LIMIT %s",
+        (int(negotiation_id), max(1, min(int(limit or 500), 1000))),
+    )
+
+
+def append_negotiation_message(negotiation_id: int, sender_role: str,
+                               sender_id: int | None, message: str,
+                               data: dict[str, Any] | None = None):
+    return execute(
+        """INSERT INTO negotiation_messages
+           (negotiation_id,sender_role,sender_id,message,data_json)
+           VALUES(%s,%s,%s,%s,%s::jsonb) RETURNING *""",
+        (int(negotiation_id), str(sender_role), sender_id, str(message),
+         json.dumps(data or {}, ensure_ascii=False)),
+        True,
+    )
+
+
+def update_negotiation(negotiation_id: int, state: dict[str, Any],
+                       status: str | None = None,
+                       actor_role: str = "admin", actor_id: int | None = None):
+    current = get_negotiation(negotiation_id, actor_role=actor_role, actor_id=actor_id)
+    if not current:
+        return None
+    if status:
+        return execute(
+            """UPDATE negotiations SET state_json=%s::jsonb,status=%s,updated_at=NOW()
+               WHERE id=%s RETURNING *""",
+            (json.dumps(state or {}, ensure_ascii=False), str(status), int(negotiation_id)),
+            True,
+        )
+    return execute(
+        """UPDATE negotiations SET state_json=%s::jsonb,updated_at=NOW()
+           WHERE id=%s RETURNING *""",
+        (json.dumps(state or {}, ensure_ascii=False), int(negotiation_id)),
+        True,
+    )
+
+
+def update_request_status(request_id: int, status: str):
+    return execute(
+        "UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s RETURNING *",
+        (str(status), int(request_id)), True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Client request / candidate persistence
 # ---------------------------------------------------------------------------
