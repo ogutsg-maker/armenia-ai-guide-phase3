@@ -580,10 +580,7 @@ async def _cancel_booking(request, actor):
     try:data=await request.json()
     except Exception:data={}
     reason=str(data.get('reason') or '').strip()[:500]
-    if actor=='client':
-        booking=_one("SELECT * FROM bookings WHERE id=%s AND client_id=%s",(booking_id,uid))
-    else:
-        booking=_one("SELECT b.* FROM bookings b JOIN partners p ON p.id=b.partner_id WHERE b.id=%s AND p.user_id=%s",(booking_id,uid))
+    booking=data_core.get_booking(booking_id, actor_role=actor, actor_id=uid)
     if not booking:
         return web.json_response({'ok':False,'error':'booking_not_found'},status=404)
     if booking.get('status') in ('cancelled','refunded','completed'):
@@ -597,13 +594,16 @@ async def _cancel_booking(request, actor):
     refund_amount=round(price*pct/100.0,2)
     currency=booking.get('currency') or 'AMD'
     new_status='refunded' if refund_amount>0 else 'cancelled'
-    _exec("UPDATE bookings SET status=%s,updated_at=NOW() WHERE id=%s",(new_status,booking_id))
-    if booking.get('request_id'):
-        _exec("UPDATE service_requests SET status='cancelled',updated_at=NOW() WHERE id=%s",(booking['request_id'],))
-    if booking.get('negotiation_id'):
-        _exec("UPDATE negotiations SET status='cancelled',updated_at=NOW() WHERE id=%s",(booking['negotiation_id'],))
+    updated=data_core.cancel_booking(
+        booking_id, actor_role=actor, actor_id=uid, new_status=new_status,
+        reason=reason, refund_amount=refund_amount
+    )
+    if not updated:
+        return web.json_response({'ok':False,'error':'booking_cancelled_or_state_conflict'},status=409)
     if refund_amount>0:
-        _exec("UPDATE payments SET status=%s,updated_at=NOW() WHERE booking_id=%s AND payment_type='commission'",('refunded' if pct>=100 else 'partial_refund',booking_id))
+        data_core.update_payment_status_for_booking(
+            booking_id, 'refunded' if pct>=100 else 'partial_refund'
+        )
         _exec("INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description) VALUES(%s,%s,'refund',%s,%s,%s)",(booking['partner_id'],booking_id,-refund_amount,currency,f'Refund on cancellation ({actor}, {pct:.0f}%)'))
     _exec("INSERT INTO booking_cancellations(booking_id,cancelled_by,reason,refund_amount) VALUES(%s,%s,%s,%s)",(booking_id,actor,reason,refund_amount))
     # Notify the counterparty (best-effort).
