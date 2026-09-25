@@ -633,6 +633,40 @@ def update_payment_status_for_booking(booking_id: int, status: str):
     )
 
 
+def checkin_booking(booking_id: int, partner_user_id: int, token: str):
+    row = one(
+        """SELECT bc.*,b.status booking_status,b.partner_id,b.client_id,b.service_name,
+                  b.agreed_price,b.currency,p.business_name
+           FROM booking_checkins bc
+           JOIN bookings b ON b.id=bc.booking_id
+           JOIN partners p ON p.id=b.partner_id
+           WHERE bc.id=%s AND bc.token=%s AND p.user_id=%s""",
+        (int(booking_id), str(token), int(partner_user_id)),
+    )
+    if not row: return None
+    if row.get("status") == "checked_in": return {"already_checked_in": True, "checkin": row}
+    if row.get("booking_status") not in ("paid", "confirmed"):
+        return {"error": "booking_not_paid", "booking_status": row.get("booking_status")}
+    check = execute(
+        """UPDATE booking_checkins
+           SET status='checked_in',checked_in_at=NOW(),checked_in_by=%s
+           WHERE id=%s AND status='active' RETURNING *""",
+        (int(partner_user_id), int(row["id"])), True,
+    )
+    if not check:
+        current = one("SELECT * FROM booking_checkins WHERE id=%s", (int(row["id"]),))
+        return {"already_checked_in": True, "checkin": current}
+    booking = execute(
+        """UPDATE bookings SET status='completed',updated_at=NOW()
+           WHERE id=%s AND status IN ('paid','confirmed') RETURNING *""",
+        (int(booking_id),), True,
+    )
+    return {"already_checked_in": False, "checkin": check,
+            "booking": booking, "service_name": row["service_name"],
+            "agreed_price": row["agreed_price"], "currency": row["currency"],
+            "business_name": row["business_name"]}
+
+
 # ---------------------------------------------------------------------------
 # Client request / candidate persistence
 # ---------------------------------------------------------------------------
