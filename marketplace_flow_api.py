@@ -219,11 +219,21 @@ async def test_payment(request):
         locations=_rows("SELECT marz,city,village,address,location_type FROM partner_locations WHERE partner_id=%s ORDER BY id LIMIT 5",(existing['partner_id'],))
         return web.json_response({'ok':True,'payment':payment,'booking':existing,'checkin':check,'qr':qr_util.qr_data_uri(check['token']) if check else None,'partner':{'business_name':partner['business_name'],'locations':locations,'contact':{}}})
 
-    st=_state(n); service_id=int(st.get('service_id') or 0)
+    st=_state(n)
+    final_price = st.get('final_price', st.get('agreed_price'))
+    if final_price is None:
+        return web.json_response({'ok':False,'error':'negotiation_final_price_missing'},status=400)
+    try:
+        final_price=float(final_price)
+    except (TypeError,ValueError):
+        return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
+    if final_price <= 0:
+        return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
+    service_id=int(st.get('service_id') or 0)
     service=_one("SELECT * FROM services WHERE id=%s AND partner_id=%s AND status='approved'",(service_id,n['partner_id']))
     if not service:
         return web.json_response({'ok':False,'error':'service_not_available'},status=404)
-    raw_price=st.get('final_price',st.get('agreed_price',st.get('price',service.get('price'))))
+    raw_price=final_price
     try:
         price=float(raw_price)
     except (TypeError,ValueError):
