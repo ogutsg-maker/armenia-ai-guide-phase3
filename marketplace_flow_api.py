@@ -677,16 +677,14 @@ async def idram_result(request):
         # Nothing to reconcile, but still ack so Idram does not retry forever.
         logging.warning('Idram callback: no payment for bill %s',bill_no)
         return web.Response(text='OK')
-    # Idempotent: only act on the first successful settlement.
-    if str(payment.get('status'))!='paid':
-        _exec("UPDATE payments SET status='paid',provider_payment_id=%s,updated_at=NOW() WHERE id=%s",(result.transaction_id or payment.get('provider_payment_id'),payment['id']))
+    # Idempotent reconciliation is centralized in Data Core.
+    reconciled=data_core.reconcile_paid_payment(
+        int(payment['id']), result.transaction_id or payment.get('provider_payment_id')
+    )
+    if reconciled and not reconciled.get('already_paid'):
+        booking=reconciled.get('booking')
         booking_id=payment.get('booking_id')
-        if booking_id:
-            _exec("UPDATE bookings SET status='paid',updated_at=NOW() WHERE id=%s AND status<>'paid'",(booking_id,))
-            booking=_one("SELECT * FROM bookings WHERE id=%s",(booking_id,))
-            if booking and booking.get('request_id'):
-                _exec("UPDATE service_requests SET status='booked',updated_at=NOW() WHERE id=%s",(booking['request_id'],))
-            # Best-effort notify the partner about the confirmed payment.
+        # Best-effort notify the partner about the confirmed payment.
             try:
                 from notify import notify
                 owner=_one("SELECT user_id FROM partners WHERE id=%s",(payment.get('partner_id'),))
