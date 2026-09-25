@@ -196,11 +196,12 @@ def search_services(
     if city:
         where.append("""EXISTS (
             SELECT 1 FROM partner_locations pl
-            WHERE pl.partner_id=p.id AND pl.is_active=TRUE
+            WHERE pl.partner_id=p.id
               AND (LOWER(COALESCE(pl.city,''))=LOWER(%s)
                 OR LOWER(COALESCE(pl.village,''))=LOWER(%s)
                 OR LOWER(COALESCE(pl.marz,''))=LOWER(%s)
-                OR COALESCE(pl.is_all_armenia,FALSE)=TRUE)
+                OR LOWER(COALESCE(pl.data_json->>'coverage',''))='all_armenia'
+                OR LOWER(COALESCE(pl.data_json->>'service_area',''))='all_armenia')
         )""")
         params.extend([city, city, city])
     params.append(max(1, min(int(limit or 100), 200)))
@@ -230,7 +231,7 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
                   limit: int = 100):
     if actor_user_id is not None:
         assert_partner_owns_partner(int(partner_id), int(actor_user_id))
-    where = ["s.status <> 'archived'"]
+    where = ["s.status <> 'deleted'"]
     params: list[Any] = []
     if approved_only:
         where += ["s.status='approved'", "p.status='approved'"]
@@ -260,7 +261,7 @@ def get_partner_addresses(partner_id: int, actor_user_id: int | None = None, lim
     return rows(
         """SELECT id,partner_id,business_id,object_name,address,city,marz,phone,is_active
            FROM partner_objects
-           WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
+           WHERE partner_id=%s
            ORDER BY business_id,id LIMIT %s""",
         (int(partner_id), max(1, min(int(limit or 100), 200))),
     )
@@ -511,10 +512,10 @@ def operational_stats() -> dict[str, Any]:
             stats["geography"]["service_cities"] = int(row.get("n") or 0)
 
     if _table_exists("partner_objects"):
-        row = one("SELECT COUNT(DISTINCT city) AS n FROM partner_objects WHERE COALESCE(is_active,TRUE)=TRUE AND city IS NOT NULL AND TRIM(city)<>''")
+        row = one("SELECT COUNT(DISTINCT city) AS n FROM partner_objects WHERE city IS NOT NULL AND TRIM(city)<>''")
         if row:
             stats["geography"]["cities"] = int(row.get("n") or 0)
-        row = one("SELECT COUNT(DISTINCT marz) AS n FROM partner_objects WHERE COALESCE(is_active,TRUE)=TRUE AND marz IS NOT NULL AND TRIM(marz)<>''")
+        row = one("SELECT COUNT(DISTINCT marz) AS n FROM partner_objects WHERE marz IS NOT NULL AND TRIM(marz)<>''")
         if row:
             stats["geography"]["marzes"] = int(row.get("n") or 0)
 
@@ -564,7 +565,7 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[
             if _table_exists("partner_objects"):
                 out["addresses"]=rows(
                     """SELECT id,business_id,object_name,address,city,marz,phone,is_active
-                       FROM partner_objects WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
+                       FROM partner_objects WHERE partner_id=%s
                        ORDER BY business_id,id LIMIT 100""",(eid,))
         return out
 
@@ -575,7 +576,7 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False) -> dict[
         if _table_exists("partner_objects"):
             out["addresses"]=rows(
                 """SELECT id,business_id,object_name,address,city,marz,phone,is_active
-                   FROM partner_objects WHERE business_id=%s AND COALESCE(is_active,TRUE)=TRUE
+                   FROM partner_objects WHERE business_id=%s
                    ORDER BY id LIMIT 50""",(eid,))
         out["services"]=rows(
             """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
