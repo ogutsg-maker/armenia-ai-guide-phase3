@@ -4,7 +4,7 @@ Partner -> Business -> Direction -> Subcategory -> Service.
 Applications are reviewed before catalogue records become active.
 """
 from __future__ import annotations
-import json, os, logging
+import json, os, logging, re
 from datetime import date, datetime
 from decimal import Decimal
 import psycopg
