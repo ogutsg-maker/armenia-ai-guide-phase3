@@ -10,7 +10,7 @@ receives arbitrary SQL access.
 from typing import Any, Dict, List
 from decimal import Decimal
 from datetime import date, datetime
-import data_core as platform_db
+import data_core
 
 
 ROLES = {"admin", "partner", "client", "potential_partner"}
@@ -135,7 +135,7 @@ class DataTools:
         sql = _COUNT_SQL.get(entity)
         if not sql:
             raise DataToolError("unsupported_count_entity")
-        row = platform_db.one(sql) or {}
+        row = data_core.one(sql) or {}
         return {"entity": entity, "count": int(row.get("count") or 0)}
 
     def _tool_search_partners(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,7 +153,7 @@ class DataTools:
                 WHERE pa.partner_id=p.id AND pa.location_city ILIKE %s
             )""")
             params.append(f"%{city}%")
-        rows = platform_db.rows(
+        rows = data_core.rows(
             """SELECT p.id,p.business_name,p.status,p.verification_status,p.business_description
                FROM partners p WHERE """ + " AND ".join(where) +
             " ORDER BY p.id DESC LIMIT %s",
@@ -165,7 +165,7 @@ class DataTools:
         partner_id = args.get("partner_id")
         if partner_id is None:
             raise DataToolError("partner_id_required")
-        row = platform_db.one(
+        row = data_core.one(
             """SELECT id,user_id,status,verification_status,business_name,
                       business_description,contact_share_policy,created_at,updated_at
                FROM partners WHERE id=%s""",
@@ -186,7 +186,7 @@ class DataTools:
         aid = args.get("application_id")
         if aid is None:
             raise DataToolError("application_id_required")
-        row = platform_db.one(
+        row = data_core.one(
             """SELECT a.*,p.user_id,p.business_name AS partner_business_name
                FROM partner_applications a
                LEFT JOIN partners p ON p.id=a.partner_id
@@ -201,11 +201,11 @@ class DataTools:
         if not aid and not partner_id:
             raise DataToolError("application_or_partner_required")
         if aid:
-            app = platform_db.one("SELECT partner_id FROM partner_applications WHERE id=%s", (int(aid),))
+            app = data_core.one("SELECT partner_id FROM partner_applications WHERE id=%s", (int(aid),))
             partner_id = app.get("partner_id") if app else None
         if not partner_id:
             return {"documents": []}
-        cols = platform_db.rows(
+        cols = data_core.rows(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_schema='public' AND table_name='partner_verification_documents' "
             "ORDER BY ordinal_position"
@@ -219,13 +219,13 @@ class DataTools:
             "rejection_reason","created_at","updated_at"
         ]
         select_cols = [x for x in wanted if x in names]
-        rows = platform_db.rows(
+        rows = data_core.rows(
             "SELECT " + ",".join(select_cols) +
             " FROM partner_verification_documents WHERE partner_id=%s ORDER BY id DESC LIMIT 50",
             (int(partner_id),),
         )
         if self.role == "partner":
-            partner = platform_db.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
+            partner = data_core.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
             if not partner or self.actor_id is None or int(partner.get("user_id") or 0) != self.actor_id:
                 raise DataToolError("partner_access_denied")
         return {"documents": self._safe_rows(rows)}
@@ -235,10 +235,10 @@ class DataTools:
         if partner_id is None:
             raise DataToolError("partner_id_required")
         if self.role == "partner":
-            partner = platform_db.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
+            partner = data_core.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
             if not partner or self.actor_id is None or int(partner.get("user_id") or 0) != self.actor_id:
                 raise DataToolError("partner_access_denied")
-        rows = platform_db.rows(
+        rows = data_core.rows(
             """SELECT id,partner_id,name,description,phone,status
                FROM partner_businesses WHERE partner_id=%s AND status<>'archived'
                ORDER BY id DESC LIMIT 100""",
@@ -247,7 +247,7 @@ class DataTools:
         return {"items": self._safe_rows(rows)}
 
     def _tool_get_directions(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        rows = platform_db.rows(
+        rows = data_core.rows(
             """SELECT id,name_am,name_ru,name_en,slug,is_active
                FROM master_categories WHERE is_active=TRUE ORDER BY id"""
         )
@@ -267,7 +267,7 @@ class DataTools:
         if master_id is not None:
             where.append("c.master_category_id=%s")
             params.append(int(master_id))
-        rows = platform_db.rows(
+        rows = data_core.rows(
             """SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,
                       m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en
                FROM categories c JOIN master_categories m ON m.id=c.master_category_id
@@ -283,7 +283,7 @@ class DataTools:
         params: List[Any] = []
         if partner_id is not None:
             if self.role == "partner":
-                partner = platform_db.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
+                partner = data_core.one("SELECT user_id FROM partners WHERE id=%s", (int(partner_id),))
                 if not partner or self.actor_id is None or int(partner.get("user_id") or 0) != self.actor_id:
                     raise DataToolError("partner_access_denied")
             where.append("s.partner_id=%s")
@@ -296,7 +296,7 @@ class DataTools:
         if category_id is not None:
             where.append("s.category_id=%s")
             params.append(int(category_id))
-        rows = platform_db.rows(
+        rows = data_core.rows(
             """SELECT s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,
                       p.business_name AS partner_name,c.name_am AS category_name_am,
                       c.name_ru AS category_name_ru,c.name_en AS category_name_en,
@@ -343,7 +343,7 @@ class DataTools:
         category_id=app.get("category_id")
         master_id=app.get("master_category_id")
         if category_id is not None:
-            category=platform_db.one(
+            category=data_core.one(
                 """SELECT id,master_category_id,name_am,name_ru,name_en,is_active
                    FROM categories WHERE id=%s""",(int(category_id),)
             )
