@@ -66,7 +66,7 @@ def test_data_core_exposes_required_gateway_operations():
 
 
 def test_ai_orchestration_layers_have_no_sql_text():
-    for name in ("client_ai.py", "ai_router.py"):
+    for name in ("client_ai.py", "ai_router.py", "marketplace_flow_api.py"):
         path = ROOT / name
         text = path.read_text(encoding="utf-8").lower()
         for keyword in ("select ", "insert ", "update ", "delete ", "create table"):
