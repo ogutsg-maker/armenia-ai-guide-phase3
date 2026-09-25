@@ -749,8 +749,18 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
 def create_direct_booking_request(client_id: int, summary: str, preferences: dict):
     return execute(
         """INSERT INTO service_requests(client_id,status,language,summary,preferences_json)
-           VALUES(%s,'booked','hy',%s,%s::jsonb) RETURNING *""",
-        (int(client_id),str(summary)[:500],json.dumps(preferences or {},ensure_ascii=False)),True)
+           SELECT %s,'booked','hy',%s,%s::jsonb
+           WHERE NOT EXISTS (
+               SELECT 1 FROM service_requests
+               WHERE client_id=%s
+                 AND status IN ('booked','pending_payment')
+                 AND preferences_json->>'direct'='true'
+                 AND preferences_json->>'service_id'=%s
+                 AND created_at > NOW() - INTERVAL '2 minutes'
+           )
+           RETURNING *""",
+        (int(client_id),str(summary)[:500],json.dumps(preferences or {},ensure_ascii=False),
+         int(client_id),str(preferences.get('service_id') or '')),True)
 
 def add_booking_financial_entries(partner_id: int, booking_id: int,
                                   commission: float, partner_amount: float, currency: str):
