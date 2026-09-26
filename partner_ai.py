@@ -2,7 +2,8 @@
 from __future__ import annotations
 import json
 import logging
-from ai_action_plan import registration_plan
+from ai_action_plan import registration_plan, service_action_plan, company_action_plan, address_action_plan
+from ai_data_tools import DataTools
 from platform_db import (
     active_session, create_session, update_session, add_ai_message,
     recent_ai_messages, catalog_tree, ensure_partner, update_partner,
@@ -10,6 +11,11 @@ from platform_db import (
 )
 
 logger=logging.getLogger(__name__)
+
+def _explicit_confirmation(value):
+    t=str(value or "").casefold().strip()
+    return t in {"yes","да","հա","այո","հաստատում եմ","հաստատել","ուղարկել","համաձայն եմ","ok","okay"} or t.startswith(("yes,","да,","այո,","հա,"))
+
 
 
 def _catalog_text(tree):
@@ -64,6 +70,10 @@ class PartnerAI:
   "profile_patch":{{"business_name":"","business_description":"","location":"","working_hours":"","services":[],"prices":[],"staff":[],"packages":[]}},
   "catalog_match":{{"master_category_id":null,"category_ids":[]}},
   "catalog_proposal":{{"needed":false,"master_category":"","category":"","subcategory":"","service":"","reason":"","description":""}},
+  "action":"none",
+  "company":{{"company_id":null,"name":"","description":"","phone":""}},
+  "address_data":{{"address_id":null,"company_id":null,"address":"","city":"","marz":"","phone":"","object_name":""}},
+  "service":{{"service_id":null,"company_id":null,"address_id":null,"name":"","price":null,"category_id":null,"phone":""}},
   "confirmed":false,
   "needs_document":false,
   "next_step":"profile|catalog|confirmation|document|waiting_admin|done"
@@ -79,6 +89,48 @@ class PartnerAI:
         except Exception as exc:
             logger.exception('Partner AI failed')
             data={'reply':'Ես այստեղ եմ։ Խնդրում եմ պատմեք ձեր բիզնեսի մասին՝ ինչ ծառայություններ եք առաջարկում, որտեղ եք աշխատում և ինչ գներով։','profile_patch':{},'catalog_match':{},'catalog_proposal':{'needed':False},'confirmed':False,'needs_document':False,'next_step':'profile'}
+        pending_action=ctx.get('pending_action')
+        if pending_action and _explicit_confirmation(text):
+            try:
+                pa=pending_action if isinstance(pending_action,dict) else {}
+                tool=DataTools('partner', user_id)
+                args=dict(pa.get('arguments') or {})
+                args['confirmed']=True
+                executed=tool.execute(pa.get('tool'), args)
+                ctx.pop('pending_action',None)
+                reply='Կատարված է։' if lang=='hy' else ('Готово.' if lang=='ru' else 'Done.')
+                update_session(session['id'],ctx); add_ai_message(session['id'],'ai',reply,executed)
+                return {'reply':reply,'context':ctx,'raw':{'executed':executed}}
+            except Exception:
+                logger.exception('Confirmed partner action failed')
+                ctx.pop('pending_action',None)
+
+        action=str(data.get('action') or 'none').strip()
+        if action in {'add_service','update_service'}:
+            ap=service_action_plan(data, partner_id=int(partner['id']), actor_user_id=int(user_id))
+            if ap.get('action') in {'add_service','update_service'}:
+                args=dict(data.get('service') or data); args['action']=ap['action']
+                ctx['pending_action']={'tool':'execute_service_action','arguments':args}
+                reply='Հաստատե՞լ այս փոփոխությունը։' if lang=='hy' else ('Подтвердить это изменение?' if lang=='ru' else 'Confirm this change?')
+                update_session(session['id'],ctx); add_ai_message(session['id'],'ai',reply,ap)
+                return {'reply':reply,'context':ctx,'raw':ap}
+        elif action in {'add_company','update_company','archive_company'}:
+            ap=company_action_plan(data, partner_id=int(partner['id']), actor_user_id=int(user_id))
+            if ap.get('action') in {'add_company','update_company','archive_company'}:
+                args=dict(data.get('company') or data); args['action']=ap['action']
+                ctx['pending_action']={'tool':'execute_company_action','arguments':args}
+                reply='Հաստատե՞լ ընկերության փոփոխությունը։' if lang=='hy' else ('Подтвердить изменение компании?' if lang=='ru' else 'Confirm the company change?')
+                update_session(session['id'],ctx); add_ai_message(session['id'],'ai',reply,ap)
+                return {'reply':reply,'context':ctx,'raw':ap}
+        elif action in {'add_address','update_address'}:
+            ap=address_action_plan(data, partner_id=int(partner['id']), actor_user_id=int(user_id))
+            if ap.get('action') in {'add_address','update_address'}:
+                args=dict(data.get('address_data') or data); args['action']=ap['action']
+                ctx['pending_action']={'tool':'execute_address_action','arguments':args}
+                reply='Հաստատե՞լ հասցեի փոփոխությունը։' if lang=='hy' else ('Подтвердить изменение адреса?' if lang=='ru' else 'Confirm the address change?')
+                update_session(session['id'],ctx); add_ai_message(session['id'],'ai',reply,ap)
+                return {'reply':reply,'context':ctx,'raw':ap}
+
         plan=registration_plan(data)
         patch=plan['profile_patch']
         ctx['profile'].update(patch)
