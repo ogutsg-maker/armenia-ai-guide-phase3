@@ -105,5 +105,34 @@ def usage_summary(*, partner_id: int | None = None, days: int = 30) -> dict:
     return {"summary":row or {}, "items":rows}
 
 
+def partner_breakdown(*, days: int = 30) -> list[dict]:
+    d=max(1,min(int(days or 30),3650))
+    return platform_db.rows(
+        """SELECT partner_id, COUNT(*) operations,
+                  COALESCE(SUM(input_tokens),0) input_tokens,
+                  COALESCE(SUM(output_tokens),0) output_tokens,
+                  COALESCE(SUM(total_tokens),0) total_tokens,
+                  COALESCE(SUM(total_cost_usd),0) total_cost_usd
+           FROM ai_usage_ledger
+           WHERE created_at >= NOW() - (%s || ' days')::interval
+           GROUP BY partner_id ORDER BY total_cost_usd DESC""",(d,))
+
+
+def provider_breakdown(*, days: int = 30) -> list[dict]:
+    d=max(1,min(int(days or 30),3650))
+    return platform_db.rows(
+        """SELECT provider,model,COUNT(*) operations,
+                  COALESCE(SUM(input_tokens),0) input_tokens,
+                  COALESCE(SUM(output_tokens),0) output_tokens,
+                  COALESCE(SUM(total_tokens),0) total_tokens,
+                  COALESCE(SUM(total_cost_usd),0) total_cost_usd
+           FROM ai_usage_ledger
+           WHERE created_at >= NOW() - (%s || ' days')::interval
+           GROUP BY provider,model ORDER BY total_cost_usd DESC""",(d,))
+
+
 def admin_overview(days: int = 30) -> dict:
-    return usage_summary(days=days)
+    base=usage_summary(days=days)
+    base["partners"]=partner_breakdown(days=days)
+    base["providers"]=provider_breakdown(days=days)
+    return base
