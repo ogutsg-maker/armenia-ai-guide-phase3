@@ -439,7 +439,10 @@ def ensure_platform_schema() -> None:
         purpose TEXT NOT NULL DEFAULT '',
         user_id BIGINT,
         partner_id BIGINT REFERENCES partners(id) ON DELETE SET NULL,
-        company_id BIGINT REFERENCES partner_businesses(id) ON DELETE SET NULL,
+        -- partner_businesses is created by the business-layer migration,
+        -- which runs after this core schema. The FK is attached there so a
+        -- clean database can bootstrap in dependency order.
+        company_id BIGINT,
         order_id BIGINT,
         negotiation_id BIGINT,
         input_tokens BIGINT NOT NULL DEFAULT 0,
