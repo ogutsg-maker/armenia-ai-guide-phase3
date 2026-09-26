@@ -1706,7 +1706,45 @@ async def _admin_semantic_answer(question,plan,state):
         plan["data_needed"]=["services"]
         target="services"
         intent="information_request"
-        plan["tool_requests"]=[{"name":"search_companies","arguments":{"query":named,"limit":10}}]
+
+        # Resolve the company first, then read its services by company_id.
+        # This prevents an entity-scoped service question from degrading into
+        # a platform-wide count.
+        try:
+            company_result=DataTools("admin").execute(
+                "search_companies",{"query":named,"limit":10}
+            )
+            company_data=company_result.get("data") if isinstance(company_result,dict) else {}
+            company_rows=(company_data.get("items") if isinstance(company_data,dict) else None) or (
+                company_data.get("rows") if isinstance(company_data,dict) else None
+            ) or []
+            exact_company=None
+            for row in company_rows:
+                if isinstance(row,dict):
+                    row_name=row.get("name") or row.get("business_name") or ""
+                    if _norm(row_name)==_norm(named):
+                        exact_company=row
+                        break
+            if exact_company is None and company_rows:
+                exact_company=company_rows[0]
+            company_id=(exact_company or {}).get("id") if isinstance(exact_company,dict) else None
+            if company_id is not None:
+                plan["entity_id"]=int(company_id)
+                plan["entity_type"]="business"
+                plan["tool_requests"]=[{
+                    "name":"get_services",
+                    "arguments":{"company_id":int(company_id),"limit":50}
+                }]
+            else:
+                plan["tool_requests"]=[{
+                    "name":"search_companies",
+                    "arguments":{"query":named,"limit":10}
+                }]
+        except Exception:
+            plan["tool_requests"]=[{
+                "name":"search_companies",
+                "arguments":{"query":named,"limit":10}
+            }]
 
     # COUNT-TRAP CORRECTION. A weak planner often collapses an entity-scoped
     # question ("services of BYUTI", "BYUTI's application in full") into a bare
