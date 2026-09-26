@@ -216,6 +216,83 @@ _ADMIN_SESSION_TTL=30*60
 _CONFIRM_YES={"да","да.","yes","yes.","ok","okay","подтверждаю","подтвердить","հա","այո","այո.","հաստատում եմ"}
 _CONFIRM_NO={"нет","нет.","no","no.","cancel","отмена","отменить","ոչ","ոչ.","չեղարկել"}
 
+def _admin_query_result_text(kind, rows, filters=None, question=""):
+    """Render a list of database rows as a compact human-readable list.
+
+    Language follows the question. Content stays strictly factual: only fields
+    actually present on each row are shown; nothing is invented. This is the
+    generic list renderer for every search/list tool result (companies,
+    services, partners, applications, ...), so a row-shaped result never falls
+    through to the "I didn't understand" message.
+    """
+    lang=_admin_detect_language(question)
+    filters=filters if isinstance(filters,dict) else {}
+    kind=str(kind or "").strip().lower()
+    rows=[r for r in (rows or []) if isinstance(r,dict)]
+    loc={
+        "am":{"companies":"\U0001F3E2 \u0538\u0576\u056f\u0565\u0580\u0578\u0582\u0569\u0575\u0578\u0582\u0576\u0576\u0565\u0580",
+              "services":"\U0001F6E0 \u053e\u0561\u057c\u0561\u0575\u0578\u0582\u0569\u0575\u0578\u0582\u0576\u0576\u0565\u0580",
+              "partners":"\U0001F91D \u0533\u0578\u0580\u056e\u0568\u0576\u056f\u0565\u0580\u0576\u0565\u0580",
+              "applications":"\U0001F4E8 \u0540\u0561\u0575\u057f\u0565\u0580",
+              "generic":"\U0001F4CB \u0531\u0580\u0564\u0575\u0578\u0582\u0576\u0584\u0576\u0565\u0580",
+              "empty":"\u0540\u0561\u0574\u0561\u057a\u0561\u057f\u0561\u057d\u056d\u0561\u0576 \u0563\u0580\u0561\u057c\u0578\u0582\u0574 \u0579\u0563\u057f\u0576\u057e\u0565\u0581\u0589",
+              "in":"\u00b7","more":"\u2026\u0587 \u0587\u057d "},
+        "ru":{"companies":"\U0001F3E2 \u041a\u043e\u043c\u043f\u0430\u043d\u0438\u0438",
+              "services":"\U0001F6E0 \u0423\u0441\u043b\u0443\u0433\u0438",
+              "partners":"\U0001F91D \u041f\u0430\u0440\u0442\u043d\u0451\u0440\u044b",
+              "applications":"\U0001F4E8 \u0417\u0430\u044f\u0432\u043a\u0438",
+              "generic":"\U0001F4CB \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b",
+              "empty":"\u041d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e \u043f\u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0443\u002e",
+              "in":"\u0432","more":"\u2026\u0438 \u0435\u0449\u0451 "},
+        "en":{"companies":"\U0001F3E2 Companies","services":"\U0001F6E0 Services",
+              "partners":"\U0001F91D Partners","applications":"\U0001F4E8 Applications",
+              "generic":"\U0001F4CB Results","empty":"Nothing matched the request.",
+              "in":"in","more":"\u2026and "},
+    }
+    L=loc.get(lang,loc["ru"])
+    if kind in {"business","businesses","company"}: kind="companies"
+    if kind in {"partner"}: kind="partners"
+    if kind in {"service"}: kind="services"
+    if kind in {"application"}: kind="applications"
+    header_key=kind if kind in ("companies","services","partners","applications") else "generic"
+    loc_hint=filters.get("city") or filters.get("marz")
+    if not rows:
+        base=L[header_key]+" "+L["in"]+" "+str(loc_hint) if loc_hint else L[header_key]
+        return base+" \u2014 "+L["empty"]
+    def price_str(p):
+        try:
+            f=float(p)
+            return "{:,} \u058f".format(int(f)) if f.is_integer() else str(p)+" \u058f"
+        except Exception:
+            return str(p)+" \u058f"
+    header=L[header_key]+" ("+str(len(rows))+")"
+    if loc_hint:
+        header+=" \u00b7 "+L["in"]+" "+str(loc_hint)
+    lines=[header]
+    for n,row in enumerate(rows[:30],1):
+        rid=row.get("id")
+        name=(row.get("name") or row.get("business_name") or row.get("service_name")
+              or row.get("name_ru") or row.get("name_am") or row.get("name_en") or "\u2014")
+        extra=[]
+        if header_key=="services":
+            if row.get("price") not in (None,""): extra.append(price_str(row.get("price")))
+            cat=(row.get("category_name") or row.get("category_name_ru")
+                 or row.get("category_name_am") or row.get("category_name_en"))
+            if cat: extra.append(str(cat))
+        else:
+            if row.get("status"): extra.append(str(row.get("status")))
+            if header_key=="companies" and row.get("partner_name"): extra.append(str(row.get("partner_name")))
+            city=row.get("location_city") or row.get("city")
+            if city: extra.append(str(city))
+        prefix="#"+str(rid)+" \u00b7 " if rid not in (None,"") else ""
+        line=str(n)+". "+prefix+str(name)
+        if extra: line+=" \u00b7 "+" \u00b7 ".join(extra)
+        lines.append(line)
+    if len(rows)>30:
+        lines.append(L["more"]+str(len(rows)-30))
+    return "\n".join(lines)
+
+
 def _admin_safe_human_fallback(facts, question, plan, target="", entity_type=""):
     if isinstance(facts, dict) and isinstance(facts.get("tool_results"), list):
         parts=[]
@@ -292,6 +369,11 @@ def _admin_safe_human_fallback(facts, question, plan, target="", entity_type="")
         return "📚 Ենթակատեգորիաների քանակը՝ "+str(facts["subcategories_count"])+"։"
     if isinstance(facts,dict) and "rows" in facts:
         return _admin_query_result_text(target or entity_type or "query_result",facts.get("rows") or [],plan.get("filters") or {},question)
+    # Search/list tools return {"items":[...],"count":N}. Render the records
+    # instead of falling through to "I didn't understand". This is the transport
+    # shape for every list result (companies, services, partners, ...).
+    if isinstance(facts,dict) and isinstance(facts.get("items"),list):
+        return _admin_query_result_text(target or entity_type or "query_result",facts.get("items") or [],plan.get("filters") or {},question)
     if isinstance(facts,dict) and isinstance(facts.get("candidates"), list):
         cands=facts.get("candidates") or []
         if cands:
@@ -807,7 +889,12 @@ async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
                 request_kwargs["reasoning"]={"effort":"low","exclude":True}
             # Structured planner calls use provider-side JSON mode when supported.
             # This is a transport constraint, not phrase-specific semantic logic.
-            if json_mode:
+            # Groq's gpt-oss-* models reject response_format=json_object with a
+            # 400, forcing a second (wasted) call and adding 429 pressure, so we
+            # skip JSON mode for them and rely on the prompt + JSON extraction.
+            model_lower=str(model or "").lower()
+            supports_json_mode="gpt-oss" not in model_lower
+            if json_mode and supports_json_mode:
                 request_kwargs["response_format"]={"type":"json_object"}
             try:
                 resp=await client.chat.completions.create(**request_kwargs)
@@ -918,6 +1005,13 @@ Each tool_request must be {"name":"TOOL_NAME","arguments":{...}}.
 Only use tools present in TOOL_REGISTRY and arguments matching TOOL_SCHEMAS.
 active_context={scope,subject,intent,query,filters,entity_type,entity_id}.
 reasoning_summary is at most one short sentence.
+
+SEMANTIC DECISION RULES (reason about meaning, do not match fixed phrases):
+1. COUNT vs LIST. A request for a bare quantity ("how many", "количество", "քանի") -> intent=count with the count tool and nothing else. A request to see or enumerate records ("show", "list", "which ones", "покажи", "какие", "ցույց տուր") -> intent=query_database and a search/list tool that returns the actual rows. Never answer a "show me" request with a count.
+2. GEOGRAPHIC SCOPE. If the user limits results to a city or region (marz), put it in filters.city or filters.marz AND call search_companies (or the matching search tool) with that city/marz argument. Place names in the database are Armenian, so give the value in Armenian script when you confidently know it (e.g. Раздан->Հրազդան, Ереван->Երևան); otherwise pass it as written. A geographic query is a list, never a count.
+3. ENTITY-SCOPED DATA. For "services of X" / "услуги X" / "X-ի ծառայությունները" set entity_name to that business or partner name and data_needed to ["services"]; keep target=services and intent=information_request. Do NOT count all services on the platform - the system resolves the named entity and reads only its services.
+4. FOLLOW-UPS. A short message with no new subject ("покажи", "а списком", "и?", "show", "ցույց տուր") refers to the previous result. Reuse subject, entity_name, filters and target from active_context/last_rows; if the previous answer was a count or summary, switch intent to query_database to list the underlying records. Never return unknown when active_context has a subject.
+5. Always fill active_context (scope, subject, entity_type, entity_id, filters, query) so the next turn can resolve follow-ups.
 
 TOOL_REGISTRY:
 """ + json.dumps(registry,ensure_ascii=False) + """
@@ -1626,8 +1720,25 @@ async def _admin_semantic_answer(question,plan,state):
     if isinstance(facts,dict):
         state["last_query_target"]=target or plan.get("target")
         state["last_query"]=question[:500]
+        # Flatten any row-bearing result (rows, items, or tool_results.*.items)
+        # so a bare follow-up like "покажи" can reuse the last shown records.
+        flat_rows=None
         if isinstance(facts.get("rows"),list):
-            state["last_shown_query_rows"]=_admin_safe(facts.get("rows")[:20])
+            flat_rows=facts.get("rows")
+        elif isinstance(facts.get("items"),list):
+            flat_rows=facts.get("items")
+        elif isinstance(facts.get("tool_results"),list):
+            collected=[]
+            for it in facts.get("tool_results") or []:
+                d=it.get("data") if isinstance(it,dict) else None
+                if isinstance(d,dict) and isinstance(d.get("items"),list):
+                    collected.extend(d.get("items"))
+                elif isinstance(d,dict) and isinstance(d.get("rows"),list):
+                    collected.extend(d.get("rows"))
+            if collected:
+                flat_rows=collected
+        if flat_rows is not None:
+            state["last_shown_query_rows"]=_admin_safe(flat_rows[:20])
             state["last_result_kind"]="rows"
             state["last_result_facts"]=None
         else:
