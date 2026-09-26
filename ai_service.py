@@ -432,8 +432,8 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
                 usage=getattr(response,"usage",None)
                 ai_cost_center.record_usage(
                     provider=provider,model=models[provider],chain=role,stage="text",operation="process_text_request",
-                    purpose="generic role response",input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
-                    output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
+                    purpose="generic role response",input_tokens=int(getattr(usage,"prompt_tokens",getattr(usage,"input_tokens",0)) or 0),
+                    output_tokens=int(getattr(usage,"completion_tokens",getattr(usage,"output_tokens",0)) or 0),
                     cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
                     reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0),
                 )
