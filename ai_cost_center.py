@@ -35,6 +35,13 @@ def _price_for(provider: str, model: str) -> tuple[float, float, float]:
     return max(0, inp), max(0, out), max(0, cached)
 
 
+def _usd_amd_rate() -> float:
+    try:
+        return max(0.0, float(os.getenv("AI_USD_AMD_RATE", "0") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def calculate_cost(provider: str, model: str, input_tokens: int = 0,
                    output_tokens: int = 0, cached_tokens: int = 0) -> dict:
     inp, out, cached = _price_for(provider, model)
@@ -48,6 +55,8 @@ def calculate_cost(provider: str, model: str, input_tokens: int = 0,
         "output_cost_usd": round(max(0, int(output_tokens or 0)) / 1_000_000 * out, 10),
         "total_cost_usd": round(cost, 10),
         "pricing_configured": bool(inp or out or cached),
+        "usd_amd_rate": _usd_amd_rate(),
+        "total_cost_amd": round(cost * _usd_amd_rate(), 4),
     }
 
 
@@ -66,7 +75,7 @@ def record_usage(*, provider: str, model: str, chain: str = "unknown",
                (provider,model,chain,stage,operation,purpose,user_id,partner_id,company_id,
                 order_id,negotiation_id,input_tokens,output_tokens,cached_input_tokens,
                 reasoning_tokens,total_tokens,input_cost_usd,cached_input_cost_usd,
-                output_cost_usd,total_cost_usd,status,error)
+                output_cost_usd,total_cost_usd,total_cost_amd,exchange_rate_amd,status,error)
                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING id""",
             (provider,model,chain,stage,operation,purpose,user_id,partner_id,company_id,
@@ -74,7 +83,7 @@ def record_usage(*, provider: str, model: str, chain: str = "unknown",
              int(cached_tokens or 0),int(reasoning_tokens or 0),
              int(input_tokens or 0)+int(output_tokens or 0),costs["input_cost_usd"],
              costs["cached_input_cost_usd"],costs["output_cost_usd"],costs["total_cost_usd"],
-             status,error[:1000]),
+             costs["total_cost_amd"],costs["usd_amd_rate"],status,error[:1000]),
             True,
         ) or {}
     except Exception:
@@ -95,11 +104,12 @@ def usage_summary(*, partner_id: int | None = None, days: int = 30) -> dict:
                    COALESCE(SUM(cached_input_tokens),0) cached_input_tokens,
                    COALESCE(SUM(reasoning_tokens),0) reasoning_tokens,
                    COALESCE(SUM(total_tokens),0) total_tokens,
-                   COALESCE(SUM(total_cost_usd),0) total_cost_usd
+                   COALESCE(SUM(total_cost_usd),0) total_cost_usd,
+                   COALESCE(SUM(total_cost_amd),0) total_cost_amd
             FROM ai_usage_ledger WHERE {sql}""", vals)
     rows=platform_db.rows(
         f"""SELECT provider,model,chain,stage,operation,purpose,input_tokens,output_tokens,
-                   cached_input_tokens,reasoning_tokens,total_tokens,total_cost_usd,created_at
+                   cached_input_tokens,reasoning_tokens,total_tokens,total_cost_usd,total_cost_amd,exchange_rate_amd,created_at
             FROM ai_usage_ledger WHERE {sql}
             ORDER BY created_at DESC LIMIT 500""", vals)
     return {"summary":row or {}, "items":rows}
