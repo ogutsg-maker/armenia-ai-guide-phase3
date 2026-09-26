@@ -917,6 +917,7 @@ TOOL_REGISTRY:
 
 TOOL_SCHEMAS:
 """ + json.dumps(schemas,ensure_ascii=False) + """
+"""
     payload=json.dumps({
         "message":str(message or "")[:1500],
         "context":planner_ctx,
