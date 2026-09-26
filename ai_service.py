@@ -1,6 +1,6 @@
 """Unified AI service for Armenia AI Guide.
 
-Groq is the primary provider. OpenAI is an optional fallback. This module
+Groq is the only AI provider. This module
 also owns the structured contracts used by the router, client search and
 partner onboarding so the individual AI modules do not invent their own
 provider APIs.
@@ -51,7 +51,6 @@ class AIService:
     def __init__(self):
         self.groq_key=os.getenv("GROQ_API_KEY","").strip()
         self.groq_model=os.getenv("GROQ_MODEL","openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
-        self.groq_fallback_model=os.getenv("GROQ_FALLBACK_MODEL","").strip()
         self.groq_vision_model=os.getenv("GROQ_VISION_MODEL","meta-llama/llama-4-scout-17b-16e-instruct").strip()
         self.groq_transcription_model=os.getenv("GROQ_TRANSCRIPTION_MODEL","whisper-large-v3-turbo").strip()
         self.groq_client=Groq(api_key=self.groq_key) if self.groq_key else None
@@ -109,23 +108,14 @@ class AIService:
     def _groq_completion(self, messages, model: str):
         if not self.groq_client:
             raise RuntimeError("GROQ_API_KEY is not configured")
-        try:
-            return self.groq_client.chat.completions.create(model=model, messages=messages, temperature=0.2)
-        except Exception as first_error:
-            if getattr(first_error, "status_code", None) == 404 and self.groq_fallback_model and model != self.groq_fallback_model:
-                return self.groq_client.chat.completions.create(model=self.groq_fallback_model, messages=messages, temperature=0.2)
-            raise
+        return self.groq_client.chat.completions.create(
+            model=model, messages=messages, temperature=0.2
+        )
 
     def _groq_completion_json(self, messages, model: str, max_tokens: int):
         if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
         kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens,"response_format":{"type":"json_object"}}
-        try:
-            return self.groq_client.chat.completions.create(**kwargs), model
-        except Exception as exc:
-            if getattr(exc, "status_code", None) == 404 and self.groq_fallback_model and model != self.groq_fallback_model:
-                kwargs["model"]=self.groq_fallback_model
-                return self.groq_client.chat.completions.create(**kwargs), self.groq_fallback_model
-            raise
+        return self.groq_client.chat.completions.create(**kwargs), model
 
     async def chat_json(self, system_prompt: str, user_text: str, *, max_tokens: int = 900, chain: str = "unknown", stage: str = "unknown", operation: str = "chat_json", purpose: str = "", user_id: int | None = None, partner_id: int | None = None, company_id: int | None = None, order_id: int | None = None, negotiation_id: int | None = None) -> dict:
         """Structured JSON through Groq only."""
