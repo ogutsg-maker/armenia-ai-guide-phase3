@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import logging
+from ai_action_plan import registration_plan
 from platform_db import (
     active_session, create_session, update_session, add_ai_message,
     recent_ai_messages, catalog_tree, ensure_partner, update_partner,
@@ -78,9 +79,10 @@ class PartnerAI:
         except Exception as exc:
             logger.exception('Partner AI failed')
             data={'reply':'Ես այստեղ եմ։ Խնդրում եմ պատմեք ձեր բիզնեսի մասին՝ ինչ ծառայություններ եք առաջարկում, որտեղ եք աշխատում և ինչ գներով։','profile_patch':{},'catalog_match':{},'catalog_proposal':{'needed':False},'confirmed':False,'needs_document':False,'next_step':'profile'}
-        patch=data.get('profile_patch') or {}
-        ctx['profile'].update({k:v for k,v in patch.items() if v not in ('',None,[])})
-        match=data.get('catalog_match') or {}
+        plan=registration_plan(data)
+        patch=plan['profile_patch']
+        ctx['profile'].update(patch)
+        match=plan['catalog_match']
         proposal_data=data.get('catalog_proposal') or {}
         proposal_id=ctx.get('proposal_id')
         if proposal_data.get('needed'):
