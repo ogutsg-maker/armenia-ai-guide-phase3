@@ -17,7 +17,10 @@ import data_core
 ROLES = {"admin", "partner", "client", "potential_partner"}
 
 TOOL_DEFINITIONS = {
-    "search_partners": {"description": "Find partners/businesses matching a name, service, city, region or status.", "roles": {"admin", "client"}},
+    "search_partners": {"description": "Find partners/businesses matching name, city or region.", "roles": {"admin", "client"}},
+    "search_applications": {"description": "Find partner applications by status, city, region or text.", "roles": {"admin"}},
+    "search_companies": {"description": "Find partner companies by name, city or region.", "roles": {"admin", "partner", "client"}},
+    "get_company": {"description": "Get one company and its owning partner.", "roles": {"admin", "partner", "client"}},
     "get_partner": {"description": "Get the allowed profile data for one partner.", "roles": {"admin", "partner", "client"}},
     "get_application": {"description": "Get a partner application and its current review state.", "roles": {"admin"}},
     "get_documents": {"description": "Get verification documents and their statuses for a partner/application.", "roles": {"admin", "partner"}},
@@ -29,7 +32,9 @@ TOOL_DEFINITIONS = {
     "get_orders": {"description": "Get orders visible to the current role.", "roles": {"admin", "partner", "client"}},
     "check_application": {"description": "Run factual consistency/completeness checks on an application.", "roles": {"admin"}},
     "check_catalog_match": {"description": "Check whether a service maps plausibly to an active catalog category.", "roles": {"admin", "partner"}},
-    "count": {"description": "Count a supported business entity without exposing SQL. directions means active master categories; subcategories means active catalog subcategories.", "roles": {"admin", "partner", "client"}},
+    "count": {"description": "Count a supported business entity without exposing SQL.", "roles": {"admin", "partner", "client"}},
+    "catalog_overview": {"description": "Return live counts for directions, subcategories, services, partners and companies.", "roles": {"admin"}},
+    "ai_usage_summary": {"description": "Return verified AI operation and cost totals for a period.", "roles": {"admin"}},
     "validate_action_plan": {"description": "Validate a proposed AI action before any write. This tool never mutates data.", "roles": {"admin", "partner"}},
     "service_action_plan": {"description": "Validate a proposed add/update service action. Never writes to DB.", "roles": {"admin", "partner"}},
     "execute_service_action": {"description": "Execute a previously confirmed service update through Data Core.", "roles": {"admin", "partner"}},
@@ -186,9 +191,56 @@ class DataTools:
 
     def _tool_count(self, args):
         entity = str(args.get("entity") or "").strip().lower()
-        if entity not in {"partners", "applications", "services", "directions", "subcategories", "companies"}:
+        if entity not in {"partners", "applications", "services", "directions", "subcategories", "companies", "addresses", "documents"}:
             raise DataToolError("unsupported_count_entity")
         return {"entity": entity, "count": data_core.count(entity)}
+
+    def _tool_search_applications(self, args):
+        rows = data_core.search_applications(
+            status=str(args.get("status") or "").strip() or None,
+            marz=str(args.get("marz") or "").strip() or None,
+            city=str(args.get("city") or "").strip() or None,
+            limit=min(max(int(args.get("limit") or 50), 1), 200),
+        )
+        query=str(args.get("query") or "").strip().casefold()
+        if query:
+            rows=[r for r in rows if query in str(r.get("business_name") or "").casefold()
+                  or query in str(r.get("service_name") or "").casefold()
+                  or query in str(r.get("description") or "").casefold()]
+        return {"items": rows, "count": len(rows)}
+
+    def _tool_search_companies(self, args):
+        if self.role == "partner":
+            partner=data_core.get_partner_by_user(self.actor_id or 0)
+            if not partner:
+                raise DataToolError("partner_not_found")
+            partner_id=int(partner["id"])
+            rows=data_core.list_partner_companies(partner_id=partner_id, actor_user_id=int(self.actor_id))
+            q=str(args.get("query") or "").strip().casefold()
+            if q:
+                rows=[r for r in rows if q in str(r.get("name") or "").casefold()]
+            return {"items": rows, "count": len(rows)}
+        rows=data_core.search_companies(
+            query=str(args.get("query") or "").strip(),
+            marz=str(args.get("marz") or "").strip(),
+            city=str(args.get("city") or "").strip(),
+            limit=min(max(int(args.get("limit") or 50), 1), 200),
+        )
+        return {"items": rows, "count": len(rows)}
+
+    def _tool_get_company(self, args):
+        cid=args.get("company_id")
+        if cid is None:
+            raise DataToolError("company_id_required")
+        row=data_core.get_company(int(cid))
+        if not row:
+            return {"company": None}
+        if self.role == "partner":
+            if self.actor_id is None or int(row.get("partner_id") or 0) != int((data_core.get_partner_by_user(self.actor_id) or {}).get("id") or 0):
+                raise DataToolError("partner_access_denied")
+        if self.role == "client":
+            row={k:row.get(k) for k in ("id","partner_id","name","description","status")}
+        return {"company":row}
 
     def _tool_search_partners(self, args):
         rows = data_core.search_partners(
@@ -255,6 +307,13 @@ class DataTools:
             actor_user_id=actor,
             public_only=self.role == "client",
         )}
+
+    def _tool_catalog_overview(self, args):
+        return {"overview": data_core.catalog_overview() or {}}
+
+    def _tool_ai_usage_summary(self, args):
+        days=min(max(int(args.get("days") or 1),1),365)
+        return {"summary": data_core.ai_usage_summary(days) or {}, "days": days}
 
     def _tool_get_directions(self, args):
         rows = data_core.active_directions()
