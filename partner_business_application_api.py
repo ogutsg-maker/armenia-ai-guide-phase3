@@ -141,13 +141,18 @@ def ensure_business_application_schema():
     """)
 
     # Historical bookings were created before the multi-company model.
-    # Recover their company from the service relation whenever possible.
-    _exec("""UPDATE bookings b
-             SET business_id=s.business_id
-             FROM services s
-             WHERE b.business_id IS NULL
-               AND s.id=b.service_id
-               AND s.business_id IS NOT NULL""")
+    # On a clean DB bookings may not exist yet, so guard the backfill.
+    _exec("""DO $
+             BEGIN
+               IF to_regclass('public.bookings') IS NOT NULL THEN
+                 UPDATE bookings b
+                    SET business_id=s.business_id
+                   FROM services s
+                  WHERE b.business_id IS NULL
+                    AND s.id=b.service_id
+                    AND s.business_id IS NOT NULL;
+               END IF;
+             END $;""")
 
     # Repair legacy duplicate directions before enforcing uniqueness.
     _exec("""
