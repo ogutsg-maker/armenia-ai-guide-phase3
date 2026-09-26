@@ -22,7 +22,7 @@ def _norm(text):
 
 
 
-_ADMIN_LOCALES={"am":{"unknown":"Ես ամբողջությամբ չհասկացա հարցումը։ Կարող եք հարցնել բնական լեզվով՝ հայտերի, գործընկերների, ընկերությունների կամ կատալոգի մասին։","need_application":"Սկզբում բացեք հայտը կամ նշեք դրա համարը։","not_found":"Հայտ #{id} չի գտնվել։","last_item":"Սա ընթացիկ ցուցակի վերջին տարրն է։","safe_error":"Չհաջողվեց անվտանգ մշակել հարցումը։ Տվյալները չեն փոխվել։ Փորձեք կրկին։", "ai_unavailable":"⚠️ AI ծառայությունը ժամանակավորապես հասանելի չէ։ Groq-ը չի սպասարկում հարցումը, իսկ պահուստային AI ծառայություններն էլ հասանելի չեն։ Տվյալները չեն փոխվել։"},"ru":{"unknown":"Я не полностью понял запрос. Можно спрашивать обычным языком о заявках, партнёрах, компаниях или каталоге.","need_application":"Сначала откройте заявку или укажите её номер.","not_found":"Заявка #{id} не найдена.","last_item":"Это последний элемент в текущем списке.","safe_error":"Не удалось безопасно обработать запрос. Данные не изменены. Повторите запрос."},"en":{"unknown":"I didn't fully understand the request. You can ask naturally about applications, partners, businesses, or the catalog.","need_application":"Open an application first or specify its number.","not_found":"Application #{id} was not found.","last_item":"This is the last item in the current list.","safe_error":"I couldn't safely process the request. No data was changed. Please try again."}}
+_ADMIN_LOCALES={"am":{"unknown":"Ես ամբողջությամբ չհասկացա հարցումը։ Կարող եք հարցնել բնական լեզվով՝ հայտերի, գործընկերների, ընկերությունների կամ կատալոգի մասին։","need_application":"Սկզբում բացեք հայտը կամ նշեք դրա համարը։","not_found":"Հայտ #{id} չի գտնվել։","last_item":"Սա ընթացիկ ցուցակի վերջին տարրն է։","safe_error":"Չհաջողվեց անվտանգ մշակել հարցումը։ Տվյալները չեն փոխվել։ Փորձեք կրկին։", "ai_unavailable":"⚠️ AI ծառայությունը ժամանակավորապես հասանելի չէ։ Groq AI-ը ժամանակավորապես հասանելի չէ։ Տվյալները չեն փոխվել։"},"ru":{"unknown":"Я не полностью понял запрос. Можно спрашивать обычным языком о заявках, партнёрах, компаниях или каталоге.","need_application":"Сначала откройте заявку или укажите её номер.","not_found":"Заявка #{id} не найдена.","last_item":"Это последний элемент в текущем списке.","safe_error":"Не удалось безопасно обработать запрос. Данные не изменены. Повторите запрос."},"en":{"unknown":"I didn't fully understand the request. You can ask naturally about applications, partners, businesses, or the catalog.","need_application":"Open an application first or specify its number.","not_found":"Application #{id} was not found.","last_item":"This is the last item in the current list.","safe_error":"I couldn't safely process the request. No data was changed. Please try again."}}
 
 def _admin_detect_language(text):
     t=str(text or "")
@@ -1016,7 +1016,7 @@ def _admin_contextual_fallback_plan(message,state):
     },message)
 
 def _admin_fallback_intent(message,focused_id=None,state=None):
-    '''Safe context-first fallback when every AI provider is unavailable.
+    '''Safe context-first fallback when Groq is unavailable.
     This is not a command dictionary: it scores the user's words against the
     business vocabulary exposed by the current AI Context and uses only
     deterministic database facts. Normal operation still goes through AI.
