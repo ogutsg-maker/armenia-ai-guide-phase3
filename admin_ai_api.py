@@ -2007,22 +2007,7 @@ async def admin_ai_message(admin_id,message):
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
     if intent=="query_database":
-        qtarget=_admin_query_target(target or c.get("target"))
-        qfilters=c.get("filters") or {}
-        if qtarget=="catalog" and not qfilters and c.get("entity_name"):
-            qfilters={"name":{"contains":c.get("entity_name")}}
-        if not qtarget:
-            reply=_admin_localized(c.get("response_language","ru"),"unknown")
-        else:
-            qlimit=c.get("limit") or 20; qsort=c.get("sort")
-            rows,error=_admin_query_rows(qtarget,qfilters,qlimit,qsort)
-            if error: reply="⚠️ "+error
-            else:
-                state["last_query"]={"target":qtarget,"filters":_admin_safe(qfilters),"sort":_admin_safe(qsort),"limit":int(qlimit or 20)}
-                state["last_shown_query_rows"]=[_admin_safe(x) for x in (rows or [])]
-                state["last_result_kind"]=qtarget
-                state["last_result_facts"]=_admin_safe({"target":qtarget,"rows":rows or []})
-                reply=await _admin_query_answer(message,qtarget,qfilters,qlimit,qsort)
+        reply=await _admin_semantic_answer(message,c,state)
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
     if intent=="show_application_count":
