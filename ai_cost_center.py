@@ -354,7 +354,7 @@ def company_economics(*, days: int = 30, partner_id: int | None = None) -> list[
                   COUNT(DISTINCT b.id) orders,
                   COALESCE(SUM(CASE WHEN UPPER(COALESCE(b.currency,'AMD'))='AMD' THEN b.commission_amount ELSE 0 END),0) commission_amd
            FROM bookings b
-           LEFT JOIN companies c ON c.id=b.company_id
+           LEFT JOIN partner_businesses c ON c.id=b.company_id
            LEFT JOIN partners p ON p.id=b.partner_id
            WHERE """+w+""" AND b.company_id IS NOT NULL
            GROUP BY b.company_id,b.partner_id ORDER BY commission_amd DESC""",tuple(params))
@@ -393,7 +393,7 @@ def company_orders_economics(*, company_id: int, days: int = 3650) -> list[dict]
                   COALESCE(c.name,'') AS company_name
            FROM bookings b
            LEFT JOIN partners p ON p.id=b.partner_id
-           LEFT JOIN companies c ON c.id=b.company_id
+           LEFT JOIN partner_businesses c ON c.id=b.company_id
            WHERE b.company_id=%s
              AND b.created_at >= NOW() - (%s || ' days')::interval
            ORDER BY b.created_at DESC,b.id DESC""",(cid,d))
