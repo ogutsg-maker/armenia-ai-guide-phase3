@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from aiohttp import web
 import features
+import ai_cost_center
 from marketplace_flow_api import _one, _rows
 from admin_ai_api import _admin
 
@@ -51,7 +52,18 @@ async def stats_timeseries(request):
 # Registering it here as well raised aiohttp RuntimeError
 # ("Added route will never be executed") on startup, so it was removed.
 
+async def stats_ai_cost(request):
+    _admin(request)
+    try: days=max(1,min(3650,int(request.query.get("days",30))))
+    except (TypeError,ValueError): days=30
+    try:
+        data=ai_cost_center.admin_overview(days=days)
+    except Exception as exc:
+        return web.json_response({"ok":False,"error":"ai_cost_unavailable","details":str(exc)[:300]},status=503)
+    return web.json_response({"ok":True,"days":days,"cost":data})
+
 def register_admin_stats_routes(app):
     app.router.add_get("/api/admin/stats/overview",stats_overview)
     app.router.add_get("/api/admin/stats/top-partners",stats_top_partners)
     app.router.add_get("/api/admin/stats/timeseries",stats_timeseries)
+    app.router.add_get("/api/admin/stats/ai-cost",stats_ai_cost)
