@@ -203,4 +203,5 @@ def register_admin_stats_routes(app):
     app.router.add_get("/api/admin/stats/overview",stats_overview)
     app.router.add_get("/api/admin/stats/top-partners",stats_top_partners)
     app.router.add_get("/api/admin/stats/timeseries",stats_timeseries)
-    app.router.add_get("/api/admin/stats/ai-cost",stats_ai_cost)\n    app.router.add_get("/api/admin/stats/structure",stats_structure)
+    app.router.add_get("/api/admin/stats/ai-cost",stats_ai_cost)
+    app.router.add_get("/api/admin/stats/structure",stats_structure)
