@@ -2160,10 +2160,48 @@ async def api_admin_assistant(request):
 
 
 
+async def api_admin_ai_costs(request):
+    _admin(request)
+    try:
+        days=max(1,min(int(request.query.get("days","30") or 30),3650))
+    except (TypeError,ValueError):
+        days=30
+    partner_raw=request.query.get("partner_id")
+    partner_id=None
+    if partner_raw not in (None,""):
+        try: partner_id=int(partner_raw)
+        except (TypeError,ValueError): partner_id=None
+    from ai_cost_center import usage_summary
+    return web.json_response({"ok":True,"days":days,"partner_id":partner_id,**usage_summary(partner_id=partner_id,days=days)})
+
+
+async def api_admin_ai_costs_partners(request):
+    _admin(request)
+    try:
+        days=max(1,min(int(request.query.get("days","30") or 30),3650))
+    except (TypeError,ValueError):
+        days=30
+    rows=platform_db.rows(
+        """SELECT partner_id, COUNT(*) operations,
+                  COALESCE(SUM(input_tokens),0) input_tokens,
+                  COALESCE(SUM(output_tokens),0) output_tokens,
+                  COALESCE(SUM(total_tokens),0) total_tokens,
+                  COALESCE(SUM(total_cost_usd),0) total_cost_usd
+           FROM ai_usage_ledger
+           WHERE partner_id IS NOT NULL
+             AND created_at >= NOW() - (%s || ' days')::interval
+           GROUP BY partner_id ORDER BY total_cost_usd DESC, operations DESC""",
+        [days],
+    )
+    return web.json_response({"ok":True,"days":days,"items":rows})
+
+
 def register_admin_ai_routes(app, ai, bot=None):
     app['ai']=ai
     app['bot']=bot
     app.router.add_post('/api/admin/assistant',api_admin_assistant)
+    app.router.add_get('/api/admin/ai/costs',api_admin_ai_costs)
+    app.router.add_get('/api/admin/ai/costs/partners',api_admin_ai_costs_partners)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
     app.router.add_post('/api/admin/ai/catalog-proposals/{id}/{action}',catalog_action)
     app.router.add_get('/api/admin/potential-partners',potential_list)
