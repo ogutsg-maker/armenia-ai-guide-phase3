@@ -2199,7 +2199,8 @@ async def api_admin_ai_costs_providers(request):
                   COALESCE(SUM(cached_input_tokens),0) cached_input_tokens,
                   COALESCE(SUM(reasoning_tokens),0) reasoning_tokens,
                   COALESCE(SUM(total_tokens),0) total_tokens,
-                  COALESCE(SUM(total_cost_usd),0) total_cost_usd
+                  COALESCE(SUM(total_cost_usd),0) total_cost_usd,
+                  COALESCE(SUM(total_cost_amd),0) total_cost_amd
            FROM ai_usage_ledger
            WHERE created_at >= NOW() - (%s || ' days')::interval
            GROUP BY provider,model ORDER BY total_cost_usd DESC, operations DESC""",
