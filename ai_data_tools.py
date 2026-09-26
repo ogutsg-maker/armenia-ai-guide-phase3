@@ -22,6 +22,7 @@ TOOL_DEFINITIONS = {
     "get_application": {"description": "Get a partner application and its current review state.", "roles": {"admin"}},
     "get_documents": {"description": "Get verification documents and their statuses for a partner/application.", "roles": {"admin", "partner"}},
     "get_addresses": {"description": "Get business objects and addresses available to the current role.", "roles": {"admin", "partner", "client"}},
+    "get_companies": {"description": "Get companies owned by the current partner.", "roles": {"partner"}},
     "get_directions": {"description": "Get active master directions from the catalog.", "roles": {"admin", "partner", "client"}},
     "search_catalog": {"description": "Search active catalog categories/subcategories by name or parent direction.", "roles": {"admin", "partner", "client"}},
     "get_services": {"description": "Get services, prices and catalog links visible to the current role.", "roles": {"admin", "partner", "client"}},
@@ -232,6 +233,13 @@ class DataTools:
         if self.role == "partner":
             data_core.assert_partner_owns_partner(int(partner_id), int(self.actor_id or 0))
         return {"documents": data_core.get_documents(partner_id=int(partner_id), limit=50)}
+
+    def _tool_get_companies(self, args):
+        if self.role != "partner" or self.actor_id is None:
+            raise DataToolError("partner_execution_only")
+        partner=data_core.get_partner_by_user(int(self.actor_id))
+        if not partner: raise DataToolError("partner_not_found")
+        return {"items": data_core.list_partner_companies(partner_id=int(partner["id"]), actor_user_id=int(self.actor_id))}
 
     def _tool_get_addresses(self, args):
         partner_id = args.get("partner_id")
