@@ -31,6 +31,7 @@ TOOL_DEFINITIONS = {
     "count": {"description": "Count a supported business entity without exposing SQL. directions means active master categories; subcategories means active catalog subcategories.", "roles": {"admin", "partner", "client"}},
     "validate_action_plan": {"description": "Validate a proposed AI action before any write. This tool never mutates data.", "roles": {"admin", "partner"}},
     "service_action_plan": {"description": "Validate a proposed add/update service action. Never writes to DB.", "roles": {"admin", "partner"}},
+    "execute_service_action": {"description": "Execute a previously confirmed service update through Data Core.", "roles": {"admin", "partner"}},
 }
 
 
@@ -91,6 +92,25 @@ class DataTools:
             partner_id=int(partner_id),
             actor_user_id=int(actor_user_id),
         )
+
+    def _tool_execute_service_action(self, args):
+        if self.role != "partner" or self.actor_id is None:
+            raise DataToolError("partner_execution_only")
+        if args.get("confirmed") is not True:
+            raise DataToolError("explicit_confirmation_required")
+        action = str(args.get("action") or "").strip()
+        if action != "update_service":
+            raise DataToolError("only_confirmed_update_supported")
+        service_id = args.get("service_id")
+        if not str(service_id).isdigit():
+            raise DataToolError("service_id_required")
+        return {"service": data_core.update_service_safe(
+            service_id=int(service_id),
+            actor_user_id=int(self.actor_id),
+            name=args.get("name"),
+            price=args.get("price"),
+            category_id=int(args["category_id"]) if str(args.get("category_id")).isdigit() else None,
+        ), "executed": True}
 
     def _tool_validate_action_plan(self, args):
         from ai_action_plan import validate_plan
