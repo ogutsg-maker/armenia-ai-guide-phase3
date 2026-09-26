@@ -1649,6 +1649,12 @@ async def _admin_semantic_answer(question,plan,state):
 
     named=_admin_detect_named_entity(question,state)
 
+    qn=_norm(question)
+    wants_full=any(x in qn for x in (
+        "ամբողջական","ամբողջությամբ","լրիվ","полный","полностью","вся заявка",
+        "целиком","full application","complete application"
+    ))
+
     # If the conversation has exactly one live application, a context-free
     # "full application" request can safely resolve to that single record.
     if wants_full and not plan.get("entity_id"):
