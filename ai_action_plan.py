@@ -68,7 +68,7 @@ def validate_catalog_match(match: Any) -> dict:
     }
     active_category_ids = {
         int(x.get("id")) for x in active
-        if str(x.get("category_id")).isdigit()
+        if str(x.get("id")).isdigit()
     }
     if master_id is not None and master_id in active_master_ids:
         out["master_category_id"] = master_id
@@ -127,6 +127,44 @@ def service_action_plan(data: dict, *, partner_id: int, actor_user_id: int) -> d
         "reason": str(data.get("reason") or "Service change requires confirmation."),
         "service": checked,
         "execution": "confirmation_required",
+    }
+
+
+def company_action_plan(data: dict, *, partner_id: int, actor_user_id: int) -> dict:
+    data = data if isinstance(data, dict) else {}
+    action = str(data.get("action") or "").strip()
+    if action not in {"add_company", "update_company", "archive_company"}:
+        return validate_plan({"action": "ask_clarification", "reason": "Unsupported company action."})
+    payload = data.get("company") if isinstance(data.get("company"), dict) else data
+    result = {"action": action, "requires_confirmation": True, "execution": "confirmation_required",
+              "reason": str(data.get("reason") or "Company change requires confirmation.")}
+    if action in {"update_company", "archive_company"} and not str(payload.get("company_id")).isdigit():
+        return validate_plan({"action": "ask_clarification", "reason": "company_id is required."})
+    if action == "add_company" and not str(payload.get("name") or "").strip():
+        return validate_plan({"action": "ask_clarification", "reason": "company name is required."})
+    result["company"] = {
+        k: _clean(payload.get(k)) for k in ("company_id", "name", "description", "phone")
+        if payload.get(k) not in (None, "")
+    }
+    return result
+
+
+def address_action_plan(data: dict, *, partner_id: int, actor_user_id: int) -> dict:
+    data = data if isinstance(data, dict) else {}
+    action = str(data.get("action") or "").strip()
+    if action not in {"add_address", "update_address"}:
+        return validate_plan({"action": "ask_clarification", "reason": "Unsupported address action."})
+    payload = data.get("address_data") if isinstance(data.get("address_data"), dict) else data
+    if action == "update_address" and not str(payload.get("address_id")).isdigit():
+        return validate_plan({"action": "ask_clarification", "reason": "address_id is required."})
+    if action == "add_address" and not str(payload.get("address") or "").strip():
+        return validate_plan({"action": "ask_clarification", "reason": "address is required."})
+    return {
+        "action": action, "requires_confirmation": True, "execution": "confirmation_required",
+        "reason": str(data.get("reason") or "Address change requires confirmation."),
+        "address": {k: _clean(payload.get(k)) for k in
+                    ("address_id", "company_id", "address", "city", "marz", "phone", "object_name")
+                    if payload.get(k) not in (None, "")},
     }
 
 
