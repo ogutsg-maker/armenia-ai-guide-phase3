@@ -91,15 +91,30 @@ def record_usage(*, provider: str, model: str, chain: str = "unknown",
     except Exception as exc:
         # Company attribution can point at a legacy/new company table during rollout.
         # Never lose the AI cost itself because that optional relation is invalid.
+        # Retry with optional attribution stripped one relation at a time.
+        # This keeps the financial ledger authoritative even if an old FK/table
+        # is encountered during a rolling schema deployment.
+        fallback = list(payload)
         if company_id is not None:
             try:
-                fallback = list(payload)
                 fallback[8] = None
                 row = platform_db.execute(sql, tuple(fallback), True)
                 if row:
                     import logging
                     logging.getLogger(__name__).warning(
                         "ai_usage_company_attribution_failed company_id=%s: %s", company_id, exc
+                    )
+                    return row
+            except Exception:
+                pass
+        if partner_id is not None:
+            try:
+                fallback[7] = None
+                row = platform_db.execute(sql, tuple(fallback), True)
+                if row:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "ai_usage_partner_attribution_failed partner_id=%s: %s", partner_id, exc
                     )
                     return row
             except Exception:
