@@ -959,11 +959,11 @@ def _admin_contextual_fallback_plan(message,state):
     },message)
 
 def _admin_fallback_intent(message,focused_id=None,state=None):
-    """Safe context-first fallback when every AI provider is unavailable.
+    '''Safe context-first fallback when every AI provider is unavailable.
     This is not a command dictionary: it scores the user's words against the
     business vocabulary exposed by the current AI Context and uses only
     deterministic database facts. Normal operation still goes through AI.
-    """
+    '''
     state=state or {}
     text=_norm(str(message or ""))
     if focused_id:
