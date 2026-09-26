@@ -1089,48 +1089,87 @@ def _admin_audit_application_catalog(app):
 
 
 def _admin_resolve_semantic_entity(plan,state):
+    """Resolve named entities only through the role-aware DataTools layer.
+
+    This keeps Admin AI on the same safe read path as every other AI caller:
+    Planner -> DataTools -> Data Core -> Supabase.
+    """
     entity_type=_norm(plan.get("entity_type") or plan.get("target"))
     entity_name=str(plan.get("entity_name") or "").strip()
     entity_id=plan.get("entity_id")
+
     if entity_id not in (None,""):
-        try: return entity_type,int(entity_id)
-        except (TypeError,ValueError): pass
+        try:
+            return entity_type,int(entity_id)
+        except (TypeError,ValueError):
+            pass
+
     focused_type=state.get("last_focused_entity_type")
     focused_id=state.get("last_focused_entity_id") or state.get("last_focused_application_id")
     if not entity_name and focused_id:
         focused_type_norm=str(focused_type or "").lower()
         requested={str(x).casefold() for x in (plan.get("data_needed") or [])}
-        # Keep the immediately focused application for natural follow-ups such as
-        # documents/services/category checks. The model decides the semantic field;
-        # Python only preserves the existing entity identity.
         if focused_type_norm=="application" and (
-            not entity_type
-            or entity_type=="application"
+            not entity_type or entity_type=="application"
             or requested & {"documents","services","application_services","category","subcategory","catalog","status"}
         ):
             return "application",int(focused_id)
         if not entity_type or entity_type in {focused_type_norm,"application"}:
             return focused_type or "application",int(focused_id)
-    if not entity_name: return None,None
-    q="%"+entity_name+"%"; candidates=[]
+        if focused_type_norm in {"business","company","partner"}:
+            return focused_type_norm,int(focused_id)
+
+    if not entity_name:
+        return None,None
+
+    tools=DataTools("admin")
+    requested={str(x).casefold() for x in (plan.get("data_needed") or [])}
+    # Application-specific requests are resolved against applications first.
+    if entity_type in {"application","applications"} or "application" in requested:
+        try:
+            raw=tools.execute("search_applications",{"query":entity_name,"limit":10})
+            rows=(raw or {}).get("data") or (raw or {}).get("items") or []
+            if rows:
+                exact=[r for r in rows if _norm(r.get("business_name") or r.get("name"))==_norm(entity_name)]
+                row=(exact or rows)[0]
+                aid=row.get("id")
+                if aid is not None:
+                    return "application",int(aid)
+        except Exception:
+            pass
+
+    # Named business/company requests resolve through the company search tool.
     try:
-        candidates += platform_db.rows("""SELECT id,business_name,'application' AS entity_type FROM partner_applications
-            WHERE business_name ILIKE %s OR service_name ILIKE %s ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 10""",(q,q))
-    except Exception: pass
+        raw=tools.execute("search_companies",{"query":entity_name,"limit":10})
+        rows=(raw or {}).get("data") or (raw or {}).get("items") or []
+        if rows:
+            exact=[r for r in rows if _norm(r.get("name") or r.get("business_name"))==_norm(entity_name)]
+            row=(exact or rows)[0]
+            cid=row.get("id")
+            if cid is not None:
+                # Keep the owning partner id for service reads; the company id
+                # itself remains available as focused context.
+                state["last_focused_company_id"]=int(cid)
+                if row.get("partner_id") is not None:
+                    state["last_focused_partner_id"]=int(row["partner_id"])
+                return "business",int(cid)
+    except Exception:
+        pass
+
+    # Finally resolve a partner by the same semantic search surface.
     try:
-        candidates += platform_db.rows("""SELECT id,business_name,'partner' AS entity_type FROM partners
-            WHERE business_name ILIKE %s ORDER BY updated_at DESC NULLS LAST,id DESC LIMIT 10""",(q,))
-    except Exception: pass
-    try:
-        candidates += platform_db.rows("""SELECT id,name,'business' AS entity_type FROM partner_businesses
-            WHERE name ILIKE %s ORDER BY id DESC LIMIT 10""",(q,))
-    except Exception: pass
-    if not candidates: return None,None
-    typed=[x for x in candidates if entity_type and _norm(x.get("entity_type"))==entity_type]
-    pool=typed or candidates
-    exact=[x for x in pool if _norm(x.get("business_name") or x.get("name"))==_norm(entity_name)]
-    chosen=(exact or pool)[0]
-    return str(chosen.get("entity_type") or entity_type or "unknown"),int(chosen["id"])
+        raw=tools.execute("search_partners",{"query":entity_name,"limit":10})
+        rows=(raw or {}).get("data") or (raw or {}).get("items") or []
+        if rows:
+            exact=[r for r in rows if _norm(r.get("business_name") or r.get("name"))==_norm(entity_name)]
+            row=(exact or rows)[0]
+            pid=row.get("id")
+            if pid is not None:
+                return "partner",int(pid)
+    except Exception:
+        pass
+
+    return None,None
 
 
 def _admin_semantic_documents(application_id):
@@ -1531,7 +1570,15 @@ async def _admin_semantic_answer(question,plan,state):
         requested={str(x).casefold() for x in needed}
         names={str(r.get("name") or "") for r in plan["tool_requests"] if isinstance(r,dict)}
         if "services" in requested and "get_services" not in names:
-            plan["tool_requests"].append({"name":"get_services","arguments":{"partner_id":int(entity_id)} if entity_type=="partner" else {"business_id":int(entity_id)}})
+            service_args={}
+            if entity_type=="partner":
+                service_args={"partner_id":int(entity_id)}
+            elif entity_type in {"business","company"}:
+                partner_id=state.get("last_focused_partner_id")
+                if partner_id is not None:
+                    service_args={"partner_id":int(partner_id)}
+            if service_args:
+                plan["tool_requests"].append({"name":"get_services","arguments":service_args})
         if "documents" in requested and "get_documents" not in names:
             plan["tool_requests"].append({"name":"get_documents","arguments":{"partner_id":int(entity_id)} if entity_type=="partner" else {}})
         if {"category","subcategory","catalog"} & requested and "get_services" not in names and entity_type=="partner":
