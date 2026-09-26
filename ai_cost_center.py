@@ -141,6 +141,80 @@ def provider_breakdown(*, days: int = 30) -> list[dict]:
            GROUP BY provider,model ORDER BY total_cost_usd DESC""",(d,))
 
 
+
+def order_economics(order_id: int) -> dict | None:
+    """Return complete unit economics for one booking/order."""
+    oid = int(order_id)
+    booking = platform_db.one(
+        """SELECT b.*, COALESCE(p.business_name,'') AS business_name
+           FROM bookings b LEFT JOIN partners p ON p.id=b.partner_id
+           WHERE b.id=%s""", (oid,))
+    if not booking:
+        return None
+    negotiation_id = booking.get("negotiation_id")
+    if negotiation_id:
+        platform_db.execute(
+            """UPDATE ai_usage_ledger SET order_id=%s
+               WHERE order_id IS NULL AND negotiation_id=%s""",
+            (oid, int(negotiation_id)), False)
+    ai = platform_db.one(
+        """SELECT COUNT(*) operations, COALESCE(SUM(total_cost_usd),0) total_cost_usd,
+                  COALESCE(SUM(total_cost_amd),0) total_cost_amd,
+                  COALESCE(SUM(input_tokens),0) input_tokens,
+                  COALESCE(SUM(output_tokens),0) output_tokens,
+                  COALESCE(SUM(cached_input_tokens),0) cached_input_tokens,
+                  COALESCE(SUM(reasoning_tokens),0) reasoning_tokens,
+                  COALESCE(SUM(total_tokens),0) total_tokens
+           FROM ai_usage_ledger WHERE order_id=%s""", (oid,)) or {}
+    stages = platform_db.rows(
+        """SELECT stage,operation,purpose,chain,COUNT(*) operations,
+                  COALESCE(SUM(total_cost_usd),0) total_cost_usd,
+                  COALESCE(SUM(total_cost_amd),0) total_cost_amd
+           FROM ai_usage_ledger WHERE order_id=%s
+           GROUP BY stage,operation,purpose,chain
+           ORDER BY total_cost_amd DESC,operations DESC""", (oid,))
+    negotiation = platform_db.one(
+        "SELECT id,request_id,partner_id,status,created_at,updated_at FROM negotiations WHERE id=%s",
+        (int(negotiation_id),)) if negotiation_id else None
+    agreed = float(booking.get("agreed_price") or 0)
+    commission = float(booking.get("commission_amount") or 0)
+    ai_cost = float(ai.get("total_cost_amd") or 0)
+    currency = str(booking.get("currency") or "AMD").upper()
+    return {"order":booking,"negotiation":negotiation,"ai":ai,"ai_stages":stages,
+            "economics":{"service_price_amd":agreed if currency=="AMD" else None,
+                         "commission_amd":commission if currency=="AMD" else None,
+                         "ai_cost_amd":round(ai_cost,4),
+                         "platform_profit_before_other_costs_amd":round(commission-ai_cost,4) if currency=="AMD" else None}}
+
+
+def negotiation_economics(negotiation_id: int) -> dict | None:
+    nid=int(negotiation_id)
+    row=platform_db.one(
+        """SELECT n.id negotiation_id,n.request_id,n.partner_id,n.status,
+                  COALESCE(b.id,0) order_id,COALESCE(b.agreed_price,0) agreed_price,
+                  COALESCE(b.commission_amount,0) commission_amount,COALESCE(b.currency,'AMD') currency
+           FROM negotiations n LEFT JOIN bookings b ON b.negotiation_id=n.id WHERE n.id=%s""",(nid,))
+    if not row:
+        return None
+    ai=platform_db.one(
+        """SELECT COUNT(*) operations,COALESCE(SUM(total_cost_usd),0) total_cost_usd,
+                  COALESCE(SUM(total_cost_amd),0) total_cost_amd
+           FROM ai_usage_ledger WHERE negotiation_id=%s""",(nid,)) or {}
+    stages=platform_db.rows(
+        """SELECT stage,operation,purpose,chain,COUNT(*) operations,
+                  COALESCE(SUM(total_cost_usd),0) total_cost_usd,
+                  COALESCE(SUM(total_cost_amd),0) total_cost_amd
+           FROM ai_usage_ledger WHERE negotiation_id=%s
+           GROUP BY stage,operation,purpose,chain ORDER BY total_cost_amd DESC,operations DESC""",(nid,))
+    commission=float(row.get("commission_amount") or 0)
+    ai_cost=float(ai.get("total_cost_amd") or 0)
+    currency=str(row.get("currency") or "AMD").upper()
+    return {"negotiation":row,"ai":ai,"ai_stages":stages,
+            "economics":{"service_price_amd":float(row.get("agreed_price") or 0) if currency=="AMD" else None,
+                         "commission_amd":commission if currency=="AMD" else None,
+                         "ai_cost_amd":round(ai_cost,4),
+                         "platform_profit_before_other_costs_amd":round(commission-ai_cost,4) if row.get("order_id") and currency=="AMD" else None}}
+
 def admin_overview(days: int = 30) -> dict:
     base=usage_summary(days=days)
     base["partners"]=partner_breakdown(days=days)
