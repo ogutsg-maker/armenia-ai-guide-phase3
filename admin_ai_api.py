@@ -2232,6 +2232,22 @@ async def api_admin_ai_costs_partners(request):
 
 
 
+
+async def api_admin_ai_project_economics(request):
+    _admin(request)
+    try:
+        days=max(1,min(int(request.query.get("days") or 30),3650))
+    except (TypeError,ValueError):
+        days=30
+    partner_raw=request.query.get("partner_id")
+    try:
+        partner_id=int(partner_raw) if partner_raw not in (None,"") else None
+    except (TypeError,ValueError):
+        return web.json_response({"ok":False,"error":"invalid_partner_id"},status=400)
+    data=ai_cost_center.project_economics(days=days,partner_id=partner_id)
+    return web.json_response({"ok":True,**data})
+
+
 async def api_admin_ai_order_economics(request):
     _admin(request)
     try:
@@ -2266,6 +2282,7 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_get('/api/admin/ai/costs/partners',api_admin_ai_costs_partners)
     app.router.add_get('/api/admin/ai/costs/providers',api_admin_ai_costs_providers)
     app.router.add_get('/api/admin/ai/economics/order/{order_id}',api_admin_ai_order_economics)
+    app.router.add_get('/api/admin/ai/economics/project',api_admin_ai_project_economics)
     app.router.add_get('/api/admin/ai/economics/negotiation/{negotiation_id}',api_admin_ai_negotiation_economics)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
     app.router.add_post('/api/admin/ai/catalog-proposals/{id}/{action}',catalog_action)
