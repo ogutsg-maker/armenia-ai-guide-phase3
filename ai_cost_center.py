@@ -308,6 +308,49 @@ def partner_economics(*, days: int = 30) -> list[dict]:
     return out
 
 
+def company_economics(*, days: int = 30, partner_id: int | None = None) -> list[dict]:
+    d=max(1,min(int(days or 30),3650))
+    where=["b.created_at >= NOW() - (%s || ' days')::interval"]
+    params=[d]
+    if partner_id is not None:
+        where.append("b.partner_id=%s"); params.append(int(partner_id))
+    w=" AND ".join(where)
+    rows=platform_db.rows(
+        """SELECT b.company_id,b.partner_id,
+                  COALESCE(MAX(c.name),'') company_name,
+                  COALESCE(MAX(p.business_name),'') partner_name,
+                  COUNT(DISTINCT b.id) orders,
+                  COALESCE(SUM(CASE WHEN UPPER(COALESCE(b.currency,'AMD'))='AMD' THEN b.commission_amount ELSE 0 END),0) commission_amd
+           FROM bookings b
+           LEFT JOIN companies c ON c.id=b.company_id
+           LEFT JOIN partners p ON p.id=b.partner_id
+           WHERE """+w+""" AND b.company_id IS NOT NULL
+           GROUP BY b.company_id,b.partner_id ORDER BY commission_amd DESC""",tuple(params))
+    ai_where=["created_at >= NOW() - (%s || ' days')::interval","company_id IS NOT NULL"]
+    ai_params=[d]
+    if partner_id is not None:
+        ai_where.append("partner_id=%s"); ai_params.append(int(partner_id))
+    ai=platform_db.rows("""SELECT company_id,COALESCE(SUM(total_cost_amd),0) ai_cost_amd
+                           FROM ai_usage_ledger WHERE """+" AND ".join(ai_where)+
+                        " GROUP BY company_id",tuple(ai_params))
+    ex_where=["created_at >= NOW() - (%s || ' days')::interval","booking_id IS NOT NULL"]
+    ex_params=[d]
+    ex=platform_db.rows("""SELECT b.company_id,COALESCE(SUM(e.amount),0) expenses_amd
+                           FROM project_expenses e JOIN bookings b ON b.id=e.booking_id
+                           WHERE """+" AND ".join(ex_where)+
+                        " GROUP BY b.company_id",tuple(ex_params))
+    ai_map={int(x["company_id"]):float(x["ai_cost_amd"] or 0) for x in ai}
+    ex_map={int(x["company_id"]):float(x["expenses_amd"] or 0) for x in ex}
+    out=[]
+    for row in rows:
+        cid=row.get("company_id")
+        if cid is None: continue
+        commission=float(row.get("commission_amd") or 0); ai_cost=ai_map.get(int(cid),0); expenses=ex_map.get(int(cid),0)
+        out.append({**row,"ai_cost_amd":round(ai_cost,4),"other_expenses_amd":round(expenses,4),
+                    "net_profit_amd":round(commission-ai_cost-expenses,4)})
+    return out
+
+
 def negotiation_economics(negotiation_id: int) -> dict | None:
     nid=int(negotiation_id)
     row=platform_db.one(
