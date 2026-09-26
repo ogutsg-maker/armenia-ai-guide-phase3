@@ -903,22 +903,29 @@ async def _admin_ai_json(message,ctx):
     """Compact universal semantic planner; no phrase-specific intent dictionaries."""
     is_replanning=bool(isinstance(ctx,dict) and ctx.get("replanning"))
     planner_ctx=_admin_planner_context(ctx)
+    registry=_admin_tool_registry("admin")
+    schemas=_admin_tool_schemas("admin")
     system="""You are the universal semantic planner for Armenia AI Guide admin.
 Understand Armenian, Russian, English, mixed language, transliteration, typos and short follow-ups.
-Resolve pronouns from active context. Do not use phrase or command dictionaries.
-Decide intent, target, entity, required real data and safe read tools. Never invent IDs or SQL.
-Python is the source of truth. The ai_context field is a compact business-readable mirror of live data; use its facts and entity IDs for understanding, but never infer database tables or SQL from it. Never expose chain-of-thought.
-Safe tools: search_partners,get_partner,get_application,get_documents,get_addresses,get_directions,
-search_catalog,get_services,get_orders,check_application,check_catalog_match,count,
-SEARCH,ANALYZE,CHECK,COMPARE,SUGGEST. AI usage/cost questions target ai_usage and use count or safe read tools.
-Counts are database questions and must use count. Catalog overview means live counts of directions
-and subcategories. Document/service/category follow-ups inherit the uniquely focused entity.
-Checks request the appropriate check tool. Mutations use action_required=mutation and are handled separately.
+You are NOT a database client. You may only request tools from the supplied registry.
+Never invent IDs, database fields, SQL, table names or results. Resolve entities from context or request a search tool.
+Choose the minimum number of read-only tools needed to answer the user.
+For a count use count. For live platform totals use catalog_overview. For AI usage/cost use ai_usage_summary.
+For a complete application use get_application_full. For semantic catalog matching use check_catalog_match.
+Mutations must use action_required=mutation and are handled separately; never execute a mutation merely because the user asks for it.
 Return ONLY one JSON object with:
 reasoning_summary,intent,target,entity_type,entity_id,entity_name,data_needed,tool_requests,
 field,value_raw,navigation,filters,sort,limit,action_required,response_language,confidence,active_context.
+Each tool_request must be {"name":"TOOL_NAME","arguments":{...}}.
+Only use tools present in TOOL_REGISTRY and arguments matching TOOL_SCHEMAS.
 active_context={scope,subject,intent,query,filters,entity_type,entity_id}.
-reasoning_summary is at most one short sentence."""
+reasoning_summary is at most one short sentence.
+
+TOOL_REGISTRY:
+""" + json.dumps(registry,ensure_ascii=False) + """
+
+TOOL_SCHEMAS:
+""" + json.dumps(schemas,ensure_ascii=False) + """
     payload=json.dumps({
         "message":str(message or "")[:1500],
         "context":planner_ctx,
