@@ -845,89 +845,42 @@ async def _admin_execute_state_action(action):
 
 
 class AdminAIProviderError(RuntimeError):
-    """All configured AI providers failed for this request."""
+    """Groq failed for this request."""
     def __init__(self, message, errors=None):
         super().__init__(message)
         self.errors = errors or []
 
 
 async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
-    """Call AI providers in order: Groq, OpenAI, OpenRouter."""
-    errors=[]
-    providers=[]
-    groq_key=os.getenv("GROQ_API_KEY","").strip()
-    if groq_key:
-        providers.append(("groq",groq_key,os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"))
-    openai_key=os.getenv("OPENAI_API_KEY","").strip()
-    if openai_key:
-        providers.append(("openai",openai_key,os.getenv("OPENAI_MODEL","").strip() or "gpt-4o-mini"))
-    openrouter_key=os.getenv("OPENROUTER_API_KEY","").strip()
-    if openrouter_key:
-        providers.append(("openrouter",openrouter_key,os.getenv("OPENROUTER_MODEL","").strip() or "nvidia/nemotron-3-super-120b-a12b:free"))
-    if not providers:
-        raise AdminAIProviderError("No AI provider is configured.")
-    for provider,key,model in providers:
-        try:
-            if provider=="groq":
-                from groq import AsyncGroq
-                client=AsyncGroq(api_key=key, max_retries=0)
-            else:
-                from openai import AsyncOpenAI
-                kwargs={"api_key":key}
-                if provider=="openrouter":
-                    kwargs["base_url"]="https://openrouter.ai/api/v1"
-                    kwargs["default_headers"]={
-                        "HTTP-Referer":os.getenv("OPENROUTER_SITE_URL","https://armenia-ai-guide-phase3.onrender.com"),
-                        "X-Title":"Armenia AI Guide",
-                    }
-                kwargs["max_retries"]=0
-                client=AsyncOpenAI(**kwargs)
-            request_kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens}
-            # Keep reasoning-token usage low for the OpenRouter planner so the
-            # completion budget is spent on the required ActionPlan JSON.
-            if provider=="openrouter" and json_mode:
-                request_kwargs["reasoning"]={"effort":"low","exclude":True}
-            # Structured planner calls use provider-side JSON mode when supported.
-            # This is a transport constraint, not phrase-specific semantic logic.
-            # Groq's gpt-oss-* models reject response_format=json_object with a
-            # 400, forcing a second (wasted) call and adding 429 pressure, so we
-            # skip JSON mode for them and rely on the prompt + JSON extraction.
-            model_lower=str(model or "").lower()
-            supports_json_mode="gpt-oss" not in model_lower
-            if json_mode and supports_json_mode:
-                request_kwargs["response_format"]={"type":"json_object"}
-            try:
-                resp=await client.chat.completions.create(**request_kwargs)
-            except Exception as structured_exc:
-                # Only retry structured JSON calls when the provider rejected the
-                # JSON transport itself (typically HTTP 400). Never retry 429s:
-                # doing so multiplies rate-limit pressure and delays the next provider.
-                status=getattr(getattr(structured_exc,"response",None),"status_code",None)
-                message_text=str(structured_exc).lower()
-                is_rate_limited=(status==429 or "429" in message_text or "rate limit" in message_text or "too many requests" in message_text)
-                if json_mode and not is_rate_limited and status in (400,422,None):
-                    resp=await client.chat.completions.create(
-                        model=model,messages=messages,temperature=0,max_tokens=max_tokens
-                    )
-                else:
-                    raise structured_exc
-            usage=getattr(resp,"usage",None)
-            ai_cost_center.record_usage(
-                provider=provider, model=model, chain="admin_secretary",
-                stage="planner", operation="admin_ai_message",
-                purpose="Admin natural-language assistant",
-                input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
-                output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
-                cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
-                reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0),
-            )
-            content=(resp.choices[0].message.content or "").strip()
-            if not content:
-                raise RuntimeError("empty AI response")
-            return content,provider,model
-        except Exception as exc:
-            errors.append({"provider":provider,"model":model,"error":str(exc)[:500]})
-    raise AdminAIProviderError("All configured AI providers failed.",errors)
+    """Admin AI planner transport. Groq only; no provider fallback."""
+    key=os.getenv("GROQ_API_KEY","").strip()
+    if not key:
+        raise AdminAIProviderError("GROQ_API_KEY is not configured.")
+    model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
+    try:
+        from groq import AsyncGroq
+        client=AsyncGroq(api_key=key,max_retries=0)
+        kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens}
+        # gpt-oss on Groq uses prompt-constrained JSON extraction instead of
+        # response_format=json_object to avoid an unnecessary 400/retry cycle.
+        if json_mode and "gpt-oss" not in model.lower():
+            kwargs["response_format"]={"type":"json_object"}
+        resp=await client.chat.completions.create(**kwargs)
+        usage=getattr(resp,"usage",None)
+        ai_cost_center.record_usage(
+            provider="groq",model=model,chain="admin_secretary",stage="planner",
+            operation="admin_ai_message",purpose="Admin natural-language assistant",
+            input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
+            output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
+            cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
+            reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0),
+        )
+        content=(resp.choices[0].message.content or "").strip()
+        if not content:
+            raise RuntimeError("empty Groq response")
+        return content,"groq",model
+    except Exception as exc:
+        raise AdminAIProviderError("Groq AI request failed.",[{"provider":"groq","model":model,"error":str(exc)[:500]}]) from exc
 
 def _admin_planner_context(ctx):
     """Build compact semantic context from business entities, not DB internals."""
