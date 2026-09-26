@@ -1475,6 +1475,32 @@ async def _admin_refine_tool_context(question, plan, entity_type, entity_id, fac
 
 
 async def _admin_semantic_answer(question,plan,state):
+    # Semantic guardrails for named entities and geographic company queries.
+    name=str(plan.get("entity_name") or "").strip()
+    needed={str(x).casefold() for x in (plan.get("data_needed") or [])}
+    target=str(plan.get("target") or "").strip().lower()
+    filters=plan.get("filters") if isinstance(plan.get("filters"),dict) else {}
+    if name and "services" in needed:
+        plan["target"]="services"
+        plan["entity_type"]="business"
+        plan["intent"]="information_request"
+        plan["tool_requests"]=[x for x in (plan.get("tool_requests") or [])
+            if isinstance(x,dict) and str(x.get("name") or "") not in {"count","search_applications"}]
+    elif name and target=="applications":
+        plan["target"]="application"
+        plan["entity_type"]="application"
+        plan["intent"]="information_request"
+        plan["tool_requests"]=[{"name":"get_application_full","arguments":{}}]
+    if target in {"companies","businesses"} and (filters.get("city") or filters.get("marz")):
+        plan["target"]="companies"
+        plan["intent"]="query_database"
+        reqs=[x for x in (plan.get("tool_requests") or []) if isinstance(x,dict)]
+        if not any(str(x.get("name") or "")=="search_companies" for x in reqs):
+            args={"limit":plan.get("limit",20)}
+            if filters.get("city"): args["city"]=filters["city"]
+            if filters.get("marz"): args["marz"]=filters["marz"]
+            reqs.append({"name":"search_companies","arguments":args})
+        plan["tool_requests"]=reqs
     entity_type,entity_id=_admin_resolve_semantic_entity(plan,state)
     # A follow-up can naturally refer to the immediately previous query result.
     previous_rows=state.get("last_shown_query_rows") or []
