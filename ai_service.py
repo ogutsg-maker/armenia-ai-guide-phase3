@@ -19,6 +19,7 @@ from groq import Groq
 from psycopg.rows import dict_row
 
 from database import _connect
+import ai_cost_center
 
 
 @dataclass
@@ -164,13 +165,29 @@ class AIService:
         if not self.openrouter_client: raise RuntimeError("OPENROUTER_API_KEY is not configured or OpenRouter client is unavailable")
         return self.openrouter_client.chat.completions.create(model=model, messages=messages, temperature=0, max_tokens=max_tokens, response_format={"type":"json_object"})
 
-    async def chat_json(self, system_prompt: str, user_text: str, *, max_tokens: int = 900) -> dict:
-        """Shared structured-AI gateway: Groq -> OpenAI -> OpenRouter."""
+    async def chat_json(self, system_prompt: str, user_text: str, *, max_tokens: int = 900,
+                         chain: str = "unknown", stage: str = "unknown",
+                         operation: str = "chat_json", purpose: str = "",
+                         user_id: int | None = None, partner_id: int | None = None,
+                         company_id: int | None = None, order_id: int | None = None,
+                         negotiation_id: int | None = None) -> dict:
+        """Unified structured-AI gateway with provider fallback and usage ledger.
+
+        The configured provider is tried first; fallbacks are only used when the
+        selected provider is unavailable or fails. Business logic never depends
+        on a provider-specific client.
+        """
         clean = self.clean_sensitive_data(user_text)
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": clean}]
-        providers = [("groq", self.groq_client, self.groq_model), ("openai", self.openai_client, self.openai_model), ("openrouter", self.openrouter_client, self.openrouter_model)]
+        available = {
+            "groq": ("groq", self.groq_client, self.groq_model),
+            "openai": ("openai", self.openai_client, self.openai_model),
+            "openrouter": ("openrouter", self.openrouter_client, self.openrouter_model),
+        }
+        order = [self.provider] + [x for x in ("groq", "openai", "openrouter") if x != self.provider]
         errors = []
-        for name, client, model in providers:
+        for key in order:
+            name, client, model = available[key]
             if not client:
                 continue
             try:
@@ -180,6 +197,16 @@ class AIService:
                     response = await asyncio.to_thread(self._openrouter_completion_json, messages, model, max_tokens)
                 else:
                     response = await asyncio.to_thread(self._openai_completion_json, messages, model, max_tokens)
+                usage = getattr(response, "usage", None)
+                ai_cost_center.record_usage(
+                    provider=name, model=model, chain=chain, stage=stage, operation=operation,
+                    purpose=purpose, user_id=user_id, partner_id=partner_id, company_id=company_id,
+                    order_id=order_id, negotiation_id=negotiation_id,
+                    input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                    output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                    cached_tokens=int(getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0),
+                    reasoning_tokens=int(getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", 0) or 0),
+                )
                 data = self._json(self._text(response))
                 if data:
                     return data
@@ -331,20 +358,34 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
     def process_text_request(self, user_text: str, role: str, system_prompt: str) -> str:
         clean_user_text = self.clean_sensitive_data(user_text)
         role_model = self._get_setting(f"{role}_ai_model", "").strip()
-        # Admin UI stores stable model aliases; resolve them to the real
-        # deployment model from environment instead of sending fake model IDs.
         if role_model == "groq-llama3":
             role_model = self.groq_model
         elif role_model == "openai-gpt4o":
             role_model = self.openai_model
         messages = [{"role": "system", "content": system_prompt + "\nUnderstand Armenian, Russian and English. Never invent marketplace facts."}, {"role": "user", "content": clean_user_text}]
         errors=[]
-        for provider in ([self.provider, "openai" if self.provider == "groq" else "groq"]):
+        order=[self.provider]+[x for x in ("groq","openai","openrouter") if x != self.provider]
+        clients={"groq":self.groq_client,"openai":self.openai_client,"openrouter":self.openrouter_client}
+        models={"groq":role_model or self.groq_model,"openai":self.openai_model,"openrouter":self.openrouter_model}
+        for provider in order:
+            if not clients.get(provider):
+                continue
             try:
-                if provider == "groq" and self.groq_client:
-                    return self._text(self._groq_completion(messages, role_model or self.groq_model))
-                if provider == "openai" and self.openai_client:
-                    return self._text(self._openai_completion(messages, self.openai_model))
+                if provider=="groq":
+                    response=self._groq_completion(messages,models[provider])
+                elif provider=="openrouter":
+                    response=self._openrouter_completion(messages,models[provider])
+                else:
+                    response=self._openai_completion(messages,models[provider])
+                usage=getattr(response,"usage",None)
+                ai_cost_center.record_usage(
+                    provider=provider,model=models[provider],chain=role,stage="text",operation="process_text_request",
+                    purpose="generic role response",input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
+                    output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
+                    cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
+                    reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0),
+                )
+                return self._text(response)
             except Exception as exc:
                 errors.append(f"{provider}: {exc}")
         if errors:
