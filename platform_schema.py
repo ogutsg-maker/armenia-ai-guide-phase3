@@ -410,6 +410,39 @@ def ensure_platform_schema() -> None:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Provider/model-agnostic AI usage ledger. Pricing is supplied by
+    -- AI_PRICING_JSON and is never hardcoded into business logic.
+    CREATE TABLE IF NOT EXISTS ai_usage_ledger (
+        id BIGSERIAL PRIMARY KEY,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        chain TEXT NOT NULL DEFAULT 'unknown',
+        stage TEXT NOT NULL DEFAULT 'unknown',
+        operation TEXT NOT NULL DEFAULT 'chat',
+        purpose TEXT NOT NULL DEFAULT '',
+        user_id BIGINT,
+        partner_id BIGINT REFERENCES partners(id) ON DELETE SET NULL,
+        company_id BIGINT REFERENCES partner_businesses(id) ON DELETE SET NULL,
+        order_id BIGINT,
+        negotiation_id BIGINT,
+        input_tokens BIGINT NOT NULL DEFAULT 0,
+        output_tokens BIGINT NOT NULL DEFAULT 0,
+        cached_input_tokens BIGINT NOT NULL DEFAULT 0,
+        reasoning_tokens BIGINT NOT NULL DEFAULT 0,
+        total_tokens BIGINT NOT NULL DEFAULT 0,
+        input_cost_usd NUMERIC(18,10) NOT NULL DEFAULT 0,
+        cached_input_cost_usd NUMERIC(18,10) NOT NULL DEFAULT 0,
+        output_cost_usd NUMERIC(18,10) NOT NULL DEFAULT 0,
+        total_cost_usd NUMERIC(18,10) NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'success',
+        error TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_partner_created ON ai_usage_ledger(partner_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_provider_model ON ai_usage_ledger(provider, model, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_chain_stage ON ai_usage_ledger(chain, stage, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_ledger(created_at DESC);
+
     CREATE TABLE IF NOT EXISTS ai_research_tasks (
         id BIGSERIAL PRIMARY KEY,
         created_by BIGINT,
