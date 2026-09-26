@@ -314,6 +314,62 @@ def check_application(application_id: int) -> dict[str, Any]:
             "master_category_id": master_id,
             "subcategory_name": app.get("subcategory_name")}
 
+def validate_service_payload(*, partner_id: int, actor_user_id: int, company_id: int | None,
+                            name: str, price: Any = None, category_id: int | None = None) -> dict:
+    """Validate a proposed service without writing anything."""
+    assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    if company_id is not None:
+        company = get_company(int(company_id))
+        if not company or int(company.get("partner_id")) != int(partner_id) or company.get("status") == "archived":
+            raise PermissionError("company_not_owned_or_archived")
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("service_name_required")
+    category = get_catalog_category(int(category_id)) if category_id is not None else None
+    if category_id is not None and not category:
+        raise ValueError("catalog_category_not_found")
+    if category and not category.get("is_active"):
+        raise ValueError("catalog_category_inactive")
+    numeric_price = None
+    if price not in (None, ""):
+        try:
+            numeric_price = float(price)
+        except (TypeError, ValueError):
+            raise ValueError("invalid_service_price")
+        if numeric_price < 0:
+            raise ValueError("invalid_service_price")
+    return {"ok": True, "partner_id": int(partner_id), "company_id": int(company_id) if company_id is not None else None,
+            "name": name, "price": numeric_price, "category": category}
+
+
+def update_service_safe(*, service_id: int, actor_user_id: int, name: str | None = None,
+                        price: Any = None, category_id: int | None = None) -> dict:
+    """Validated domain write. Ownership and catalog are checked before mutation."""
+    service = get_service(int(service_id))
+    if not service:
+        raise ValueError("service_not_found")
+    assert_partner_owns_partner(int(service["partner_id"]), int(actor_user_id))
+    fields=[]; params=[]
+    if name is not None:
+        name=str(name).strip()
+        if not name: raise ValueError("service_name_required")
+        fields.append("name=%s"); params.append(name)
+    if price not in (None, ""):
+        try: price=float(price)
+        except (TypeError,ValueError): raise ValueError("invalid_service_price")
+        if price < 0: raise ValueError("invalid_service_price")
+        fields.append("price=%s"); params.append(price)
+    if category_id is not None:
+        category=get_catalog_category(int(category_id))
+        if not category or not category.get("is_active"): raise ValueError("catalog_category_invalid")
+        fields.append("category_id=%s"); params.append(int(category_id))
+    if not fields: raise ValueError("no_changes")
+    params.extend([int(service_id),int(service["partner_id"])])
+    row=one("UPDATE services SET "+",".join(fields)+" WHERE id=%s AND partner_id=%s AND status<>'deleted' RETURNING id,partner_id,business_id,name,category_id,price,status",tuple(params))
+    if not row: raise ValueError("service_update_failed")
+    return row
+
+
 # ---------------------------------------------------------------------------
 # Applications / documents
 # ---------------------------------------------------------------------------
