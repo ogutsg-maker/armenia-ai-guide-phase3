@@ -320,22 +320,11 @@ Rules:
 Never invent a module outside the list."""
         prompt = f"role={role}\ncontext={json.dumps(context, ensure_ascii=False)}\nmessage={text}"
         try:
-            selected = self._get_setting("client_ai_model", "groq-llama3").strip()
-            model = self.groq_model
-            if selected == "openai-gpt4o":
-                # analyze_request is client-facing; OpenAI is used only when
-                # explicitly selected and configured.
-                if self.openai_client:
-                    clean = self.clean_sensitive_data(prompt)
-                    response = await asyncio.to_thread(self._openai_completion, [
-                        {"role":"system","content":system},
-                        {"role":"user","content":clean},
-                    ], self.openai_model)
-                    data = self._json(self._text(response))
-                else:
-                    data = self._json(await self._call_groq(system, prompt, True, model))
-            else:
-                data = self._json(await self._call_groq(system, prompt, True, model))
+            data = await self.chat_json(
+                system, prompt, max_tokens=250,
+                chain="router", stage="intent", operation="route_message",
+                purpose="Select the correct AI workflow",
+            )
         except Exception:
             data = {}
         module = data.get("module") if data.get("module") in {"client_search", "partner_onboarding", "negotiation", "support", "smalltalk"} else None
@@ -378,16 +367,12 @@ missing_fields should contain only genuinely useful information needed for a bet
 Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
         prompt = f"CATALOG={json.dumps(compact_catalog, ensure_ascii=False)}\nREQUEST={user_text}"
         try:
-            selected = self._get_setting("client_ai_model", "groq-llama3").strip()
-            if selected == "openai-gpt4o" and self.openai_client:
-                clean = self.clean_sensitive_data(prompt)
-                response = await asyncio.to_thread(self._openai_completion, [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": clean},
-                ], self.openai_model)
-                data = self._json(self._text(response))
-            else:
-                data = self._json(await self._call_groq(system, prompt, True, self.groq_model))
+            data = await self.chat_json(
+                system, prompt, max_tokens=700,
+                chain="client_search", stage="request_analysis",
+                operation="analyze_request",
+                purpose="Extract service, location, budget and catalog IDs",
+            )
         except Exception:
             data = {}
         def _int(v):
