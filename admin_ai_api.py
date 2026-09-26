@@ -407,65 +407,53 @@ async def _admin_execute(command):
     return "Չհաջողվեց որոշել հարցման տեսակը։"
 
 def _admin_full_application_text(aid):
-    """Return the complete current application state for read-only admin inspection."""
     if not aid:
         return "Укажите номер заявки."
-    a=platform_db.one("""SELECT a.*,p.user_id
-        FROM partner_applications a
-        LEFT JOIN partners p ON p.id=a.partner_id
-        WHERE a.id=%s""",(int(aid),))
-    if not a:
+    try:
+        result=DataTools("admin").execute("get_application_full",{"application_id":int(aid)})
+        payload=result.get("data") or {}
+        app=payload.get("application")
+        docs=payload.get("documents") or []
+    except Exception:
+        return "Не удалось открыть заявку #"+str(aid)+"."
+    if not app:
         return "Заявка #"+str(aid)+" не найдена."
-
     def val(v):
-        if v is None or str(v).strip()=="":
-            return "—"
-        return str(v)
-
+        return "—" if v is None or str(v).strip()=="" else str(v)
     loc=", ".join(str(x) for x in (
-        a.get("location_marz"),a.get("location_city"),
-        a.get("location_village"),a.get("address")
+        app.get("location_marz"),app.get("location_city"),
+        app.get("location_village"),app.get("address")
     ) if x)
-
     lines=[
-        "📨 Заявка #"+str(aid)+" · "+val(a.get("business_name")),
-        "Статус: "+val(a.get("status")),
-        "Telegram: "+val(a.get("user_id")),
+        "📨 Заявка #"+str(aid)+" · "+val(app.get("business_name")),
+        "Статус: "+val(app.get("status")),
+        "Telegram: "+val(app.get("user_id")),
         "📍 Место: "+(loc or "—"),
-        "☎ Телефон: "+val(a.get("phone")),
-        "",
-        "🛠 Услуга: "+val(a.get("service_name")),
-        "💰 Գին: "+(val(a.get("price"))+" ֏" if a.get("price") is not None else "—"),
-        "🧭 Направление: "+val(a.get("direction_name")),
-        "🏷 Подкатегория: "+val(a.get("subcategory_name")),
-        "🆔 ID категории: "+val(a.get("category_id")),
-        "",
-        "📝 Описание: "+val(a.get("description")),
-        "🏢 Объект: "+val(a.get("object_name")),
-        "📄 Документ ID: "+val(a.get("document_id")),
-        "Создана: "+val(a.get("created_at")),
-        "Обновлена: "+val(a.get("updated_at")),
+        "☎ Телефон: "+val(app.get("phone")),
+        "🛠 Услуга: "+val(app.get("service_name")),
+        "💰 Цена: "+(val(app.get("price"))+" ֏" if app.get("price") is not None else "—"),
+        "🧭 Направление: "+val(app.get("direction_name")),
+        "🏷 Подкатегория: "+val(app.get("subcategory_name")),
+        "🆔 ID категории: "+val(app.get("category_id")),
+        "📝 Описание: "+val(app.get("description")),
+        "📄 Документы: "+str(len(docs)),
+        "Создана: "+val(app.get("created_at")),
+        "Обновлена: "+val(app.get("updated_at")),
     ]
-
-    payload=a.get("payload_json") or {}
+    payload=app.get("payload_json") or {}
     if isinstance(payload,str):
-        try: payload=json.loads(payload)
-        except Exception: payload={}
-    if isinstance(payload,dict):
-        services=payload.get("services")
-        if isinstance(services,list) and services:
-            lines += ["","🛠 Все услуги из заявки:"]
-            for i,svc in enumerate(services,1):
-                if not isinstance(svc,dict): continue
+        try:
+            payload=json.loads(payload)
+        except Exception:
+            payload={}
+    services=payload.get("services") if isinstance(payload,dict) else None
+    if isinstance(services,list) and services:
+        lines.append("🛠 Все услуги из заявки:")
+        for svc in services:
+            if isinstance(svc,dict):
                 name=svc.get("name") or svc.get("service_name") or "—"
                 price=svc.get("price")
-                direction=svc.get("direction_name") or "—"
-                sub=svc.get("subcategory_name") or "—"
-                lines.append(
-                    str(i)+". "+str(name)+" · "+
-                    ((str(price)+" ֏") if price is not None else "—")+" · "+
-                    str(direction)+" → "+str(sub)
-                )
+                lines.append("• "+str(name)+((" · "+str(price)+" ֏") if price is not None else ""))
     return "\n".join(lines)
 
 
