@@ -1564,6 +1564,10 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                                  "test_transaction":getattr(intent,"transaction_id",None),
                                  "service_price":float(price)},ensure_ascii=False)))
         booking=cur.fetchone()
+        # Link all AI usage from this negotiation to the concrete booking.
+        cur.execute("""UPDATE ai_usage_ledger SET order_id=%s
+                       WHERE order_id IS NULL AND negotiation_id=%s""",
+                    (int(booking["id"]), int(negotiation_id)))
         cur.execute("""INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,
                          provider,provider_payment_id,data_json)
                        VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
