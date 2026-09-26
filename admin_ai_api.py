@@ -2248,6 +2248,30 @@ async def api_admin_ai_project_economics(request):
     return web.json_response({"ok":True,**data})
 
 
+
+async def api_admin_ai_add_expense(request):
+    _admin(request)
+    try:
+        body=await request.json()
+        booking_id=int(body.get("booking_id")) if body.get("booking_id") not in (None,"") else None
+        amount=float(body.get("amount_amd") or 0)
+        expense_type=str(body.get("expense_type") or "other")
+        partner_id=int(body.get("partner_id")) if body.get("partner_id") not in (None,"") else None
+    except Exception:
+        return web.json_response({"ok":False,"error":"invalid_payload"},status=400)
+    if amount < 0:
+        return web.json_response({"ok":False,"error":"amount_must_be_nonnegative"},status=400)
+    try:
+        from ai_cost_center import record_project_expense
+        row=record_project_expense(booking_id=booking_id,partner_id=partner_id,
+                                   expense_type=expense_type,amount_amd=amount,
+                                   description=str(body.get("description") or ""),
+                                   source=str(body.get("source") or "manual"))
+    except ValueError as e:
+        return web.json_response({"ok":False,"error":str(e)},status=400)
+    return web.json_response({"ok":True,"expense":row})
+
+
 async def api_admin_ai_order_economics(request):
     _admin(request)
     try:
@@ -2283,6 +2307,7 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_get('/api/admin/ai/costs/providers',api_admin_ai_costs_providers)
     app.router.add_get('/api/admin/ai/economics/order/{order_id}',api_admin_ai_order_economics)
     app.router.add_get('/api/admin/ai/economics/project',api_admin_ai_project_economics)
+    app.router.add_post('/api/admin/ai/economics/expense',api_admin_ai_add_expense)
     app.router.add_get('/api/admin/ai/economics/negotiation/{negotiation_id}',api_admin_ai_negotiation_economics)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
     app.router.add_post('/api/admin/ai/catalog-proposals/{id}/{action}',catalog_action)
