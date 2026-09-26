@@ -345,6 +345,7 @@ class DataTools:
 
     def _tool_get_services(self, args):
         partner_id = args.get("partner_id")
+        company_id = args.get("company_id")
         if self.role == "partner":
             if self.actor_id is None:
                 raise DataToolError("actor_required")
@@ -356,6 +357,19 @@ class DataTools:
             actor = self.actor_id
         else:
             actor = None
+
+        # Company-scoped reads must stay company-scoped. Resolve the owning
+        # partner first, then use the same Data Core service read path.
+        if company_id is not None:
+            try:
+                company = data_core.get_company(int(company_id))
+            except (TypeError, ValueError):
+                company = None
+            if not company:
+                raise DataToolError("company_not_found")
+            if self.role == "partner" and self.actor_id is not None:
+                data_core.assert_partner_owns_partner(int(company["partner_id"]), int(self.actor_id))
+            partner_id = int(company["partner_id"])
 
         if self.role == "client":
             rows = data_core.search_services(
@@ -372,6 +386,9 @@ class DataTools:
                 actor_user_id=actor,
                 limit=min(max(int(args.get("limit") or 100), 1), 200),
             )
+            if company_id is not None:
+                rows = [row for row in rows if str(row.get("business_id")) == str(company_id)]
+
         return {"items": rows, "count": len(rows)}
 
     def _tool_get_orders(self, args):
