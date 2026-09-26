@@ -839,6 +839,43 @@ def record_payment_provider_fee(booking_id: int, amount_amd: float, provider: st
         (int(booking_id),float(amount_amd),
          ("Payment provider fee" + (": "+str(provider) if provider else ""))[:1000]), True)
 
+def record_payment_provider_fee_for_payment(payment: dict):
+    """Record the configured provider fee once, after a payment settles.
+    The rate is configurable because the provider callback does not expose the
+    merchant fee in the current Idram contract.
+    """
+    import os
+    if not payment or str(payment.get("status") or "").lower() != "paid":
+        return None
+    booking_id=payment.get("booking_id")
+    if not booking_id:
+        return None
+    try:
+        pct=float(os.getenv("PAYMENT_PROVIDER_FEE_PCT","0") or 0)
+    except ValueError:
+        pct=0
+    pct=max(0,min(pct,100))
+    if pct<=0:
+        return None
+    existing=one("""SELECT id FROM project_expenses
+                    WHERE booking_id=%s AND expense_type='payment_fee'
+                      AND source='payment_provider' AND data_json->>'payment_id'=%s
+                    LIMIT 1""",(int(booking_id),str(payment.get("id"))))
+    if existing:
+        return existing
+    fee=round(float(payment.get("amount") or 0)*pct/100,4)
+    if fee<=0:
+        return None
+    return execute(
+        """INSERT INTO project_expenses
+           (booking_id,partner_id,expense_type,amount,currency,description,source,data_json)
+           VALUES(%s,%s,'payment_fee',%s,'AMD',%s,'payment_provider',%s::jsonb)
+           RETURNING *""",
+        (int(booking_id),payment.get("partner_id"),fee,
+         f"Payment provider fee ({pct:g}%)",
+         json.dumps({"payment_id":payment.get("id"),"provider":payment.get("provider"),"rate_pct":pct},ensure_ascii=False)),True)
+
+
 def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
     payment = one("SELECT * FROM payments WHERE id=%s", (int(payment_id),))
     if not payment:
@@ -852,6 +889,7 @@ def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
     if not updated:
         return {"payment": one("SELECT * FROM payments WHERE id=%s",(int(payment_id),)), "already_paid": True}
     payment = updated
+    record_payment_provider_fee_for_payment(payment)
     booking_id = payment.get("booking_id")
     booking = None
     if booking_id:
