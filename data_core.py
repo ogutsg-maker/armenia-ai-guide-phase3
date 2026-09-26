@@ -253,6 +253,17 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
     )
 
 
+def list_partner_companies(*, partner_id: int, actor_user_id: int) -> list[dict]:
+    assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    return rows(
+        """SELECT id,partner_id,name,description,phone,status
+           FROM partner_businesses
+           WHERE partner_id=%s AND status<>'archived'
+           ORDER BY id""",
+        (int(partner_id),),
+    )
+
+
 def create_partner_company(*, partner_id: int, actor_user_id: int, name: str,
                           description: str | None = None, phone: str | None = None) -> dict:
     assert_partner_owns_partner(int(partner_id), int(actor_user_id))
