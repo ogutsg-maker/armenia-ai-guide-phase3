@@ -96,17 +96,6 @@ class PartnerAI:
   "needs_document":false,
   "next_step":"profile|catalog|confirmation|document|waiting_admin|done"
 }}'''
-        try:
-            data=await self.ai.chat_json(
-                system, text, max_tokens=1200,
-                chain="partner_registration", stage="dialogue",
-                operation="partner_profile_extraction",
-                purpose="Extract business profile, services, prices and catalog mapping",
-                user_id=user_id, partner_id=int(partner['id']),
-            )
-        except Exception as exc:
-            logger.exception('Partner AI failed')
-            data={'reply':'Ես այստեղ եմ։ Խնդրում եմ պատմեք ձեր բիզնեսի մասին՝ ինչ ծառայություններ եք առաջարկում, որտեղ եք աշխատում և ինչ գներով։','profile_patch':{},'catalog_match':{},'catalog_proposal':{'needed':False},'confirmed':False,'needs_document':False,'next_step':'profile'}
         pending_action=ctx.get('pending_action')
         if pending_action and _explicit_confirmation(text):
             try:
@@ -122,6 +111,17 @@ class PartnerAI:
             except Exception:
                 logger.exception('Confirmed partner action failed')
                 ctx.pop('pending_action',None)
+        try:
+            data=await self.ai.chat_json(
+                system, text, max_tokens=1200,
+                chain="partner_registration", stage="dialogue",
+                operation="partner_profile_extraction",
+                purpose="Extract business profile, services, prices and catalog mapping",
+                user_id=user_id, partner_id=int(partner['id']),
+            )
+        except Exception as exc:
+            logger.exception('Partner AI failed')
+            data={'reply':'Ես այստեղ եմ։ Խնդրում եմ պատմեք ձեր բիզնեսի մասին՝ ինչ ծառայություններ եք առաջարկում, որտեղ եք աշխատում և ինչ գներով։','profile_patch':{},'catalog_match':{},'catalog_proposal':{'needed':False},'confirmed':False,'needs_document':False,'next_step':'profile'}
 
         action=str(data.get('action') or 'none').strip()
         if action in {'add_service','update_service'}:
