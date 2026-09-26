@@ -19,6 +19,7 @@ ROLES = {"admin", "partner", "client", "potential_partner"}
 TOOL_DEFINITIONS = {
     "search_partners": {"description": "Find partners/businesses matching name, city or region.", "roles": {"admin", "client"}},
     "search_applications": {"description": "Find partner applications by status, city, region or text.", "roles": {"admin"}},
+    "application_directions": {"description": "Return only catalog directions that are actually represented by partner applications, with application counts.", "roles": {"admin"}},
     "search_companies": {"description": "Find partner companies by name, city or region.", "roles": {"admin", "partner", "client"}},
     "get_company": {"description": "Get one company and its owning partner.", "roles": {"admin", "partner", "client"}},
     "get_partner": {"description": "Get the allowed profile data for one partner.", "roles": {"admin", "partner", "client"}},
@@ -209,6 +210,9 @@ class DataTools:
                   or query in str(r.get("service_name") or "").casefold()
                   or query in str(r.get("description") or "").casefold()]
         return {"items": rows, "count": len(rows)}
+
+    def _tool_application_directions(self, args):
+        return {"items": data_core.application_directions(limit=min(max(int(args.get("limit") or 200),1),200))}
 
     def _tool_search_companies(self, args):
         if self.role == "partner":
