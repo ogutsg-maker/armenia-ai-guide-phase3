@@ -5,7 +5,6 @@ No legacy Supabase table-client API is used here.
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
