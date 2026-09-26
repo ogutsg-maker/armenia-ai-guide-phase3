@@ -1651,39 +1651,30 @@ async def _admin_semantic_answer(question,plan,state):
             plan["tool_requests"].append({"name":"get_documents","arguments":{"partner_id":int(entity_id)} if entity_type=="partner" else {}})
         if {"category","subcategory","catalog"} & requested and "get_services" not in names and entity_type=="partner":
             plan["tool_requests"].append({"name":"get_services","arguments":{"partner_id":int(entity_id)}})
-    target=_admin_query_target(plan.get("target"))
-    if target=="catalog_overview" and not plan.get("tool_requests"):
-        rows,error=_admin_query_rows("catalog_overview",{},1,None)
-        facts={"rows":rows or []}
-        if error: facts={"error":error}
-    elif target in {"partners","applications","services","directions","subcategories","ai_usage"} and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
+    target=str(plan.get("target") or "").strip().lower()
+    simple_counts={"partners":"partners","applications":"applications","services":"services",
+                   "directions":"directions","subcategories":"subcategories","companies":"companies",
+                   "addresses":"addresses","documents":"documents"}
+    if target in simple_counts and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
         try:
-            entity=target
+            entity=simple_counts[target]
             raw=DataTools("admin").execute("count",{"entity":entity})
-            payload=raw.get("data") if isinstance(raw,dict) else {}
-            facts=payload if isinstance(payload,dict) else {"entity":entity,"count":0}
-        except Exception:
-            rows,error=_admin_query_rows(target,{},50,None)
-            facts={"entity":target,"count":len(rows or [])}
-            if error: facts={"error":error}
+            facts=raw.get("data") if isinstance(raw,dict) else {}
+        except Exception as exc:
+            facts={"error":str(exc)[:180]}
+    elif target=="catalog_overview":
+        try:
+            facts=DataTools("admin").execute("catalog_overview",{}).get("data",{})
+        except Exception as exc:
+            facts={"error":str(exc)[:180]}
+    elif target=="ai_usage":
+        try:
+            days=int(plan.get("days") or 1)
+            facts=DataTools("admin").execute("ai_usage_summary",{"days":days}).get("data",{})
+        except Exception as exc:
+            facts={"error":str(exc)[:180]}
     else:
         facts=_admin_tool_context(plan,entity_type,entity_id)
-    # One semantic AI pass only. Provider fallback is handled inside
-    # _admin_ai_completion as Groq -> OpenAI -> OpenRouter. Do not re-plan
-    # after tool execution: that created extra provider calls during 429s.
-    if not facts and entity_id:
-        facts=_admin_semantic_entity_data(entity_type,entity_id,needed,state)
-    if not facts and target:
-        # If the user is asking a follow-up about the previous result, reuse those exact
-        # rows instead of issuing a broader unrelated query.
-        followup_rows=previous_rows if previous_target==target and previous_rows else None
-        if followup_rows is not None:
-            rows=followup_rows
-            error=None
-        else:
-            rows,error=_admin_query_rows(target,plan.get("filters") or {},plan.get("limit") or 20,plan.get("sort"))
-        facts={"target":target,"rows":rows or []}
-        if error: facts={"error":error}
     if not facts and state.get("last_result_facts"):
         facts=_admin_safe(state.get("last_result_facts"))
         if isinstance(facts,dict):
