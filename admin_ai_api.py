@@ -2319,6 +2319,35 @@ async def api_admin_ai_order_economics(request):
     return web.json_response({"ok":True,**data})
 
 
+
+async def api_admin_ai_company_orders(request):
+    _admin(request)
+    try:
+        company_id=int(request.match_info["company_id"])
+    except (TypeError,ValueError):
+        return web.json_response({"ok":False,"error":"invalid_company_id"},status=400)
+    try:
+        days=max(1,min(int(request.query.get("days") or 3650),3650))
+    except (TypeError,ValueError):
+        days=3650
+    from ai_cost_center import company_orders_economics
+    return web.json_response({"ok":True,"company_id":company_id,"period_days":days,
+                              "items":company_orders_economics(company_id=company_id,days=days)})
+
+
+async def api_admin_ai_order_trace(request):
+    _admin(request)
+    try:
+        order_id=int(request.match_info["order_id"])
+    except (TypeError,ValueError):
+        return web.json_response({"ok":False,"error":"invalid_order_id"},status=400)
+    from ai_cost_center import order_financial_trace
+    data=order_financial_trace(order_id)
+    if not data:
+        return web.json_response({"ok":False,"error":"order_not_found"},status=404)
+    return web.json_response({"ok":True,**data})
+
+
 async def api_admin_ai_negotiation_economics(request):
     _admin(request)
     try:
@@ -2346,6 +2375,8 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_get('/api/admin/ai/company-economics',api_admin_ai_company_economics)
     app.router.add_post('/api/admin/ai/economics/expense',api_admin_ai_add_expense)
     app.router.add_get('/api/admin/ai/economics/negotiation/{negotiation_id}',api_admin_ai_negotiation_economics)
+    app.router.add_get('/api/admin/ai/economics/company/{company_id}/orders',api_admin_ai_company_orders)
+    app.router.add_get('/api/admin/ai/economics/order/{order_id}/trace',api_admin_ai_order_trace)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
     app.router.add_post('/api/admin/ai/catalog-proposals/{id}/{action}',catalog_action)
     app.router.add_get('/api/admin/potential-partners',potential_list)
