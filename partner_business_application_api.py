@@ -97,6 +97,7 @@ def ensure_business_application_schema():
     ALTER TABLE partner_objects ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE partner_locations ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE bookings ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE SET NULL;
+
     ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     CREATE INDEX IF NOT EXISTS idx_partner_businesses_partner ON partner_businesses(partner_id,status);
     ALTER TABLE partner_directions DROP CONSTRAINT IF EXISTS partner_directions_partner_id_master_category_id_key;
