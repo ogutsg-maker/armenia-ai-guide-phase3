@@ -147,12 +147,27 @@ class AINegotiator:
 
         prompt = self.generate_system_prompt(state)
         try:
+            # Resolve the company from the negotiated service so AI cost can be
+            # attributed to the same company as the eventual booking.
+            company_id = None
+            try:
+                service_id = (state or {}).get("service_id")
+                if service_id:
+                    svc = data_core.marketplace_service_for_partner(
+                        int(service_id), int(negotiation.get("partner_id") or 0)
+                    )
+                    if svc and svc.get("business_id"):
+                        company_id = int(svc["business_id"])
+            except Exception:
+                company_id = None
+
             result = await self.ai_service.chat_json(
                 prompt, text, max_tokens=700,
                 chain="negotiation", stage="dialogue", operation="negotiation_reply",
                 purpose="Analyze negotiation message and formulate safe reply",
                 user_id=sender_id,
                 partner_id=int(negotiation.get("partner_id")) if negotiation.get("partner_id") else None,
+                company_id=company_id,
                 negotiation_id=int(negotiation.get("id")) if negotiation.get("id") else None,
             )
             reply = str(result.get("reply") or result.get("message") or "").strip()
