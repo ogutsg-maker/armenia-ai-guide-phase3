@@ -2224,7 +2224,7 @@ async def api_admin_ai_costs_partners(request):
            FROM ai_usage_ledger u
            LEFT JOIN partners p ON p.id=u.partner_id
            WHERE u.partner_id IS NOT NULL
-             AND created_at >= NOW() - (%s || ' days')::interval
+             AND u.created_at >= NOW() - (%s || ' days')::interval
            GROUP BY u.partner_id,p.business_name ORDER BY total_cost_usd DESC, operations DESC""",
         [days],
     )
