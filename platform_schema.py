@@ -358,7 +358,9 @@ def ensure_platform_schema() -> None:
 
     CREATE TABLE IF NOT EXISTS project_expenses (
         id BIGSERIAL PRIMARY KEY,
-        booking_id BIGINT REFERENCES bookings(id) ON DELETE CASCADE,
+        -- bookings are created by booking_schema later in bootstrap.
+        -- Keep this column dependency-free so a clean install can initialize.
+        booking_id BIGINT,
         partner_id BIGINT REFERENCES partners(id) ON DELETE SET NULL,
         expense_type TEXT NOT NULL CHECK (expense_type IN ('payment_fee','refund','other')),
         amount NUMERIC(18,4) NOT NULL DEFAULT 0,
