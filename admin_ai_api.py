@@ -66,6 +66,7 @@ def _admin_tool_schemas(role="admin"):
         "get_orders":{**common,"partner_id":{"type":"integer"},"status":{"type":"string"}},
         "search_catalog":{**common,"master_category_id":{"type":"integer"}},
         "get_directions":{"limit":{"type":"integer","minimum":1,"maximum":200}},
+        "application_directions":{"limit":{"type":"integer","minimum":1,"maximum":200}},
         "catalog_overview":{},
         "ai_usage_summary":{"days":{"type":"integer","minimum":1,"maximum":365}},
         "check_application":{"application_id":{"type":"integer"}},
@@ -254,6 +255,14 @@ def _admin_query_result_text(kind, rows, filters=None, question=""):
     if kind in {"partner"}: kind="partners"
     if kind in {"service"}: kind="services"
     if kind in {"application"}: kind="applications"
+    if kind in {"application_directions","application_direction","directions_with_applications"}:
+        labels={"am":"🧭 Ուղղություններ, որոնցով հայտեր կան","ru":"🧭 Направления, по которым есть заявки","en":"🧭 Directions represented by applications"}
+        lines=[labels.get(_admin_detect_language(question),labels["ru"])+" ("+str(len(rows))+")"]
+        for n,row in enumerate(rows[:30],1):
+            name=row.get("name_am") or row.get("name_ru") or row.get("name_en") or "—"
+            count=row.get("application_count")
+            lines.append(str(n)+". "+str(name)+(" · "+str(count)+" հայտ" if count is not None else ""))
+        return "\n".join(lines) if rows else labels.get(_admin_detect_language(question),labels["ru"])+" — "+L["empty"]
     header_key=kind if kind in ("companies","services","partners","applications") else "generic"
     loc_hint=filters.get("city") or filters.get("marz")
     if not rows:
@@ -1618,6 +1627,29 @@ async def _admin_semantic_answer(question,plan,state):
     # already exists in the conversation data, this is a mis-plan: re-target it
     # as an entity read. Detection is data-driven (matches names surfaced by
     # previous results / the active subject), NOT a fixed phrase dictionary.
+    # A single application in the immediately previous result is a strong
+    # conversational reference. If the next request asks for the complete
+    # application, resolve it directly to the authoritative full-read tool.
+    previous_rows_for_full=state.get("last_shown_query_rows") or []
+    if len(previous_rows_for_full)==1 and isinstance(previous_rows_for_full[0],dict):
+        qn=_norm(question)
+        wants_full=any(token in qn for token in (
+            "ամբողջական","ամբողջությամբ","լրիվ","полный","полностью","вся заявка","целиком","full application","complete application"
+        ))
+        if wants_full and target in {"applications","application",""}:
+            try:
+                prev_aid=int(previous_rows_for_full[0].get("id"))
+                plan["target"]="application"
+                plan["entity_type"]="application"
+                plan["entity_id"]=prev_aid
+                plan["intent"]="information_request"
+                plan["data_needed"]=["application","documents","services","category"]
+                plan["tool_requests"]=[{"name":"get_application_full","arguments":{"application_id":prev_aid}}]
+                intent="information_request"
+                target="application"
+            except (TypeError,ValueError):
+                pass
+
     if not name and not (filters.get("city") or filters.get("marz")) and (
             intent in _ADMIN_COUNT_INTENTS
             or target in {"applications","services","companies","partners","businesses"}):
