@@ -228,7 +228,8 @@ class AIService:
                               max_tokens: int = 900, chain: str = "unknown",
                               stage: str = "unknown", operation: str = "structured_json",
                               purpose: str = "", partner_id: int | None = None,
-                              user_id: int | None = None) -> dict:
+                              user_id: int | None = None, company_id: int | None = None,
+                              order_id: int | None = None, negotiation_id: int | None = None) -> dict:
         """Provider/model-agnostic strict JSON gateway used by AI workflows."""
         clean=self.clean_sensitive_data(user_text)
         messages=[{"role":"system","content":system_prompt},{"role":"user","content":clean}]
@@ -251,7 +252,8 @@ class AIService:
                     response=await asyncio.to_thread(client.chat.completions.create,**kwargs)
                 usage=getattr(response,"usage",None)
                 ai_cost_center.record_usage(provider=provider,model=model,chain=chain,stage=stage,operation=operation,
-                    purpose=purpose,user_id=user_id,partner_id=partner_id,
+                    purpose=purpose,user_id=user_id,partner_id=partner_id,company_id=company_id,
+                    order_id=order_id,negotiation_id=negotiation_id,
                     input_tokens=int(getattr(usage,"prompt_tokens",getattr(usage,"input_tokens",0)) or 0),
                     output_tokens=int(getattr(usage,"completion_tokens",getattr(usage,"output_tokens",0)) or 0),
                     cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
@@ -270,7 +272,8 @@ class AIService:
                         response=await asyncio.to_thread(client.chat.completions.create,**kwargs)
                         usage=getattr(response,"usage",None)
                         ai_cost_center.record_usage(provider=provider,model=model,chain=chain,stage=stage,operation=operation,
-                            purpose=purpose,user_id=user_id,partner_id=partner_id,
+                            purpose=purpose,user_id=user_id,partner_id=partner_id,company_id=company_id,
+                            order_id=order_id,negotiation_id=negotiation_id,
                             input_tokens=int(getattr(usage,"prompt_tokens",getattr(usage,"input_tokens",0)) or 0),
                             output_tokens=int(getattr(usage,"completion_tokens",getattr(usage,"output_tokens",0)) or 0),
                             cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
