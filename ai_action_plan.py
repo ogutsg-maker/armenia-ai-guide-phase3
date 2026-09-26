@@ -5,6 +5,7 @@ fields/actions are structurally acceptable. It never writes to the database.
 """
 from __future__ import annotations
 from typing import Any
+import data_core
 
 ALLOWED_ACTIONS = {
     "update_profile",
@@ -47,17 +48,36 @@ def validate_profile_patch(patch: Any) -> dict:
 
 
 def validate_catalog_match(match: Any) -> dict:
+    """Accept only IDs that exist in the current active catalog."""
     if not isinstance(match, dict):
         return {}
-    out = {}
+    out = {"category_ids": []}
     master = match.get("master_category_id")
-    if str(master).isdigit():
-        out["master_category_id"] = int(master)
+    master_id = int(master) if str(master).isdigit() else None
+    try:
+        active = data_core.search_catalog(
+            query="",
+            master_category_id=master_id,
+            limit=500,
+        )
+    except Exception:
+        active = []
+    active_master_ids = {
+        int(x.get("master_category_id")) for x in active
+        if str(x.get("master_category_id")).isdigit()
+    }
+    active_category_ids = {
+        int(x.get("category_id")) for x in active
+        if str(x.get("category_id")).isdigit()
+    }
+    if master_id is not None and master_id in active_master_ids:
+        out["master_category_id"] = master_id
     ids = match.get("category_ids")
     if isinstance(ids, list):
-        out["category_ids"] = [int(x) for x in ids if str(x).isdigit()][:50]
-    else:
-        out["category_ids"] = []
+        out["category_ids"] = [
+            int(x) for x in ids
+            if str(x).isdigit() and int(x) in active_category_ids
+        ][:50]
     return out
 
 
