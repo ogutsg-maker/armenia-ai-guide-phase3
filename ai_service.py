@@ -143,25 +143,15 @@ class AIService:
         return await self.chat_json(system_prompt,user_text,max_tokens=max_tokens,chain=chain,stage=stage,operation=operation,purpose=purpose,partner_id=partner_id,user_id=user_id,company_id=company_id,order_id=order_id,negotiation_id=negotiation_id)
 
     async def _call_groq(self, system_prompt: str, user_text: str, json_mode: bool = False, model: str | None = None) -> str:
-        clean = self.clean_sensitive_data(user_text)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": clean},
-        ]
-        selected = model or self.groq_model
-        try:
-            if self.groq_client:
-                response = await asyncio.to_thread(self._groq_completion, messages, selected)
-                return self._text(response)
-            if self.openai_client:
-                response = await asyncio.to_thread(self._openai_completion, messages, self.openai_model)
-                return self._text(response)
-        except Exception:
-            if self.openai_client and self.groq_client:
-                response = await asyncio.to_thread(self._openai_completion, messages, self.openai_model)
-                return self._text(response)
-            raise
-        raise RuntimeError("No AI provider is configured")
+        clean=self.clean_sensitive_data(user_text)
+        messages=[{"role":"system","content":system_prompt},{"role":"user","content":clean}]
+        if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
+        selected=model or self.groq_model
+        if json_mode:
+            response,_=await asyncio.to_thread(self._groq_completion_json,messages,selected,900)
+        else:
+            response=await asyncio.to_thread(self._groq_completion,messages,selected)
+        return self._text(response)
 
     async def route_message(self, text: str, role: str, context: dict | None = None) -> dict:
         context = context or {}
