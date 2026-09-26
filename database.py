@@ -109,6 +109,38 @@ class DatabaseManager:
                             UNIQUE(user_id, category_id)
                         )
                     ''')
+                    # AI usage/cost ledger. Provider/model are data, not code paths.
+                    cur.execute('''
+                        CREATE TABLE IF NOT EXISTS ai_usage_ledger (
+                            id BIGSERIAL PRIMARY KEY,
+                            provider TEXT NOT NULL,
+                            model TEXT NOT NULL,
+                            chain TEXT NOT NULL DEFAULT 'unknown',
+                            stage TEXT NOT NULL DEFAULT 'unknown',
+                            operation TEXT NOT NULL DEFAULT 'chat',
+                            purpose TEXT DEFAULT '',
+                            user_id BIGINT,
+                            partner_id BIGINT,
+                            company_id BIGINT,
+                            order_id BIGINT,
+                            negotiation_id BIGINT,
+                            input_tokens BIGINT NOT NULL DEFAULT 0,
+                            output_tokens BIGINT NOT NULL DEFAULT 0,
+                            cached_input_tokens BIGINT NOT NULL DEFAULT 0,
+                            reasoning_tokens BIGINT NOT NULL DEFAULT 0,
+                            total_tokens BIGINT NOT NULL DEFAULT 0,
+                            input_cost_usd NUMERIC(20,10) NOT NULL DEFAULT 0,
+                            cached_input_cost_usd NUMERIC(20,10) NOT NULL DEFAULT 0,
+                            output_cost_usd NUMERIC(20,10) NOT NULL DEFAULT 0,
+                            total_cost_usd NUMERIC(20,10) NOT NULL DEFAULT 0,
+                            status TEXT NOT NULL DEFAULT 'success',
+                            error TEXT DEFAULT '',
+                            created_at TIMESTAMPTZ DEFAULT NOW()
+                        )
+                    ''')
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_partner_created ON ai_usage_ledger(partner_id, created_at DESC)")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_chain_created ON ai_usage_ledger(chain, created_at DESC)")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_provider_model ON ai_usage_ledger(provider, model, created_at DESC)")
                     # Legacy contour tables (orders, deals, chat_messages,
                     # bids, reviews, disputes) were removed as part of the clean
                     # Armenia AI Guide architecture. The new catalogue / booking
