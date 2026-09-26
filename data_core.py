@@ -779,6 +779,13 @@ def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
            (booking_id,cancelled_by,reason,refund_amount)
            VALUES(%s,%s,%s,%s)""",
         (int(booking_id), str(actor_role), str(reason or "")[:500], float(refund_amount or 0)), False)
+    if float(refund_amount or 0) > 0:
+        execute(
+            """INSERT INTO project_expenses
+               (booking_id,partner_id,expense_type,amount,currency,description,source)
+               VALUES(%s,%s,'refund',%s,'AMD',%s,'booking_cancellation')""",
+            (int(booking_id), booking.get("partner_id"), float(refund_amount),
+             str(reason or "Booking refund")[:1000]), False)
     return updated
 
 def update_payment_status_for_booking(booking_id: int, status: str):
@@ -821,6 +828,16 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
             "agreed_price": row["agreed_price"], "currency": row["currency"],
             "business_name": row["business_name"]}
 
+
+def record_payment_provider_fee(booking_id: int, amount_amd: float, provider: str = ""):
+    if float(amount_amd or 0) <= 0:
+        return None
+    return execute(
+        """INSERT INTO project_expenses
+           (booking_id,expense_type,amount,currency,description,source)
+           VALUES(%s,'payment_fee',%s,'AMD',%s,'payment_provider') RETURNING *""",
+        (int(booking_id),float(amount_amd),
+         ("Payment provider fee" + (": "+str(provider) if provider else ""))[:1000]), True)
 
 def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
     payment = one("SELECT * FROM payments WHERE id=%s", (int(payment_id),))
