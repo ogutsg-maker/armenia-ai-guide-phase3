@@ -30,6 +30,7 @@ TOOL_DEFINITIONS = {
     "check_catalog_match": {"description": "Check whether a service maps plausibly to an active catalog category.", "roles": {"admin", "partner"}},
     "count": {"description": "Count a supported business entity without exposing SQL. directions means active master categories; subcategories means active catalog subcategories.", "roles": {"admin", "partner", "client"}},
     "validate_action_plan": {"description": "Validate a proposed AI action before any write. This tool never mutates data.", "roles": {"admin", "partner"}},
+    "service_action_plan": {"description": "Validate a proposed add/update service action. Never writes to DB.", "roles": {"admin", "partner"}},
 }
 
 
@@ -78,6 +79,18 @@ class DataTools:
         if isinstance(value, (list, tuple, set)):
             return [DataTools._safe_value(v) for v in value]
         return str(value)
+
+    def _tool_service_action_plan(self, args):
+        from ai_action_plan import service_action_plan
+        partner_id = args.get("partner_id")
+        actor_user_id = args.get("actor_user_id")
+        if not str(partner_id).isdigit() or not str(actor_user_id).isdigit():
+            raise ValueError("partner_id_and_actor_user_id_required")
+        return service_action_plan(
+            args.get("plan") or args,
+            partner_id=int(partner_id),
+            actor_user_id=int(actor_user_id),
+        )
 
     def _tool_validate_action_plan(self, args):
         from ai_action_plan import validate_plan
