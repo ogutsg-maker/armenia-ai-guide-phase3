@@ -140,6 +140,15 @@ def ensure_business_application_schema():
     CREATE INDEX IF NOT EXISTS idx_partner_applications_partner ON partner_applications(partner_id,status,created_at DESC);
     """)
 
+    # Historical bookings were created before the multi-company model.
+    # Recover their company from the service relation whenever possible.
+    _exec("""UPDATE bookings b
+             SET business_id=s.business_id
+             FROM services s
+             WHERE b.business_id IS NULL
+               AND s.id=b.service_id
+               AND s.business_id IS NOT NULL""")
+
     # Repair legacy duplicate directions before enforcing uniqueness.
     _exec("""
     UPDATE partner_directions pd
