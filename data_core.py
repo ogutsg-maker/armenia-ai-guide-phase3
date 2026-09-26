@@ -253,6 +253,51 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
     )
 
 
+def create_partner_company(*, partner_id: int, actor_user_id: int, name: str,
+                          description: str | None = None, phone: str | None = None) -> dict:
+    assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    name=str(name or "").strip()
+    if not name: raise ValueError("company_name_required")
+    row=one(
+        """INSERT INTO partner_businesses (partner_id,name,description,phone,status)
+           VALUES (%s,%s,%s,%s,'active')
+           RETURNING id,partner_id,name,description,phone,status""",
+        (int(partner_id),name,str(description or "").strip() or None,str(phone or "").strip() or None),
+    )
+    if not row: raise ValueError("company_create_failed")
+    return row
+
+
+def update_partner_company(*, company_id: int, actor_user_id: int,
+                           name: str | None = None, description: str | None = None,
+                           phone: str | None = None) -> dict:
+    company=get_company(int(company_id))
+    if not company: raise ValueError("company_not_found")
+    assert_partner_owns_partner(int(company["partner_id"]), int(actor_user_id))
+    if company.get("status")=="archived": raise ValueError("company_archived")
+    fields=[]; vals=[]
+    for key,value in {"name":name,"description":description,"phone":phone}.items():
+        if value is not None:
+            value=str(value).strip()
+            if key=="name" and not value: raise ValueError("company_name_required")
+            fields.append(f"{key}=%s"); vals.append(value or None)
+    if not fields: raise ValueError("no_changes")
+    vals.extend([int(company_id),int(company["partner_id"])])
+    row=one("UPDATE partner_businesses SET "+",".join(fields)+" WHERE id=%s AND partner_id=%s AND status<>'archived' RETURNING id,partner_id,name,description,phone,status",tuple(vals))
+    if not row: raise ValueError("company_update_failed")
+    return row
+
+
+def archive_partner_company(*, company_id: int, actor_user_id: int) -> dict:
+    company=get_company(int(company_id))
+    if not company: raise ValueError("company_not_found")
+    assert_partner_owns_partner(int(company["partner_id"]), int(actor_user_id))
+    if company.get("status")=="archived": return company
+    row=one("UPDATE partner_businesses SET status='archived' WHERE id=%s AND partner_id=%s RETURNING id,partner_id,name,description,phone,status",(int(company_id),int(company["partner_id"])))
+    if not row: raise ValueError("company_archive_failed")
+    return row
+
+
 def create_partner_address(*, partner_id: int, actor_user_id: int, company_id: int | None,
                          address: str, city: str | None = None, marz: str | None = None,
                          phone: str | None = None, object_name: str | None = None) -> dict:
