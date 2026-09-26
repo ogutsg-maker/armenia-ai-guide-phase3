@@ -91,14 +91,6 @@ def ensure_business_application_schema():
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    -- Attach the AI ledger company FK only after the canonical company table
-    -- exists. This also repairs older installs that used the same relation.
-    _exec("""ALTER TABLE ai_usage_ledger
-             DROP CONSTRAINT IF EXISTS ai_usage_ledger_company_id_fkey""")
-    _exec("""ALTER TABLE ai_usage_ledger
-             ADD CONSTRAINT ai_usage_ledger_company_id_fkey
-             FOREIGN KEY (company_id) REFERENCES partner_businesses(id)
-             ON DELETE SET NULL""")
     ALTER TABLE partner_directions ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE services ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
