@@ -147,12 +147,17 @@ class AINegotiator:
 
         prompt = self.generate_system_prompt(state)
         try:
-            reply = self.ai_service.process_text_request(
-                user_text=text,
-                role="client" if actor == "client" else "partner",
-                system_prompt=prompt,
+            result = await self.ai_service.chat_json(
+                prompt, text, max_tokens=700,
+                chain="negotiation", stage="dialogue", operation="negotiation_reply",
+                purpose="Analyze negotiation message and formulate safe reply",
+                user_id=sender_id,
+                partner_id=int(negotiation.get("partner_id")) if negotiation.get("partner_id") else None,
+                negotiation_id=int(negotiation.get("id")) if negotiation.get("id") else None,
             )
-            reply = str(reply).strip()
+            reply = str(result.get("reply") or result.get("message") or "").strip()
+            if not reply:
+                raise RuntimeError("AI returned no negotiation reply")
         except Exception:
             if actor == "client":
                 reply = "Принял ваше сообщение. Уточните, пожалуйста, желаемую цену и удобное время."
