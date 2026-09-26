@@ -1621,6 +1621,48 @@ async def _admin_semantic_answer(question,plan,state):
     target=str(plan.get("target") or "").strip().lower()
     filters=plan.get("filters") if isinstance(plan.get("filters"),dict) else {}
     intent=str(plan.get("intent") or "").lower()
+
+    # Deterministic semantic guard for two high-value conversational patterns.
+    # The vocabulary comes from the live conversation/context, not from a fixed
+    # list of company names or database records.
+    qn=_norm(question)
+    previous_rows=state.get("last_shown_query_rows") or []
+    if len(previous_rows)==1 and isinstance(previous_rows[0],dict):
+        prev_id=previous_rows[0].get("id")
+        wants_full=any(x in qn for x in (
+            "ամբողջական","ամբողջությամբ","լրիվ","полный","полностью","вся заявка",
+            "целиком","full application","complete application"
+        ))
+        if wants_full and prev_id is not None:
+            try:
+                plan["target"]="application"
+                plan["entity_type"]="application"
+                plan["entity_id"]=int(prev_id)
+                plan["entity_name"]=previous_rows[0].get("business_name") or ""
+                plan["intent"]="information_request"
+                plan["data_needed"]=["application","documents","services","category"]
+                plan["tool_requests"]=[{"name":"get_application_full","arguments":{"application_id":int(prev_id)}}]
+                target="application"
+                intent="information_request"
+            except (TypeError,ValueError):
+                pass
+
+    named=_admin_detect_named_entity(question,state)
+    service_words={
+        "ծառայություն","ծառայություններ","ծառայությունները","услуга","услуги",
+        "услуг","services","service"
+    }
+    asks_services=bool(set(_tokens(qn)).intersection(service_words)) or "services" in qn
+    if named and asks_services:
+        plan["entity_name"]=named
+        plan["target"]="services"
+        plan["entity_type"]="business"
+        plan["intent"]="information_request"
+        plan["data_needed"]=["services"]
+        target="services"
+        intent="information_request"
+        plan["tool_requests"]=[{"name":"search_companies","arguments":{"query":named,"limit":10}}]
+
     # COUNT-TRAP CORRECTION. A weak planner often collapses an entity-scoped
     # question ("services of BYUTI", "BYUTI's application in full") into a bare
     # platform count. If the message clearly references one specific entity that
