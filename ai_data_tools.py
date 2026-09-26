@@ -33,6 +33,7 @@ TOOL_DEFINITIONS = {
     "service_action_plan": {"description": "Validate a proposed add/update service action. Never writes to DB.", "roles": {"admin", "partner"}},
     "execute_service_action": {"description": "Execute a previously confirmed service update through Data Core.", "roles": {"admin", "partner"}},
     "execute_address_action": {"description": "Execute a confirmed partner address create/update through Data Core.", "roles": {"partner"}},
+    "execute_company_action": {"description": "Execute confirmed partner company create/update/archive through Data Core.", "roles": {"partner"}},
 }
 
 
@@ -93,6 +94,32 @@ class DataTools:
             partner_id=int(partner_id),
             actor_user_id=int(actor_user_id),
         )
+
+    def _tool_execute_company_action(self, args):
+        if self.role != "partner" or self.actor_id is None:
+            raise DataToolError("partner_execution_only")
+        if args.get("confirmed") is not True:
+            raise DataToolError("explicit_confirmation_required")
+        partner=data_core.get_partner_by_user(int(self.actor_id))
+        if not partner: raise DataToolError("partner_not_found")
+        action=str(args.get("action") or "").strip()
+        if action=="add_company":
+            return {"company":data_core.create_partner_company(
+                partner_id=int(partner["id"]), actor_user_id=int(self.actor_id),
+                name=args.get("name"), description=args.get("description"), phone=args.get("phone"),
+            ),"executed":True}
+        if action=="update_company":
+            if not str(args.get("company_id")).isdigit(): raise DataToolError("company_id_required")
+            return {"company":data_core.update_partner_company(
+                company_id=int(args["company_id"]), actor_user_id=int(self.actor_id),
+                name=args.get("name"), description=args.get("description"), phone=args.get("phone"),
+            ),"executed":True}
+        if action=="archive_company":
+            if not str(args.get("company_id")).isdigit(): raise DataToolError("company_id_required")
+            return {"company":data_core.archive_partner_company(
+                company_id=int(args["company_id"]), actor_user_id=int(self.actor_id),
+            ),"executed":True}
+        raise DataToolError("unsupported_company_action")
 
     def _tool_execute_address_action(self, args):
         if self.role != "partner" or self.actor_id is None:
