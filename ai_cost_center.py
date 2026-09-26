@@ -245,6 +245,17 @@ def project_economics(*, days: int = 30, partner_id: int | None = None) -> dict:
         "SELECT COUNT(*) operations,COALESCE(SUM(total_cost_usd),0) total_cost_usd,"
         "COALESCE(SUM(total_cost_amd),0) total_cost_amd "
         "FROM ai_usage_ledger u WHERE "+" AND ".join(ai_where),tuple(ai_params)) or {}
+    expense_where=["e.created_at >= NOW() - (%s || ' days')::interval"]
+    expense_params=[d]
+    if partner_id is not None:
+        expense_where.append("e.partner_id=%s"); expense_params.append(int(partner_id))
+    expense_sql=" AND ".join(expense_where)
+    expenses=platform_db.one(
+        """SELECT COALESCE(SUM(e.amount),0) total_expenses_amd,
+                  COALESCE(SUM(CASE WHEN e.expense_type='payment_fee' THEN e.amount ELSE 0 END),0) payment_fees_amd,
+                  COALESCE(SUM(CASE WHEN e.expense_type='refund' THEN e.amount ELSE 0 END),0) refunds_amd,
+                  COALESCE(SUM(CASE WHEN e.expense_type='other' THEN e.amount ELSE 0 END),0) other_expenses_amd
+           FROM project_expenses e WHERE """+expense_sql,tuple(expense_params)) or {}
     by_stage=platform_db.rows(
         "SELECT COALESCE(u.stage,'unknown') stage,COALESCE(u.operation,'unknown') operation,"
         "COUNT(*) operations,COALESCE(SUM(u.total_cost_amd),0) total_cost_amd "
@@ -253,10 +264,13 @@ def project_economics(*, days: int = 30, partner_id: int | None = None) -> dict:
     commission=float(summary.get("commission_amd") or 0)
     ai_cost=float(ai.get("total_cost_amd") or 0)
     return {"period_days":d,"partner_id":partner_id,"orders":summary,
-            "ai":ai,"ai_by_stage":by_stage,
+            "ai":ai,"ai_by_stage":by_stage,"expenses":expenses,
             "economics":{"commission_amd":round(commission,4),
                          "ai_cost_amd":round(ai_cost,4),
-                         "platform_profit_before_other_costs_amd":round(commission-ai_cost,4),
+                         "other_expenses_amd":round(float(expenses.get("total_expenses_amd") or 0),4),
+                         "payment_fees_amd":round(float(expenses.get("payment_fees_amd") or 0),4),
+                         "refunds_amd":round(float(expenses.get("refunds_amd") or 0),4),
+                         "net_profit_amd":round(commission-ai_cost-float(expenses.get("total_expenses_amd") or 0),4),
                          "ai_cost_share_of_commission_pct":round(ai_cost/commission*100,2) if commission else None}}
 
 
