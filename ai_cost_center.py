@@ -351,6 +351,55 @@ def company_economics(*, days: int = 30, partner_id: int | None = None) -> list[
     return out
 
 
+
+def company_orders_economics(*, company_id: int, days: int = 3650) -> list[dict]:
+    """Return booking-level economics for one company, with AI and expense attribution."""
+    cid=int(company_id)
+    d=max(1,min(int(days or 3650),3650))
+    bookings=platform_db.rows(
+        """SELECT b.*, COALESCE(p.business_name,'') AS business_name,
+                  COALESCE(c.name,'') AS company_name
+           FROM bookings b
+           LEFT JOIN partners p ON p.id=b.partner_id
+           LEFT JOIN companies c ON c.id=b.company_id
+           WHERE b.company_id=%s
+             AND b.created_at >= NOW() - (%s || ' days')::interval
+           ORDER BY b.created_at DESC,b.id DESC""",(cid,d))
+    out=[]
+    for b in bookings:
+        oid=int(b["id"])
+        # This also links negotiation-level AI rows to the realized booking.
+        item=order_economics(oid) or {"ai_stages":[],"ai":{},"economics":{}}
+        econ=item.get("economics") or {}
+        out.append({
+            "order_id":oid,
+            "booking":b,
+            "economics":econ,
+            "ai":item.get("ai") or {},
+            "ai_stages":item.get("ai_stages") or [],
+            "negotiation":item.get("negotiation"),
+            "expenses":project_expenses_for_order(oid),
+        })
+    return out
+
+
+def order_financial_trace(order_id: int) -> dict | None:
+    """Return the auditable financial trace for one realized order."""
+    data=order_economics(int(order_id))
+    if not data:
+        return None
+    order=data.get("order") or {}
+    negotiation=data.get("negotiation")
+    return {
+        "order":order,
+        "negotiation":negotiation,
+        "ai":data.get("ai") or {},
+        "ai_stages":data.get("ai_stages") or [],
+        "expenses":project_expenses_for_order(int(order_id)),
+        "economics":data.get("economics") or {},
+    }
+
+
 def negotiation_economics(negotiation_id: int) -> dict | None:
     nid=int(negotiation_id)
     row=platform_db.one(
