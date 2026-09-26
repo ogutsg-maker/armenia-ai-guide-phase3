@@ -1607,12 +1607,78 @@ async def _admin_refine_tool_context(question, plan, entity_type, entity_id, fac
     return facts
 
 
+_ADMIN_COUNT_INTENTS={"count","count_entities","count_partners","count_applications",
+    "count_services","count_directions","count_subcategories","count_ai_usage"}
+
+
+def _admin_context_entity_names(state):
+    """Names already surfaced in the conversation (data-driven candidates a
+    follow-up may reference). This is real data, not a hardcoded phrase list."""
+    names=[]
+    def push(v):
+        v=str(v or "").strip()
+        if len(v)>=2 and v not in names:
+            names.append(v)
+    ac=state.get("active_context") or {}
+    push(ac.get("subject"))
+    for row in (state.get("last_shown_query_rows") or []):
+        if isinstance(row,dict):
+            for k in ("name","business_name","service_name"):
+                push(row.get(k))
+    return names
+
+
+def _admin_detect_named_entity(question,state):
+    """Return an entity name the message clearly refers to.
+
+    The candidate vocabulary is built from real conversation data (previous
+    results and the active subject), so this resolves follow-ups such as
+    'BYUTI-i services' or 'BYUTI application in full' without any fixed command
+    dictionary. It matches whole tokens or a full-name substring only, to avoid
+    accidental hits on generic words.
+    """
+    q=_norm(question)
+    if not q:
+        return None
+    tokens=set(q.split())
+    best=None
+    for cand in _admin_context_entity_names(state):
+        n=_norm(cand)
+        if len(n)<2:
+            continue
+        hit=(n in tokens) or (" " in n and n in q) or (len(n)>=4 and n in q)
+        if hit and (best is None or len(n)>len(_norm(best))):
+            best=cand
+    return best
+
+
 async def _admin_semantic_answer(question,plan,state):
     # Semantic guardrails for named entities and geographic company queries.
     name=str(plan.get("entity_name") or "").strip()
     needed={str(x).casefold() for x in (plan.get("data_needed") or [])}
     target=str(plan.get("target") or "").strip().lower()
     filters=plan.get("filters") if isinstance(plan.get("filters"),dict) else {}
+    intent=str(plan.get("intent") or "").lower()
+    # COUNT-TRAP CORRECTION. A weak planner often collapses an entity-scoped
+    # question ("services of BYUTI", "BYUTI's application in full") into a bare
+    # platform count. If the message clearly references one specific entity that
+    # already exists in the conversation data, this is a mis-plan: re-target it
+    # as an entity read. Detection is data-driven (matches names surfaced by
+    # previous results / the active subject), NOT a fixed phrase dictionary.
+    if not name and not (filters.get("city") or filters.get("marz")) and (
+            intent in _ADMIN_COUNT_INTENTS
+            or target in {"applications","services","companies","partners","businesses"}):
+        ctx_name=_admin_detect_named_entity(question,state)
+        if ctx_name:
+            name=ctx_name
+            plan["entity_name"]=ctx_name
+            if intent in _ADMIN_COUNT_INTENTS:
+                plan["intent"]="information_request"
+                intent="information_request"
+            need_set=set(needed); need_set.add("services")
+            plan["data_needed"]=list(need_set); needed=need_set
+            plan["tool_requests"]=[x for x in (plan.get("tool_requests") or [])
+                if isinstance(x,dict) and str(x.get("name") or "") not in {"count"}]
     if name and "services" in needed:
         plan["target"]="services"
         plan["entity_type"]="business"
