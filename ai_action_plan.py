@@ -67,7 +67,7 @@ def validate_catalog_match(match: Any) -> dict:
         if str(x.get("master_category_id")).isdigit()
     }
     active_category_ids = {
-        int(x.get("category_id")) for x in active
+        int(x.get("id")) for x in active
         if str(x.get("category_id")).isdigit()
     }
     if master_id is not None and master_id in active_master_ids:
@@ -95,6 +95,38 @@ def validate_plan(plan: Any, *, allowed_actions: set[str] | None = None) -> dict
         "profile_patch": validate_profile_patch(plan.get("profile_patch")),
         "catalog_match": validate_catalog_match(plan.get("catalog_match")),
         "catalog_proposal": plan.get("catalog_proposal") if isinstance(plan.get("catalog_proposal"), dict) else {},
+    }
+
+
+def service_action_plan(data: dict, *, partner_id: int, actor_user_id: int) -> dict:
+    """Validate an AI-proposed service mutation before confirmation/execution."""
+    data = data if isinstance(data, dict) else {}
+    action = str(data.get("action") or "ask_clarification").strip()
+    if action not in {"add_service", "update_service"}:
+        return validate_plan({"action": "ask_clarification", "reason": "Unsupported service action."})
+    payload = data.get("service") if isinstance(data.get("service"), dict) else data
+    name = payload.get("name") or payload.get("service_name")
+    price = payload.get("price")
+    category_id = payload.get("category_id")
+    company_id = payload.get("company_id")
+    if action == "add_service":
+        checked = data_core.validate_service_payload(
+            partner_id=int(partner_id), actor_user_id=int(actor_user_id),
+            company_id=int(company_id) if str(company_id).isdigit() else None,
+            name=name, price=price,
+            category_id=int(category_id) if str(category_id).isdigit() else None,
+        )
+    else:
+        service_id = payload.get("service_id")
+        if not str(service_id).isdigit():
+            return validate_plan({"action": "ask_clarification", "reason": "service_id is required."})
+        checked = {"ok": True, "service_id": int(service_id), "name": name, "price": price, "category_id": category_id}
+    return {
+        "action": action,
+        "requires_confirmation": True,
+        "reason": str(data.get("reason") or "Service change requires confirmation."),
+        "service": checked,
+        "execution": "confirmation_required",
     }
 
 
