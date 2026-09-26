@@ -13,6 +13,7 @@ from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWeb
 from ai_data_tools import DataTools, DataToolError
 from ai_datatools import AdminDataTools, data_contract
 from ai_context_builder import build_ai_context
+import ai_cost_center
 
 
 def _norm(text):
@@ -966,6 +967,16 @@ async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
                     )
                 else:
                     raise structured_exc
+            usage=getattr(resp,"usage",None)
+            ai_cost_center.record_usage(
+                provider=provider, model=model, chain="admin_secretary",
+                stage="planner", operation="admin_ai_message",
+                purpose="Admin natural-language assistant",
+                input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
+                output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
+                cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
+                reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0),
+            )
             content=(resp.choices[0].message.content or "").strip()
             if not content:
                 raise RuntimeError("empty AI response")
