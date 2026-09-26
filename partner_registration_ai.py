@@ -1009,13 +1009,40 @@ Return only the supplied JSON schema."""
             normalized_services.append(item)
         data["services"] = normalized_services
 
-        # Catalogue classification is intentionally deferred to the second AI stage.
-        data["master_category_id"] = None
-        for service in data.get("services") or []:
-            if isinstance(service, dict):
-                service["matched_subcategory_id"] = None
-                service.pop("match_confidence", None)
-                service.pop("match_reason", None)
+        # Once the free-form profile is complete, classify it against the real
+        # active catalogue. The partner never selects a direction manually.
+        # This only writes classification into the application/profile; Admin
+        # approval is still required before anything becomes active.
+        if data.get("ready") and data.get("services"):
+            try:
+                classified = await classify_profile_catalog(db, data)
+                data["master_category_id"] = _safe_int(classified.get("master_category_id"))
+                data["classification_confidence"] = classified.get("confidence")
+                data["classification_ambiguities"] = classified.get("ambiguities") or []
+                data["classification_needs_review"] = bool(classified.get("needs_review"))
+                if classified.get("services"):
+                    data["services"] = classified["services"]
+
+                if data.get("master_category_id") is not None:
+                    selected_master = next(
+                        (
+                            row for row in get_master_catalog(db)
+                            if _safe_int(row.get("master_id")) == data["master_category_id"]
+                        ),
+                        None,
+                    )
+                    if selected_master:
+                        data["direction"] = (
+                            selected_master.get("master_am")
+                            or selected_master.get("master_ru")
+                            or selected_master.get("master_en")
+                            or data.get("direction")
+                        )
+            except Exception:
+                logger.exception("Partner catalogue classification failed")
+                data["master_category_id"] = None
+                data["classification_needs_review"] = True
+                data["classification_ambiguities"] = ["classification_failed"]
 
         if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
             data[pending_field] = _norm(text)
