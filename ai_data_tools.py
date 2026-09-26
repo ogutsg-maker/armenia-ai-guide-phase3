@@ -23,6 +23,7 @@ TOOL_DEFINITIONS = {
     "get_company": {"description": "Get one company and its owning partner.", "roles": {"admin", "partner", "client"}},
     "get_partner": {"description": "Get the allowed profile data for one partner.", "roles": {"admin", "partner", "client"}},
     "get_application": {"description": "Get a partner application and its current review state.", "roles": {"admin"}},
+    "get_application_full": {"description": "Get a complete read-only application record with its verification documents.", "roles": {"admin"}},
     "get_documents": {"description": "Get verification documents and their statuses for a partner/application.", "roles": {"admin", "partner"}},
     "get_addresses": {"description": "Get business objects and addresses available to the current role.", "roles": {"admin", "partner", "client"}},
     "get_companies": {"description": "Get companies owned by the current partner.", "roles": {"partner"}},
@@ -267,10 +268,21 @@ class DataTools:
         return {"partner": row}
 
     def _tool_get_application(self, args):
-        aid = args.get("application_id")
+        aid=args.get("application_id")
         if aid is None:
             raise DataToolError("application_id_required")
         return {"application": data_core.get_application(int(aid))}
+
+    def _tool_get_application_full(self, args):
+        aid=args.get("application_id")
+        if aid is None:
+            raise DataToolError("application_id_required")
+        app=data_core.get_application(int(aid))
+        if not app:
+            return {"application":None,"documents":[]}
+        docs=data_core.get_documents(application_id=int(aid),limit=50)
+        return {"application":app,"documents":docs}
+
 
     def _tool_get_documents(self, args):
         aid = args.get("application_id")
