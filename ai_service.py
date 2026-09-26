@@ -218,6 +218,68 @@ class AIService:
             raise RuntimeError("AI providers failed: " + " | ".join(errors)[-1800:])
         raise RuntimeError("No AI provider is configured")
 
+    async def structured_json(self, system_prompt: str, user_text: str, *,
+                              schema_name: str = "response", schema: dict | None = None,
+                              max_tokens: int = 900, chain: str = "unknown",
+                              stage: str = "unknown", operation: str = "structured_json",
+                              purpose: str = "", partner_id: int | None = None,
+                              user_id: int | None = None) -> dict:
+        """Provider/model-agnostic strict JSON gateway used by AI workflows."""
+        clean=self.clean_sensitive_data(user_text)
+        messages=[{"role":"system","content":system_prompt},{"role":"user","content":clean}]
+        available={"groq":(self.groq_client,self.groq_model),"openai":(self.openai_client,self.openai_model),
+                   "openrouter":(self.openrouter_client,self.openrouter_model)}
+        order=[self.provider]+[x for x in ("groq","openai","openrouter") if x!=self.provider]
+        errors=[]
+        for provider in order:
+            client,model=available[provider]
+            if not client: continue
+            try:
+                kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens}
+                if schema:
+                    kwargs["response_format"]={"type":"json_schema","json_schema":{"name":schema_name,"schema":schema,"strict":True}}
+                else:
+                    kwargs["response_format"]={"type":"json_object"}
+                if provider=="groq":
+                    response=await asyncio.to_thread(client.chat.completions.create,**kwargs)
+                else:
+                    response=await asyncio.to_thread(client.chat.completions.create,**kwargs)
+                usage=getattr(response,"usage",None)
+                ai_cost_center.record_usage(provider=provider,model=model,chain=chain,stage=stage,operation=operation,
+                    purpose=purpose,user_id=user_id,partner_id=partner_id,
+                    input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
+                    output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
+                    cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
+                    reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0))
+                data=self._json(self._text(response))
+                if data:return data
+                errors.append(provider+": invalid_json")
+            except Exception as exc:
+                # Some providers/models do not support json_schema. Retry once
+                # as JSON object mode, without retrying rate limits.
+                if getattr(exc,"status_code",None)==400 and schema:
+                    try:
+                        kwargs["response_format"]={"type":"json_object"}
+                        if provider=="openrouter":
+                            kwargs.pop("response_format",None)
+                        response=await asyncio.to_thread(client.chat.completions.create,**kwargs)
+                        usage=getattr(response,"usage",None)
+                        ai_cost_center.record_usage(provider=provider,model=model,chain=chain,stage=stage,operation=operation,
+                            purpose=purpose,user_id=user_id,partner_id=partner_id,
+                            input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
+                            output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
+                            cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
+                            reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0))
+                        data=self._json(self._text(response))
+                        if data:return data
+                    except Exception as retry_exc:
+                        if getattr(retry_exc,"status_code",None)==429: raise
+                        errors.append(provider+": json_mode_failed")
+                        continue
+                errors.append(provider+": "+str(getattr(exc,"status_code",type(exc).__name__)))
+        if errors: raise RuntimeError("AI providers failed: "+" | ".join(errors)[-1800:])
+        raise RuntimeError("No AI provider is configured")
+
     def _openai_completion(self, messages, model: str | None = None):
         if not self.openai_client:
             raise RuntimeError("OPENAI_API_KEY is not configured or OpenAI client is unavailable")
