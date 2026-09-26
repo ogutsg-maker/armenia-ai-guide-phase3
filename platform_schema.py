@@ -444,6 +444,8 @@ def ensure_platform_schema() -> None:
     CREATE INDEX IF NOT EXISTS idx_ai_usage_provider_model ON ai_usage_ledger(provider, model, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_ai_usage_chain_stage ON ai_usage_ledger(chain, stage, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_ledger(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_order_created ON ai_usage_ledger(order_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_negotiation_created ON ai_usage_ledger(negotiation_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS ai_research_tasks (
         id BIGSERIAL PRIMARY KEY,
