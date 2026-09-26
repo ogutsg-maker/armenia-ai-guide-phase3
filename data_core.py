@@ -951,6 +951,32 @@ def replace_request_candidates(request_id: int, candidates: list[dict[str, Any]]
 
 
 
+def create_partner_service(*, partner_id: int, actor_user_id: int, company_id: int | None,
+                         name: str, price: Any = None, category_id: int | None = None,
+                         address_id: int | None = None, phone: str | None = None) -> dict:
+    """Canonical validated service creation entry point for partner tools/API."""
+    checked = validate_service_payload(
+        partner_id=int(partner_id), actor_user_id=int(actor_user_id),
+        company_id=int(company_id) if company_id is not None else None,
+        name=name, price=price, category_id=category_id,
+    )
+    if address_id is not None:
+        obj = one("SELECT id,partner_id,business_id FROM partner_objects WHERE id=%s", (int(address_id),))
+        if not obj or int(obj.get("partner_id") or 0) != int(partner_id):
+            raise PermissionError("address_not_owned")
+        if company_id is not None and int(obj.get("business_id") or 0) != int(company_id):
+            raise PermissionError("address_not_in_company")
+    cols=["partner_id","business_id","name","price"]
+    vals=[int(partner_id), checked["company_id"], checked["name"], checked["price"]]
+    if category_id is not None: cols.append("category_id"); vals.append(int(category_id))
+    if address_id is not None: cols.append("object_id"); vals.append(int(address_id))
+    if phone is not None: cols.append("phone"); vals.append(str(phone).strip())
+    placeholders=",".join(["%s"]*len(vals))
+    row=one(f"INSERT INTO services ({','.join(cols)}) VALUES ({placeholders}) RETURNING id,partner_id,business_id,name,category_id,price,status",tuple(vals))
+    if not row: raise ValueError("service_create_failed")
+    return row
+
+
 # ---------------------------------------------------------------------------
 # Operational AI context reads
 # ---------------------------------------------------------------------------
