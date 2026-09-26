@@ -68,8 +68,13 @@ class PartnerAI:
   "next_step":"profile|catalog|confirmation|document|waiting_admin|done"
 }}'''
         try:
-            raw=await self.ai._call_groq(system,text,True)
-            data=json.loads(raw)
+            data=await self.ai.chat_json(
+                system, text, max_tokens=1200,
+                chain="partner_registration", stage="dialogue",
+                operation="partner_profile_extraction",
+                purpose="Extract business profile, services, prices and catalog mapping",
+                user_id=user_id, partner_id=int(partner['id']),
+            )
         except Exception as exc:
             logger.exception('Partner AI failed')
             data={'reply':'Ես այստեղ եմ։ Խնդրում եմ պատմեք ձեր բիզնեսի մասին՝ ինչ ծառայություններ եք առաջարկում, որտեղ եք աշխատում և ինչ գներով։','profile_patch':{},'catalog_match':{},'catalog_proposal':{'needed':False},'confirmed':False,'needs_document':False,'next_step':'profile'}
