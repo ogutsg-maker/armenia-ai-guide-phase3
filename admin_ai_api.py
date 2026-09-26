@@ -370,52 +370,41 @@ def _admin_context(limit=30,include_catalog=False):
 # =====================================================================
 # Dynamic Admin Query / Skills layer
 # =====================================================================
-# Legacy phrase-to-SQL query engine removed. AI reads use DataTools.\n\nasync def _admin_execute(command):
-    intent=str(command.get("intent") or ""); aid=command.get("application_id")
-    try: aid=int(aid) if aid is not None else None
-    except (TypeError,ValueError): aid=None
-    if intent=="show_applications":
-        rows=_admin_context(limit=30).get("applications",[])
-        if not rows: return "📨 Заявок нет."
-        return "📨 Заявки ("+str(len(rows))+"):\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")+" · "+str(x.get("price") if x.get("price") is not None else "—")+" ֏" for x in rows[:20])
-    # Full application is handled by the canonical read-only branch below.
-    if intent=="show_partner_count":
-        row=platform_db.one("SELECT COUNT(*) AS count FROM partners")
-        reply="🤝 Գործընկերների քանակը՝ "+str(int(row.get("count") or 0))+"։"
-        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
+# Legacy phrase-to-SQL query engine removed. AI reads use DataTools.
 
+async def _admin_execute(command):
+    intent=str(command.get("intent") or "").strip()
+    aid=command.get("application_id")
+    try:
+        aid=int(aid) if aid is not None else None
+    except (TypeError,ValueError):
+        aid=None
+    tools=DataTools("admin")
     if intent=="show_application_count":
-        row=platform_db.one("SELECT COUNT(*) AS count FROM partner_applications WHERE status NOT IN ('approved','pending_partner')")
-        return "📨 Сейчас в работе: "+str(int(row.get("count") or 0))+" заявок."
-    if intent=="open_application":
-        if not aid: return "Укажите номер заявки."
-        a=platform_db.one("SELECT a.*,p.user_id FROM partner_applications a JOIN partners p ON p.id=a.partner_id WHERE a.id=%s",(aid,))
-        if not a: return "Заявка #"+str(aid)+" не найдена."
-        loc=", ".join(str(x) for x in (a.get("location_marz"),a.get("location_city"),a.get("address")) if x)
-        return ("📨 Заявка #"+str(aid)+" · "+str(a.get("business_name") or "—")+"\nСтатус: "+str(a.get("status") or "—")+"\nTelegram: "+str(a.get("user_id") or "—")+"\n📍 "+(loc or "—")+"\n☎ "+str(a.get("phone") or "—")+"\n🛠 "+str(a.get("service_name") or "—")+" · "+str(a.get("price") if a.get("price") is not None else "—")+" ֏\n🧭 "+str(a.get("direction_name") or "—")+" → "+str(a.get("subcategory_name") or "—"))
-    # All read-only semantic intents belong to the conversational data path.
-    # Do not force them through the legacy command vocabulary.
-    action_required=str(c.get("action_required") or "read_only").strip().lower()
-    if action_required not in {"mutation","write","confirm"} and intent not in {
-        "edit_application","approve_application","reject_application","clarify_application"
-    }:
-        try:
-            reply=await _admin_semantic_answer(message,c,state)
-        except Exception:
-            reply=_admin_localized(c.get("response_language","ru"),"safe_error")
-        _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
-    if intent=="query_database":
-        return await _admin_query_answer(str(command.get("question") or ""),command.get("target") or "applications",command.get("filters") or {},command.get("limit") or 20,command.get("sort"))
-    if intent=="show_full_application":
-        return _admin_full_application_text(aid)
+        data=tools.execute("count",{"entity":"applications"}).get("data") or {}
+        return "📨 Հայտերի քանակը՝ "+str(data.get("count") or 0)+"։"
+    if intent=="show_partner_count":
+        data=tools.execute("count",{"entity":"partners"}).get("data") or {}
+        return "🤝 Գործընկերների քանակը՝ "+str(data.get("count") or 0)+"։"
+    if intent=="show_applications":
+        rows=(tools.execute("search_applications",{"limit":30}).get("data") or {}).get("items",[])
+        if not rows: return "📨 Հայտեր չկան։"
+        return "📨 Հայտեր ("+str(len(rows))+"):\n"+"\n".join(
+            "#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")
+            for x in rows[:20])
     if intent=="show_partners":
-        rows=_admin_context(limit=50).get("partners",[])
-        return "🤝 Партнёров нет." if not rows else "🤝 Партнёры:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:30])
+        rows=(tools.execute("search_partners",{"limit":50}).get("data") or {}).get("items",[])
+        return "🤝 Գործընկերներ չկան։" if not rows else "🤝 Գործընկերներ:\n"+"\n".join(
+            "#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")
+            for x in rows[:30])
     if intent=="show_businesses":
-        rows=_admin_context(limit=100).get("businesses",[])
-        return "🏢 Компаний нет." if not rows else "🏢 Компании:\n"+"\n".join("#"+str(x["id"])+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—") for x in rows[:50])
-    return "Неизвестный запрос."
-
+        rows=(tools.execute("search_companies",{"limit":100}).get("data") or {}).get("items",[])
+        return "🏢 Ընկերություններ չկան։" if not rows else "🏢 Ընկերություններ:\n"+"\n".join(
+            "#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")
+            for x in rows[:50])
+    if intent in {"open_application","show_full_application"}:
+        return _admin_full_application_text(aid)
+    return "Չհաջողվեց որոշել հարցման տեսակը։"
 
 def _admin_full_application_text(aid):
     """Return the complete current application state for read-only admin inspection."""
