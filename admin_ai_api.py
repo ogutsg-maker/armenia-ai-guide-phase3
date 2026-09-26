@@ -90,7 +90,14 @@ def _admin_normalize_plan(data,message=""):
     data["tool_requests"]=normalized
     data["tool_registry_valid"]=len(normalized)==len(raw_tools[:6])
     data["navigation"]=data.get("navigation")
-    data["response_language"]=lang
+    lang=_admin_detect_language(message)
+    data["response_language"]=str(data.get("response_language") or lang).lower()
+    if data["response_language"] not in {"am","ru","en"}:
+        data["response_language"]=lang
+    try:
+        confidence=float(data.get("confidence",0.0) or 0.0)
+    except (TypeError,ValueError):
+        confidence=0.0
     data["confidence"]=max(0.0,min(1.0,confidence))
     data["count_only"]=bool(data.get("count_only",False))
     data["reasoning_summary"]=str(data.get("reasoning_summary") or "")[:500]
@@ -934,10 +941,12 @@ TOOL_SCHEMAS:
         data=json.loads(raw)
     except json.JSONDecodeError:
         start=raw.find("{")
-        end=raw.rfind("}")
-        if start<0 or end<=start:
+        if start<0:
             raise RuntimeError(f"{provider} returned invalid planner JSON")
-        data=json.loads(raw[start:end+1])
+        try:
+            data,_end=json.JSONDecoder().raw_decode(raw[start:])
+        except json.JSONDecodeError:
+            raise RuntimeError(f"{provider} returned invalid planner JSON")
     if not isinstance(data,dict):
         raise RuntimeError(f"{provider} returned non-object planner output")
     data["ai_provider"]=provider
