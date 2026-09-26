@@ -507,6 +507,25 @@ def search_applications(status: str | None = None, marz: str | None = None,
     )
 
 
+def application_directions(limit: int = 200):
+    """Return directions actually represented by partner applications.
+
+    This is intentionally different from active_directions(): the latter is the
+    whole catalogue, while this query answers the admin question "which
+    directions have applications?" using only application data.
+    """
+    return rows(
+        """SELECT m.id, m.name_am, m.name_ru, m.name_en,
+                  COUNT(a.id) AS application_count
+           FROM partner_applications a
+           JOIN master_categories m ON m.id=a.master_category_id
+           WHERE m.is_active=TRUE
+           GROUP BY m.id,m.name_am,m.name_ru,m.name_en
+           ORDER BY application_count DESC,m.id ASC
+           LIMIT %s""",
+        (max(1, min(int(limit or 200), 200)),),
+    )
+
 def search_companies(query: str = "", marz: str = "", city: str = "", limit: int = 50):
     q = str(query or "").strip()
     marz = str(marz or "").strip()
