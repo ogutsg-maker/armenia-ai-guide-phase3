@@ -507,20 +507,66 @@ def search_applications(status: str | None = None, marz: str | None = None,
     )
 
 
+def search_companies(query: str = "", marz: str = "", city: str = "", limit: int = 50):
+    q = str(query or "").strip()
+    marz = str(marz or "").strip()
+    city = str(city or "").strip()
+    where = ["b.status <> 'archived'"]
+    params: list[Any] = []
+    if q:
+        where.append("(b.name ILIKE %s OR b.description ILIKE %s OR p.business_name ILIKE %s)")
+        params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
+    if marz:
+        where.append("EXISTS (SELECT 1 FROM partner_objects po WHERE po.partner_id=b.partner_id AND po.marz ILIKE %s)")
+        params.append(f"%{marz}%")
+    if city:
+        where.append("EXISTS (SELECT 1 FROM partner_objects po WHERE po.partner_id=b.partner_id AND po.city ILIKE %s)")
+        params.append(f"%{city}%")
+    params.append(max(1, min(int(limit or 50), 200)))
+    return rows(
+        "SELECT b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_name "
+        "FROM partner_businesses b JOIN partners p ON p.id=b.partner_id WHERE " + " AND ".join(where) +
+        " ORDER BY b.id DESC LIMIT %s", tuple(params)
+    )
+
+
+def catalog_overview():
+    return one("""SELECT
+        (SELECT COUNT(*) FROM master_categories WHERE is_active=TRUE) AS directions_count,
+        (SELECT COUNT(*) FROM categories WHERE is_active=TRUE) AS subcategories_count,
+        (SELECT COUNT(*) FROM services WHERE status <> 'deleted') AS services_count,
+        (SELECT COUNT(*) FROM partners WHERE status <> 'archived') AS partners_count,
+        (SELECT COUNT(*) FROM partner_businesses WHERE status <> 'archived') AS companies_count""")
+
+
+def ai_usage_summary(days: int = 1):
+    days = max(1, min(int(days or 1), 365))
+    return one("""SELECT COUNT(*) AS operations,
+        COALESCE(SUM(input_tokens),0) AS input_tokens,
+        COALESCE(SUM(output_tokens),0) AS output_tokens,
+        COALESCE(SUM(total_tokens),0) AS total_tokens,
+        COALESCE(SUM(total_cost_usd),0) AS total_cost_usd,
+        COALESCE(SUM(total_cost_amd),0) AS total_cost_amd
+        FROM ai_usage_ledger WHERE created_at >= NOW() - (%s * INTERVAL '1 day')""", (days,))
+
+
 def count(entity: str) -> int:
     allowed = {
         "partners": "SELECT COUNT(*) AS n FROM partners",
         "applications": "SELECT COUNT(*) AS n FROM partner_applications",
-        "services": "SELECT COUNT(*) AS n FROM services",
+        "services": "SELECT COUNT(*) AS n FROM services WHERE status <> 'deleted'",
         "directions": "SELECT COUNT(*) AS n FROM master_categories WHERE is_active=TRUE",
         "subcategories": "SELECT COUNT(*) AS n FROM categories WHERE is_active=TRUE",
         "companies": "SELECT COUNT(*) AS n FROM partner_businesses WHERE status <> 'archived'",
+        "addresses": "SELECT COUNT(*) AS n FROM partner_objects",
+        "documents": "SELECT COUNT(*) AS n FROM partner_verification_documents",
     }
     sql = allowed.get(str(entity or "").strip().lower())
     if not sql:
         raise ValueError("unsupported_count_entity")
     row = one(sql) or {}
     return int(row.get("n") or 0)
+
 
 
 def get_documents(application_id: int | None = None, partner_id: int | None = None, limit: int = 50):
