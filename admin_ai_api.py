@@ -76,28 +76,19 @@ def _admin_tool_schemas(role="admin"):
 def _admin_normalize_plan(data,message=""):
     """Normalize the single semantic ActionPlan contract used by the admin AI."""
     if not isinstance(data,dict): data={}
-    lang=str(data.get("response_language") or data.get("language") or "").lower()[:2]
-    if lang not in {"am","ru","en"}: lang=_admin_detect_language(message)
-    try: confidence=float(data.get("confidence",0) or 0)
-    except Exception: confidence=0.0
-    # Keep one canonical identity field internally while accepting legacy output.
-    entity_id=data.get("entity_id", data.get("application_id"))
-    if entity_id not in (None,""):
-        try: entity_id=int(entity_id)
-        except (TypeError,ValueError): entity_id=None
-    data["entity_id"]=entity_id
-    data["application_id"]=entity_id
-    data["entity_type"]=str(data.get("entity_type") or data.get("target") or "").strip().lower()
-    data["entity_name"]=str(data.get("entity_name") or data.get("entity_query") or "").strip()[:200]
-    raw_needed=data.get("data_needed")
-    if not isinstance(raw_needed,list): raw_needed=[]
-    data["data_needed"]=[str(x).strip().lower() for x in raw_needed if str(x).strip()]
+    registry={x["name"] for x in _admin_tool_registry("admin")}
+    schemas=_admin_tool_schemas("admin")
     raw_tools=data.get("tool_requests")
     if not isinstance(raw_tools,list): raw_tools=[]
-    data["tool_requests"]=[
-        {"name":str(x.get("name") or "").strip(),"arguments":x.get("arguments") if isinstance(x.get("arguments"),dict) else {}}
-        for x in raw_tools if isinstance(x,dict) and str(x.get("name") or "").strip()
-    ][:6]
+    normalized=[]
+    for item in raw_tools[:6]:
+        if not isinstance(item,dict): continue
+        name=str(item.get("name") or "").strip()
+        args=item.get("arguments") if isinstance(item.get("arguments"),dict) else {}
+        if name not in registry: continue
+        normalized.append({"name":name,"arguments":args})
+    data["tool_requests"]=normalized
+    data["tool_registry_valid"]=len(normalized)==len(raw_tools[:6])
     data["navigation"]=data.get("navigation")
     data["response_language"]=lang
     data["confidence"]=max(0.0,min(1.0,confidence))
