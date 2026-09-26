@@ -253,6 +253,49 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
     )
 
 
+def create_partner_address(*, partner_id: int, actor_user_id: int, company_id: int | None,
+                         address: str, city: str | None = None, marz: str | None = None,
+                         phone: str | None = None, object_name: str | None = None) -> dict:
+    assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    address = str(address or "").strip()
+    if not address:
+        raise ValueError("address_required")
+    if company_id is not None:
+        company = get_company(int(company_id))
+        if not company or int(company.get("partner_id") or 0) != int(partner_id):
+            raise PermissionError("company_not_owned")
+    cols=["partner_id","business_id","object_name","address","city","marz","phone"]
+    vals=[int(partner_id), int(company_id) if company_id is not None else None,
+          str(object_name or "").strip() or None, address,
+          str(city or "").strip() or None, str(marz or "").strip() or None,
+          str(phone or "").strip() or None]
+    row=one(
+        f"INSERT INTO partner_objects ({','.join(cols)}) VALUES ({','.join(['%s']*len(vals))}) RETURNING id,partner_id,business_id,object_name,address,city,marz,phone",
+        tuple(vals),
+    )
+    if not row: raise ValueError("address_create_failed")
+    return row
+
+
+def update_partner_address(*, address_id: int, actor_user_id: int, address: str | None = None,
+                           city: str | None = None, marz: str | None = None,
+                           phone: str | None = None, object_name: str | None = None) -> dict:
+    obj=one("SELECT id,partner_id,business_id FROM partner_objects WHERE id=%s",(int(address_id),))
+    if not obj: raise ValueError("address_not_found")
+    assert_partner_owns_partner(int(obj["partner_id"]), int(actor_user_id))
+    fields=[]; vals=[]
+    for key,value in {"address":address,"city":city,"marz":marz,"phone":phone,"object_name":object_name}.items():
+        if value is not None:
+            value=str(value).strip()
+            if key=="address" and not value: raise ValueError("address_required")
+            fields.append(f"{key}=%s"); vals.append(value or None)
+    if not fields: raise ValueError("no_changes")
+    vals.extend([int(address_id),int(obj["partner_id"])])
+    row=one("UPDATE partner_objects SET "+",".join(fields)+" WHERE id=%s AND partner_id=%s RETURNING id,partner_id,business_id,object_name,address,city,marz,phone",tuple(vals))
+    if not row: raise ValueError("address_update_failed")
+    return row
+
+
 def get_partner_addresses(partner_id: int, actor_user_id: int | None = None,
                           public_only: bool = False, limit: int = 100):
     if actor_user_id is not None:
