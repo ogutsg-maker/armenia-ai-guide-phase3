@@ -1650,6 +1650,9 @@ async def _admin_semantic_answer(question,plan,state):
     named=_admin_detect_named_entity(question,state)
 
     qn=_norm(question)
+    asks_services=any(x in qn for x in (
+        "ծառայություններ","ծառայություն","услуги","услуг","services","service"
+    ))
     wants_full=any(x in qn for x in (
         "ամբողջական","ամբողջությամբ","լրիվ","полный","полностью","вся заявка",
         "целиком","full application","complete application"
