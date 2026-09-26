@@ -380,9 +380,9 @@ def ensure_business_application_schema():
              )""")
     _exec("""UPDATE partner_businesses b
              SET description=COALESCE(
-                 substring(a.description from 'Մենք զբաղվում ենք ([^\\.]+)'),
-                 substring(a.description from 'Мы занимаемся ([^\\.]+)'),
-                 substring(a.description from 'We provide ([^\\.]+)'),
+                 substring(a.description from 'Մենք զբաղվում ենք ([^[.]]+)'),
+                 substring(a.description from 'Мы занимаемся ([^[.]]+)'),
+                 substring(a.description from 'We provide ([^[.]]+)'),
                  b.description
              ),
                  phone=COALESCE(
