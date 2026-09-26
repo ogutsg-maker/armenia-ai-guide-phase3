@@ -347,7 +347,7 @@ def _admin_hydrate_context(state,limit=12):
         "response_language":state.get("response_language"),
         "last_action":state.get("last_action"),"last_action_failed":state.get("last_action_failed",False),
         "last_error":state.get("last_error"),"last_error_context":state.get("last_error_context"),"retry_count":state.get("retry_count",0),
-        "query_capabilities":{"targets":["applications","partners","businesses","catalog","master_categories","catalog_overview","services"],"catalog_behavior":"master_categories and catalog return the complete current catalog without an artificial row limit; catalog_overview returns live database counts","operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
+        "query_capabilities":{"targets":["applications","partners","businesses","catalog","master_categories","catalog_overview","services","ai_usage"],"catalog_behavior":"master_categories and catalog return the complete current catalog without an artificial row limit; catalog_overview returns live database counts","operators":["eq","neq","contains","gt","gte","lt","lte","in"]},
         "history":state.get("history",[])[-6:]})
 
 
@@ -377,7 +377,8 @@ _ADMIN_QUERY_TARGETS={
  "businesses":{"table":"partner_businesses b JOIN partners p ON p.id=b.partner_id","select":"b.id,b.partner_id,b.name,b.description,b.phone,b.status,p.business_name AS partner_business_name,b.created_at","order":"b.created_at DESC","limit":50,"aliases":{"business","businesses","companies","компании","ընկերություններ"},"fields":{"status":"b.status","name":"b.name","description":"b.description","phone":"b.phone","partner_name":"p.business_name"}},
  "master_categories":{"table":"master_categories m","select":"m.id,m.name_am,m.name_ru,m.name_en,m.slug,m.is_active","order":"m.id ASC","limit":0,"aliases":{"master_categories","master category","master categories","directions","direction","главные категории","направления","ուղղություններ","ուղղություն","գլխավոր կատեգորիաներ","գլխավոր կատեգորիա"},"fields":{"name":"m.name_am","name_am":"m.name_am","name_ru":"m.name_ru","name_en":"m.name_en","slug":"m.slug","is_active":"m.is_active"}},
  "catalog":{"table":"categories c JOIN master_categories m ON m.id=c.master_category_id","select":"c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en","order":"c.id ASC","limit":0,"aliases":{"catalog","category","categories","subcategory","подкатегории","կատալոգ"},"fields":{"name":"c.name_am","name_am":"c.name_am","name_ru":"c.name_ru","name_en":"c.name_en","slug":"c.slug","master_category_id":"c.master_category_id","master_name":"m.name_am","master_name_am":"m.name_am","master_name_ru":"m.name_ru","master_name_en":"m.name_en"},"base_where":"c.is_active=TRUE AND m.is_active=TRUE"}, "catalog_overview":{"aliases":{"catalog overview","catalog_overview","կատալոգի ընդհանուր","ընդհանուր կատալոգ","catalog stats","catalog count","direction","directions","master categories","subcategory","subcategories","ուղղություն","ուղղություններ","ենթաուղղություն","ենթաուղղություններ","направления","поднаправления"},"limit":1},
- "services":{"table":"services s LEFT JOIN categories c ON c.id=s.category_id LEFT JOIN master_categories m ON m.id=c.master_category_id LEFT JOIN partners p ON p.id=s.partner_id","select":"s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,p.business_name AS partner_name,c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,c.master_category_id,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id","category_name":"c.name_am","master_category_id":"c.master_category_id"}}}
+ "services":{"table":"services s LEFT JOIN categories c ON c.id=s.category_id LEFT JOIN master_categories m ON m.id=c.master_category_id LEFT JOIN partners p ON p.id=s.partner_id","select":"s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,p.business_name AS partner_name,c.name_am AS category_name_am,c.name_ru AS category_name_ru,c.name_en AS category_name_en,c.master_category_id,m.name_am AS master_name_am,m.name_ru AS master_name_ru,m.name_en AS master_name_en,s.created_at","order":"s.id DESC","limit":50,"aliases":{"service","services","услуги","услуга","ծառայություններ","ծառայություն","uslugi"},"fields":{"name":"s.name","category_id":"s.category_id","category_name":"c.name_am","master_category_id":"c.master_category_id"}},
+ "ai_usage":{"table":"ai_usage_ledger u","select":"u.id,u.provider,u.model,u.chain,u.stage,u.operation,u.purpose,u.input_tokens,u.output_tokens,u.cached_input_tokens,u.reasoning_tokens,u.total_tokens,u.total_cost_usd,u.total_cost_amd,u.status,u.created_at","order":"u.created_at DESC","limit":100,"aliases":{"ai usage","ai operation","ai operations","ai cost","ai costs","AI operations","AI operation","AI ծախսեր","AI ծախս","AI գործողություններ","AI գործողություն","операции ai","операция ai","ai операции","расходы ai","ai costs"},"fields":{"provider":"u.provider","model":"u.model","chain":"u.chain","stage":"u.stage","operation":"u.operation","purpose":"u.purpose","status":"u.status","total_tokens":"u.total_tokens","total_cost_usd":"u.total_cost_usd","total_cost_amd":"u.total_cost_amd","created_at":"u.created_at"}}}
 _ADMIN_QUERY_FIELD_ALIASES={"city":"location_city","город":"location_city","քաղաք":"location_city","marz":"location_marz","region":"location_marz","область":"location_marz","մարզ":"location_marz","village":"location_village","село":"location_village","գյուղ":"location_village","address":"address","адрес":"address","հասցե":"address","price":"price","цена":"price","գին":"price","status":"status","статус":"status","կարգավիճակ":"status","name":"business_name","название":"business_name","անուն":"business_name","service":"service_name","service_name":"service_name","услуга":"service_name","подкатегория":"subcategory_name","subcategory":"subcategory_name","ենթակատեգորիա":"subcategory_name","verification_status":"verification_status"}
 _ADMIN_STATUS_ALIASES={"applications":{"pending":["pending_admin","pending_partner","document_pending"],"moderation":["pending_admin"]},"partners":{"pending":["pending"],"moderation":["pending","pending_verification"]},"businesses":{}}
 def _admin_normalize_location(field,value):
@@ -412,6 +413,9 @@ def _admin_query_filter_items(filters,target=None):
 def _admin_query_build(target,filters,limit=20,sort=None):
  target=_admin_query_target(target)
  if not target:return None,"Неизвестный объект данных."
+ if target=="ai_usage" and not filters:
+  # Natural-language questions such as “how many AI operations today?” default to today.
+  return ("SELECT COUNT(*) AS operations, COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(total_cost_usd),0) AS total_cost_usd, COALESCE(SUM(total_cost_amd),0) AS total_cost_amd FROM ai_usage_ledger u WHERE u.created_at >= CURRENT_DATE", (), target), None
  if target=="catalog_overview":
   return ("SELECT (SELECT COUNT(*) FROM master_categories) AS master_categories_count, (SELECT COUNT(*) FROM categories) AS subcategories_count, (SELECT COUNT(*) FROM master_categories WHERE is_active=TRUE) AS master_categories_active, (SELECT COUNT(*) FROM categories WHERE is_active=TRUE) AS subcategories_active", (), target), None
  spec=_ADMIN_QUERY_TARGETS[target];clauses=[];params=[]
@@ -504,11 +508,16 @@ async def _admin_query_answer(question,target,filters,limit=20,sort=None):
 
 def _admin_query_result_text(target,rows,filters,question):
  if not rows:return "🔎 Ничего не найдено."
- labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","master_categories":"📂 Ուղղություններ","catalog_overview":"📚 Катալոգ","services":"🛠 Услуги"}
+ labels={"applications":"📨 Заявки","partners":"🤝 Партнёры","businesses":"🏢 Компании","catalog":"📚 Каталог","master_categories":"📂 Ուղղություններ","catalog_overview":"📚 Կատալոգ","services":"🛠 Услуги","ai_usage":"🤖 AI operations"}
  if target=="catalog_overview":
   x=rows[0]
   return ("📚 Կատալոգ՝ "+str(x.get("master_categories_count") or 0)+" ուղղություն, "
           +str(x.get("subcategories_count") or 0)+" ենթաուղղություն։")
+ if target=="ai_usage":
+  x=rows[0]
+  return ("🤖 AI operations today: "+str(x.get("operations") or 0)+"։\n"
+          "🔢 Tokens: "+str(x.get("total_tokens") or 0)+"։\n"
+          "💵 Cost: "+str(x.get("total_cost_usd") or 0)+" USD · "+str(x.get("total_cost_amd") or 0)+" AMD։")
  lines=[labels.get(target,"🔎 Результат")+" ("+str(len(rows))+"):"]
  for x in rows:
   if target=="applications":
@@ -1051,7 +1060,7 @@ Decide intent, target, entity, required real data and safe read tools. Never inv
 Python is the source of truth. The ai_context field is a compact business-readable mirror of live data; use its facts and entity IDs for understanding, but never infer database tables or SQL from it. Never expose chain-of-thought.
 Safe tools: search_partners,get_partner,get_application,get_documents,get_addresses,get_directions,
 search_catalog,get_services,get_orders,check_application,check_catalog_match,count,
-SEARCH,ANALYZE,CHECK,COMPARE,SUGGEST.
+SEARCH,ANALYZE,CHECK,COMPARE,SUGGEST. AI usage/cost questions target ai_usage and use count or safe read tools.
 Counts are database questions and must use count. Catalog overview means live counts of directions
 and subcategories. Document/service/category follow-ups inherit the uniquely focused entity.
 Checks request the appropriate check tool. Mutations use action_required=mutation and are handled separately.
@@ -1129,11 +1138,12 @@ def _admin_fallback_intent(message,focused_id=None,state=None):
         "services": {"service","services","ծառայություն","ծառայություններ","услуга","услуги"},
         "directions": {"direction","directions","ուղղություն","ուղղություններ","направление","направления"},
         "subcategories": {"subcategory","subcategories","ենթակատեգորիա","ենթակատեգորիաներ","подкатегория","подкатегории"},
+        "ai_usage": {"ai","AI","ai operation","ai operations","AI operations","ai usage","ai cost","AI costs","AI ծախս","AI ծախսեր","AI գործողություն","AI գործողություններ","операции ai","операция ai","ai операции","расходы ai"},
     }
     scores={k:sum(1 for token in vals if token in text) for k,vals in vocab.items()}
     target=max(scores,key=scores.get) if scores else None
     if target and scores[target]>0:
-        intent="count" if any(x in text for x in {"քանի","сколько","how many","count","количество"}) else "query_database"
+        intent=("count_ai_usage" if target=="ai_usage" and any(x in text for x in {"քանի","сколько","how many","count","количество"}) else ("count" if any(x in text for x in {"քանի","сколько","how many","count","количество"}) else "query_database"))
         return _admin_normalize_plan({
             "intent":intent,
             "target":target,
@@ -1672,7 +1682,7 @@ async def _admin_semantic_answer(question,plan,state):
         rows,error=_admin_query_rows("catalog_overview",{},1,None)
         facts={"rows":rows or []}
         if error: facts={"error":error}
-    elif target in {"partners","applications","services","directions","subcategories"} and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories"}:
+    elif target in {"partners","applications","services","directions","subcategories","ai_usage"} and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
         try:
             entity=target
             raw=DataTools("admin").execute("count",{"entity":entity})
@@ -2383,4 +2393,6 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_post('/api/admin/potential-partners/structure',potential_structure)
     app.router.add_post('/api/admin/potential-partners/research',potential_research)
     app.router.add_post('/api/admin/potential-partners/{id}/status',potential_status)
+
+
 
