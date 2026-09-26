@@ -187,6 +187,45 @@ def order_economics(order_id: int) -> dict | None:
                          "platform_profit_before_other_costs_amd":round(commission-ai_cost,4) if currency=="AMD" else None}}
 
 
+
+def project_economics(*, days: int = 30, partner_id: int | None = None) -> dict:
+    """Aggregate realized booking economics and AI operating expense."""
+    d=max(1,min(int(days or 30),3650))
+    params=[d]
+    where=["b.created_at >= NOW() - (%s || ' days')::interval"]
+    if partner_id is not None:
+        where.append("b.partner_id=%s")
+        params.append(int(partner_id))
+    where_sql=" AND ".join(where)
+    summary=platform_db.one(
+        f"""SELECT COUNT(*) orders,
+                   COALESCE(SUM(CASE WHEN UPPER(COALESCE(b.currency,'AMD'))='AMD' THEN b.agreed_price ELSE 0 END),0) service_revenue_amd,
+                   COALESCE(SUM(CASE WHEN UPPER(COALESCE(b.currency,'AMD'))='AMD' THEN b.commission_amount ELSE 0 END),0) commission_amd
+            FROM bookings b WHERE {where_sql}""", tuple(params)) or {}
+    ai_where=["u.created_at >= NOW() - (%s || ' days')::interval"]
+    ai_params=[d]
+    if partner_id is not None:
+        ai_where.append("u.partner_id=%s")
+        ai_params.append(int(partner_id))
+    ai=platform_db.one(
+        "SELECT COUNT(*) operations,COALESCE(SUM(total_cost_usd),0) total_cost_usd,"
+        "COALESCE(SUM(total_cost_amd),0) total_cost_amd "
+        "FROM ai_usage_ledger u WHERE "+" AND ".join(ai_where),tuple(ai_params)) or {}
+    by_stage=platform_db.rows(
+        "SELECT COALESCE(u.stage,'unknown') stage,COALESCE(u.operation,'unknown') operation,"
+        "COUNT(*) operations,COALESCE(SUM(u.total_cost_amd),0) total_cost_amd "
+        "FROM ai_usage_ledger u WHERE "+" AND ".join(ai_where)+
+        " GROUP BY u.stage,u.operation ORDER BY total_cost_amd DESC",tuple(ai_params))
+    commission=float(summary.get("commission_amd") or 0)
+    ai_cost=float(ai.get("total_cost_amd") or 0)
+    return {"period_days":d,"partner_id":partner_id,"orders":summary,
+            "ai":ai,"ai_by_stage":by_stage,
+            "economics":{"commission_amd":round(commission,4),
+                         "ai_cost_amd":round(ai_cost,4),
+                         "platform_profit_before_other_costs_amd":round(commission-ai_cost,4),
+                         "ai_cost_share_of_commission_pct":round(ai_cost/commission*100,2) if commission else None}}
+
+
 def negotiation_economics(negotiation_id: int) -> dict | None:
     nid=int(negotiation_id)
     row=platform_db.one(
