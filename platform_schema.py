@@ -356,6 +356,21 @@ def ensure_platform_schema() -> None:
         UNIQUE(request_id, partner_id, service_id)
     );
 
+    CREATE TABLE IF NOT EXISTS project_expenses (
+        id BIGSERIAL PRIMARY KEY,
+        booking_id BIGINT REFERENCES bookings(id) ON DELETE CASCADE,
+        partner_id BIGINT REFERENCES partners(id) ON DELETE SET NULL,
+        expense_type TEXT NOT NULL CHECK (expense_type IN ('payment_fee','refund','other')),
+        amount NUMERIC(18,4) NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'AMD',
+        description TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'manual',
+        data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_project_expenses_booking ON project_expenses(booking_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_project_expenses_partner ON project_expenses(partner_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS negotiations (
         id BIGSERIAL PRIMARY KEY,
         request_id BIGINT NOT NULL REFERENCES service_requests(id) ON DELETE CASCADE,
