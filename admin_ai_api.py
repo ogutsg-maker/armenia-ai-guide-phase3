@@ -1478,53 +1478,28 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
 
 
 def _admin_tool_context(plan, entity_type, entity_id):
-    """Execute model-selected safe tools and normalize every result to one Data Contract."""
     requests=plan.get("tool_requests") or []
-    if not requests:
-        return {}
-    business_tools=DataTools("admin")
-    universal_tools=AdminDataTools()
+    if not requests: return {}
+    tools=DataTools("admin")
     results=[]
     for req in requests[:6]:
+        if not isinstance(req,dict): continue
         name=str(req.get("name") or "").strip()
         args=dict(req.get("arguments") or {})
-
-        # Python owns identity resolution; the model never supplies raw SQL.
         if entity_id:
             if entity_type=="application" and name in {"get_application","get_documents","check_application"}:
                 args.setdefault("application_id",int(entity_id))
             elif entity_type=="partner" and name in {"get_partner","get_documents","get_addresses","get_services"}:
                 args.setdefault("partner_id",int(entity_id))
-
+            elif entity_type in {"business","company"} and name=="get_company":
+                args.setdefault("company_id",int(entity_id))
         try:
-            if name in {"SEARCH","ANALYZE","CHECK","COMPARE","SUGGEST"}:
-                if name=="SEARCH":
-                    result=universal_tools.search(args.get("table"),args.get("filters") or {},
-                                                  args.get("columns"),args.get("limit",20))
-                elif name in {"ANALYZE","CHECK"}:
-                    result=(universal_tools.analyze if name=="ANALYZE" else universal_tools.check)(
-                        args.get("table"),args.get("record_id",entity_id),args.get("aspects") or [])
-                elif name=="COMPARE":
-                    result=universal_tools.compare(args.get("table"),args.get("ids") or [],args.get("columns"))
-                else:
-                    result=universal_tools.suggest(args.get("table"),args.get("query") or "",args.get("columns"))
-                results.append(result)
-                continue
-
-            raw=business_tools.execute(name,args)
-            payload=raw.get("data") if isinstance(raw,dict) else raw
-            if isinstance(payload,list):
-                records=[{"row_index":i,"table":name,"fields":item} for i,item in enumerate(payload)]
-            else:
-                records=[{"row_index":0,"table":name,"fields":payload}]
-            results.append(data_contract(tool_executed=name,data=records))
+            results.append(tools.execute(name,args))
         except DataToolError as exc:
-            results.append(data_contract(tool_executed=name,status="error",system_notice=str(exc)))
+            results.append({"tool":name,"data":{},"error":str(exc)})
         except Exception as exc:
-            results.append(data_contract(tool_executed=name,status="error",
-                                         system_notice="tool_execution_failed:"+str(exc)[:250]))
+            results.append({"tool":name,"data":{},"error":"tool_execution_failed:"+str(exc)[:250]})
     return {"tool_results":results}
-
 
 def _admin_compact_tool_result_for_replanning(result, question=""):
     """Keep re-planning context factual but small.
