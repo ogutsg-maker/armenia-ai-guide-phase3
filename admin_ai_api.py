@@ -1658,6 +1658,22 @@ async def _admin_semantic_answer(question,plan,state):
         "целиком","full application","complete application"
     ))
 
+    # A generic "show it fully" follow-up should preserve the immediately
+    # previous result family. For example, after "what services does BYUTI
+    # have?", "ամբողջական ցույց տուր" means show those services, not count
+    # all services and not switch to an application.
+    previous_target=str(state.get("last_query_target") or "").strip().lower()
+    previous_rows_for_display=state.get("last_shown_query_rows") or []
+    if wants_full and previous_rows_for_display and previous_target in {
+        "services","companies","partners","applications"
+    } and not any(x in qn for x in ("հայտ","заявк","application")):
+        if previous_target=="services":
+            return _admin_query_result_text("services", previous_rows_for_display, {}, question)
+        if previous_target=="companies":
+            return _admin_query_result_text("companies", previous_rows_for_display, {}, question)
+        if previous_target=="partners":
+            return _admin_query_result_text("partners", previous_rows_for_display, {}, question)
+
     # If the conversation has exactly one live application, a context-free
     # "full application" request can safely resolve to that single record.
     if wants_full and not plan.get("entity_id"):
@@ -1857,7 +1873,11 @@ async def _admin_semantic_answer(question,plan,state):
     simple_counts={"partners":"partners","applications":"applications","services":"services",
                    "directions":"directions","subcategories":"subcategories","companies":"companies",
                    "addresses":"addresses","documents":"documents"}
-    if target in simple_counts and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
+    entity_scoped_read = bool(entity_id and (
+        (target == "services" and "services" in needed)
+        or (target in {"application","application_full"} and bool(needed & {"application","documents","services","category"}))
+    ))
+    if target in simple_counts and not entity_scoped_read and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
         try:
             entity=simple_counts[target]
             raw=DataTools("admin").execute("count",{"entity":entity})
