@@ -1648,6 +1648,42 @@ async def _admin_semantic_answer(question,plan,state):
                 pass
 
     named=_admin_detect_named_entity(question,state)
+
+    # If the conversation has exactly one live application, a context-free
+    # "full application" request can safely resolve to that single record.
+    if wants_full and not plan.get("entity_id"):
+        try:
+            only_apps=DataTools("admin").execute("search_applications",{"limit":2}).get("data",{}).get("items",[])
+            if len(only_apps)==1 and only_apps[0].get("id") is not None:
+                aid=int(only_apps[0]["id"])
+                plan["target"]="application"
+                plan["entity_type"]="application"
+                plan["entity_id"]=aid
+                plan["entity_name"]=only_apps[0].get("business_name") or ""
+                plan["intent"]="information_request"
+                plan["data_needed"]=["application","documents","services","category"]
+                plan["tool_requests"]=[{"name":"get_application_full","arguments":{"application_id":aid}}]
+                target="application"
+                intent="information_request"
+        except Exception:
+            pass
+
+    # Resolve an explicit Latin/mixed business token from the live company
+    # search surface when the planner missed the entity name.
+    if not named and asks_services:
+        candidates=[x for x in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", question or "")]
+        for candidate in candidates:
+            try:
+                rows=(DataTools("admin").execute(
+                    "search_companies",{"query":candidate,"limit":5}
+                ).get("data") or {}).get("items",[])
+                exact=[row for row in rows if _norm(row.get("name") or row.get("business_name"))==_norm(candidate)]
+                if exact:
+                    named=exact[0].get("name") or candidate
+                    break
+            except Exception:
+                continue
+
     service_words={
         "ծառայություն","ծառայություններ","ծառայությունները","услуга","услуги",
         "услуг","services","service"
