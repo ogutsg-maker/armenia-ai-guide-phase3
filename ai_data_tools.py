@@ -32,6 +32,7 @@ TOOL_DEFINITIONS = {
     "validate_action_plan": {"description": "Validate a proposed AI action before any write. This tool never mutates data.", "roles": {"admin", "partner"}},
     "service_action_plan": {"description": "Validate a proposed add/update service action. Never writes to DB.", "roles": {"admin", "partner"}},
     "execute_service_action": {"description": "Execute a previously confirmed service update through Data Core.", "roles": {"admin", "partner"}},
+    "execute_address_action": {"description": "Execute a confirmed partner address create/update through Data Core.", "roles": {"partner"}},
 }
 
 
@@ -92,6 +93,30 @@ class DataTools:
             partner_id=int(partner_id),
             actor_user_id=int(actor_user_id),
         )
+
+    def _tool_execute_address_action(self, args):
+        if self.role != "partner" or self.actor_id is None:
+            raise DataToolError("partner_execution_only")
+        if args.get("confirmed") is not True:
+            raise DataToolError("explicit_confirmation_required")
+        action=str(args.get("action") or "").strip()
+        partner=data_core.get_partner_by_user(int(self.actor_id))
+        if not partner: raise DataToolError("partner_not_found")
+        if action=="add_address":
+            return {"address":data_core.create_partner_address(
+                partner_id=int(partner["id"]), actor_user_id=int(self.actor_id),
+                company_id=int(args["company_id"]) if str(args.get("company_id")).isdigit() else None,
+                address=args.get("address"), city=args.get("city"), marz=args.get("marz"),
+                phone=args.get("phone"), object_name=args.get("object_name"),
+            ),"executed":True}
+        if action=="update_address":
+            if not str(args.get("address_id")).isdigit(): raise DataToolError("address_id_required")
+            return {"address":data_core.update_partner_address(
+                address_id=int(args["address_id"]), actor_user_id=int(self.actor_id),
+                address=args.get("address"), city=args.get("city"), marz=args.get("marz"),
+                phone=args.get("phone"), object_name=args.get("object_name"),
+            ),"executed":True}
+        raise DataToolError("unsupported_address_action")
 
     def _tool_execute_service_action(self, args):
         if self.role != "partner" or self.actor_id is None:
