@@ -274,6 +274,40 @@ def project_economics(*, days: int = 30, partner_id: int | None = None) -> dict:
                          "ai_cost_share_of_commission_pct":round(ai_cost/commission*100,2) if commission else None}}
 
 
+def partner_economics(*, days: int = 30) -> list[dict]:
+    d=max(1,min(int(days or 30),3650))
+    rows=platform_db.rows(
+        """SELECT b.partner_id,
+                  COALESCE(MAX(p.business_name),'') business_name,
+                  COUNT(DISTINCT b.id) orders,
+                  COALESCE(SUM(CASE WHEN UPPER(COALESCE(b.currency,'AMD'))='AMD' THEN b.commission_amount ELSE 0 END),0) commission_amd
+           FROM bookings b LEFT JOIN partners p ON p.id=b.partner_id
+           WHERE b.created_at >= NOW() - (%s || ' days')::interval
+           GROUP BY b.partner_id ORDER BY commission_amd DESC""",(d,))
+    ai=platform_db.rows(
+        """SELECT partner_id,COALESCE(SUM(total_cost_amd),0) ai_cost_amd
+           FROM ai_usage_ledger
+           WHERE created_at >= NOW() - (%s || ' days')::interval
+           GROUP BY partner_id""",(d,))
+    ex=platform_db.rows(
+        """SELECT partner_id,COALESCE(SUM(amount),0) expenses_amd
+           FROM project_expenses
+           WHERE created_at >= NOW() - (%s || ' days')::interval
+           GROUP BY partner_id""",(d,))
+    ai_map={int(x["partner_id"]):float(x["ai_cost_amd"] or 0) for x in ai if x.get("partner_id") is not None}
+    ex_map={int(x["partner_id"]):float(x["expenses_amd"] or 0) for x in ex if x.get("partner_id") is not None}
+    out=[]
+    for row in rows:
+        pid=row.get("partner_id")
+        if pid is None: continue
+        commission=float(row.get("commission_amd") or 0)
+        ai_cost=ai_map.get(int(pid),0)
+        expenses=ex_map.get(int(pid),0)
+        out.append({**row,"ai_cost_amd":round(ai_cost,4),"other_expenses_amd":round(expenses,4),
+                    "net_profit_amd":round(commission-ai_cost-expenses,4)})
+    return out
+
+
 def negotiation_economics(negotiation_id: int) -> dict | None:
     nid=int(negotiation_id)
     row=platform_db.one(
