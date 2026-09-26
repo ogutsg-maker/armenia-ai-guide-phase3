@@ -266,7 +266,7 @@ def ensure_business_application_schema():
              SET description=COALESCE(
                  COALESCE(substring(a.description from 'Մենք զբաղվում ենք ([^։]+)'), substring(a.description from '^(.+?)։[[:space:]]*Հիմնական ծառայություններն')),
                  substring(a.description from 'Мы занимаемся ([^.]+)'),
-                 substring(a.description from 'We provide ([^\.]+)'),
+                 substring(a.description from 'We provide ([^.]+)'),
                  b.description
              ), updated_at=NOW()
              FROM partner_applications a
@@ -380,9 +380,9 @@ def ensure_business_application_schema():
              )""")
     _exec("""UPDATE partner_businesses b
              SET description=COALESCE(
-                 substring(a.description from 'Մենք զբաղվում ենք ([^[.]]+)'),
-                 substring(a.description from 'Мы занимаемся ([^[.]]+)'),
-                 substring(a.description from 'We provide ([^[.]]+)'),
+                 substring(a.description from 'Մենք զբաղվում ենք ([^.]+)'),
+                 substring(a.description from 'Мы занимаемся ([^.]+)'),
+                 substring(a.description from 'We provide ([^.]+)'),
                  b.description
              ),
                  phone=COALESCE(
