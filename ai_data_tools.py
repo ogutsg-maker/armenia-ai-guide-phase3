@@ -29,6 +29,7 @@ TOOL_DEFINITIONS = {
     "check_application": {"description": "Run factual consistency/completeness checks on an application.", "roles": {"admin"}},
     "check_catalog_match": {"description": "Check whether a service maps plausibly to an active catalog category.", "roles": {"admin", "partner"}},
     "count": {"description": "Count a supported business entity without exposing SQL. directions means active master categories; subcategories means active catalog subcategories.", "roles": {"admin", "partner", "client"}},
+    "validate_action_plan": {"description": "Validate a proposed AI action before any write. This tool never mutates data.", "roles": {"admin", "partner"}},
 }
 
 
@@ -77,6 +78,14 @@ class DataTools:
         if isinstance(value, (list, tuple, set)):
             return [DataTools._safe_value(v) for v in value]
         return str(value)
+
+    def _tool_validate_action_plan(self, args):
+        from ai_action_plan import validate_plan
+        allowed = args.get("allowed_actions")
+        allowed_set = {str(x) for x in allowed} if isinstance(allowed, list) else None
+        plan = validate_plan(args.get("plan"), allowed_actions=allowed_set)
+        plan["execution"] = "confirmation_required" if plan["requires_confirmation"] else "not_executed"
+        return plan
 
     def _tool_count(self, args):
         entity = str(args.get("entity") or "").strip().lower()
