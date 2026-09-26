@@ -42,6 +42,21 @@ class PartnerAI:
         history=recent_ai_messages(session['id'],14)
         clarification=latest_clarification(partner['id'])
         catalog=_catalog_text(catalog_tree())
+        # Give the model a verified, compact view of the partner's current
+        # business structure so it can resolve natural-language references
+        # such as "BYUTI", "second address" or "that service" without IDs.
+        try:
+            dt=DataTools('partner', user_id)
+            companies=dt.execute('get_companies').get('data',{}).get('items',[])
+            addresses=dt.execute('get_addresses').get('data',{}).get('items',[])
+            services=dt.execute('get_services').get('data',{}).get('items',[])
+        except Exception:
+            companies,addresses,services=[],[],[]
+        business_context=json.dumps({
+            'companies':companies[:50],
+            'addresses':addresses[:100],
+            'services':services[:200],
+        },ensure_ascii=False)
         system=f'''Դու Armenia AI Guide-ի գործընկերոջ անձնական AI օգնականն ես։
 Դու չես ստիպում գործընկերոջը լրացնել ձևեր։ Գործընկերը խոսում է բնական լեզվով, իսկ դու նրա խոսքը վերածում ես կառուցվածքային տվյալների։
 Լեզուն՝ {lang}. Պատասխանիր նույն լեզվով, հնարավորինս բնական և կարճ։
@@ -57,6 +72,9 @@ class PartnerAI:
 
 Կատալոգը.
 {catalog}
+
+Գործընկերոջ իրական ընթացիկ կառուցվածքը (միայն DB-ից ստացված տվյալներ).
+{business_context}
 
 Ընթացիկ կառուցված տվյալները.
 {json.dumps(ctx.get('profile',{}),ensure_ascii=False)}
