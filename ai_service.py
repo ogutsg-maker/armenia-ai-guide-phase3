@@ -199,14 +199,18 @@ class AIService:
                 else:
                     response = await asyncio.to_thread(self._openai_completion_json, messages, model, max_tokens)
                 usage = getattr(response, "usage", None)
+                input_tokens = int(getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", 0)) or 0)
+                output_tokens = int(getattr(usage, "completion_tokens", getattr(usage, "output_tokens", 0)) or 0)
+                prompt_details = getattr(usage, "prompt_tokens_details", None)
+                completion_details = getattr(usage, "completion_tokens_details", None)
+                cached_tokens = int(getattr(prompt_details, "cached_tokens", 0) or 0)
+                reasoning_tokens = int(getattr(completion_details, "reasoning_tokens", 0) or 0)
                 ai_cost_center.record_usage(
                     provider=name, model=model, chain=chain, stage=stage, operation=operation,
                     purpose=purpose, user_id=user_id, partner_id=partner_id, company_id=company_id,
                     order_id=order_id, negotiation_id=negotiation_id,
-                    input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-                    output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
-                    cached_tokens=int(getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0),
-                    reasoning_tokens=int(getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", 0) or 0),
+                    input_tokens=input_tokens, output_tokens=output_tokens,
+                    cached_tokens=cached_tokens, reasoning_tokens=reasoning_tokens,
                 )
                 data = self._json(self._text(response))
                 if data:
