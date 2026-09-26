@@ -75,7 +75,9 @@ def ensure_platform_schema() -> None:
         location_type TEXT NOT NULL DEFAULT 'fixed'
             CHECK (location_type IN ('fixed','mobile','online','outbound')),
         data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        total_cost_amd NUMERIC(18,4) NOT NULL DEFAULT 0,
+        exchange_rate_amd NUMERIC(18,6) NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS partner_objects (
