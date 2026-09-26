@@ -643,69 +643,24 @@ def _parse_json(text: str) -> dict:
 
 
 async def _groq_json(client, model, system_prompt, user_content, schema_name, schema, max_tokens):
-    """Call Groq for structured JSON without turning transient/rate-limit errors into a second bad request.
+    """Compatibility wrapper now routed through the unified AI gateway.
 
-    GPT-OSS supports strict JSON Schema, but a schema/model/API mismatch can still
-    return HTTP 400. A 429 is a rate-limit condition and MUST NOT be immediately
-    retried as another request. The caller already has deterministic extraction
-    fallbacks, so we return control quickly in that case.
+    The historical function name is kept so existing onboarding/classification
+    code remains stable while provider/model selection becomes centralized.
     """
-    models = []
-    for candidate in (str(model or "").strip(), "openai/gpt-oss-20b"):
-        if candidate and candidate not in models:
-            models.append(candidate)
-
-    last_error = None
-    for active_model in models:
-        base = {
-            "model": active_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "temperature": 0.0,
-            "max_tokens": max_tokens,
-        }
-
-        # 1) Preferred path: strict Structured Outputs.
-        try:
-            response = await client.chat.completions.create(
-                **base,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": schema_name,
-                        "schema": schema,
-                        "strict": True,
-                    },
-                },
-            )
-            return _parse_json(response.choices[0].message.content or "{}")
-        except Exception as exc:
-            last_error = exc
-            status = getattr(exc, "status_code", None)
-
-            # A rate limit is not a schema/model error. Do not immediately send
-            # another request and turn one 429 into a 429 + 400 sequence.
-            if status == 429:
-                raise
-
-            # 2) For a 400 caused by schema validation/support, try JSON Object
-            # Mode once. This is supported by GPT-OSS and is intentionally less
-            # strict; _parse_json validates the returned syntax.
-            if status == 400:
-                try:
-                    response = await client.chat.completions.create(
-                        **base,
-                        response_format={"type": "json_object"},
-                    )
-                    return _parse_json(response.choices[0].message.content or "{}")
-                except Exception as exc2:
-                    last_error = exc2
-                    if getattr(exc2, "status_code", None) == 429:
-                        raise
-
-    raise last_error or RuntimeError("Groq request failed")
+    from ai_service import AIService
+    service = AIService()
+    return await service.structured_json(
+        system_prompt,
+        user_content,
+        schema_name=schema_name,
+        schema=schema,
+        max_tokens=max_tokens,
+        chain="partner_ai",
+        stage=schema_name,
+        operation=schema_name,
+        purpose="structured partner extraction/classification",
+    )
 
 async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
     """Use Groq for semantic service -> real catalogue matching inside one direction.
