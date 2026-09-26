@@ -11,7 +11,6 @@ from potential_partner_ai import PotentialPartnerAI
 from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 from ai_data_tools import DataTools, DataToolError
-from ai_datatools import AdminDataTools, data_contract
 from ai_context_builder import build_ai_context
 import ai_cost_center
 
