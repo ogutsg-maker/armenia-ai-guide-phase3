@@ -2231,6 +2231,33 @@ async def api_admin_ai_costs_partners(request):
     return web.json_response({"ok":True,"days":days,"items":rows})
 
 
+
+async def api_admin_ai_order_economics(request):
+    _admin(request)
+    try:
+        order_id=int(request.match_info["order_id"])
+    except (TypeError,ValueError):
+        return web.json_response({"ok":False,"error":"invalid_order_id"},status=400)
+    from ai_cost_center import order_economics
+    data=order_economics(order_id)
+    if not data:
+        return web.json_response({"ok":False,"error":"order_not_found"},status=404)
+    return web.json_response({"ok":True,**data})
+
+
+async def api_admin_ai_negotiation_economics(request):
+    _admin(request)
+    try:
+        negotiation_id=int(request.match_info["negotiation_id"])
+    except (TypeError,ValueError):
+        return web.json_response({"ok":False,"error":"invalid_negotiation_id"},status=400)
+    from ai_cost_center import negotiation_economics
+    data=negotiation_economics(negotiation_id)
+    if not data:
+        return web.json_response({"ok":False,"error":"negotiation_not_found"},status=404)
+    return web.json_response({"ok":True,**data})
+
+
 def register_admin_ai_routes(app, ai, bot=None):
     app['ai']=ai
     app['bot']=bot
@@ -2238,6 +2265,8 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_get('/api/admin/ai/costs',api_admin_ai_costs)
     app.router.add_get('/api/admin/ai/costs/partners',api_admin_ai_costs_partners)
     app.router.add_get('/api/admin/ai/costs/providers',api_admin_ai_costs_providers)
+    app.router.add_get('/api/admin/ai/economics/order/{order_id}',api_admin_ai_order_economics)
+    app.router.add_get('/api/admin/ai/economics/negotiation/{negotiation_id}',api_admin_ai_negotiation_economics)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
     app.router.add_post('/api/admin/ai/catalog-proposals/{id}/{action}',catalog_action)
     app.router.add_get('/api/admin/potential-partners',potential_list)
