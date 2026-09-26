@@ -37,6 +37,42 @@ def _admin_detect_language(text):
 def _admin_localized(lang,key,**kwargs):
     return _ADMIN_LOCALES.get(lang,_ADMIN_LOCALES["ru"]).get(key,key).format(**kwargs)
 
+def _admin_tool_registry(role="admin"):
+    """Compact machine-readable registry supplied to the planner."""
+    tools=DataTools(role)
+    return tools.available_tools()
+
+
+def _admin_tool_schemas(role="admin"):
+    """Planner-facing argument contract; business validation remains in DataTools."""
+    common={
+        "query":{"type":"string"},
+        "city":{"type":"string"},
+        "marz":{"type":"string"},
+        "limit":{"type":"integer","minimum":1,"maximum":200},
+    }
+    return {
+        "count":{"entity":{"type":"string","enum":["partners","applications","services","directions","subcategories","companies","addresses","documents"]}},
+        "search_partners":common,
+        "search_applications":{**common,"status":{"type":"string"}},
+        "search_companies":common,
+        "get_partner":{"partner_id":{"type":"integer"}},
+        "get_company":{"company_id":{"type":"integer"}},
+        "get_application":{"application_id":{"type":"integer"}},
+        "get_application_full":{"application_id":{"type":"integer"}},
+        "get_documents":{"partner_id":{"type":"integer"},"application_id":{"type":"integer"}},
+        "get_addresses":common,
+        "get_services":{**common,"partner_id":{"type":"integer"},"company_id":{"type":"integer"}},
+        "get_orders":{**common,"partner_id":{"type":"integer"},"status":{"type":"string"}},
+        "search_catalog":{**common,"master_category_id":{"type":"integer"}},
+        "get_directions":{"limit":{"type":"integer","minimum":1,"maximum":200}},
+        "catalog_overview":{},
+        "ai_usage_summary":{"days":{"type":"integer","minimum":1,"maximum":365}},
+        "check_application":{"application_id":{"type":"integer"}},
+        "check_catalog_match":{"service_name":{"type":"string"},"category_id":{"type":"integer"}},
+    }
+
+
 def _admin_normalize_plan(data,message=""):
     """Normalize the single semantic ActionPlan contract used by the admin AI."""
     if not isinstance(data,dict): data={}
