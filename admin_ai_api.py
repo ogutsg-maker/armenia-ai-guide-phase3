@@ -2233,6 +2233,14 @@ async def api_admin_ai_costs_partners(request):
 
 
 
+async def api_admin_ai_partner_economics(request):
+    _admin(request)
+    try: days=max(1,min(int(request.query.get("days") or 30),3650))
+    except (TypeError,ValueError): days=30
+    return web.json_response({"ok":True,"period_days":days,
+                              "items":ai_cost_center.partner_economics(days=days)})
+
+
 async def api_admin_ai_financial_summary(request):
     _admin(request)
     try:
@@ -2323,6 +2331,7 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_get('/api/admin/ai/economics/order/{order_id}',api_admin_ai_order_economics)
     app.router.add_get('/api/admin/ai/economics/project',api_admin_ai_project_economics)
     app.router.add_get('/api/admin/ai/financial-summary',api_admin_ai_financial_summary)
+    app.router.add_get('/api/admin/ai/partner-economics',api_admin_ai_partner_economics)
     app.router.add_post('/api/admin/ai/economics/expense',api_admin_ai_add_expense)
     app.router.add_get('/api/admin/ai/economics/negotiation/{negotiation_id}',api_admin_ai_negotiation_economics)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
