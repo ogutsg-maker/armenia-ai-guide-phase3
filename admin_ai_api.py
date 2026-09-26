@@ -2186,6 +2186,28 @@ async def api_admin_ai_costs(request):
     return web.json_response({"ok":True,"days":days,"partner_id":partner_id,**usage_summary(partner_id=partner_id,days=days)})
 
 
+async def api_admin_ai_costs_providers(request):
+    _admin(request)
+    try:
+        days=max(1,min(int(request.query.get("days","30") or 30),3650))
+    except (TypeError,ValueError):
+        days=30
+    rows=platform_db.rows(
+        """SELECT provider,model,COUNT(*) operations,
+                  COALESCE(SUM(input_tokens),0) input_tokens,
+                  COALESCE(SUM(output_tokens),0) output_tokens,
+                  COALESCE(SUM(cached_input_tokens),0) cached_input_tokens,
+                  COALESCE(SUM(reasoning_tokens),0) reasoning_tokens,
+                  COALESCE(SUM(total_tokens),0) total_tokens,
+                  COALESCE(SUM(total_cost_usd),0) total_cost_usd
+           FROM ai_usage_ledger
+           WHERE created_at >= NOW() - (%s || ' days')::interval
+           GROUP BY provider,model ORDER BY total_cost_usd DESC, operations DESC""",
+        [days],
+    )
+    return web.json_response({"ok":True,"days":days,"items":rows})
+
+
 async def api_admin_ai_costs_partners(request):
     _admin(request)
     try:
@@ -2193,15 +2215,16 @@ async def api_admin_ai_costs_partners(request):
     except (TypeError,ValueError):
         days=30
     rows=platform_db.rows(
-        """SELECT partner_id, COUNT(*) operations,
+        """SELECT u.partner_id, COALESCE(p.business_name,'') business_name, COUNT(*) operations,
                   COALESCE(SUM(input_tokens),0) input_tokens,
                   COALESCE(SUM(output_tokens),0) output_tokens,
                   COALESCE(SUM(total_tokens),0) total_tokens,
                   COALESCE(SUM(total_cost_usd),0) total_cost_usd
-           FROM ai_usage_ledger
-           WHERE partner_id IS NOT NULL
+           FROM ai_usage_ledger u
+           LEFT JOIN partners p ON p.id=u.partner_id
+           WHERE u.partner_id IS NOT NULL
              AND created_at >= NOW() - (%s || ' days')::interval
-           GROUP BY partner_id ORDER BY total_cost_usd DESC, operations DESC""",
+           GROUP BY u.partner_id,p.business_name ORDER BY total_cost_usd DESC, operations DESC""",
         [days],
     )
     return web.json_response({"ok":True,"days":days,"items":rows})
@@ -2213,6 +2236,7 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_post('/api/admin/assistant',api_admin_assistant)
     app.router.add_get('/api/admin/ai/costs',api_admin_ai_costs)
     app.router.add_get('/api/admin/ai/costs/partners',api_admin_ai_costs_partners)
+    app.router.add_get('/api/admin/ai/costs/providers',api_admin_ai_costs_providers)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
     app.router.add_post('/api/admin/ai/catalog-proposals/{id}/{action}',catalog_action)
     app.router.add_get('/api/admin/potential-partners',potential_list)
