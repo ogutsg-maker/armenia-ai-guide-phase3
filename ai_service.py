@@ -150,11 +150,11 @@ class AIService:
         if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
         kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens,"response_format":{"type":"json_object"}}
         try:
-            return self.groq_client.chat.completions.create(**kwargs)
+            return self.groq_client.chat.completions.create(**kwargs), model
         except Exception as exc:
             if getattr(exc, "status_code", None) == 404 and self.groq_fallback_model and model != self.groq_fallback_model:
                 kwargs["model"]=self.groq_fallback_model
-                return self.groq_client.chat.completions.create(**kwargs)
+                return self.groq_client.chat.completions.create(**kwargs), self.groq_fallback_model
             raise
 
     def _openai_completion_json(self, messages, model: str, max_tokens: int):
@@ -193,6 +193,7 @@ class AIService:
             try:
                 if name == "groq":
                     response = await asyncio.to_thread(self._groq_completion_json, messages, model, max_tokens)
+                    response, model = response
                 elif name == "openrouter":
                     response = await asyncio.to_thread(self._openrouter_completion_json, messages, model, max_tokens)
                 else:
