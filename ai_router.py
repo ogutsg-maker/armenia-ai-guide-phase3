@@ -42,6 +42,19 @@ class AIRouter:
         except Exception:
             return None
 
+    def _select_chain(self, role: str, module: str) -> str:
+        # Chain names are stable business concepts. Provider/model selection
+        # remains inside AIService and can be changed without touching flows.
+        if role == "admin":
+            return "admin_secretary"
+        if module == "partner_onboarding":
+            return "partner_registration"
+        if module == "negotiation":
+            return "negotiation"
+        if module == "client_search":
+            return "client_search"
+        return "general"
+
     async def dispatch(self, user_id: int, role: str, text: str, lang: str = "hy") -> dict:
         session = self._orchestrator_session(user_id, role)
         ctx = session.get("context_json") or {}
@@ -56,8 +69,9 @@ class AIRouter:
             "last_module": ctx.get("last_module"),
         })
         module = decision.get("module", "client_search")
+        chain = self._select_chain(role, module)
         rlang = decision.get("language") or lang
-        result = {"module": module, "confidence": decision.get("confidence", 0.0)}
+        result = {"module": module, "chain": chain, "confidence": decision.get("confidence", 0.0)}
 
         if module == "negotiation" and neg_id:
             result["reply"] = _NEGOTIATION_HINT.get(rlang, _NEGOTIATION_HINT["ru"])
