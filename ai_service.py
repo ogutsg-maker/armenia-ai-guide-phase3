@@ -451,7 +451,18 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
             return "Голосовой ввод требует доступного OPENAI_API_KEY."
         try:
             with open(audio_file_path, "rb") as audio:
-                return self.openai_client.audio.transcriptions.create(model="whisper-1", file=audio).text or ""
+                response = self.openai_client.audio.transcriptions.create(model="whisper-1", file=audio)
+                # Audio APIs may expose duration rather than token usage; keep the
+                # operation in the ledger even when the provider does not return tokens.
+                usage = getattr(response, "usage", None)
+                ai_cost_center.record_usage(
+                    provider="openai", model="whisper-1", chain="voice",
+                    stage="transcription", operation="speech_to_text",
+                    purpose="Voice message transcription",
+                    input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+                    output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                )
+                return getattr(response, "text", "") or ""
         except Exception as exc:
             return f"Ошибка распознавания аудио: {exc}"
 
@@ -468,6 +479,16 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
                     {"type":"image_url","image_url":{"url":image_url}},
                 ]}],
                 max_tokens=1500,
+            )
+            usage = getattr(response, "usage", None)
+            ai_cost_center.record_usage(
+                provider="openai", model=self.openai_model, chain="image",
+                stage="price_extraction", operation="process_image_price",
+                purpose="Extract services and prices from price-list image",
+                input_tokens=int(getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", 0)) or 0),
+                output_tokens=int(getattr(usage, "completion_tokens", getattr(usage, "output_tokens", 0)) or 0),
+                cached_tokens=int(getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0),
+                reasoning_tokens=int(getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", 0) or 0),
             )
             return self._text(response)
         except Exception as exc:
