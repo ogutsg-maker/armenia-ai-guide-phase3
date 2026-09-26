@@ -142,6 +142,29 @@ def provider_breakdown(*, days: int = 30) -> list[dict]:
 
 
 
+
+def record_project_expense(*, booking_id: int | None, expense_type: str,
+                           amount_amd: float, description: str = "",
+                           source: str = "manual", partner_id: int | None = None):
+    allowed={"payment_fee","refund","other"}
+    if expense_type not in allowed:
+        raise ValueError("invalid expense_type")
+    return platform_db.execute(
+        """INSERT INTO project_expenses
+           (booking_id,partner_id,expense_type,amount,currency,description,source)
+           VALUES(%s,%s,%s,%s,'AMD',%s,%s) RETURNING *""",
+        (booking_id,partner_id,expense_type,float(amount_amd),str(description or "")[:1000],str(source or "manual")[:100]),
+        True)
+
+
+def project_expenses_for_order(order_id: int):
+    return platform_db.rows(
+        """SELECT id,expense_type,amount,currency,description,source,created_at
+           FROM project_expenses WHERE booking_id=%s ORDER BY created_at,id""",
+        (int(order_id),))
+
+
+
 def order_economics(order_id: int) -> dict | None:
     """Return complete unit economics for one booking/order."""
     oid = int(order_id)
@@ -179,12 +202,18 @@ def order_economics(order_id: int) -> dict | None:
     agreed = float(booking.get("agreed_price") or 0)
     commission = float(booking.get("commission_amount") or 0)
     ai_cost = float(ai.get("total_cost_amd") or 0)
+    expense_row = platform_db.one(
+        """SELECT COALESCE(SUM(amount),0) total_other_expenses_amd
+           FROM project_expenses WHERE booking_id=%s""", (oid,)) or {}
+    other_expenses = float(expense_row.get("total_other_expenses_amd") or 0)
     currency = str(booking.get("currency") or "AMD").upper()
     return {"order":booking,"negotiation":negotiation,"ai":ai,"ai_stages":stages,
             "economics":{"service_price_amd":agreed if currency=="AMD" else None,
                          "commission_amd":commission if currency=="AMD" else None,
                          "ai_cost_amd":round(ai_cost,4),
-                         "platform_profit_before_other_costs_amd":round(commission-ai_cost,4) if currency=="AMD" else None}}
+                         "other_expenses_amd":round(other_expenses,4),
+                         "platform_profit_before_other_costs_amd":round(commission-ai_cost,4) if currency=="AMD" else None,
+                         "net_profit_amd":round(commission-ai_cost-other_expenses,4) if currency=="AMD" else None}}
 
 
 
