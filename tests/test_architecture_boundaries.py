@@ -61,7 +61,7 @@ def test_data_core_exposes_required_gateway_operations():
         "get_application", "get_partner", "get_company", "get_service",
         "search_services", "search_catalog", "operational_stats",
         "get_ai_entity", "check_application", "active_negotiation_id_for_user",
-        "create_partner_company", "update_partner_company", "archive_partner_company",
+        "list_partner_companies", "create_partner_company", "update_partner_company", "archive_partner_company",
         "create_partner_address", "update_partner_address",
         "validate_service_payload", "create_partner_service", "update_service_safe",
     }
