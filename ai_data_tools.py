@@ -99,16 +99,27 @@ class DataTools:
         if args.get("confirmed") is not True:
             raise DataToolError("explicit_confirmation_required")
         action = str(args.get("action") or "").strip()
-        if action != "update_service":
-            raise DataToolError("only_confirmed_update_supported")
-        service_id = args.get("service_id")
+        if action not in {"add_service", "update_service"}:
+            raise DataToolError("unsupported_service_action")
+        if action == "add_service":
+            partner = data_core.get_partner_by_user(int(self.actor_id))
+            if not partner:
+                raise DataToolError("partner_not_found")
+            return {"service": data_core.create_partner_service(
+                partner_id=int(partner["id"]), actor_user_id=int(self.actor_id),
+                company_id=int(args["company_id"]) if str(args.get("company_id")).isdigit() else None,
+                name=args.get("name") or args.get("service_name"),
+                price=args.get("price"),
+                category_id=int(args["category_id"]) if str(args.get("category_id")).isdigit() else None,
+                address_id=int(args["address_id"]) if str(args.get("address_id")).isdigit() else None,
+                phone=args.get("phone"),
+            ), "executed": True}
+        service_id=args.get("service_id")
         if not str(service_id).isdigit():
             raise DataToolError("service_id_required")
         return {"service": data_core.update_service_safe(
-            service_id=int(service_id),
-            actor_user_id=int(self.actor_id),
-            name=args.get("name"),
-            price=args.get("price"),
+            service_id=int(service_id), actor_user_id=int(self.actor_id),
+            name=args.get("name"), price=args.get("price"),
             category_id=int(args["category_id"]) if str(args.get("category_id")).isdigit() else None,
         ), "executed": True}
 
