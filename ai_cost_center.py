@@ -203,7 +203,10 @@ def order_economics(order_id: int) -> dict | None:
     commission = float(booking.get("commission_amount") or 0)
     ai_cost = float(ai.get("total_cost_amd") or 0)
     expense_row = platform_db.one(
-        """SELECT COALESCE(SUM(amount),0) total_other_expenses_amd
+        """SELECT COALESCE(SUM(amount),0) total_other_expenses_amd,
+                  COALESCE(SUM(CASE WHEN expense_type='payment_fee' THEN amount ELSE 0 END),0) payment_fees_amd,
+                  COALESCE(SUM(CASE WHEN expense_type='refund' THEN amount ELSE 0 END),0) refunds_amd,
+                  COALESCE(SUM(CASE WHEN expense_type='other' THEN amount ELSE 0 END),0) other_expenses_amd
            FROM project_expenses WHERE booking_id=%s""", (oid,)) or {}
     other_expenses = float(expense_row.get("total_other_expenses_amd") or 0)
     currency = str(booking.get("currency") or "AMD").upper()
@@ -212,6 +215,8 @@ def order_economics(order_id: int) -> dict | None:
                          "commission_amd":commission if currency=="AMD" else None,
                          "ai_cost_amd":round(ai_cost,4),
                          "other_expenses_amd":round(other_expenses,4),
+                         "payment_fees_amd":round(float(expense_row.get("payment_fees_amd") or 0),4),
+                         "refunds_amd":round(float(expense_row.get("refunds_amd") or 0),4),
                          "platform_profit_before_other_costs_amd":round(commission-ai_cost,4) if currency=="AMD" else None,
                          "net_profit_amd":round(commission-ai_cost-other_expenses,4) if currency=="AMD" else None}}
 
