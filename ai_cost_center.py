@@ -68,28 +68,45 @@ def record_usage(*, provider: str, model: str, chain: str = "unknown",
                  input_tokens: int = 0, output_tokens: int = 0,
                  cached_tokens: int = 0, reasoning_tokens: int = 0,
                  status: str = "success", error: str = "") -> dict:
+    """Persist one AI operation without allowing accounting failures to break AI."""
     costs = calculate_cost(provider, model, input_tokens, output_tokens, cached_tokens)
+    payload = (
+        provider, model, chain, stage, operation, purpose, user_id, partner_id, company_id,
+        order_id, negotiation_id, int(input_tokens or 0), int(output_tokens or 0),
+        int(cached_tokens or 0), int(reasoning_tokens or 0),
+        int(input_tokens or 0) + int(output_tokens or 0),
+        costs["input_cost_usd"], costs["cached_input_cost_usd"], costs["output_cost_usd"],
+        costs["total_cost_usd"], costs["total_cost_amd"], costs["usd_amd_rate"],
+        status, (error or "")[:1000],
+    )
+    sql = """INSERT INTO ai_usage_ledger
+             (provider,model,chain,stage,operation,purpose,user_id,partner_id,company_id,
+              order_id,negotiation_id,input_tokens,output_tokens,cached_input_tokens,
+              reasoning_tokens,total_tokens,input_cost_usd,cached_input_cost_usd,
+              output_cost_usd,total_cost_usd,total_cost_amd,exchange_rate_amd,status,error)
+             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             RETURNING id"""
     try:
-        return platform_db.execute(
-            """INSERT INTO ai_usage_ledger
-               (provider,model,chain,stage,operation,purpose,user_id,partner_id,company_id,
-                order_id,negotiation_id,input_tokens,output_tokens,cached_input_tokens,
-                reasoning_tokens,total_tokens,input_cost_usd,cached_input_cost_usd,
-                output_cost_usd,total_cost_usd,total_cost_amd,exchange_rate_amd,status,error)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               RETURNING id""",
-            (provider,model,chain,stage,operation,purpose,user_id,partner_id,company_id,
-             order_id,negotiation_id,int(input_tokens or 0),int(output_tokens or 0),
-             int(cached_tokens or 0),int(reasoning_tokens or 0),
-             int(input_tokens or 0)+int(output_tokens or 0),costs["input_cost_usd"],
-             costs["cached_input_cost_usd"],costs["output_cost_usd"],costs["total_cost_usd"],
-             costs["total_cost_amd"],costs["usd_amd_rate"],status,error[:1000]),
-            True,
-        ) or {}
-    except Exception:
-        # AI usage accounting must never break a successful user request.
+        return platform_db.execute(sql, payload, True) or {}
+    except Exception as exc:
+        # Company attribution can point at a legacy/new company table during rollout.
+        # Never lose the AI cost itself because that optional relation is invalid.
+        if company_id is not None:
+            try:
+                fallback = list(payload)
+                fallback[8] = None
+                row = platform_db.execute(sql, tuple(fallback), True)
+                if row:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "ai_usage_company_attribution_failed company_id=%s: %s", company_id, exc
+                    )
+                    return row
+            except Exception:
+                pass
+        import logging
+        logging.getLogger(__name__).exception("ai_usage_record_failed")
         return {}
-
 
 def usage_summary(*, partner_id: int | None = None, days: int = 30) -> dict:
     where=["created_at >= NOW() - (%s || ' days')::interval"]
