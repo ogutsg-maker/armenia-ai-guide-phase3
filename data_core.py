@@ -959,13 +959,13 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
 
         cur.execute(
             """INSERT INTO bookings(
-                 request_id,negotiation_id,client_id,partner_id,service_id,package_id,
+                 request_id,negotiation_id,client_id,partner_id,service_id,package_id,business_id,
                  status,service_name,agreed_price,currency,commission_amount,partner_amount,
                  scheduled_at,client_note,data_json)
                VALUES(%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                RETURNING *""",
             (request_id, int(client_id), int(service["partner_id"]), int(service["id"]),
-             package_id, booking_status, service["name"], float(price), currency,
+             package_id, service.get("business_id"), booking_status, service["name"], float(price), currency,
              float(commission), float(partner_amount), scheduled_at, client_note, metadata_json),
         )
         booking = cur.fetchone()
@@ -1609,11 +1609,11 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
             cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); payment=cur.fetchone()
             cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s",(bid,)); check=cur.fetchone()
             return {"booking":booking,"payment":payment,"checkin":check,"already_exists":True}
-        cur.execute("""INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,status,
+        cur.execute("""INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,business_id,status,
                          service_name,agreed_price,currency,commission_amount,partner_amount,data_json)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
                     (int(request_id),int(negotiation_id),int(client_id),int(partner_id),int(service["id"]),
-                     status,service["name"],float(price),currency,float(commission),float(partner_amount),
+                     service.get("business_id"),status,service["name"],float(price),currency,float(commission),float(partner_amount),
                      json.dumps({"payment_mode":getattr(intent,"provider",None),
                                  "payment_status":getattr(intent,"status",status),
                                  "test_transaction":getattr(intent,"transaction_id",None),
