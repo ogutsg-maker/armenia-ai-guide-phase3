@@ -251,7 +251,10 @@ async def catalog_action(request):
     admin_id=_admin(request); pid=int(request.match_info['id']); data=await request.json(); action=request.match_info['action']
     if action=='clarify':
         comment=str(data.get('comment') or '').strip()
-        p=review_proposal(pid,'clarification',admin_id,comment)
+        try:
+            p=review_proposal(pid,'clarification',admin_id,comment)
+        except ValueError as exc:
+            return web.json_response({'ok':False,'error':str(exc)},status=409)
         if p:
             add_clarification(pid,p.get('partner_id'),admin_id,comment)
             if p.get('partner_id') and request.app.get('bot'):
@@ -263,12 +266,23 @@ async def catalog_action(request):
         return web.json_response({'ok':True,'proposal':p})
     if action=='edit':
         fields={k:data[k] for k in ('proposed_master_category','proposed_category','proposed_subcategory','proposed_service','description','reason') if k in data}
-        return web.json_response({'ok':True,'proposal':edit_proposal(pid,admin_id,fields)})
+        try:
+            result=edit_proposal(pid,admin_id,fields)
+        except ValueError as exc:
+            return web.json_response({'ok':False,'error':str(exc)},status=409)
+        return web.json_response({'ok':True,'proposal':result})
     if action=='reject':
-        return web.json_response({'ok':True,'proposal':review_proposal(pid,'rejected',admin_id,str(data.get('comment') or '').strip())})
+        try:
+            result=review_proposal(pid,'rejected',admin_id,str(data.get('comment') or '').strip())
+        except ValueError as exc:
+            return web.json_response({'ok':False,'error':str(exc)},status=409)
+        return web.json_response({'ok':True,'proposal':result})
     if action=='activate':
         from catalog_manager import activate_proposal
-        result=activate_proposal(pid,admin_id,data)
+        try:
+            result=activate_proposal(pid,admin_id,data)
+        except ValueError as exc:
+            return web.json_response({'ok':False,'error':str(exc)},status=409)
         if result.get('proposal_id') and request.app.get('bot'):
             from platform_db import proposal as get_proposal, one as db_one
             pp=get_proposal(pid)
