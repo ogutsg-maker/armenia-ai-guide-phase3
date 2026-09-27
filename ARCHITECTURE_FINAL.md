@@ -119,9 +119,8 @@ The following are not part of the runtime data path:
 - large persistent AI business-data context;
 - LangChain/CrewAI/AutoGen orchestration.
 
-Compatibility modules may remain temporarily during migration, but they must not become another source of business truth.
+Legacy AI Context / AI Tools modules have been removed from the runtime. There is no compatibility data layer between AI and Data Core.
 
 ## Golden rule
 
 **AI understands. Python validates. Data Core reads/writes. PostgreSQL stores the fact.**
-
