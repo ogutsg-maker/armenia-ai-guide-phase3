@@ -57,6 +57,8 @@ def _materialize_proposal_services(p, category_id):
 def activate_proposal(proposal_id, admin_id, data=None):
     p=proposal(proposal_id)
     if not p: raise ValueError('proposal_not_found')
+    if str(p.get('status') or '').lower() in {'approved','rejected','archived'}:
+        raise ValueError('proposal_already_final')
     master=str(p.get('proposed_master_category') or '').strip()
     if not master:
         raise ValueError('proposal_direction_required')
@@ -98,7 +100,12 @@ def activate_proposal(proposal_id, admin_id, data=None):
         if pd:
             execute("INSERT INTO partner_direction_categories(partner_direction_id,category_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(pd['id'],c['id']))
             # Attach a document uploaded before proposal activation to the new direction.
-            execute("UPDATE partner_verification_documents SET partner_direction_id=%s WHERE id=(SELECT id FROM partner_verification_documents WHERE partner_id=%s AND partner_direction_id IS NULL AND status='pending' ORDER BY created_at DESC LIMIT 1)",(pd['id'],p['partner_id']))
+            execute("""UPDATE partner_verification_documents SET partner_direction_id=%s, business_id=%s
+                       WHERE id=(SELECT id FROM partner_verification_documents
+                                 WHERE partner_id=%s AND business_id=%s
+                                   AND partner_direction_id IS NULL AND status='pending'
+                                 ORDER BY created_at DESC LIMIT 1)""",
+                    (pd['id'],business_id,p['partner_id'],business_id))
             # Materialise the services the partner submitted with the proposal.
             # persist_ready_application() stored the FULL profile in
             # payload_json when it could not map the direction, so approving
