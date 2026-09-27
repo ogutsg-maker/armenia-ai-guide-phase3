@@ -944,11 +944,18 @@ async def api_notifications_read_all(request: web.Request):
 async def api_bookings(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request, pid)
     with _connect() as conn:
         if not _table_exists(conn, "bookings"):
             return web.json_response({"ok": True, "bookings": []})
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM bookings WHERE partner_id=%s ORDER BY id DESC LIMIT 200", (pid,))
+            if bid is not None:
+                cur.execute(
+                    "SELECT * FROM bookings WHERE partner_id=%s AND (business_id=%s OR business_id IS NULL) ORDER BY id DESC LIMIT 200",
+                    (pid, bid),
+                )
+            else:
+                cur.execute("SELECT * FROM bookings WHERE partner_id=%s ORDER BY id DESC LIMIT 200", (pid,))
             rows = cur.fetchall()
     return web.json_response({"ok": True, "bookings": _json(rows)})
 
