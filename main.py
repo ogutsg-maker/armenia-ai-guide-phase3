@@ -555,6 +555,9 @@ async def serve_welcome(request: web.Request):
 async def serve_partner(request: web.Request):
     return await _serve_html_file(request, "partner.html")
 
+async def serve_master_cabinet(request: web.Request):
+    return await _serve_html_file(request, "master_cabinet.html")
+
 def log_webapp_files():
     for name in ("welcome.html", "partner.html"):
         path = WEB_APPS_DIR / name
@@ -596,6 +599,7 @@ async def main():
     app.router.add_get("/", serve_index)
     app.router.add_get("/welcome.html", serve_welcome)
     app.router.add_get("/partner.html", serve_partner)
+    app.router.add_get("/master_cabinet.html", serve_master_cabinet)
     app.router.add_get("/api/webapp/session", api_webapp_session)
     app.router.add_post("/api/webapp/role", api_webapp_role)
     app.router.add_post("/api/webapp/partner/start", api_webapp_partner_start)
