@@ -6,6 +6,8 @@ import os
 import re
 from typing import Any
 
+import data_core
+
 try:
     from groq import AsyncGroq
 except Exception:
@@ -86,60 +88,44 @@ _ARMENIA_CITY_TO_MARZ = {
     "goris":"Սյունիք","sisian":"Սյունիք","jermuk":"Վայոց ձոր",
 }
  
-def get_catalog(db) -> list[dict]:
+def get_catalog(db=None) -> list[dict]:
+    """Read the active catalogue through Data Core only."""
     rows = []
     try:
-        for master in db.get_all_master_categories() or []:
-            mid = _safe_int(master.get("id"))
-            if mid is None:
-                continue
-            for sub in db.get_subcategories_by_master(mid) or []:
-                cid = _safe_int(sub.get("id"))
-                if cid is None:
-                    continue
-                rows.append({
-                    "master_id": mid,
-                    "master_am": master.get("name_am") or master.get("name_hy") or "",
-                    "master_ru": master.get("name_ru") or "",
-                    "master_en": master.get("name_en") or "",
-                    "master_slug": master.get("slug") or "",
-                    "category_id": sub.get("id"),
-                    "category_am": sub.get("name_am") or sub.get("name_hy") or "",
-                    "category_ru": sub.get("name_ru") or "",
-                    "category_en": sub.get("name_en") or "",
-                    "category_slug": sub.get("slug") or "",
-                })
+        for row in data_core.rows(
+            """SELECT m.id AS master_id,m.name_am AS master_am,m.name_ru AS master_ru,
+                      m.name_en AS master_en,m.slug AS master_slug,
+                      c.id AS category_id,c.name_am AS category_am,c.name_ru AS category_ru,
+                      c.name_en AS category_en,c.slug AS category_slug
+               FROM master_categories m
+               JOIN categories c ON c.master_category_id=m.id
+               WHERE m.is_active=TRUE AND c.is_active=TRUE
+               ORDER BY m.id,c.id"""
+        ):
+            rows.append(dict(row))
     except Exception:
         return []
     return rows
 
 
-def get_master_catalog(db) -> list[dict]:
-    """Return only top-level directions for the first AI classification step."""
-    rows = []
-    try:
-        for master in db.get_all_master_categories() or []:
-            mid = _safe_int(master.get("id"))
-            if mid is None:
-                continue
-            rows.append({
-                "master_id": mid,
-                "master_am": master.get("name_am") or master.get("name_hy") or "",
-                "master_ru": master.get("name_ru") or "",
-                "master_en": master.get("name_en") or "",
-                "master_slug": master.get("slug") or "",
-            })
-    except Exception:
-        return []
-    return rows
+def get_master_catalog(db=None) -> list[dict]:
+    return [
+        {
+            "master_id": row["id"],
+            "master_am": row.get("name_am") or "",
+            "master_ru": row.get("name_ru") or "",
+            "master_en": row.get("name_en") or "",
+            "master_slug": row.get("slug") or "",
+        }
+        for row in data_core.active_directions()
+    ]
 
 
-def get_catalog_for_master(db, master_id: int | None) -> list[dict]:
-    """Load subcategories only from the already selected direction."""
+def get_catalog_for_master(db=None, master_id: int | None = None) -> list[dict]:
     mid = _safe_int(master_id)
     if mid is None:
         return []
-    return [row for row in get_catalog(db) if _safe_int(row.get("master_id")) == mid]
+    return [row for row in get_catalog() if _safe_int(row.get("master_id")) == mid]
 
 
 def _heuristic(text: str) -> dict:
