@@ -554,8 +554,27 @@ async function submitNewService(){
     closeServiceCreate();
     await loadBusinesses();
     state.current=state.businesses.find(b=>String(b.id)===String(businessId))||state.businesses[0]||null;
-    await openBusiness(businessId); showCompanySection('services');
-    toast(d.proposal_created?(newBusiness&&businessDocument?'Заявка отправлена администратору вместе с документом':'Заявка на услугу отправлена администратору'):'Услуга сохранена');
+
+    // A successful POST can mean two different things:
+    // 1) an active service was created, or
+    // 2) the service was accepted and turned into an admin application.
+    // Do not reopen the Services section in case (2): the service is not
+    // active yet and therefore will correctly be absent from /services.
+    if(d.proposal_created){
+      await loadApplications();
+      renderApplications();
+      setView('applications', false);
+      const appId=d.application_id ? ' #'+d.application_id : '';
+      toast(
+        newBusiness&&businessDocument
+          ? '✓ Заявка'+appId+' отправлена администратору вместе с документом'
+          : '✓ Заявка'+appId+' отправлена администратору на проверку'
+      );
+    }else{
+      await openBusiness(businessId);
+      showCompanySection('services');
+      toast('✓ '+(d.message||'Услуга сохранена'));
+    }
   }catch(e){
     if(save){save.disabled=false;save.textContent='✓ '+tr('save')}
     toast(e.message);
