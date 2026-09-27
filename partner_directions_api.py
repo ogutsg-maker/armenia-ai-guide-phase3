@@ -374,6 +374,20 @@ async def _upload_direction_document(request, partner, direction_id):
     return web.json_response({"ok":True,"document":doc,"direction_id":direction_id,"status":"pending"})
 
 
+def _admin_guard(request):
+    raw = request.headers.get("X-Telegram-Init-Data", "").strip() or request.query.get("tgwad", "").strip()
+    if not raw:
+        raise web.HTTPUnauthorized(text='{"ok":false,"error":"telegram_init_data_required"}', content_type="application/json")
+    try:
+        user = validate_telegram_webapp_init_data(raw, BOT_TOKEN)
+    except TelegramWebAppAuthError as exc:
+        raise web.HTTPUnauthorized(text='{"ok":false,"error":"telegram_init_data_invalid"}', content_type="application/json")
+    admin_id = int(os.getenv("ADMIN_TELEGRAM_ID", "0") or os.getenv("ADMIN_ID", "0") or 0)
+    if not admin_id or int(user["id"]) != admin_id:
+        raise web.HTTPForbidden(text='{"ok":false,"error":"admin_access_required"}', content_type="application/json")
+    return int(user["id"])
+
+
 def register_partner_direction_routes(app, db=None, bot=None):
     app["partner_direction_bot"] = bot
     ensure_partner_direction_schema()
@@ -798,4 +812,24 @@ def register_partner_direction_routes(app, db=None, bot=None):
     app.router.add_get("/api/admin/partner-applications/{id}/directions", admin_partner_directions)
     app.router.add_post("/api/admin/partner-directions/{id}/action", admin_direction_action)
     app.router.add_post("/api/admin/partner/{id}/settings", admin_partner_settings)
+    async def admin_category_settings(request):
+        _admin_guard(request)
+        category_id = int(request.match_info["id"])
+        payload = await request.json()
+        allowed = ("bank_commission_type","bank_commission_value","cancellation_policy","premium_contact_enabled","premium_contact_fee","premium_disclosure_scope","contact_reveal_after_booking")
+        updates = {k: payload[k] for k in allowed if k in payload}
+        if not updates:
+            return web.json_response({"ok": False, "error": "no_changes"}, status=400)
+        existing = _fetchone("SELECT id FROM category_settings WHERE category_id=%s", (category_id,))
+        if existing:
+            sets=", ".join(f"{k}=%s" for k in updates)
+            _exec(f"UPDATE category_settings SET {sets}, updated_at=NOW() WHERE category_id=%s", [*updates.values(), category_id])
+        else:
+            fields=["category_id", *updates.keys()]
+            values=[category_id, *updates.values()]
+            marks=", ".join(["%s"]*len(values))
+            _exec(f"INSERT INTO category_settings ({', '.join(fields)}) VALUES ({marks})", values)
+        return web.json_response({"ok": True, "category_id": category_id})
+
     app.router.add_post("/api/admin/partner-services/{id}/action", admin_service_action)
+    app.router.add_post("/api/admin/categories/{id}/settings", admin_category_settings)
