@@ -19,7 +19,6 @@ from ai_service import AIService
 import data_core
 
 from config import BOT_TOKEN
-from database import _connect
 from telegram_webapp_auth import validate_telegram_webapp_init_data
 
 _PENDING: dict[str, tuple[float, int, dict[str, Any]]] = {}
@@ -276,7 +275,7 @@ async def api_ai_command(request: web.Request):
                     command["service_id"] = int(candidates[0]["id"])
                     command["business_id"] = int(candidates[0]["business_id"])
                     command["name"] = candidates[0].get("name")
-            result = await _execute_mutation(pid, command, ctx)
+            result = await _execute_mutation(pid, command, ctx, uid)
             if isinstance(result, web.Response):
                 # Rebuild the partner context after every confirmed mutation.
                 # The next AI turn therefore always sees fresh business data.
@@ -432,7 +431,7 @@ async def api_ai_command(request: web.Request):
     if intent not in {"show_businesses","show_services","show_orders","clarify"}:
         token=_pending_add(pid,command)
         return web.json_response({"ok":True,"reply":str(command.get("reply") or _preview(command,ctx,language)),"confirmation_id":token,"command":command})
-    return await _execute_mutation(pid,command,ctx)
+    return await _execute_mutation(pid,command,ctx,uid)
 
 
 
@@ -557,133 +556,105 @@ async def api_ai_command_confirm(request: web.Request):
     ctx=_context(pid)
     return await _execute_mutation(pid,command,ctx)
 
-async def _execute_mutation(pid,c,ctx):
-    intent=c.get("intent")
-    bid=int(c["business_id"]) if c.get("business_id") else None
-    oid=int(c["object_id"]) if c.get("object_id") else None
-    sid=int(c["service_id"]) if c.get("service_id") else None
-    name=str(c.get("name") or "").strip()
-    description=str(c.get("description") or "").strip()
-    phone=str(c.get("phone") or "").strip() or None
-    price=_clean_num(c.get("price"))
-    if intent=="add_service":
+async def _execute_mutation(pid, c, ctx, actor_user_id):
+    intent = str(c.get("intent") or "")
+    bid = int(c["business_id"]) if c.get("business_id") else None
+    oid = int(c["object_id"]) if c.get("object_id") else None
+    sid = int(c["service_id"]) if c.get("service_id") else None
+    name = str(c.get("name") or "").strip()
+    description = str(c.get("description") or "").strip()
+    phone = str(c.get("phone") or "").strip() or None
+    price = _clean_num(c.get("price"))
+    lang = str(c.get("language") or "hy")
+
+    if intent == "add_service":
         if not bid:
-            reply = {"hy":"Նշեք, թե որ ընկերությունում ավելացնել ծառայությունը։","ru":"Укажите, в какую компанию добавить услугу.","en":"Please specify which company should receive the service."}.get(str(c.get("language") or "hy"), "Նշեք ընկերությունը։")
-            return web.json_response({"ok":True,"reply":reply})
-        candidates=[x for x in ctx.get("addresses",[]) if int(x.get("business_id") or 0)==bid]
+            return web.json_response({"ok": True, "reply": {"hy":"Նշեք, թե որ ընկերությունում ավելացնել ծառայությունը։","ru":"Укажите, в какую компанию добавить услугу.","en":"Please specify which company should receive the service."}.get(lang, "Նշեք ընկերությունը։")})
+        candidates = [x for x in ctx.get("addresses", []) if int(x.get("business_id") or 0) == bid]
         if oid:
-            selected = next((x for x in candidates if int(x["id"]) == oid), None)
+            selected = next((x for x in candidates if int(x.get("id") or 0) == oid), None)
             if selected is None:
-                # If Groq returned a stale/mismatched object id, use the only
-                # active address of the selected company when there is exactly one.
-                if len(candidates) == 1:
-                    oid=int(candidates[0]["id"])
-                else:
-                    reply = {
-                "hy": "Նշեք հասցեն, որտեղ պետք է մատուցվի այս ծառայությունը։",
-                "ru": "Укажите адрес, где должна быть эта услуга.",
-                "en": "Please provide the address where this service is offered.",
-            }.get(str(c.get("language") or "hy"), "Նշեք ծառայության հասցեն։")
-            return web.json_response({"ok":True,"reply":reply})
-        elif len(candidates)==1:
-            oid=int(candidates[0]["id"])
-        else:
-            return web.json_response({"ok":True,"reply":"Укажите адрес, где должна быть эта услуга."})
+                oid = int(candidates[0]["id"]) if len(candidates) == 1 else None
+        elif len(candidates) == 1:
+            oid = int(candidates[0]["id"])
+        if not oid:
+            return web.json_response({"ok": True, "reply": {"hy":"Նշեք հասցեն, որտեղ պետք է մատուցվի այս ծառայությունը։","ru":"Укажите адрес, где должна быть эта услуга.","en":"Please provide the address where this service is offered."}.get(lang, "Նշեք հասցեն։")})
         if not name:
-            return web.json_response({"ok":True,"reply":"Как называется услуга?"})
+            return web.json_response({"ok": True, "reply": {"hy":"Գրեք ծառայության անունը։","ru":"Укажите название услуги.","en":"Please provide the service name."}.get(lang, "Укажите название услуги.")})
         from master_cabinet_api import _ai_match_new_service
-        match=await _ai_match_new_service(pid,name,description,bid)
-        with _connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id,name FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(bid,pid))
-                b=cur.fetchone()
-                cur.execute("SELECT id,object_name,address,city,marz,phone FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s AND COALESCE(is_active,TRUE)=TRUE",(oid,pid,bid))
-                o=cur.fetchone()
-                if not b or not o:
-                    return web.json_response({"ok":False,"error":"business_or_address_not_found"},status=404)
-                cur.execute("""INSERT INTO partner_applications(
-                    partner_id,business_id,status,business_name,location_marz,location_city,address,object_name,object_id,phone,
-                    direction_name,master_category_id,subcategory_name,category_id,service_name,price,description,ai_reason,payload_json)
-                    VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
-                    (pid,bid,b["name"],o.get("marz"),o.get("city"),o.get("address"),o.get("object_name"),oid,
-                     c.get("contact_phone") or o.get("phone"),match.get("direction_name") or match.get("out_of_scope_master_name") or "",
-                     match.get("master_category_id") or match.get("out_of_scope_master_id"),match.get("subcategory_name") or match.get("proposed_name") or "",
-                     match.get("category_id"),name,price,description,match.get("reason") or "AI assistant request.",json.dumps({"source":"partner_ai_assistant","message":c.get("message"),"object_id":oid},ensure_ascii=False)))
-                aid=int(cur.fetchone()["id"])
-            conn.commit()
+        match = await _ai_match_new_service(pid, name, description, bid)
         try:
-            admin_id = int(os.getenv("ADMIN_TELEGRAM_ID", "0") or 0)
-            if admin_id:
-                location = ", ".join(x for x in [o.get("marz"), o.get("city"), o.get("address")] if x)
-                body = "Поступила новая заявка #" + str(aid) + " от " + str(b.get("name") or "бизнес") + ".\\n\\n🛠 " + name + " · " + str(price if price is not None else "—") + " ֏"
-                if location: body += "\\n📍 " + location
-                await notify(request.app, admin_id, title="📨 Новая заявка", body=body, kind="partner_application", audience="admin", data={"application_id":aid}, telegram_text="🤖 AI-секретарь\\n\\n" + body + "\\n\\nНапишите, что сделать с заявкой.")
-        except Exception:
-            pass
+            row = data_core.create_partner_service_application(
+                partner_id=pid, actor_user_id=int(actor_user_id), company_id=bid, address_id=oid,
+                name=name, price=price, description=description,
+                phone=c.get("contact_phone") or phone, match=match,
+                message=str(c.get("message") or ""),
+            )
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc) or "application_create_failed"}, status=400)
+        aid = int(row["id"])
+        return web.json_response({"ok":True,"reply":f"✓ Услуга «{name}» подготовлена и отправлена администратору на подтверждение. Заявка #{aid}.","data":{"application_id":aid}})
 
-        return web.json_response({"ok":True,"reply":"✓ Услуга «%s» подготовлена и отправлена администратору на подтверждение. Заявка #%s."%(name,aid),"data":{"application_id":aid}})
+    if intent == "add_business":
+        if len(name) < 2:
+            return web.json_response({"ok": True, "reply": "Укажите название компании."})
+        row = data_core.create_partner_company(partner_id=pid, actor_user_id=int(actor_user_id), name=name, description=description or None, phone=phone)
+        _set_active_business(pid, int(row["id"]), str(row.get("name") or ""))
+        return web.json_response({"ok":True,"reply":{"hy":f'✓ «{row["name"]}» ընկերությունը ստեղծվել է։',"ru":f'✓ Компания «{row["name"]}» создана.',"en":f'✓ Company “{row["name"]}” was created.'}.get(lang, f'✓ «{row["name"]}» ընկերությունը ստեղծվել է։'),"data":{"business":row}})
 
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            if intent=="add_business":
-                if len(name)<2: return web.json_response({"ok":True,"reply":"Укажите название компании."})
-                cur.execute("INSERT INTO partner_businesses(partner_id,name,description,phone,status) VALUES(%s,%s,%s,%s,'active') RETURNING id,name",(pid,name,description or None,phone))
-                row=cur.fetchone()
-                conn.commit()
-                _set_active_business(pid, int(row["id"]), str(row["name"] or ""))
-                lang = str(c.get("language") or "hy")
-                success_reply = {
-                    "hy": f'✓ «{row["name"]}» ընկերությունը ստեղծվել է։',
-                    "ru": f'✓ Компания «{row["name"]}» создана.',
-                    "en": f'✓ Company “{row["name"]}” was created.',
-                }.get(lang, f'✓ «{row["name"]}» ընկերությունը ստեղծվել է։')
-                return web.json_response({"ok":True,"reply":success_reply,"data":{"business":dict(row)}})
-            if intent in {"update_business","delete_business"}:
-                cur.execute("SELECT id,name FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(bid,pid)); b=cur.fetchone()
-                if not b: return web.json_response({"ok":False,"error":"business_not_found"},status=404)
-                if intent=="delete_business":
-                    cur.execute("UPDATE partner_businesses SET status='archived',updated_at=NOW(),is_default=FALSE WHERE id=%s AND partner_id=%s",(bid,pid))
-                    conn.commit(); return web.json_response({"ok":True,"reply":"✓ Компания «%s» удалена из активного списка."%b["name"]})
-                fields=[]; vals=[]
-                for k,v in (("name",name),("description",description),("phone",phone)):
-                    if v not in ("",None): fields.append(k+"=%s"); vals.append(v)
-                if fields: cur.execute("UPDATE partner_businesses SET "+",".join(fields)+",updated_at=NOW() WHERE id=%s AND partner_id=%s",(*vals,bid,pid))
-                conn.commit(); return web.json_response({"ok":True,"reply":"✓ Данные компании обновлены."})
-            if intent in {"add_address","update_address","delete_address"}:
-                if intent=="add_address":
-                    if not bid or len(name)<2: return web.json_response({"ok":True,"reply":"Укажите компанию и название адреса."})
-                    cur.execute("SELECT id FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(bid,pid))
-                    if not cur.fetchone(): return web.json_response({"ok":False,"error":"business_not_found"},status=404)
-                    cur.execute("""INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,phone)
-                                   VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING id,object_name""",(pid,bid,name,c.get("address") or None,c.get("city") or None,c.get("marz") or None,phone))
-                    row=cur.fetchone(); conn.commit()
-                    return web.json_response({"ok":True,"reply":"✓ Адрес «%s» добавлен."%row["object_name"],"data":{"address":dict(row)}})
-                cur.execute("SELECT id,object_name FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s AND COALESCE(is_active,TRUE)=TRUE",(oid,pid,bid))
-                o=cur.fetchone()
-                if not o: return web.json_response({"ok":False,"error":"address_not_found"},status=404)
-                if intent=="delete_address":
-                    cur.execute("UPDATE partner_objects SET is_active=FALSE WHERE id=%s AND partner_id=%s AND business_id=%s",(oid,pid,bid))
-                    conn.commit(); return web.json_response({"ok":True,"reply":"✓ Адрес «%s» удалён."%o["object_name"]})
-                sets=[]; vals=[]
-                for k,v in (("object_name",name),("address",c.get("address")),("city",c.get("city")),("marz",c.get("marz")),("phone",phone)):
-                    if v not in ("",None): sets.append(k+"=%s"); vals.append(v)
-                if sets: cur.execute("UPDATE partner_objects SET "+",".join(sets)+" WHERE id=%s AND partner_id=%s AND business_id=%s",(*vals,oid,pid,bid))
-                conn.commit(); return web.json_response({"ok":True,"reply":"✓ Адрес обновлён."})
-            if intent in {"add_service","update_service","delete_service"}:
-                if not bid: return web.json_response({"ok":True,"reply":"Укажите, в какой компании находится услуга."})
-                cur.execute("SELECT id,name FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(bid,pid))
-                if not cur.fetchone(): return web.json_response({"ok":False,"error":"business_not_found"},status=404)
-                if intent=="update_service":
-                    cur.execute("SELECT id,name FROM services WHERE id=%s AND partner_id=%s AND business_id=%s AND (status IS NULL OR status<>'deleted')",(sid,pid,bid)); s=cur.fetchone()
-                    if not s:return web.json_response({"ok":False,"error":"service_not_found"},status=404)
-                    sets=[];vals=[]
-                    for k,v in (("name",name),("description",description),("price",price)):
-                        if v not in ("",None):sets.append(k+"=%s");vals.append(v)
-                    if sets:cur.execute("UPDATE services SET "+",".join(sets)+",updated_at=NOW() WHERE id=%s AND partner_id=%s AND business_id=%s",(*vals,sid,pid,bid))
-                    conn.commit();return web.json_response({"ok":True,"reply":"✓ Услуга обновлена."})
-                if intent=="delete_service":
-                    cur.execute("UPDATE services SET status='deleted',updated_at=NOW() WHERE id=%s AND partner_id=%s AND business_id=%s RETURNING id",(sid,pid,bid))
-                    if not cur.fetchone():return web.json_response({"ok":False,"error":"service_not_found"},status=404)
-                    conn.commit();return web.json_response({"ok":True,"reply":"✓ Услуга удалена."})
+    if intent in {"update_business","delete_business"}:
+        if not bid:
+            return web.json_response({"ok":False,"error":"business_id_required"},status=400)
+        try:
+            if intent == "delete_business":
+                row = data_core.archive_partner_company(company_id=bid, actor_user_id=int(actor_user_id))
+                return web.json_response({"ok":True,"reply":"✓ Компания «%s» удалена из активного списка." % (row.get("name") or "")})
+            row = data_core.update_partner_company(company_id=bid, actor_user_id=int(actor_user_id), name=name or None, description=description or None, phone=phone)
+            return web.json_response({"ok":True,"reply":"✓ Данные компании обновлены.","data":{"business":row}})
+        except Exception as exc:
+            return web.json_response({"ok":False,"error":str(exc) or "business_not_found"},status=400)
+
+    if intent in {"add_address","update_address","delete_address"}:
+        try:
+            if intent == "add_address":
+                if not bid or len(name) < 2:
+                    return web.json_response({"ok":True,"reply":"Укажите компанию и название адреса."})
+                row = data_core.create_partner_address(
+                    partner_id=pid, actor_user_id=int(actor_user_id), company_id=bid,
+                    address=str(c.get("address") or name).strip(), city=c.get("city"),
+                    marz=c.get("marz"), phone=phone, object_name=name,
+                )
+                return web.json_response({"ok":True,"reply":"✓ Адрес «%s» добавлен." % (row.get("object_name") or row.get("address") or ""), "data":{"address":row}})
+            if not oid or not bid:
+                return web.json_response({"ok":False,"error":"address_id_required"},status=400)
+            if intent == "delete_address":
+                row = data_core.archive_partner_address(address_id=oid, actor_user_id=int(actor_user_id))
+                return web.json_response({"ok":True,"reply":"✓ Адрес «%s» удалён." % (row.get("object_name") or "")})
+            row = data_core.update_partner_address(
+                address_id=oid, actor_user_id=int(actor_user_id), address=c.get("address"),
+                city=c.get("city"), marz=c.get("marz"), phone=phone, object_name=name or None,
+            )
+            return web.json_response({"ok":True,"reply":"✓ Адрес обновлён.","data":{"address":row}})
+        except Exception as exc:
+            return web.json_response({"ok":False,"error":str(exc) or "address_not_found"},status=400)
+
+    if intent in {"update_service","delete_service"}:
+        if not bid or not sid:
+            return web.json_response({"ok":True,"reply":"Укажите компанию и услугу."})
+        try:
+            if intent == "update_service":
+                service = data_core.get_service(sid)
+                if not service or int(service.get("partner_id") or 0) != int(pid) or int(service.get("business_id") or 0) != int(bid):
+                    raise ValueError("service_not_found")
+                row = data_core.update_service_safe(
+                    service_id=sid, actor_user_id=int(actor_user_id),
+                    name=name or None, description=description if description else None, price=price,
+                )
+                return web.json_response({"ok":True,"reply":"✓ Услуга обновлена.","data":{"service":row}})
+            row = data_core.archive_partner_service(service_id=sid, actor_user_id=int(actor_user_id))
+            return web.json_response({"ok":True,"reply":"✓ Услуга удалена.","data":{"service":row}})
+        except Exception as exc:
+            return web.json_response({"ok":False,"error":str(exc) or "service_not_found"},status=400)
+
     return web.json_response({"ok":True,"reply":"Запрос принят."})
 
