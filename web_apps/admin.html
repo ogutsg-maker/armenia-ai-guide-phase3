@@ -13,21 +13,10 @@
 <div id="app" style="display:none">
 <header><b>👑 Armenia AI Guide — Ադմինիստրացիա</b><small>Գործընկերներ · ուղղություններ · պատվերներ · AI · ֆինանսներ</small></header>
 <nav>
-<button class="active" data-page="overview">📊 Ընդհանուր</button><button data-page="partners">🤝 Գործընկերներ</button><button data-page="cats">📂 Ուղղություններ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="applications">📨 Հայտեր</button><button data-page="ai">🤖 AI</button><button data-page="aiCosts">💳 AI ծախսեր</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Настройки</button>
+<button data-page="partners">🤝 Գործընկերներ</button><button data-page="cats">📂 Ուղղություններ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="applications">📨 Հայտեր</button><button data-page="ai">🤖 AI</button><button data-page="aiCosts">💳 AI ծախսեր</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Настройки</button>
 </nav>
 <main>
-<section id="overview" class="page active"><div class="grid" id="stats"></div>
-<div class="card"><div class="row"><div><b>📊 Վիճակագրություն</b><div class="muted">Ընտրեք, թե ինչ տվյալներ եք ուզում տեսնել։</div></div><button class="btn soft" onclick="loadStats()">↻</button></div>
-<div class="stat-menu" id="statMenu" style="margin-top:10px">
-<button onclick="openStatSection('catalog')"><div><b>📂 Կատալոգ</b><small>Ուղղություններ · ենթակատեգորիաներ · ծառայություններ</small></div><b>›</b></button>
-<button onclick="openStatSection('partners')"><div><b>🏢 Գործընկերներ և ընկերություններ</b><small>Գործընկերներ · ընկերություններ · հասցեներ · փաստաթղթեր</small></div><b>›</b></button>
-<button onclick="openStatSection('geography')"><div><b>📍 Աշխարհագրություն</b><small>Մարզեր · քաղաքներ · բաշխում</small></div><b>›</b></button>
-<button onclick="openStatSection('services')"><div><b>🛠️ Ծառայություններ</b><small>Ծառայություններ · գներ · կատեգորիաներ</small></div><b>›</b></button>
-<button onclick="openStatSection('activity')"><div><b>📈 Ակտիվություն</b><small>Նոր գործընկերներ · ընկերություններ · ծառայություններ</small></div><b>›</b></button>
-<button onclick="openStatSection('gaps')"><div><b>⚠️ Բացեր և խնդիրներ</b><small>Չդասակարգված · առանց հասցեի · դատարկ ենթակատեգորիաներ</small></div><b>›</b></button>
-</div></div>
-<div id="statView" class="card stat-view"></div>
-<div class="card"><div class="row"><b>Վերջին գործընկերային հայտերը</b><button class="btn soft" onclick="loadPartners()">↻</button></div><div id="recent"></div></div></section>
+
 <section id="partners" class="page"><div class="card"><div class="row"><div><b>🤝 Գործընկերներ</b><div class="muted">Գործընկերները և նրանց ընկերությունները դիտվում են առանձին։</div></div><button class="btn soft" onclick="loadPartners()">↻</button></div></div><div id="partnersList"></div></section>
 
 <section id="cats" class="page"><div class="card"><b>📂 Կատալոգ</b><div class="muted">Ուղղություններ, ենթակատեգորիաներ և тарифներ։ Existing IDs are preserved.</div></div><div id="catsList"></div></section>
@@ -258,8 +247,7 @@ async function deleteCompany(pid,bid,name){
    const text=await r.text(); let d={}; try{d=text?JSON.parse(text):{}}catch(_){d={}};
    if(!r.ok)throw Error(d.error||d.message||('HTTP '+r.status));
    await loadPartners();
-   await loadStats();
-   alert(d.archived?'Компания архивирована — история сохранена.':'Компания удалена.');
+   await alert(d.archived?'Компания архивирована — история сохранена.':'Компания удалена.');
  }catch(e){alert(e.message||'Не удалось удалить компанию')}
 }
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
@@ -358,7 +346,7 @@ async function loadDisputes(){const d=await api('/api/admin/disputes');const r=d
 async function resolveDispute(id,refund){
  const question=refund?'Փակել վեճը և վերադարձնել պատվերի ամբողջ գումարը?':'Փակել վեճը առանց վերադարձի և նշել պատվերը որպես ավարտված?';
  if(!confirm(question))return;
- try{await post(`/api/admin/dispute/${id}/resolve`,{refund});await loadDisputes();await loadStats();}catch(e){alert(e.message||e)}
+ try{await post(`/api/admin/dispute/${id}/resolve`,{refund});await loadDisputes();await }catch(e){alert(e.message||e)}
 }
 async function loadPotential(){const d=await api('/api/admin/potential-partners');$('potentialList').innerHTML=(d.items||[]).map(x=>`<div class="item"><div class="row"><b>${esc(x.business_name)}</b>${badge(x.status)}</div><div>${esc(x.description||'')}</div><div class="muted">${esc(x.direction||'')} · ${esc(x.city||'')} · ${esc(x.source||'')}</div></div>`).join('')||'<div class="empty">Թեկնածուներ չկան</div>'}
 async function runResearch(){const q=$('researchQuery').value.trim();if(!q)return alert('Գրեք որոնման հարցումը');try{const d=await post('/api/admin/potential-partners/research',{query:q,location:'Armenia',limit:10});await loadPotential();alert('Գտնվեց՝ '+(d.results||[]).length)}catch(e){alert('AI որոնումը հասանելի չէ: '+e.message)}}
