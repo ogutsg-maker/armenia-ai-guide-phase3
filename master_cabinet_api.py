@@ -1006,9 +1006,12 @@ async def update_profile_by_voice(request):
 
 
 async def api_service_catalog(request: web.Request):
-    """Return every active subcategory under the partner's approved directions."""
+    """Return every active subcategory under the selected company's approved directions."""
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request, pid)
+    if not bid:
+        return web.json_response({"ok": True, "categories": []})
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -1035,6 +1038,9 @@ async def api_subcategory_proposal(request: web.Request):
     """Automatically create a pending admin proposal when no catalog match exists."""
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request, pid)
+    if not bid:
+        return web.json_response({"ok": False, "error": "business_required"}, status=409)
     data = await request.json()
     proposed_name = str(data.get("proposed_name") or "").strip()
     master_id = int(data.get("master_category_id") or 0)
@@ -1047,8 +1053,8 @@ async def api_subcategory_proposal(request: web.Request):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT 1 FROM partner_directions
-                WHERE partner_id=%s AND master_category_id=%s AND status='approved'
-            """, (pid, master_id))
+                WHERE partner_id=%s AND business_id=%s AND master_category_id=%s AND status='approved'
+            """, (pid, bid, master_id))
             if not cur.fetchone():
                 return web.json_response({"ok": False, "error": "direction_not_approved"}, status=403)
 
@@ -1074,6 +1080,7 @@ async def api_subcategory_proposal(request: web.Request):
                     id BIGSERIAL PRIMARY KEY,
                     partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
                     master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
+                    business_id BIGINT,
                     proposed_name TEXT NOT NULL,
                     requested_service_name TEXT,
                     description TEXT,
@@ -1086,12 +1093,13 @@ async def api_subcategory_proposal(request: web.Request):
                 )
             """)
             cur.execute("""
+                ALTER TABLE subcategory_proposals ADD COLUMN IF NOT EXISTS business_id BIGINT;
                 SELECT id FROM subcategory_proposals
-                WHERE partner_id=%s AND master_category_id=%s
+                WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
                   AND lower(trim(proposed_name))=lower(trim(%s))
                   AND status='pending'
                 LIMIT 1
-            """, (pid, master_id, proposed_name))
+            """, (pid, bid, master_id, proposed_name))
             duplicate = cur.fetchone()
             if duplicate:
                 return web.json_response({
@@ -1102,10 +1110,10 @@ async def api_subcategory_proposal(request: web.Request):
 
             cur.execute("""
                 INSERT INTO subcategory_proposals
-                    (partner_id,master_category_id,proposed_name,requested_service_name,description,price,status)
-                VALUES(%s,%s,%s,%s,%s,%s,'pending')
+                    (partner_id,business_id,master_category_id,proposed_name,requested_service_name,description,price,status)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,'pending')
                 RETURNING id
-            """, (pid, master_id, proposed_name,
+            """, (pid, bid, master_id, proposed_name,
                   str(data.get("requested_service_name") or "").strip() or None,
                   str(data.get("description") or "").strip() or None,
                   data.get("price")))
