@@ -548,7 +548,7 @@ async def api_ai_command_confirm(request: web.Request):
     command=_get_pending(token,pid)
     _PENDING.pop(token,None)
     ctx=_context(pid)
-    return await _execute_mutation(pid,command,ctx)
+    return await _execute_mutation(pid,command,ctx,uid)
 
 async def _execute_mutation(pid, c, ctx, actor_user_id):
     intent = str(c.get("intent") or "")
