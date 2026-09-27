@@ -19,6 +19,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import BOT_TOKEN, ADMIN_ID, WEBAPP_BASE_URL
 from database import DatabaseManager
+import data_core
 from ai_service import AIService
 from states import PartnerAIStates
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
@@ -212,7 +213,6 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         pass
     history.append({"role": "user", "content": text})
     from partner_registration_ai import extract, missing_question
-    from ai_first_partner_onboarding import persist_ready_application, create_partner_application_draft
     profile = await extract(text, history, db, previous_profile=previous, pending_field=pending)
 
     # Final deterministic safety net for the WebApp. The partner's original
@@ -323,7 +323,7 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         # IMPORTANT: the AI result is shown immediately in the universal form.
         # Missing fields remain editable/empty; the partner does not have to
         # answer a questionnaire before seeing what AI understood.
-        draft = create_partner_application_draft(db, uid, merged)
+        draft = data_core.save_partner_application_draft(user_id=uid, profile=merged)
         question = missing_question(merged, lang)
         history.append({"role": "assistant", "content": question})
         await state.update_data(
@@ -345,7 +345,7 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
             "profile": merged,
         }
     try:
-        result = persist_ready_application(db, uid, merged)
+        result = data_core.persist_ready_partner_application(user_id=uid, profile=merged)
     except ValueError as exc:
         # The persistence layer may reject an incomplete profile. This is a
         # normal conversational state, not an error for the partner.
