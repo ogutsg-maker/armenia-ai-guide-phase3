@@ -616,6 +616,88 @@ def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[d
     return out
 
 
+async def classify_profile_catalog(db, profile: dict) -> dict:
+    """Reclassify the services of an already extracted partner profile.
+
+    This is intentionally a compatibility entry point for the partner
+    application editor.  Catalogue IDs always come from the active DB
+    catalogue; the model is never allowed to invent them.
+    """
+    profile = dict(profile or {})
+    services = profile.get("services") if isinstance(profile.get("services"), list) else []
+    services = [dict(x) for x in services if isinstance(x, dict) and str(x.get("name") or x.get("service_name") or "").strip()]
+    if not services:
+        return {"services": [], "master_category_id": _safe_int(profile.get("master_category_id")), "confidence": 0.0, "needs_review": False, "ambiguities": []}
+
+    master_id = _safe_int(
+        profile.get("master_category_id")
+        or profile.get("ai_master_category_id")
+    )
+    if master_id is None:
+        # Use the same deterministic master-category recovery already used
+        # by onboarding when a profile was edited without an internal ID.
+        recovered = _recover_master_category(
+            db,
+            " ".join([
+                str(profile.get("business_name") or ""),
+                str(profile.get("description") or ""),
+                str(profile.get("direction") or ""),
+                str(profile.get("master_category_name") or ""),
+                " ".join(str(s.get("name") or "") for s in services),
+            ]),
+            profile,
+        )
+        master_id = _safe_int(recovered.get("master_category_id") or recovered.get("master_category_id"))
+    if master_id is None:
+        return {"services": services, "master_category_id": None, "confidence": 0.0, "needs_review": True, "ambiguities": ["master_category_missing"]}
+
+    catalog = []
+    try:
+        catalog = get_catalog_for_master(db, master_id)
+    except Exception:
+        catalog = []
+    # get_catalog_for_master may be empty on legacy adapters; use the
+    # adapter's explicit method as a compatibility fallback.
+    if not catalog and hasattr(db, "get_subcategories_by_master"):
+        for row in db.get_subcategories_by_master(master_id) or []:
+            catalog.append({
+                "category_id": row.get("id"),
+                "master_category_id": row.get("master_category_id"),
+                "category_am": row.get("name_am"),
+                "category_ru": row.get("name_ru"),
+                "category_en": row.get("name_en"),
+            })
+
+    matched = _fallback_catalog_match(services, catalog)
+
+    # If deterministic matching did not resolve everything, ask the existing
+    # semantic matcher. _groq_json is provider-gateway backed, so no provider
+    # client is required here.
+    if any(_safe_int(x.get("matched_subcategory_id")) is None for x in matched):
+        try:
+            matched = await _ai_match_services(None, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"), matched, catalog)
+        except Exception:
+            pass
+
+    unresolved = [
+        str(x.get("name") or x.get("service_name") or "").strip()
+        for x in matched
+        if _safe_int(x.get("matched_subcategory_id")) is None
+    ]
+    confidence_values = [
+        float(x.get("match_confidence") or 0)
+        for x in matched
+        if _safe_int(x.get("matched_subcategory_id")) is not None
+    ]
+    return {
+        "services": matched,
+        "master_category_id": master_id,
+        "confidence": min(confidence_values) if confidence_values else 0.0,
+        "needs_review": bool(unresolved),
+        "ambiguities": unresolved,
+    }
+
+
 def _parse_json(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
