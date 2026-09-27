@@ -438,7 +438,7 @@ async def api_partner_document_upload(request):
             )
         else:
             doc = _db_execute(
-                "INSERT INTO partner_verification_documents(partner_id,partner_direction_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status) VALUES(%s,%s,%s,%s,%s,NULL,%s,%s,'pending') RETURNING id, document_type, original_filename, mime_type, file_size, status, created_at",
+                "INSERT INTO partner_verification_documents(partner_id,business_id,partner_direction_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status) VALUES(%s,%s,%s,%s,%s,NULL,%s,%s,%s,'pending') RETURNING id, document_type, original_filename, mime_type, file_size, status, created_at",
                 (partner["id"], business_id, direction_id, document_type, original, bytes(data), mime, len(data)),
                 returning=True,
             )
