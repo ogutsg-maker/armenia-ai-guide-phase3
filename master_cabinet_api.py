@@ -1107,6 +1107,42 @@ async def api_subcategory_proposal(request: web.Request):
     })
 
 
+
+async def api_businesses(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    from data_core import list_companies, create_partner_company, archive_partner_company
+    return web.json_response({"ok": True, "businesses": _json(list_companies(pid))})
+
+
+async def api_business_create(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    from data_core import create_partner_company
+    data = await request.json()
+    try:
+        row = create_partner_company(
+            partner_id=pid, actor_user_id=uid,
+            name=data.get("name") or data.get("business_name"),
+            description=data.get("description"),
+            phone=data.get("phone"),
+        )
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    return web.json_response({"ok": True, "business": _json(row)})
+
+
+async def api_business_delete(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    from data_core import archive_partner_company
+    try:
+        row = archive_partner_company(company_id=int(request.match_info["business_id"]), actor_user_id=uid)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    return web.json_response({"ok": True, "business": _json(row)})
+
+
 def register_master_cabinet_routes(app, db=None, bot=None):
     """Register the complete current partner cabinet API.
 
@@ -1114,6 +1150,9 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     """
     app["partner_db"] = db
     app.router.add_get("/api/master/{id}/dashboard", api_dashboard)
+    app.router.add_get("/api/master/{id}/businesses", api_businesses)
+    app.router.add_post("/api/master/{id}/businesses", api_business_create)
+    app.router.add_delete("/api/master/{id}/businesses/{business_id}", api_business_delete)
     app.router.add_post("/api/master/{id}/ai-command", api_ai_command)
     app.router.add_post("/api/master/{id}/ai-command/confirm", api_ai_command_confirm)
     app.router.add_get("/api/master/{id}/settings", api_settings)
