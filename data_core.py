@@ -442,7 +442,8 @@ def validate_service_payload(*, partner_id: int, actor_user_id: int, company_id:
 
 
 def update_service_safe(*, service_id: int, actor_user_id: int, name: str | None = None,
-                        price: Any = None, category_id: int | None = None) -> dict:
+                        price: Any = None, category_id: int | None = None,
+                        description: str | None = None) -> dict:
     """Validated domain write. Ownership and catalog are checked before mutation."""
     service = get_service(int(service_id))
     if not service:
@@ -458,6 +459,8 @@ def update_service_safe(*, service_id: int, actor_user_id: int, name: str | None
         except (TypeError,ValueError): raise ValueError("invalid_service_price")
         if price < 0: raise ValueError("invalid_service_price")
         fields.append("price=%s"); params.append(price)
+    if description is not None:
+        fields.append("description=%s"); params.append(str(description).strip()[:5000] or None)
     if category_id is not None:
         category=get_catalog_category(int(category_id))
         if not category or not category.get("is_active"): raise ValueError("catalog_category_invalid")
@@ -1706,3 +1709,36 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
         return {"booking":booking,"payment":payment,"checkin":check,"already_exists":False}
     try: return platform_db.transaction(_tx)
     except Exception: return None
+
+
+def get_admin_setting(key: str, default: str = "") -> str:
+    row = one("SELECT value_json FROM admin_settings WHERE key=%s", (str(key),))
+    if not row or row.get("value_json") is None:
+        return str(default)
+    value = row.get("value_json")
+    if isinstance(value, dict):
+        value = value.get("value") or value.get("model")
+    return str(value) if value is not None else str(default)
+
+
+def ensure_partner(user_id: int):
+    return platform_db.ensure_partner(int(user_id))
+
+
+def update_partner(partner_id: int, **fields):
+    return platform_db.update_partner(int(partner_id), **fields)
+
+
+def create_or_update_proposal(partner_id: int, data: dict, proposal_id: int | None = None):
+    return platform_db.create_or_update_proposal(int(partner_id), data, proposal_id)
+
+
+def latest_clarification(partner_id: int):
+    return platform_db.latest_clarification(int(partner_id))
+
+
+def mark_clarification_answered(clarification_id: int):
+    return platform_db.execute(
+        "UPDATE admin_clarifications SET status='answered',answered_at=NOW() WHERE id=%s RETURNING *",
+        (int(clarification_id),), True
+)

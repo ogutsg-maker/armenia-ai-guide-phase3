@@ -9,13 +9,11 @@ import os
 from typing import Any
 
 from ai_service import AIService
-from database import DatabaseManager
 
 
 class PotentialPartnerAI:
     def __init__(self):
         self.ai_service = AIService()
-        self.db = DatabaseManager()
 
     @staticmethod
     def _setting(name: str, default: str) -> str:

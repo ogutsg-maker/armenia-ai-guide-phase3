@@ -6,6 +6,8 @@ import os
 import re
 from typing import Any
 
+import data_core
+
 try:
     from groq import AsyncGroq
 except Exception:
@@ -86,60 +88,44 @@ _ARMENIA_CITY_TO_MARZ = {
     "goris":"Սյունիք","sisian":"Սյունիք","jermuk":"Վայոց ձոր",
 }
  
-def get_catalog(db) -> list[dict]:
+def get_catalog(db=None) -> list[dict]:
+    """Read the active catalogue through Data Core only."""
     rows = []
     try:
-        for master in db.get_all_master_categories() or []:
-            mid = _safe_int(master.get("id"))
-            if mid is None:
-                continue
-            for sub in db.get_subcategories_by_master(mid) or []:
-                cid = _safe_int(sub.get("id"))
-                if cid is None:
-                    continue
-                rows.append({
-                    "master_id": mid,
-                    "master_am": master.get("name_am") or master.get("name_hy") or "",
-                    "master_ru": master.get("name_ru") or "",
-                    "master_en": master.get("name_en") or "",
-                    "master_slug": master.get("slug") or "",
-                    "category_id": sub.get("id"),
-                    "category_am": sub.get("name_am") or sub.get("name_hy") or "",
-                    "category_ru": sub.get("name_ru") or "",
-                    "category_en": sub.get("name_en") or "",
-                    "category_slug": sub.get("slug") or "",
-                })
+        for row in data_core.rows(
+            """SELECT m.id AS master_id,m.name_am AS master_am,m.name_ru AS master_ru,
+                      m.name_en AS master_en,m.slug AS master_slug,
+                      c.id AS category_id,c.name_am AS category_am,c.name_ru AS category_ru,
+                      c.name_en AS category_en,c.slug AS category_slug
+               FROM master_categories m
+               JOIN categories c ON c.master_category_id=m.id
+               WHERE m.is_active=TRUE AND c.is_active=TRUE
+               ORDER BY m.id,c.id"""
+        ):
+            rows.append(dict(row))
     except Exception:
         return []
     return rows
 
 
-def get_master_catalog(db) -> list[dict]:
-    """Return only top-level directions for the first AI classification step."""
-    rows = []
-    try:
-        for master in db.get_all_master_categories() or []:
-            mid = _safe_int(master.get("id"))
-            if mid is None:
-                continue
-            rows.append({
-                "master_id": mid,
-                "master_am": master.get("name_am") or master.get("name_hy") or "",
-                "master_ru": master.get("name_ru") or "",
-                "master_en": master.get("name_en") or "",
-                "master_slug": master.get("slug") or "",
-            })
-    except Exception:
-        return []
-    return rows
+def get_master_catalog(db=None) -> list[dict]:
+    return [
+        {
+            "master_id": row["id"],
+            "master_am": row.get("name_am") or "",
+            "master_ru": row.get("name_ru") or "",
+            "master_en": row.get("name_en") or "",
+            "master_slug": row.get("slug") or "",
+        }
+        for row in data_core.active_directions()
+    ]
 
 
-def get_catalog_for_master(db, master_id: int | None) -> list[dict]:
-    """Load subcategories only from the already selected direction."""
+def get_catalog_for_master(db=None, master_id: int | None = None) -> list[dict]:
     mid = _safe_int(master_id)
     if mid is None:
         return []
-    return [row for row in get_catalog(db) if _safe_int(row.get("master_id")) == mid]
+    return [row for row in get_catalog() if _safe_int(row.get("master_id")) == mid]
 
 
 def _heuristic(text: str) -> dict:
@@ -835,7 +821,6 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
             data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown", "matched_subcategory_id": None}]
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
         data = _recover_obvious_facts(combined_text, data)
-        data = _recover_master_category(db, combined_text, data)
         recovered = _recover_services_from_history(history + [{"role": "user", "content": text}])
         if recovered:
             data["services"] = recovered
@@ -1009,40 +994,12 @@ Return only the supplied JSON schema."""
             normalized_services.append(item)
         data["services"] = normalized_services
 
-        # Once the free-form profile is complete, classify it against the real
-        # active catalogue. The partner never selects a direction manually.
-        # This only writes classification into the application/profile; Admin
-        # approval is still required before anything becomes active.
-        if data.get("ready") and data.get("services"):
-            try:
-                classified = await classify_profile_catalog(db, data)
-                data["master_category_id"] = _safe_int(classified.get("master_category_id"))
-                data["classification_confidence"] = classified.get("confidence")
-                data["classification_ambiguities"] = classified.get("ambiguities") or []
-                data["classification_needs_review"] = bool(classified.get("needs_review"))
-                if classified.get("services"):
-                    data["services"] = classified["services"]
-
-                if data.get("master_category_id") is not None:
-                    selected_master = next(
-                        (
-                            row for row in get_master_catalog(db)
-                            if _safe_int(row.get("master_id")) == data["master_category_id"]
-                        ),
-                        None,
-                    )
-                    if selected_master:
-                        data["direction"] = (
-                            selected_master.get("master_am")
-                            or selected_master.get("master_ru")
-                            or selected_master.get("master_en")
-                            or data.get("direction")
-                        )
-            except Exception:
-                logger.exception("Partner catalogue classification failed")
-                data["master_category_id"] = None
-                data["classification_needs_review"] = True
-                data["classification_ambiguities"] = ["classification_failed"]
+        # Registration is intentionally classification-free. Direction, subcategory
+        # and catalogue IDs are assigned/reviewed after submission by Admin.
+        data["master_category_id"] = None
+        data["classification_confidence"] = 0
+        data["classification_ambiguities"] = []
+        data["classification_needs_review"] = True
 
         if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
             data[pending_field] = _norm(text)
@@ -1079,7 +1036,6 @@ Return only the supplied JSON schema."""
         data = _heuristic(text)
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
         data = _recover_obvious_facts(combined_text, data)
-        data = _recover_master_category(db, combined_text, data)
         recovered = _recover_services_from_history(
             history + [{"role": "user", "content": text}]
         )
@@ -1129,244 +1085,6 @@ Return only the supplied JSON schema."""
         ]
         data["ready"] = not data["missing"]
         return data
-
-async def classify_profile_catalog(db, profile: dict) -> dict:
-    """Second AI stage: classify an already extracted partner profile.
-
-    Classification is deliberately split into two small Groq requests:
-    1) choose one top-level direction from the 22 master categories;
-    2) match services only against subcategories of that direction.
-
-    The old implementation sent all ~320 subcategories (with three language
-    labels) in one prompt and could exceed Groq's request-size limit (HTTP 413).
-    Never send the full catalogue to Groq in one request.
-    """
-    key = os.getenv("GROQ_API_KEY", "").strip()
-    services_profile = list(profile.get("services") or [])
-    if not key or AsyncGroq is None:
-        return {
-            "master_category_id": None,
-            "services": services_profile,
-            "confidence": 0.0,
-            "ambiguities": ["classification_ai_unavailable"],
-            "needs_review": True,
-        }
-
-    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
-    if model in {"llama-3.1-8b-instant", "llama-3.3-70b-versatile"}:
-        model = "openai/gpt-oss-20b"
-
-    client = AsyncGroq(api_key=key)
-    master_catalog = get_master_catalog(db)
-    if not master_catalog:
-        return {
-            "master_category_id": None,
-            "services": services_profile,
-            "confidence": 0.0,
-            "ambiguities": ["catalog_empty"],
-            "needs_review": True,
-        }
-
-    # STEP 1: send only the 22 master directions, never the full 320-row
-    # catalogue. This keeps the request small and makes direction selection
-    # independent from subcategory wording.
-    master_schema = {
-        "type": "object",
-        "properties": {
-            "master_category_id": {"type": ["integer", "null"]},
-            "confidence": {"type": "number"},
-            "reason": {"type": "string"},
-        },
-        "required": ["master_category_id", "confidence", "reason"],
-        "additionalProperties": False,
-    }
-    master_system = """You are Admin Classification AI for Armenia AI Guide.
-Choose the ONE real top-level direction that best represents this partner
-business and its services.
-
-Rules:
-- Understand Armenian, Russian and English semantically.
-- Use the supplied master catalogue only.
-- master_category_id MUST be one of the supplied IDs or null.
-- Do not classify individual services yet.
-- Never invent an ID.
-- If the business genuinely does not fit any direction, return null.
-"""
-    master_user = (
-        "ACTIVE MASTER DIRECTIONS:\n"
-        + json.dumps(master_catalog, ensure_ascii=False)
-        + "\n\nPARTNER PROFILE:\n"
-        + json.dumps({
-            "business_name": profile.get("business_name"),
-            "description": profile.get("description"),
-            "marz": profile.get("marz"),
-            "city": profile.get("city"),
-            "address": profile.get("address"),
-            "services": [
-                {
-                    "index": i,
-                    "name": _norm(x.get("name")),
-                    "specialization": _norm(x.get("raw_sub_direction") or x.get("name")),
-                }
-                for i, x in enumerate(services_profile)
-                if isinstance(x, dict)
-            ],
-        }, ensure_ascii=False)
-    )
-
-    try:
-        master_result = await _groq_json(
-            client, model, master_system, master_user,
-            "admin_partner_master_classification", master_schema, 500
-        )
-    except Exception:
-        return {
-            "master_category_id": None,
-            "services": services_profile,
-            "confidence": 0.0,
-            "ambiguities": ["master_classification_failed"],
-            "needs_review": True,
-        }
-
-    master_id = _safe_int(master_result.get("master_category_id"))
-    valid_master_ids = {
-        _safe_int(row.get("master_id"))
-        for row in master_catalog
-        if _safe_int(row.get("master_id")) is not None
-    }
-    if master_id not in valid_master_ids:
-        master_id = None
-
-    if master_id is None:
-        return {
-            "master_category_id": None,
-            "services": services_profile,
-            "confidence": float(master_result.get("confidence") or 0),
-            "ambiguities": [
-                _norm(master_result.get("reason")) or "Top-level direction requires admin review."
-            ],
-            "needs_review": True,
-        }
-
-    # STEP 2: only this direction's active subcategories are sent to Groq.
-    # For MOTOR servis this is the compact Авտոծառայություններ catalogue,
-    # including the exact IDs such as diagnosis, engine repair, brakes, oil,
-    # tyres, etc.
-    direction_catalog = get_catalog_for_master(db, master_id)
-    if not direction_catalog:
-        return {
-            "master_category_id": master_id,
-            "services": services_profile,
-            "confidence": float(master_result.get("confidence") or 0),
-            "ambiguities": ["direction_catalog_empty"],
-            "needs_review": True,
-        }
-
-    matched = await _ai_match_services(
-        client, model, services_profile, direction_catalog
-    )
-
-    # Deterministic fallback is intentionally applied only after the compact
-    # AI request. It can rescue obvious multilingual phrases if Groq leaves
-    # one unresolved, while still accepting IDs only from this real direction.
-    matched = _fallback_catalog_match(matched, direction_catalog)
-
-    valid_subcats = {
-        _safe_int(x.get("category_id"))
-        for x in direction_catalog
-        if _safe_int(x.get("category_id")) is not None
-    }
-    for item in matched:
-        cid = _safe_int(item.get("matched_subcategory_id"))
-        if cid not in valid_subcats:
-            item["matched_subcategory_id"] = None
-
-    needs_review = any(
-        _safe_int(x.get("matched_subcategory_id")) is None
-        for x in matched
-        if isinstance(x, dict)
-    )
-
-    ambiguities = []
-    if needs_review:
-        ambiguities.append("one_or_more_services_need_admin_review")
-
-    return {
-        "master_category_id": master_id,
-        "services": matched,
-        "confidence": float(master_result.get("confidence") or 0),
-        "ambiguities": ambiguities,
-        "needs_review": needs_review,
-    }
-
-def match_catalog(db, profile: dict) -> tuple[int | None, list[int]]:
-    """Validate AI-selected catalogue IDs against the real database.
-
-    The AI does the semantic classification. Python does NOT guess a category
-    from the first row or from substring matching. It only validates the IDs
-    returned by Structured Outputs and derives the master direction from them.
-    """
-    catalog = get_catalog(db)
-    by_category = {}
-    for row in catalog:
-        cid = _safe_int(row.get("category_id"))
-        mid = _safe_int(row.get("master_id"))
-        if cid is not None:
-            by_category[cid] = mid
-
-    selected: list[int] = []
-    for item in profile.get("services") or []:
-        if not isinstance(item, dict):
-            continue
-        cid = _safe_int(item.get("matched_subcategory_id"))
-        if cid is not None and cid in by_category and cid not in selected:
-            selected.append(cid)
-
-    explicit_master = _safe_int(profile.get("master_category_id"))
-    if explicit_master is not None:
-        valid_master_ids = {row["master_id"] for row in catalog}
-        if explicit_master not in valid_master_ids:
-            explicit_master = None
-
-    # If AI selected valid subcategories, their parent direction is authoritative.
-    parent_ids = {by_category[cid] for cid in selected if cid in by_category}
-    master_id = explicit_master
-    if parent_ids:
-        if master_id not in parent_ids:
-            # Prefer the parent of the selected service categories. This avoids
-            # trusting an inconsistent master ID returned alongside valid IDs.
-            master_id = next(iter(parent_ids))
-        selected = [
-            cid for cid in selected
-            if by_category.get(cid) == master_id
-        ]
-
-    # If the model identified a valid master but no subcategory, return the
-    # master with an empty category list. The persistence layer must NOT invent
-    # a category as a fallback.
-    return master_id, selected
-
-
-def match_subcategories(db, names: list[str]) -> list[int]:
-    """Compatibility helper: exact catalogue-name lookup for legacy callers.
-
-    Active onboarding uses matched_subcategory_id from the AI and does not use
-    this function for semantic classification.
-    """
-    catalog = get_catalog(db)
-    wanted = {_norm(name).lower() for name in names if _norm(name)}
-    result = []
-    for row in catalog:
-        names3 = {
-            _norm(row.get("category_am")).lower(),
-            _norm(row.get("category_ru")).lower(),
-            _norm(row.get("category_en")).lower(),
-        }
-        if wanted & names3:
-            cid = _safe_int(row.get("category_id"))
-            if cid is not None and cid not in result:
-                result.append(cid)
-    return result
 
 def missing_question(data: dict, lang: str) -> str:
     """Ask only for information that is actually missing.

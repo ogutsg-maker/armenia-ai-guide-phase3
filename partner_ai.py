@@ -11,11 +11,7 @@ import logging
 from typing import Any
 
 import data_core
-from platform_db import (
-    active_session, create_session, update_session, add_ai_message,
-    recent_ai_messages, ensure_partner, update_partner,
-    create_or_update_proposal, latest_clarification, mark_clarification_answered,
-)
+
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +219,8 @@ class PartnerAI:
         self.ai = ai
 
     async def process(self, user_id: int, text: str, lang: str = "hy") -> dict:
-        partner = ensure_partner(user_id)
-        session = active_session(user_id, "partner", "onboarding") or create_session(
+        partner = data_core.ensure_partner(user_id)
+        session = data_core.active_session(user_id, "partner", "onboarding") or data_core.create_session(
             user_id, "partner", "onboarding",
             {"partner_id": partner["id"], "profile": {}, "proposal_id": None,
              "confirmed": False, "awaiting_document": False},
@@ -237,10 +233,10 @@ class PartnerAI:
                 ctx = {}
         ctx.setdefault("partner_id", partner["id"])
         ctx.setdefault("profile", {})
-        add_ai_message(session["id"], "user", text)
+        data_core.add_ai_message(session["id"], "user", text)
 
-        history = recent_ai_messages(session["id"], 14)
-        clarification = latest_clarification(partner["id"])
+        history = data_core.recent_ai_messages(session["id"], 14)
+        clarification = data_core.latest_clarification(partner["id"])
         system = f"""Դու Armenia AI Guide-ի գործընկերոջ անձնական AI օգնականն ես։
 Դու աշխատում ես միայն իրական տվյալներով և չես հորինում ընկերություններ, ծառայություններ կամ հաստատումներ։
 Լեզուն՝ {lang}. Պատասխանիր նույն լեզվով, կարճ և բնական։
@@ -284,13 +280,13 @@ class PartnerAI:
                 )
                 ctx.pop("pending_action", None)
                 reply = "Կատարված է։" if lang == "hy" else ("Готово." if lang == "ru" else "Done.")
-                update_session(session["id"], ctx)
-                add_ai_message(session["id"], "ai", reply, executed)
+                data_core.update_session(session["id"], ctx)
+                data_core.add_ai_message(session["id"], "ai", reply, executed)
                 return {"reply": reply, "context": ctx, "raw": {"executed": executed}}
             except Exception:
                 logger.exception("Confirmed partner action failed")
                 ctx.pop("pending_action", None)
-                update_session(session["id"], ctx)
+                data_core.update_session(session["id"], ctx)
 
         try:
             data = await self.ai.chat_json(
@@ -322,8 +318,8 @@ class PartnerAI:
                     "Հաստատե՞լ այս փոփոխությունը։" if lang == "hy"
                     else ("Подтвердить это изменение?" if lang == "ru" else "Confirm this change?")
                 )
-                update_session(session["id"], ctx)
-                add_ai_message(session["id"], "ai", reply, prepared)
+                data_core.update_session(session["id"], ctx)
+                data_core.add_ai_message(session["id"], "ai", reply, prepared)
                 return {"reply": reply, "context": ctx, "raw": prepared}
 
         patch = _clean_patch(data.get("profile_patch"))
@@ -332,14 +328,14 @@ class PartnerAI:
         proposal_data = data.get("catalog_proposal") or {}
         proposal_id = ctx.get("proposal_id")
         if isinstance(proposal_data, dict) and proposal_data.get("needed"):
-            p = create_or_update_proposal(partner["id"], proposal_data, proposal_id)
+            p = data_core.create_or_update_proposal(partner["id"], proposal_data, proposal_id)
             proposal_id = p["id"]
             ctx["proposal_id"] = proposal_id
             ctx["awaiting_document"] = False
 
         try:
             if ctx.get("profile"):
-                update_partner(
+                data_core.update_partner(
                     partner["id"],
                     business_name=ctx["profile"].get("business_name")
                     or partner.get("business_name")
@@ -357,18 +353,18 @@ class PartnerAI:
             ctx["awaiting_document"] = True
         if clarification:
             ctx["last_admin_clarification_id"] = clarification["id"]
-            mark_clarification_answered(clarification["id"])
+            data_core.mark_clarification_answered(clarification["id"])
 
-        update_session(session["id"], ctx)
+        data_core.update_session(session["id"], ctx)
         reply = str(data.get("reply") or "")
-        add_ai_message(session["id"], "ai", reply, data)
+        data_core.add_ai_message(session["id"], "ai", reply, data)
         return {"reply": reply, "context": ctx, "raw": data}
 
     async def initial_message(self, user_id: int, lang: str = "hy") -> str:
-        p = ensure_partner(user_id)
-        s = active_session(
+        p = data_core.ensure_partner(user_id)
+        s = data_core.active_session(
             user_id, "partner", "onboarding"
-        ) or create_session(user_id, "partner", "onboarding", {
+        ) or data_core.create_session(user_id, "partner", "onboarding", {
             "partner_id": p["id"], "profile": {},
         })
         text = {
@@ -376,5 +372,5 @@ class PartnerAI:
             "ru": "Здравствуйте 👋 Я ваш AI-помощник. Я помогу подключить бизнес к Armenia AI Guide без сложных анкет. Расскажите о бизнесе свободным текстом: чем занимаетесь, где работаете, какие услуги и цены. Можно прислать PDF, фото или прайс-лист.",
             "en": "Hello 👋 I am your AI assistant. I will connect your business to Armenia AI Guide without complicated forms. Tell me about your business, location, services and prices. You can also send a PDF, photo or price list.",
         }[lang]
-        add_ai_message(s["id"], "ai", text)
+        data_core.add_ai_message(s["id"], "ai", text)
         return text
