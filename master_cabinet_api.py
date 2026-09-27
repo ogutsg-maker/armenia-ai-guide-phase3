@@ -1212,6 +1212,38 @@ async def api_documents(request: web.Request):
     return web.json_response({"ok": True, "documents": _json(rows)})
 
 
+
+async def api_application_get(request: web.Request):
+    uid = _auth_partner(request); pid = _require_partner(uid)
+    application_id = int(request.match_info["application_id"])
+    from data_core import get_application_full
+    row = get_application_full(application_id, partner_id=pid)
+    if not row:
+        raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "application_not_found"}), content_type="application/json")
+    return web.json_response({"ok": True, "application": _json(row)})
+
+
+async def api_application_update(request: web.Request):
+    uid = _auth_partner(request); pid = _require_partner(uid)
+    application_id = int(request.match_info["application_id"])
+    data = await request.json()
+    from data_core import update_partner_application
+    row = update_partner_application(application_id, partner_id=pid, actor_user_id=uid, payload=data)
+    if not row:
+        return web.json_response({"ok": False, "error": "application_update_failed"}, status=400)
+    return web.json_response({"ok": True, "application": _json(row)})
+
+
+async def api_application_submit(request: web.Request):
+    uid = _auth_partner(request); pid = _require_partner(uid)
+    application_id = int(request.match_info["application_id"])
+    from data_core import submit_partner_application
+    row = submit_partner_application(application_id, partner_id=pid, actor_user_id=uid)
+    if not row:
+        return web.json_response({"ok": False, "error": "application_submit_failed"}, status=400)
+    return web.json_response({"ok": True, "application": _json(row)})
+
+
 def register_master_cabinet_routes(app, db=None, bot=None):
     """Register the complete current partner cabinet API.
 
@@ -1243,6 +1275,9 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
     app.router.add_get("/api/master/{id}/applications", api_applications)
     app.router.add_get("/api/master/{id}/documents", api_documents)
+    app.router.add_get("/api/master/{id}/applications/{application_id}", api_application_get)
+    app.router.add_put("/api/master/{id}/applications/{application_id}", api_application_update)
+    app.router.add_post("/api/master/{id}/applications/{application_id}/submit", api_application_submit)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document", api_application_document_upload)
     app.router.add_get("/api/master/{id}/locations", api_locations)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
