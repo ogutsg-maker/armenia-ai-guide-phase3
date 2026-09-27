@@ -99,6 +99,14 @@ def get_catalog_category(category_id: int):
     )
 
 
+def get_user(user_id: int):
+    return one(
+        """SELECT telegram_id,username,full_name,role,lang,phone,is_verified,is_frozen,balance,rating_avg,rating_count
+           FROM users WHERE telegram_id=%s""",
+        (int(user_id),),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Partners / companies / services
 # ---------------------------------------------------------------------------
