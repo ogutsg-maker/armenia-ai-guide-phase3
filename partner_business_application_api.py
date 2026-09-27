@@ -1194,6 +1194,24 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                         item["matched_subcategory_id"]=_safe_int(item.get("matched_subcategory_id") or item.get("subcategory_id") or item.get("category_id"))
                         clean.append(item)
                     merged["services"]=clean
+                    # Admin edits must never persist an impossible
+                    # direction/subcategory pair. Validate every explicitly
+                    # classified service against the canonical catalogue.
+                    classified_ids=[_safe_int(s.get("matched_subcategory_id")) for s in clean]
+                    classified_ids=[x for x in classified_ids if x is not None]
+                    if classified_ids:
+                        valid_rows=_all(
+                            "SELECT id,master_category_id FROM categories WHERE id=ANY(%s::int[])",
+                            (list(set(classified_ids)),)
+                        )
+                        valid_map={_safe_int(x.get("id")):_safe_int(x.get("master_category_id")) for x in valid_rows}
+                        for svc in clean:
+                            cid=_safe_int(svc.get("matched_subcategory_id"))
+                            mid=_safe_int(svc.get("direction_id"))
+                            if cid is not None and cid not in valid_map:
+                                return web.json_response({"ok":False,"error":"invalid_subcategory","category_id":cid},status=409)
+                            if cid is not None and mid is not None and valid_map.get(cid) != mid:
+                                return web.json_response({"ok":False,"error":"subcategory_direction_mismatch","category_id":cid,"direction_id":mid},status=409)
                     if clean:
                         first=clean[0]
                         fields.setdefault("master_category_id",_safe_int(first.get("direction_id") or merged.get("master_category_id") or merged.get("ai_master_category_id")))
