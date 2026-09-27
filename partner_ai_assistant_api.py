@@ -218,6 +218,28 @@ async def api_ai_command(request: web.Request):
         ]
         if pending:
             _, token, command = max(pending, key=lambda item: item[0])
+
+            # Keep a confirmed add-service action alive when an address is still missing.
+            if command.get("intent") == "add_service" and not command.get("object_id"):
+                candidates = [
+                    x for x in ctx.get("addresses", [])
+                    if int(x.get("business_id") or 0) == int(command.get("business_id") or 0)
+                ]
+                if len(candidates) == 1:
+                    command["object_id"] = int(candidates[0]["id"])
+                else:
+                    reply = {
+                        "hy": "Նշեք ծառայության հասցեն։ Օրինակ՝ «Գյումրի, Կենտրոնական 22»։",
+                        "ru": "Укажите адрес услуги. Например: «Гюмри, Центральная 22».",
+                        "en": "Please provide the service address, for example: “Gyumri, Kentronakan 22”.",
+                    }.get(language, "Նշեք ծառայության հասցեն։")
+                    return web.json_response({
+                        "ok": True,
+                        "reply": reply,
+                        "confirmation_id": token,
+                        "command": command,
+                    })
+
             _PENDING.pop(token, None)
             # Re-resolve the pending entity against the latest live context.
             # The original AI response may have omitted service_id/name.
@@ -502,7 +524,12 @@ async def _execute_mutation(pid,c,ctx):
                 if len(candidates) == 1:
                     oid=int(candidates[0]["id"])
                 else:
-                    return web.json_response({"ok":True,"reply":"Укажите адрес, где должна быть эта услуга."})
+                    reply = {
+                "hy": "Նշեք հասցեն, որտեղ պետք է մատուցվի այս ծառայությունը։",
+                "ru": "Укажите адрес, где должна быть эта услуга.",
+                "en": "Please provide the address where this service is offered.",
+            }.get(str(c.get("language") or "hy"), "Նշեք ծառայության հասցեն։")
+            return web.json_response({"ok":True,"reply":reply})
         elif len(candidates)==1:
             oid=int(candidates[0]["id"])
         else:
@@ -549,7 +576,13 @@ async def _execute_mutation(pid,c,ctx):
                 row=cur.fetchone()
                 conn.commit()
                 _set_active_business(pid, int(row["id"]), str(row["name"] or ""))
-                return web.json_response({"ok":True,"reply":"✓ Компания «%s» создана."%row["name"],"data":{"business":dict(row)}})
+                lang = str(c.get("language") or "hy")
+                success_reply = {
+                    "hy": f'✓ «{row["name"]}» ընկերությունը ստեղծվել է։',
+                    "ru": f'✓ Компания «{row["name"]}» создана.',
+                    "en": f'✓ Company “{row["name"]}” was created.',
+                }.get(lang, f'✓ «{row["name"]}» ընկերությունը ստեղծվել է։')
+                return web.json_response({"ok":True,"reply":success_reply,"data":{"business":dict(row)}})
             if intent in {"update_business","delete_business"}:
                 cur.execute("SELECT id,name FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(bid,pid)); b=cur.fetchone()
                 if not b: return web.json_response({"ok":False,"error":"business_not_found"},status=404)
@@ -599,44 +632,3 @@ async def _execute_mutation(pid,c,ctx):
                     conn.commit();return web.json_response({"ok":True,"reply":"✓ Услуга удалена."})
     return web.json_response({"ok":True,"reply":"Запрос принят."})
 
-
-# Shared AI Context integration.
-# Keep the existing partner-specific mutation/read contract, but source the
-# conversational context from the central operational context layer.
-def _context(pid: int) -> dict[str, Any]:
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id,name,description,phone,status FROM partner_businesses "
-                "WHERE partner_id=%s AND status='active' ORDER BY id",
-                (pid,),
-            )
-            businesses = [dict(x) for x in cur.fetchall()]
-            cur.execute(
-                """SELECT id,business_id,object_name,address,city,marz,phone
-                   FROM partner_objects
-                   WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
-                   ORDER BY business_id,id""",
-                (pid,),
-            )
-            objects = [dict(x) for x in cur.fetchall()]
-            cur.execute(
-                """SELECT id,business_id,name,description,price,status,category_id
-                   FROM services
-                   WHERE partner_id=%s AND (status IS NULL OR status <> 'deleted')
-                   ORDER BY business_id,id DESC""",
-                (pid,),
-            )
-            services = [dict(x) for x in cur.fetchall()]
-
-    return {
-        "businesses": businesses,
-        "addresses": objects,
-        "services": services,
-        "permissions": {
-            "role": "partner",
-            "can_read_own_data": True,
-            "can_modify_own_data": True,
-            "confirmation_required_for_mutations": True,
-        },
-    }
