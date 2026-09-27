@@ -137,6 +137,42 @@ async function saveCompanyEdit(id){
     await loadBusinessData();renderBusiness();showCompanySection('settings');toast('✓ '+tr('saved'));
   }catch(e){toast(e.message)}
 }
+function editCompany(){
+  const b=state.current;
+  if(!b)return;
+  const e=document.getElementById('business');
+  if(!e)return;
+  e.innerHTML='<button class="back" onclick="openBusiness('+b.id+')">'+tr('back')+'</button>'+
+    '<div class="detail"><div class="heading"><div><h2>✎ '+tr('companySettings')+'</h2><p>'+tr('companySettingsHint')+'</p></div></div>'+
+    '<div class="field"><label>'+tr('name')+'</label><input id="editCompanyName" value="'+esc(b.name||'')+'"></div>'+
+    '<div class="field"><label>'+tr('description')+'</label><textarea id="editCompanyDescription">'+esc(b.description||'')+'</textarea></div>'+
+    '<div class="field"><label>'+tr('phoneCompany')+'</label><input id="editCompanyPhone" inputmode="tel" value="'+esc(b.phone||'')+'"></div>'+
+    '<div class="notice">'+(state.lang==='hy'?'Փոփոխվում են միայն այս ընկերության տվյալները։':'Данные изменяются только у этой компании.')+'</div>'+
+    '<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="openBusiness('+b.id+')">'+tr('back')+'</button><button class="btn" onclick="saveCompanyEdit('+b.id+')">✓ '+tr('save')+'</button></div></div>';
+  setView('business',false);
+  document.getElementById('editCompanyName')?.focus();
+}
+function openService(id){
+  const s=state.services.find(x=>String(x.id)===String(id));
+  if(!s || !state.current)return;
+  const d=typeof s.data_json==='string'?(function(){try{return JSON.parse(s.data_json)}catch(e){return {}}})():(s.data_json||{});
+  const objectId=s.service_object_id||d.object_id;
+  const o=state.objects.find(x=>String(x.id)===String(objectId))||{};
+  const location=serviceLocation(s);
+  document.getElementById('service').innerHTML=
+    '<button class="back" onclick="openBusiness('+state.current.id+')">'+tr('back')+'</button>'+
+    '<div class="detail"><div class="heading"><div><h1>🛠 '+esc(s.name||s.service_name||'')+'</h1><p>'+esc(state.current.name||'')+'</p></div>'+status(s.status)+'</div>'+
+    '<div class="grid2">'+
+      '<div><b>'+tr('price')+'</b><div class="muted">'+esc(s.price!=null?String(s.price)+' AMD':'—')+'</div></div>'+
+      '<div><b>'+tr('phone')+'</b><div class="muted">'+esc(s.service_contact_phone||d.contact_phone||o.phone||'—')+'</div></div>'+
+      '<div><b>'+tr('description')+'</b><div class="muted">'+esc(s.description||'—')+'</div></div>'+
+      '<div><b>'+tr('object')+'</b><div class="muted">'+esc(location||'—')+'</div></div>'+
+    '</div>'+
+    '<div class="section"><h3>'+tr('classification')+'</h3><div class="notice">'+esc(s.direction_name||d.direction_name||'—')+' · '+esc(s.subcategory_name||d.subcategory_name||'—')+'</div></div>'+
+    '<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="editService('+s.id+')">✎ '+tr('serviceEdit')+'</button><button class="btn danger" onclick="deleteService('+s.id+')">🗑</button></div>'+
+    '</div>';
+  setView('service',false);
+}
 function editObject(id){
   const o=state.objects.find(x=>String(x.id)===String(id));if(!o)return;
   const e=document.getElementById('business');if(!e)return;
