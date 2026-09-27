@@ -207,8 +207,6 @@ async function deleteCompany(pid,bid,name){
 }
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
 async function decision(id,a){const reason=a==='reject'?prompt('Պատճառ / Причина','Փաստաթուղթը չի համապատասխանում'):'';await post(`/api/admin/partner-applications/${id}/${a}`,reason?{reason}:{});await Promise.all([loadPartners(),loadStats()])}
-async function directionAction(id,a,pid){const reason=a==='reject'?prompt('Պատճառ','Փաստաթուղթը չի համապատասխանում'):'';await post(`/api/admin/partner-directions/${id}/action`,reason?{action:a,reason}:{action:a});const el=$('expand'+pid);el.style.display='none';await togglePartner(pid);await loadStats()}
-
 async function loadServiceDirectionRequests(){
   const el=$('serviceDirectionRequestList');
   try{
