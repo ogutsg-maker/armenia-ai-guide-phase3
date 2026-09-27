@@ -917,15 +917,25 @@ async def api_admin_service_direction_request_action(request):
         master = _db_fetchone("SELECT id,name_am,name_ru,name_en FROM master_categories WHERE id=%s AND is_active=TRUE",(mid,))
         if not master:
             return web.json_response({"ok":False,"error":"master_direction_not_found"},status=400)
-        existing_pd = _db_fetchone("SELECT * FROM partner_directions WHERE partner_id=%s AND master_category_id=%s",(req["partner_id"],mid))
+        business_id = req.get("business_id")
+        if business_id:
+            business = _db_fetchone("SELECT id FROM partner_businesses WHERE id=%s AND partner_id=%s AND status<>'archived'",(business_id,req["partner_id"]))
+            if not business:
+                return web.json_response({"ok":False,"error":"business_not_found"},status=409)
+        else:
+            business = _db_fetchone("SELECT id FROM partner_businesses WHERE partner_id=%s AND status<>'archived' ORDER BY is_default DESC,id LIMIT 1",(req["partner_id"],))
+            business_id = business["id"] if business else None
+        if not business_id:
+            return web.json_response({"ok":False,"error":"business_required"},status=409)
+        existing_pd = _db_fetchone("SELECT * FROM partner_directions WHERE partner_id=%s AND business_id=%s AND master_category_id=%s",(req["partner_id"],business_id,mid))
         if existing_pd and existing_pd["status"]=="approved":
             return web.json_response({"ok":False,"error":"direction_already_approved"},status=400)
         if existing_pd:
             pd=existing_pd
             _db_execute("UPDATE partner_directions SET status='pending',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(pd["id"],))
         else:
-            pd=_db_execute("""INSERT INTO partner_directions(partner_id,master_category_id,status)
-                              VALUES(%s,%s,'pending') RETURNING *""",(req["partner_id"],mid),True)
+            pd=_db_execute("""INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+                              VALUES(%s,%s,%s,'pending') RETURNING *""",(req["partner_id"],business_id,mid),True)
 
         import re
         slug=re.sub(r"[^a-z0-9\u0531-\u0587]+","-",sub.lower()).strip("-") or ("partner-request-"+str(rid))
@@ -941,21 +951,21 @@ async def api_admin_service_direction_request_action(request):
                                  (mid,sub,sub,sub,slug),True)
         _db_execute("""INSERT INTO partner_direction_categories(partner_direction_id,category_id)
                        VALUES(%s,%s) ON CONFLICT DO NOTHING""",(pd["id"],category["id"]))
-        service_row=_db_fetchone("""SELECT id FROM services WHERE partner_id=%s AND category_id=%s
+        service_row=_db_fetchone("""SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND category_id=%s
                                     AND lower(trim(name))=lower(trim(%s)) AND status<>'deleted'
-                                    ORDER BY id DESC LIMIT 1""",(req["partner_id"],category["id"],service))
+                                    ORDER BY id DESC LIMIT 1""",(req["partner_id"],business_id,category["id"],service))
         if service_row:
-            _db_execute("""UPDATE services SET price=%s,description=%s,status='pending',updated_at=NOW()
-                           WHERE id=%s""",(req.get("price"),req.get("description") or "",service_row["id"]))
+            _db_execute("""UPDATE services SET price=%s,description=%s,status='pending',business_id=%s,updated_at=NOW()
+                           WHERE id=%s""",(req.get("price"),req.get("description") or "",business_id,service_row["id"]))
         else:
-            _db_execute("""INSERT INTO services(partner_id,category_id,subcategory_id,name,description,price,status,data_json)
-                           VALUES(%s,%s,%s,%s,%s,%s,'pending',%s::jsonb)""",
-                        (req["partner_id"],category["id"],category["id"],service,req.get("description") or "",req.get("price"),
+            _db_execute("""INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json)
+                           VALUES(%s,%s,%s,%s,%s,%s,%s,'pending',%s::jsonb)""",
+                        (req["partner_id"],business_id,category["id"],category["id"],service,req.get("description") or "",req.get("price"),
                          '{"source":"service_direction_request"}'))
         _db_execute("""UPDATE service_direction_requests
-                       SET status='document_pending',partner_direction_id=%s,admin_note=%s,
+                       SET business_id=%s,status='document_pending',partner_direction_id=%s,admin_note=%s,
                            reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
-                       WHERE id=%s""",(pd["id"],req.get("admin_note") or "",admin_id,rid))
+                       WHERE id=%s""",(business_id,pd["id"],req.get("admin_note") or "",admin_id,rid))
         try:
             bot=request.app.get("partner_direction_bot")
             user=_db_fetchone("SELECT user_id FROM partners WHERE id=%s",(req["partner_id"],))
@@ -984,9 +994,9 @@ async def api_admin_service_direction_request_action(request):
         _db_execute("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE id=%s",(admin_id,doc["id"]))
         _db_execute("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(req["partner_direction_id"],))
         _db_execute("""UPDATE services SET status='approved',updated_at=NOW()
-                       WHERE partner_id=%s AND category_id IN
+                       WHERE partner_id=%s AND business_id=%s AND category_id IN
                          (SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s)
-                         AND status='pending'""",(req["partner_id"],req["partner_direction_id"]))
+                         AND status='pending'""",(req["partner_id"],req.get("business_id"),req["partner_direction_id"]))
         _db_execute("UPDATE service_direction_requests SET status='approved',admin_note=NULL,reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(admin_id,rid))
         try:
             bot=request.app.get("partner_direction_bot")
