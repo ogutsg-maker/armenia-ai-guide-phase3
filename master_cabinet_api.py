@@ -1322,7 +1322,8 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/negotiations/{negotiation_id}/message", api_negotiation_reply)
     app.router.add_post("/api/master/{id}/negotiations/{negotiation_id}/agree", api_negotiation_agree)
     app.router.add_get("/api/master/{id}/applications", api_applications)
-    app.router.add_get("/api/master/{id}/documents", api_documents)
+    # GET /documents is owned by stage3_partner_verification.api_partner_documents.
+    # Keep a single route so document reads cannot be shadowed by a legacy handler.
     app.router.add_get("/api/master/{id}/applications/{application_id}", api_application_get)
     app.router.add_put("/api/master/{id}/applications/{application_id}", api_application_update)
     app.router.add_post("/api/master/{id}/applications/{application_id}/submit", api_application_submit)
