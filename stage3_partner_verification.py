@@ -1239,6 +1239,205 @@ async def api_admin_dispute_resolve(request):
     })
 
 
+
+async def api_admin_registry(request):
+    """Compact admin registry with one search/filter contract for companies,
+    services, bookings and applications. Results stay small and drill into
+    the existing detailed admin records."""
+    _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    kind = str(request.query.get("type") or "companies").strip().lower()
+    q = str(request.query.get("q") or "").strip()
+    marz = str(request.query.get("marz") or "").strip()
+    city = str(request.query.get("city") or "").strip()
+    direction = str(request.query.get("direction") or "").strip()
+    subcategory = str(request.query.get("subcategory") or "").strip()
+    service = str(request.query.get("service") or "").strip()
+    documents = str(request.query.get("documents") or "").strip()
+    address = str(request.query.get("address") or "").strip()
+    status = str(request.query.get("status") or "").strip()
+    company = str(request.query.get("company") or "").strip()
+    min_price = str(request.query.get("min_price") or "").strip()
+    max_price = str(request.query.get("max_price") or "").strip()
+    date_from = str(request.query.get("date_from") or "").strip()
+    date_to = str(request.query.get("date_to") or "").strip()
+    payment = str(request.query.get("payment") or "").strip()
+    limit = min(max(int(request.query.get("limit") or 100), 1), 300)
+
+    clauses = []
+    args = []
+
+    def like(expr, value):
+        if value:
+            clauses.append(f"LOWER(COALESCE({expr},'')) LIKE LOWER(%s)")
+            args.append("%" + value + "%")
+
+    if kind == "companies":
+        sql = """SELECT pb.id, pb.partner_id, pb.name AS company_name,
+                        pb.status, p.user_id AS telegram_id,
+                        p.business_name AS partner_name,
+                        COUNT(DISTINCT s.id) FILTER (WHERE s.status IS DISTINCT FROM 'deleted') AS service_count,
+                        COUNT(DISTINCT o.id) FILTER (WHERE COALESCE(o.is_active,TRUE)) AS address_count,
+                        COUNT(DISTINCT d.id) AS document_count,
+                        COALESCE(MAX(o.marz), '') AS marz,
+                        COALESCE(MAX(o.city), '') AS city,
+                        COALESCE(MAX(o.address), '') AS address
+                 FROM partner_businesses pb
+                 JOIN partners p ON p.id=pb.partner_id
+                 LEFT JOIN services s ON s.business_id=pb.id
+                 LEFT JOIN partner_objects o ON o.business_id=pb.id
+                 LEFT JOIN partner_verification_documents d ON d.business_id=pb.id
+                 WHERE pb.status <> 'archived'"""
+        like("pb.name", q)
+        like("p.business_name", q) if q else None
+        if q:
+            clauses.append("""(LOWER(COALESCE(pb.name,'')) LIKE LOWER(%s)
+                               OR LOWER(COALESCE(p.business_name,'')) LIKE LOWER(%s)
+                               OR LOWER(COALESCE(p.user_id::text,'')) LIKE LOWER(%s))""")
+            # remove the two extra q predicates added above, keeping one grouped predicate
+            clauses = clauses[:-1]
+            args = args[:-2] if len(args)>=2 and args[-2:]==["%"+q+"%","%"+q+"%"] else args
+            args.extend(["%"+q+"%","%"+q+"%","%"+q+"%"])
+        like("o.marz", marz)
+        like("o.city", city)
+        like("o.address", address)
+        if direction:
+            clauses.append("""EXISTS (SELECT 1 FROM services sx
+                               JOIN categories cx ON cx.id=sx.category_id
+                               JOIN master_categories mx ON mx.id=cx.master_category_id
+                               WHERE sx.business_id=pb.id AND sx.status IS DISTINCT FROM 'deleted'
+                               AND (LOWER(COALESCE(mx.name_am,'')) LIKE LOWER(%s)
+                                    OR LOWER(COALESCE(mx.name_ru,'')) LIKE LOWER(%s)
+                                    OR LOWER(COALESCE(mx.name_en,'')) LIKE LOWER(%s)))""")
+            args += ["%"+direction+"%"]*3
+        if subcategory:
+            clauses.append("""EXISTS (SELECT 1 FROM services sx
+                               JOIN categories cx ON cx.id=sx.category_id
+                               WHERE sx.business_id=pb.id AND sx.status IS DISTINCT FROM 'deleted'
+                               AND (LOWER(COALESCE(cx.name_am,'')) LIKE LOWER(%s)
+                                    OR LOWER(COALESCE(cx.name_ru,'')) LIKE LOWER(%s)
+                                    OR LOWER(COALESCE(cx.name_en,'')) LIKE LOWER(%s)))""")
+            args += ["%"+subcategory+"%"]*3
+        if service:
+            clauses.append("EXISTS (SELECT 1 FROM services sx WHERE sx.business_id=pb.id AND sx.status IS DISTINCT FROM 'deleted' AND LOWER(COALESCE(sx.name,'')) LIKE LOWER(%s))")
+            args.append("%"+service+"%")
+        if documents == "yes":
+            clauses.append("EXISTS (SELECT 1 FROM partner_verification_documents dx WHERE dx.business_id=pb.id)")
+        elif documents == "no":
+            clauses.append("NOT EXISTS (SELECT 1 FROM partner_verification_documents dx WHERE dx.business_id=pb.id)")
+        if status:
+            clauses.append("pb.status=%s"); args.append(status)
+        sql += (" AND " + " AND ".join(clauses)) if clauses else ""
+        sql += """ GROUP BY pb.id,pb.partner_id,pb.name,pb.status,p.user_id,p.business_name
+                   ORDER BY pb.updated_at DESC NULLS LAST,pb.id DESC LIMIT %s"""
+        args.append(limit)
+        rows = _db_fetchall(sql, tuple(args))
+        return web.json_response({"ok":True,"type":kind,"items":_safe(rows)})
+
+    if kind == "services":
+        sql = """SELECT s.id,s.partner_id,s.business_id,s.name AS service_name,s.price,s.status,
+                        pb.name AS company_name,p.user_id AS telegram_id,
+                        COALESCE(o.city,'') AS city,COALESCE(o.marz,'') AS marz,
+                        COALESCE(m.name_am,m.name_ru,m.name_en,'') AS direction,
+                        COALESCE(c.name_am,c.name_ru,c.name_en,'') AS subcategory
+                 FROM services s
+                 JOIN partner_businesses pb ON pb.id=s.business_id
+                 JOIN partners p ON p.id=s.partner_id
+                 LEFT JOIN categories c ON c.id=s.category_id
+                 LEFT JOIN master_categories m ON m.id=c.master_category_id
+                 LEFT JOIN LATERAL (SELECT city,marz FROM partner_objects WHERE business_id=s.business_id AND COALESCE(is_active,TRUE) ORDER BY id LIMIT 1) o ON TRUE
+                 WHERE s.status IS DISTINCT FROM 'deleted'"""
+        if q:
+            clauses.append("(LOWER(COALESCE(s.name,'')) LIKE LOWER(%s) OR LOWER(COALESCE(pb.name,'')) LIKE LOWER(%s))")
+            args += ["%"+q+"%","%"+q+"%"]
+        like("o.marz", marz); like("o.city", city)
+        like("m.name_am", direction); like("c.name_am", subcategory); like("s.name", service)
+        if company: like("pb.name", company)
+        if status: clauses.append("s.status=%s"); args.append(status)
+        if min_price:
+            clauses.append("s.price >= %s"); args.append(float(min_price))
+        if max_price:
+            clauses.append("s.price <= %s"); args.append(float(max_price))
+        sql += (" AND " + " AND ".join(clauses)) if clauses else ""
+        sql += " ORDER BY s.updated_at DESC NULLS LAST,s.id DESC LIMIT %s"; args.append(limit)
+        return web.json_response({"ok":True,"type":kind,"items":_safe(_db_fetchall(sql,tuple(args)))})
+
+    if kind == "bookings":
+        sql = """SELECT b.id,b.status,b.service_name,b.agreed_price,b.currency,b.scheduled_at,b.created_at,
+                        b.partner_id,b.business_id,b.service_id,p.business_name AS partner_name,
+                        pb.name AS company_name,COALESCE(sr.city,'') AS city
+                 FROM bookings b
+                 LEFT JOIN partners p ON p.id=b.partner_id
+                 LEFT JOIN partner_businesses pb ON pb.id=b.business_id
+                 LEFT JOIN service_requests sr ON sr.id=b.request_id
+                 WHERE 1=1"""
+        if q:
+            clauses.append("(LOWER(COALESCE(b.service_name,'')) LIKE LOWER(%s) OR LOWER(COALESCE(pb.name,'')) LIKE LOWER(%s) OR LOWER(COALESCE(p.business_name,'')) LIKE LOWER(%s))")
+            args += ["%"+q+"%"]*3
+        like("sr.city", city); like("b.service_name", service)
+        if company: like("pb.name", company)
+        if status: clauses.append("b.status=%s"); args.append(status)
+        if payment: clauses.append("LOWER(COALESCE(b.status,'')) LIKE LOWER(%s)"); args.append("%"+payment+"%")
+        if date_from: clauses.append("b.created_at >= %s::date"); args.append(date_from)
+        if date_to: clauses.append("b.created_at < (%s::date + INTERVAL '1 day')"); args.append(date_to)
+        sql += (" AND " + " AND ".join(clauses)) if clauses else ""
+        sql += " ORDER BY b.created_at DESC LIMIT %s"; args.append(limit)
+        return web.json_response({"ok":True,"type":kind,"items":_safe(_db_fetchall(sql,tuple(args)))})
+
+    if kind == "payments":
+        # There is no independent payments table in the current schema.
+        # Expose booking-level financial state instead of inventing payment records.
+        sql = """SELECT b.id AS order_id,b.status,b.agreed_price,b.currency,b.commission_amount,
+                        b.partner_amount,b.created_at,b.partner_id,b.business_id,
+                        p.business_name AS partner_name,pb.name AS company_name,b.service_name
+                 FROM bookings b
+                 LEFT JOIN partners p ON p.id=b.partner_id
+                 LEFT JOIN partner_businesses pb ON pb.id=b.business_id
+                 WHERE b.agreed_price IS NOT NULL"""
+        if q:
+            clauses.append("(LOWER(COALESCE(pb.name,'')) LIKE LOWER(%s) OR LOWER(COALESCE(b.service_name,'')) LIKE LOWER(%s) OR LOWER(COALESCE(p.business_name,'')) LIKE LOWER(%s))")
+            args += ["%"+q+"%"]*3
+        if company: like("pb.name", company)
+        if status: clauses.append("b.status=%s"); args.append(status)
+        if min_price: clauses.append("b.agreed_price >= %s"); args.append(float(min_price))
+        if max_price: clauses.append("b.agreed_price <= %s"); args.append(float(max_price))
+        if date_from: clauses.append("b.created_at >= %s::date"); args.append(date_from)
+        if date_to: clauses.append("b.created_at < (%s::date + INTERVAL '1 day')"); args.append(date_to)
+        sql += (" AND " + " AND ".join(clauses)) if clauses else ""
+        sql += " ORDER BY b.created_at DESC LIMIT %s"; args.append(limit)
+        return web.json_response({"ok":True,"type":kind,"items":_safe(_db_fetchall(sql,tuple(args)))})
+
+    if kind == "partners":
+        sql = """SELECT p.id,p.user_id AS telegram_id,p.business_name AS partner_name,p.status,
+                        COUNT(DISTINCT pb.id) AS company_count
+                 FROM partners p LEFT JOIN partner_businesses pb ON pb.partner_id=p.id AND pb.status <> 'archived'
+                 WHERE 1=1"""
+        if q:
+            clauses.append("(LOWER(COALESCE(p.business_name,'')) LIKE LOWER(%s) OR LOWER(p.user_id::text) LIKE LOWER(%s))")
+            args += ["%"+q+"%","%"+q+"%"]
+        if status: clauses.append("p.status=%s"); args.append(status)
+        sql += (" AND " + " AND ".join(clauses)) if clauses else ""
+        sql += " GROUP BY p.id,p.user_id,p.business_name,p.status ORDER BY p.id DESC LIMIT %s"; args.append(limit)
+        return web.json_response({"ok":True,"type":kind,"items":_safe(_db_fetchall(sql,tuple(args)))})
+
+    if kind == "applications":
+        sql = """SELECT pa.id,pa.partner_id,pa.business_id,pa.status,pa.created_at,
+                        p.user_id AS telegram_id,p.business_name AS partner_name,pb.name AS company_name
+                 FROM partner_applications pa
+                 LEFT JOIN partners p ON p.id=pa.partner_id
+                 LEFT JOIN partner_businesses pb ON pb.id=pa.business_id
+                 WHERE 1=1"""
+        if q:
+            clauses.append("(LOWER(COALESCE(p.business_name,'')) LIKE LOWER(%s) OR LOWER(COALESCE(pb.name,'')) LIKE LOWER(%s) OR LOWER(p.user_id::text) LIKE LOWER(%s))")
+            args += ["%"+q+"%"]*3
+        if status: clauses.append("pa.status=%s"); args.append(status)
+        if date_from: clauses.append("pa.created_at >= %s::date"); args.append(date_from)
+        if date_to: clauses.append("pa.created_at < (%s::date + INTERVAL '1 day')"); args.append(date_to)
+        sql += (" AND " + " AND ".join(clauses)) if clauses else ""
+        sql += " ORDER BY pa.created_at DESC LIMIT %s"; args.append(limit)
+        return web.json_response({"ok":True,"type":kind,"items":_safe(_db_fetchall(sql,tuple(args)))})
+
+    return web.json_response({"ok":False,"error":"unknown_registry_type"},status=400)
+
 def register_stage3_routes(app, bot_token=None, admin_id=None):
     ensure_stage3_schema()
     app["stage3_bot_token"] = bot_token
@@ -1247,6 +1446,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/master/{id}/documents/upload", api_partner_document_upload)
     app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
+    app.router.add_get("/api/admin/registry-search", api_admin_registry)
     app.router.add_get("/api/admin/orders", api_admin_orders)
     app.router.add_get("/api/admin/disputes", api_admin_disputes)
     app.router.add_post("/api/admin/dispute/{id}/resolve", api_admin_dispute_resolve)
