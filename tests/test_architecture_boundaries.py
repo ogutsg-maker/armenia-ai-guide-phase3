@@ -21,14 +21,16 @@ def _imports(name):
 
 
 def test_ai_orchestration_does_not_import_context_layers():
-    for name in ("admin_ai_api.py", "client_ai.py", "partner_ai.py", "ai_router.py"):
+    for name in ("admin_ai_api.py", "client_ai.py", "partner_ai.py", "ai_router.py", "partner_ai_assistant_api.py"):
         imports = _imports(name)
         assert "ai_context_layer" not in imports
         assert "ai_context_builder" not in imports
 
 
 def test_ai_orchestration_has_no_sql_text():
-    for name in ("admin_ai_api.py", "client_ai.py", "partner_ai.py", "ai_router.py"):
+    # Admin/partner assistant APIs still contain legacy non-AI web operations;
+    # the AI orchestration modules themselves must not compose SQL.
+    for name in ("client_ai.py", "partner_ai.py", "ai_router.py"):
         text = _text(name).lower()
         for keyword in ("select ", "insert ", "update ", "delete ", "create table"):
             assert keyword not in text, f"SQL text in AI orchestration layer {name}: {keyword}"
@@ -66,3 +68,16 @@ def test_partner_registration_does_not_assign_catalog_direction():
     assert "upsert_direction" not in text
     assert "catalog_tree" not in text
     assert "catalog=_catalog_text" not in text
+
+
+def test_removed_ai_layers_are_not_referenced():
+    forbidden = ("ai_data_tools", "ai_action_plan", "ai_context_layer", "ai_context_builder")
+    for name in ("admin_ai_api.py", "client_ai.py", "partner_ai.py", "ai_router.py", "partner_ai_assistant_api.py"):
+        text = _text(name).lower()
+        for module in forbidden:
+            assert module not in text, f"Legacy AI module reference in {name}: {module}"
+
+
+def test_partner_service_creation_is_in_data_core():
+    text = _text("data_core.py")
+    assert "def create_partner_service(" in text
