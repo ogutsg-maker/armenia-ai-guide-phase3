@@ -1195,6 +1195,23 @@ async def api_application_document_upload(request: web.Request):
     return web.json_response({"ok": True, "document_id": int(doc["id"]), "status": "document_pending"})
 
 
+
+async def api_applications(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    from data_core import search_applications
+    rows = search_applications(partner_id=pid, limit=100)
+    return web.json_response({"ok": True, "applications": _json(rows)})
+
+
+async def api_documents(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    from data_core import get_documents
+    rows = get_documents(partner_id=pid)
+    return web.json_response({"ok": True, "documents": _json(rows)})
+
+
 def register_master_cabinet_routes(app, db=None, bot=None):
     """Register the complete current partner cabinet API.
 
@@ -1224,6 +1241,8 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/notifications/read", api_notifications_read_compat)
     app.router.add_post("/api/master/{id}/notifications/read-all", api_notifications_read_all)
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
+    app.router.add_get("/api/master/{id}/applications", api_applications)
+    app.router.add_get("/api/master/{id}/documents", api_documents)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document", api_application_document_upload)
     app.router.add_get("/api/master/{id}/locations", api_locations)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
