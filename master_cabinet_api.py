@@ -1301,6 +1301,26 @@ async def api_application_update(request: web.Request):
     return web.json_response({"ok": True, "application": _json(row)})
 
 
+async def api_application_delete(request: web.Request):
+    """Delete a partner-owned non-approved application and its attached document."""
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    application_id = int(request.match_info["application_id"])
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,status,document_id FROM partner_applications WHERE id=%s AND partner_id=%s", (application_id, pid))
+            row = cur.fetchone()
+            if not row:
+                raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "application_not_found"}), content_type="application/json")
+            if str(row.get("status") or "") == "approved":
+                return web.json_response({"ok": False, "error": "approved_application_cannot_be_deleted"}, status=409)
+            if row.get("document_id"):
+                cur.execute("DELETE FROM partner_verification_documents WHERE id=%s AND partner_id=%s", (row["document_id"], pid))
+            cur.execute("DELETE FROM partner_applications WHERE id=%s AND partner_id=%s RETURNING id", (application_id, pid))
+            deleted = cur.fetchone()
+        conn.commit()
+    return web.json_response({"ok": True, "deleted": bool(deleted), "application_id": application_id})
+
 async def api_application_submit(request: web.Request):
     uid = _auth_partner(request); pid = _require_partner(uid)
     application_id = int(request.match_info["application_id"])
@@ -1376,6 +1396,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_get("/api/master/{id}/applications/{application_id}", api_application_get)
     app.router.add_put("/api/master/{id}/applications/{application_id}", api_application_update)
     app.router.add_post("/api/master/{id}/applications/{application_id}/submit", api_application_submit)
+    app.router.add_delete("/api/master/{id}/applications/{application_id}", api_application_delete)
     app.router.add_post("/api/master/{id}/applications/{application_id}/document", api_application_document_upload)
     app.router.add_get("/api/master/{id}/locations", api_locations)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
