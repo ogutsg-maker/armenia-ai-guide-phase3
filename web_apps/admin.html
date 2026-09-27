@@ -247,7 +247,7 @@ async function deleteCompany(pid,bid,name){
    const text=await r.text(); let d={}; try{d=text?JSON.parse(text):{}}catch(_){d={}};
    if(!r.ok)throw Error(d.error||d.message||('HTTP '+r.status));
    await loadPartners();
-   await alert(d.archived?'Компания архивирована — история сохранена.':'Компания удалена.');
+   alert(d.archived?'Компания архивирована — история сохранена.':'Компания удалена.');
  }catch(e){alert(e.message||'Не удалось удалить компанию')}
 }
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
@@ -346,7 +346,7 @@ async function loadDisputes(){const d=await api('/api/admin/disputes');const r=d
 async function resolveDispute(id,refund){
  const question=refund?'Փակել վեճը և վերադարձնել պատվերի ամբողջ գումարը?':'Փակել վեճը առանց վերադարձի և նշել պատվերը որպես ավարտված?';
  if(!confirm(question))return;
- try{await post(`/api/admin/dispute/${id}/resolve`,{refund});await loadDisputes();await }catch(e){alert(e.message||e)}
+ try{await post(`/api/admin/dispute/${id}/resolve`,{refund});await loadDisputes();}catch(e){alert(e.message||e)}
 }
 async function loadPotential(){const d=await api('/api/admin/potential-partners');$('potentialList').innerHTML=(d.items||[]).map(x=>`<div class="item"><div class="row"><b>${esc(x.business_name)}</b>${badge(x.status)}</div><div>${esc(x.description||'')}</div><div class="muted">${esc(x.direction||'')} · ${esc(x.city||'')} · ${esc(x.source||'')}</div></div>`).join('')||'<div class="empty">Թեկնածուներ չկան</div>'}
 async function runResearch(){const q=$('researchQuery').value.trim();if(!q)return alert('Գրեք որոնման հարցումը');try{const d=await post('/api/admin/potential-partners/research',{query:q,location:'Armenia',limit:10});await loadPotential();alert('Գտնվեց՝ '+(d.results||[]).length)}catch(e){alert('AI որոնումը հասանելի չէ: '+e.message)}}
