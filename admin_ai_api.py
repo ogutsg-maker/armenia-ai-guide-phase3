@@ -97,11 +97,12 @@ def _admin_localized(lang,key,**kwargs):
     return _ADMIN_LOCALES.get(lang,_ADMIN_LOCALES["ru"]).get(key,key).format(**kwargs)
 
 def _admin_tool_registry(role="admin"):
-    return [
+    names = [
         "count","search_partners","search_applications","search_companies",
         "get_partner","get_company","get_application","get_application_full",
         "get_documents","get_services","catalog_overview","ai_usage_summary",
     ]
+    return [{"name": name, "description": "Read live data through Python Data Core."} for name in names]
 
 
 def _admin_tool_schemas(role="admin"):
