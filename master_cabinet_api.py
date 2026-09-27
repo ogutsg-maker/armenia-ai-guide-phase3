@@ -841,9 +841,22 @@ async def api_service_update(request: web.Request):
     pid = _require_partner(uid)
     bid = _business_id(request,pid)
     sid = int(request.match_info["service_id"])
+    if not bid:
+        return web.json_response({"ok": False, "error": "business_required"}, status=409)
     data = await request.json()
     allowed = {"category_id", "subcategory_id", "name", "description", "price", "duration_minutes", "status", "data_json", "object_id", "contact_phone"}
     fields = {k: data[k] for k in allowed if k in data}
+    if "object_id" in fields and fields["object_id"] is not None:
+        try:
+            object_id = int(fields["object_id"])
+        except (TypeError, ValueError):
+            return web.json_response({"ok": False, "error": "invalid_object_id"}, status=400)
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM partner_objects WHERE id=%s AND partner_id=%s AND business_id=%s", (object_id, pid, bid))
+                if not cur.fetchone():
+                    return web.json_response({"ok": False, "error": "object_not_found"}, status=404)
+        fields["object_id"] = object_id
     if not fields:
         return web.json_response({"ok": True})
     if "data_json" in fields and not isinstance(fields["data_json"], str):
@@ -949,13 +962,12 @@ async def api_bookings(request: web.Request):
         if not _table_exists(conn, "bookings"):
             return web.json_response({"ok": True, "bookings": []})
         with conn.cursor() as cur:
-            if bid is not None:
-                cur.execute(
-                    "SELECT * FROM bookings WHERE partner_id=%s AND (business_id=%s OR business_id IS NULL) ORDER BY id DESC LIMIT 200",
-                    (pid, bid),
-                )
-            else:
-                cur.execute("SELECT * FROM bookings WHERE partner_id=%s ORDER BY id DESC LIMIT 200", (pid,))
+            if bid is None:
+                return web.json_response({"ok": True, "bookings": []})
+            cur.execute(
+                "SELECT * FROM bookings WHERE partner_id=%s AND business_id=%s ORDER BY id DESC LIMIT 200",
+                (pid, bid),
+            )
             rows = cur.fetchall()
     return web.json_response({"ok": True, "bookings": _json(rows)})
 
