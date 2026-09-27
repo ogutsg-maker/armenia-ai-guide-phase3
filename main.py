@@ -26,7 +26,8 @@ from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_weba
 from stage3_partner_verification import register_stage3_routes
 from partner_business_application_api import register_business_application_routes
 from partner_directions_api import register_partner_direction_routes
-from admin_ai_api import admin_ai_message
+from admin_ai_api import admin_ai_message, register_admin_ai_routes
+from admin_stats_api import register_admin_stats_routes
 import runtime_platform_bootstrap  # noqa: F401
 
 try:
@@ -603,6 +604,8 @@ async def main():
     register_stage3_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID)
     register_business_application_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID)
     register_partner_direction_routes(app, db, bot=bot)
+    register_admin_stats_routes(app)
+    register_admin_ai_routes(app, ai=ai, bot=bot)
     logger.info("✅ Business/application layer registered")
     logger.info("✅ Partner direction routes registered")
     logger.info("✅ Stage 3 verification routes registered")
