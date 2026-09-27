@@ -1287,15 +1287,10 @@ async def api_admin_registry(request):
                  LEFT JOIN partner_objects o ON o.business_id=pb.id
                  LEFT JOIN partner_verification_documents d ON d.business_id=pb.id
                  WHERE pb.status <> 'archived'"""
-        like("pb.name", q)
-        like("p.business_name", q) if q else None
         if q:
             clauses.append("""(LOWER(COALESCE(pb.name,'')) LIKE LOWER(%s)
                                OR LOWER(COALESCE(p.business_name,'')) LIKE LOWER(%s)
                                OR LOWER(COALESCE(p.user_id::text,'')) LIKE LOWER(%s))""")
-            # remove the two extra q predicates added above, keeping one grouped predicate
-            clauses = clauses[:-1]
-            args = args[:-2] if len(args)>=2 and args[-2:]==["%"+q+"%","%"+q+"%"] else args
             args.extend(["%"+q+"%","%"+q+"%","%"+q+"%"])
         like("o.marz", marz)
         like("o.city", city)
