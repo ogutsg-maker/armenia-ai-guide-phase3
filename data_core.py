@@ -534,6 +534,78 @@ def get_application_full(application_id: int, partner_id: int | None = None):
     )
 
 
+
+def save_partner_application_draft(*, user_id: int, profile: dict[str, Any]) -> dict[str, Any]:
+    """Create/update the partner-facing registration draft.
+
+    This is deliberately independent from catalogue classification. During
+    onboarding the partner only supplies business facts; direction/category
+    fields stay empty until the admin-side classification step.
+    """
+    uid = int(user_id)
+    profile = dict(profile or {})
+    partner = get_partner_by_user(uid) or ensure_partner(uid)
+    if not partner:
+        raise ValueError("partner_create_failed")
+    partner_id = int(partner["id"])
+
+    services = profile.get("services") if isinstance(profile.get("services"), list) else []
+    services = [dict(x) for x in services if isinstance(x, dict) and str(x.get("name") or x.get("service_name") or "").strip()]
+    payload = dict(profile)
+    payload["services"] = services
+
+    business_name = str(profile.get("business_name") or "").strip() or None
+    marz = str(profile.get("marz") or profile.get("location_marz") or "").strip() or None
+    city = str(profile.get("city") or profile.get("location_city") or "").strip() or None
+    village = str(profile.get("village") or profile.get("location_village") or "").strip() or None
+    address = str(profile.get("address") or "").strip() or None
+    phone = str(profile.get("phone") or "").strip() or None
+    description = str(profile.get("business_description") or profile.get("description") or "").strip() or None
+    service_name = str(services[0].get("name") or services[0].get("service_name") or "").strip() or None
+    price = services[0].get("price") if services else None
+    try:
+        price = float(price) if price not in (None, "") else None
+    except (TypeError, ValueError):
+        price = None
+
+    existing = one(
+        """SELECT id FROM partner_applications
+           WHERE partner_id=%s
+             AND status IN ('draft','pending_partner','sent_back')
+           ORDER BY id DESC LIMIT 1""",
+        (partner_id,),
+    )
+    payload_json = json_dump(payload)
+    if existing:
+        return execute(
+            """UPDATE partner_applications
+               SET business_name=%s,location_marz=%s,location_city=%s,
+                   location_village=%s,address=%s,phone=%s,
+                   direction_name=NULL,master_category_id=NULL,
+                   subcategory_name=NULL,category_id=NULL,
+                   service_name=%s,price=%s,description=%s,
+                   payload_json=%s,updated_at=NOW()
+               WHERE id=%s AND partner_id=%s
+               RETURNING id AS application_id,*""",
+            (business_name,marz,city,village,address,phone,service_name,price,
+             description,payload_json,int(existing["id"]),partner_id),
+            returning=True,
+        )
+
+    return execute(
+        """INSERT INTO partner_applications
+           (partner_id,status,business_name,location_marz,location_city,
+            location_village,address,phone,direction_name,master_category_id,
+            subcategory_name,category_id,service_name,price,description,
+            payload_json)
+           VALUES(%s,'draft',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,%s,%s,%s,%s)
+           RETURNING id AS application_id,*""",
+        (partner_id,business_name,marz,city,village,address,phone,
+         service_name,price,description,payload_json),
+        returning=True,
+    )
+
+
 def update_partner_application(application_id: int, *, partner_id: int,
                                 actor_user_id: int, payload: dict[str, Any]):
     assert_partner_owns_partner(int(partner_id), int(actor_user_id))
