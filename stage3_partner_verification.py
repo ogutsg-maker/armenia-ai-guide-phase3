@@ -1253,9 +1253,12 @@ async def api_admin_registry_company(request):
                            WHERE pb.id=%s""",(bid,))
     if not company:
         return web.json_response({"ok":False,"error":"company_not_found"},status=404)
-    objects=_db_fetchall("""SELECT * FROM partner_objects
+    try:
+        objects=_db_fetchall("""SELECT * FROM partner_objects
                             WHERE business_id=%s AND COALESCE(is_active,TRUE)=TRUE
                             ORDER BY id""",(bid,))
+    except Exception:
+        objects=[]
     services=[]
     try:
         services=_db_fetchall("""SELECT s.*,c.name_am AS subcategory_name_am,c.name_ru AS subcategory_name_ru,
@@ -1268,10 +1271,16 @@ async def api_admin_registry_company(request):
                              ORDER BY s.id DESC""",(bid,))
     except Exception:
         services=[]
-    documents=_db_fetchall("""SELECT id,document_type,original_filename,status,created_at,reviewed_at
+    try:
+        documents=_db_fetchall("""SELECT id,document_type,original_filename,status,created_at,reviewed_at
                               FROM partner_verification_documents WHERE business_id=%s ORDER BY id DESC""",(bid,))
-    bookings=_db_fetchall("""SELECT id,status,service_name,agreed_price,currency,scheduled_at,created_at
+    except Exception:
+        documents=[]
+    try:
+        bookings=_db_fetchall("""SELECT id,status,service_name,agreed_price,currency,scheduled_at,created_at
                              FROM bookings WHERE business_id=%s ORDER BY created_at DESC LIMIT 100""",(bid,))
+    except Exception:
+        bookings=[]
     return web.json_response({"ok":True,"company":_safe(company),"objects":_safe(objects),
                               "services":_safe(services),"documents":_safe(documents),
                               "bookings":_safe(bookings)})
