@@ -1119,6 +1119,60 @@ async def api_admin_partner_block(request):
     return web.json_response({"ok": True, "partner_id": pid, "status": "blocked"})
 
 
+
+async def api_admin_orders(request):
+    _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    rows = _db_fetchall(
+        """SELECT b.id,b.status,b.client_id,b.partner_id,b.service_id,b.business_id,
+                  b.service_name,b.agreed_price,b.currency,b.commission_amount,b.partner_amount,
+                  b.scheduled_at,b.created_at,
+                  sr.city,
+                  p.business_name,
+                  pb.name AS company_name
+           FROM bookings b
+           LEFT JOIN service_requests sr ON sr.id=b.request_id
+           LEFT JOIN partners p ON p.id=b.partner_id
+           LEFT JOIN partner_businesses pb ON pb.id=b.business_id
+           ORDER BY b.created_at DESC LIMIT 200"""
+    )
+    for row in rows:
+        row["final_price"] = row.get("agreed_price")
+        row["category_name_am"] = ""
+    return web.json_response({"ok": True, "items": _safe(rows)})
+
+
+async def api_admin_disputes(request):
+    _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    rows = _db_fetchall(
+        """SELECT b.id,b.id AS order_id,b.status,
+                  COALESCE(b.client_note,'') AS reason,
+                  b.client_id,b.partner_id,b.service_name,b.agreed_price,b.currency,
+                  b.created_at,p.business_name
+           FROM bookings b
+           LEFT JOIN partners p ON p.id=b.partner_id
+           WHERE b.status='dispute'
+           ORDER BY b.updated_at DESC LIMIT 200"""
+    )
+    return web.json_response({"ok": True, "items": _safe(rows)})
+
+
+async def api_admin_dispute_resolve(request):
+    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    did = int(request.match_info["id"])
+    payload = await request.json()
+    refund = bool(payload.get("refund"))
+    status = "cancelled" if refund else "completed"
+    row = _db_fetchone("SELECT id,status,data_json FROM bookings WHERE id=%s", (did,))
+    if not row or row.get("status") != "dispute":
+        return web.json_response({"ok": False, "error": "dispute_not_found"}, status=404)
+    _db_execute(
+        "UPDATE bookings SET status=%s,data_json=COALESCE(data_json,'{}'::jsonb) || %s::jsonb,updated_at=NOW() WHERE id=%s",
+        (status, json.dumps({"dispute_resolved": True, "resolved_by": admin_id, "refund": refund} , ensure_ascii=False), did),
+    )
+    _audit(admin_id, "dispute_resolved", did, {"refund": refund, "status": status})
+    return web.json_response({"ok": True, "id": did, "status": status, "refund": refund})
+
+
 def register_stage3_routes(app, bot_token=None, admin_id=None):
     ensure_stage3_schema()
     app["stage3_bot_token"] = bot_token
@@ -1127,6 +1181,9 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_post("/api/master/{id}/documents/upload", api_partner_document_upload)
     app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
+    app.router.add_get("/api/admin/orders", api_admin_orders)
+    app.router.add_get("/api/admin/disputes", api_admin_disputes)
+    app.router.add_post("/api/admin/dispute/{id}/resolve", api_admin_dispute_resolve)
     app.router.add_get("/api/admin/service-direction-requests", api_admin_service_direction_requests)
     app.router.add_post("/api/admin/service-direction-requests/{id}/action", api_admin_service_direction_request_action)
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
