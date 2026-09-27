@@ -127,9 +127,19 @@ def proposals(status=None):
     if status:return rows('SELECT p.*,pr.business_name FROM ai_catalog_proposals p LEFT JOIN partners pr ON pr.id=p.partner_id WHERE p.status=%s ORDER BY p.created_at DESC',(status,))
     return rows('SELECT p.*,pr.business_name FROM ai_catalog_proposals p LEFT JOIN partners pr ON pr.id=p.partner_id ORDER BY p.created_at DESC')
 def review_proposal(proposal_id,status,admin_id,comment=''):
+    current=proposal(proposal_id)
+    if not current:
+        return None
+    if str(current.get('status') or '').lower() in {'approved','rejected','archived'}:
+        raise ValueError('proposal_already_final')
     return execute('UPDATE ai_catalog_proposals SET status=%s,admin_comment=%s,reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s RETURNING *',(status,comment,admin_id,proposal_id),True)
 
 def edit_proposal(proposal_id, admin_id, fields):
+    current=proposal(proposal_id)
+    if not current:
+        return None
+    if str(current.get('status') or '').lower() in {'approved','rejected','archived'}:
+        raise ValueError('proposal_already_final')
     allowed={k:fields.get(k) for k in ('proposed_master_category','proposed_category','proposed_subcategory','proposed_service','description','reason') if k in fields}
     if not allowed: return proposal(proposal_id)
     sets=[];vals=[]
