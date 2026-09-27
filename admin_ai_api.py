@@ -1729,7 +1729,7 @@ async def _admin_semantic_answer(question,plan,state):
     # "full application" request can safely resolve to that single record.
     if wants_full and not plan.get("entity_id"):
         try:
-            only_apps=Data Core("admin").execute("search_applications",{"limit":2}).get("data",{}).get("items",[])
+            only_apps=_admin_data_call("search_applications", {"limit": 2}).get("data", {}).get("items", [])
             if len(only_apps)==1 and only_apps[0].get("id") is not None:
                 aid=int(only_apps[0]["id"])
                 plan["target"]="application"
