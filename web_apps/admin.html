@@ -81,10 +81,7 @@ function renderPartners(){
        ${badge(p.status)}
      </div>
      <div class="detail">
-       <div>🏢 Компании: <b>${Number(p.company_count||0)}</b></div>
-       <div>🛠 Услуги: <b>${Number(p.service_count||0)}</b></div>
-       ${p.partner_phone?`<div>☎ ${esc(p.partner_phone)}</div>`:''}
-       ${p.partner_address?`<div>📍 ${esc(p.partner_address)}</div>`:''}
+       <div class="muted">Գործընկերոջ ընկերությունները բացելու համար սեղմեք «▼ Ընկերություններ»։</div>
      </div>
      <div class="actions">
        <button class="btn soft" onclick="togglePartner(${p.id})">▼ Компании</button>
