@@ -922,12 +922,32 @@ async def _admin_execute_state_action(action):
                 pass
         if not clean:
             return "Չկա ջնջման ենթակա հայտ։"
-        platform_db.execute(
-            "UPDATE partner_applications SET status='deleted',updated_at=NOW() WHERE id = ANY(%s) AND status <> 'deleted'",
+        rows=platform_db.rows(
+            "SELECT id,status FROM partner_applications WHERE id = ANY(%s)",
             (clean,)
         )
-        return "✓ Ջնջված հայտեր՝ "+", ".join("#"+str(x) for x in clean)+"."
+        existing={int(row["id"]):str(row.get("status") or "") for row in rows if row.get("id") is not None}
+        missing=[x for x in clean if x not in existing]
+        already_deleted=[x for x in clean if existing.get(x)=="deleted"]
+        target=[x for x in clean if x in existing and existing.get(x)!="deleted"]
+        if target:
+            platform_db.execute(
+                "UPDATE partner_applications SET status='deleted',updated_at=NOW() WHERE id = ANY(%s) AND status <> 'deleted'",
+                (target,)
+            )
+        parts=[]
+        if target: parts.append("ջնջված՝ "+", ".join("#"+str(x) for x in target))
+        if already_deleted: parts.append("արդեն ջնջված՝ "+", ".join("#"+str(x) for x in already_deleted))
+        if missing: parts.append("չգտնվեց՝ "+", ".join("#"+str(x) for x in missing))
+        return "✓ Հայտերի արդյունք՝ "+"; ".join(parts)+"."
     aid=int(action.get("application_id") or 0)
+    if aid <= 0:
+        return "Հայտի ID-ն սխալ է։"
+    current=platform_db.one("SELECT id,status FROM partner_applications WHERE id=%s",(aid,))
+    if not current:
+        return "Հայտ #"+str(aid)+" չի գտնվել։"
+    if str(current.get("status") or "")=="deleted":
+        return "Հայտ #"+str(aid)+" արդեն ջնջված է։"
     if action.get("intent")=="edit_application":
         field=action.get("field")
         if field=="subcategory":
