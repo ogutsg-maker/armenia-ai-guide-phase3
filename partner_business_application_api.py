@@ -718,7 +718,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                            WHERE partner_id=%s AND business_id=%s
                              AND master_category_id=%s AND status='approved'
                            LIMIT 1""",
-                        (p["id"], business_id, master_id),
+                        (row["partner_id"], business_id, master_id),
                     )
                     if approved:
                         document_required = False
