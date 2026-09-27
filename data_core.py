@@ -442,7 +442,8 @@ def validate_service_payload(*, partner_id: int, actor_user_id: int, company_id:
 
 
 def update_service_safe(*, service_id: int, actor_user_id: int, name: str | None = None,
-                        price: Any = None, category_id: int | None = None) -> dict:
+                        price: Any = None, category_id: int | None = None,
+                        description: str | None = None) -> dict:
     """Validated domain write. Ownership and catalog are checked before mutation."""
     service = get_service(int(service_id))
     if not service:
@@ -458,6 +459,8 @@ def update_service_safe(*, service_id: int, actor_user_id: int, name: str | None
         except (TypeError,ValueError): raise ValueError("invalid_service_price")
         if price < 0: raise ValueError("invalid_service_price")
         fields.append("price=%s"); params.append(price)
+    if description is not None:
+        fields.append("description=%s"); params.append(str(description).strip()[:5000] or None)
     if category_id is not None:
         category=get_catalog_category(int(category_id))
         if not category or not category.get("is_active"): raise ValueError("catalog_category_invalid")
