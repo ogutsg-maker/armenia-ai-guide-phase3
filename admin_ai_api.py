@@ -11,7 +11,6 @@ from potential_partner_ai import PotentialPartnerAI
 from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
 from ai_data_tools import DataTools, DataToolError
-from ai_context_builder import build_ai_context
 import ai_cost_center
 
 
@@ -916,16 +915,6 @@ def _admin_planner_context(ctx):
 
     focused_type=str(ctx.get("last_focused_entity_type") or active.get("entity_type") or "").strip()
     focused_id=ctx.get("last_focused_entity_id") or ctx.get("last_focused_application_id") or active.get("entity_id")
-    ai_context=""
-    try:
-        ai_context=build_ai_context(
-            focused_type or None,
-            focused_id,
-            include_platform_index=True,
-        )
-    except Exception:
-        ai_context=""
-
     return {
         "active_context":{
             "scope":str(active.get("scope") or "")[:80],
@@ -939,7 +928,6 @@ def _admin_planner_context(ctx):
             "type":focused_type[:40],
             "id":focused_id
         },
-        "ai_context":ai_context[:14000],
         "last_query_target":str(ctx.get("last_query_target") or ctx.get("last_result_kind") or "")[:60],
         "last_rows":compact_rows,
         "history":compact_history,
@@ -953,6 +941,10 @@ async def _admin_ai_json(message,ctx):
     registry=_admin_tool_registry("admin")
     schemas=_admin_tool_schemas("admin")
     system="""You are the universal semantic planner for Armenia AI Guide admin.
+All business data is live in Supabase/PostgreSQL and is accessed only through the supplied Python DataTools/Data Core tools.
+Do not expect or request a prebuilt database context, platform index, cached entity profile, or duplicate business-data snapshot.
+Resolve named entities with the appropriate search/get tool, then read the requested live records.
+
 Understand Armenian, Russian, English, mixed language, transliteration, typos and short follow-ups.
 You are NOT a database client. You may only request tools from the supplied registry.
 Never invent IDs, database fields, SQL, table names or results. Resolve entities from context or request a search tool.
@@ -985,7 +977,6 @@ TOOL_SCHEMAS:
         "message":str(message or "")[:1500],
         "context":planner_ctx,
         "previous_tool_results":ctx.get("compact_tool_results",[]) if isinstance(ctx,dict) else [],
-        "ai_context":planner_ctx.get("ai_context","")
     },ensure_ascii=False,default=str)
     raw,provider,model=await _admin_ai_completion(
         [{"role":"system","content":system},{"role":"user","content":payload}],
@@ -2582,6 +2573,5 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_post('/api/admin/potential-partners/structure',potential_structure)
     app.router.add_post('/api/admin/potential-partners/research',potential_research)
     app.router.add_post('/api/admin/potential-partners/{id}/status',potential_status)
-
 
 
