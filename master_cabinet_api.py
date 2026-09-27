@@ -352,8 +352,22 @@ async def api_services(request: web.Request):
             # services exist for this partner; the cabinet must display them
             # even if a legacy DB has a different category schema.
             cur.execute(
-                """SELECT s.*, (s.data_json->>'object_id') AS service_object_id, (s.data_json->>'contact_phone') AS service_contact_phone
+                """SELECT s.*,
+                          (s.data_json->>'object_id') AS service_object_id,
+                          (s.data_json->>'contact_phone') AS service_contact_phone,
+                          c.master_category_id AS direction_id,
+                          c.name_am AS subcategory_name_am,
+                          c.name_ru AS subcategory_name_ru,
+                          c.name_en AS subcategory_name_en,
+                          m.name_am AS direction_name_am,
+                          m.name_ru AS direction_name_ru,
+                          m.name_en AS direction_name_en,
+                          c.name_am AS category_name_am,
+                          c.name_ru AS category_name_ru,
+                          c.name_en AS category_name_en
                    FROM services s
+                   LEFT JOIN categories c ON c.id=s.category_id
+                   LEFT JOIN master_categories m ON m.id=c.master_category_id
                    WHERE s.partner_id=%s AND s.business_id=%s
                      AND (s.status IS NULL OR s.status <> 'deleted')
                    ORDER BY s.id DESC""",
