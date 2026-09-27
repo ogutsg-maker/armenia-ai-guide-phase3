@@ -90,13 +90,18 @@ def _prepare_action(data: dict, partner_id: int, actor_user_id: int) -> dict | N
                 "price": payload.get("price"),
                 "category_id": _digits(payload.get("category_id")),
             }
-            # Validate the actual proposed fields before asking for confirmation.
-            if args["name"] is not None or args["price"] not in (None, "") or args["category_id"] is not None:
-                data_core.update_service_safe(
-                    service_id=service_id, actor_user_id=actor_user_id,
-                    name=args["name"], price=args["price"],
-                    category_id=args["category_id"],
-                )
+            if args["name"] is not None and not str(args["name"]).strip():
+                raise ValueError("service_name_required")
+            if args["price"] not in (None, ""):
+                try:
+                    if float(args["price"]) < 0:
+                        raise ValueError("invalid_service_price")
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("invalid_service_price") from exc
+            if args["category_id"] is not None:
+                category = data_core.get_catalog_category(args["category_id"])
+                if not category or not category.get("is_active"):
+                    raise ValueError("catalog_category_invalid")
         return {"tool": "service", "arguments": args}
 
     if action in {"add_company", "update_company", "archive_company"}:
@@ -121,10 +126,8 @@ def _prepare_action(data: dict, partner_id: int, actor_user_id: int) -> dict | N
                 "name": payload.get("name"), "description": payload.get("description"),
                 "phone": payload.get("phone"),
             }
-            data_core.update_partner_company(
-                company_id=company_id, actor_user_id=actor_user_id,
-                name=args["name"], description=args["description"], phone=args["phone"],
-            )
+            if args["name"] is not None and not str(args["name"]).strip():
+                raise ValueError("company_name_required")
         else:
             company = data_core.get_company(company_id)
             if not company or int(company.get("partner_id") or 0) != int(partner_id):
