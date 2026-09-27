@@ -1143,6 +1143,58 @@ async def api_business_delete(request: web.Request):
     return web.json_response({"ok": True, "business": _json(row)})
 
 
+
+async def api_application_document_upload(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    application_id = int(request.match_info["application_id"])
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, partner_id, document_id, status FROM partner_applications WHERE id=%s AND partner_id=%s",
+                (application_id, pid),
+            )
+            app_row = cur.fetchone()
+            if not app_row:
+                raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "application_not_found"}), content_type="application/json")
+            reader = await request.multipart()
+            file_part = None
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if part.name == "file":
+                    file_part = part
+                    break
+            if file_part is None:
+                return web.json_response({"ok": False, "error": "file_required"}, status=400)
+            filename = file_part.filename or "document"
+            allowed = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+            suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            if suffix not in allowed:
+                return web.json_response({"ok": False, "error": "unsupported_file_type"}, status=400)
+            data = await file_part.read()
+            if len(data) > 10 * 1024 * 1024:
+                return web.json_response({"ok": False, "error": "file_too_large"}, status=400)
+            cur.execute(
+                """INSERT INTO partner_verification_documents
+                   (partner_id, business_id, document_type, original_filename, file_data, mime_type, file_size, status)
+                   SELECT partner_id, business_id, 'business_document', %s, %s, %s, %s, 'pending'
+                   FROM partner_applications WHERE id=%s
+                   RETURNING id""",
+                (filename, data, allowed[suffix], len(data), application_id),
+            )
+            doc = cur.fetchone()
+            if not doc:
+                return web.json_response({"ok": False, "error": "document_create_failed"}, status=500)
+            cur.execute(
+                "UPDATE partner_applications SET document_id=%s, status=CASE WHEN status='document_under_review' THEN status ELSE 'document_pending' END, updated_at=NOW() WHERE id=%s",
+                (doc["id"], application_id),
+            )
+        conn.commit()
+    return web.json_response({"ok": True, "document_id": int(doc["id"]), "status": "document_pending"})
+
+
 def register_master_cabinet_routes(app, db=None, bot=None):
     """Register the complete current partner cabinet API.
 
@@ -1172,6 +1224,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/notifications/read", api_notifications_read_compat)
     app.router.add_post("/api/master/{id}/notifications/read-all", api_notifications_read_all)
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
+    app.router.add_post("/api/master/{id}/applications/{application_id}/document", api_application_document_upload)
     app.router.add_get("/api/master/{id}/locations", api_locations)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
     # NOTE: GET /api/master/{id}/documents is already registered by
