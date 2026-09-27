@@ -105,7 +105,7 @@ def _admin_tool_registry(role="admin"):
 
 
 def _admin_tool_schemas(role="admin"):
-    """Planner-facing argument contract; business validation remains in DataTools."""
+    """Planner-facing argument contract; business validation remains in Data Core."""
     common={
         "query":{"type":"string"},
         "city":{"type":"string"},
@@ -569,21 +569,21 @@ async def _admin_execute(command):
         data=_admin_data_call("count",{"entity":"applications"}).get("data") or {}
         return "📨 Հայտերի քանակը՝ "+str(data.get("count") or 0)+"։"
     if intent=="show_partner_count":
-        data=tools.execute("count",{"entity":"partners"}).get("data") or {}
+        data=_admin_data_call("count",{"entity":"partners"}).get("data") or {}
         return "🤝 Գործընկերների քանակը՝ "+str(data.get("count") or 0)+"։"
     if intent=="show_applications":
-        rows=(tools.execute("search_applications",{"limit":30}).get("data") or {}).get("items",[])
+        rows=(_admin_data_call("search_applications",{"limit":30}).get("data") or {}).get("items",[])
         if not rows: return "📨 Հայտեր չկան։"
         return "📨 Հայտեր ("+str(len(rows))+"):\n"+"\n".join(
             "#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")
             for x in rows[:20])
     if intent=="show_partners":
-        rows=(tools.execute("search_partners",{"limit":50}).get("data") or {}).get("items",[])
+        rows=(_admin_data_call("search_partners",{"limit":50}).get("data") or {}).get("items",[])
         return "🤝 Գործընկերներ չկան։" if not rows else "🤝 Գործընկերներ:\n"+"\n".join(
             "#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")
             for x in rows[:30])
     if intent=="show_businesses":
-        rows=(tools.execute("search_companies",{"limit":100}).get("data") or {}).get("items",[])
+        rows=(_admin_data_call("search_companies",{"limit":100}).get("data") or {}).get("items",[])
         return "🏢 Ընկերություններ չկան։" if not rows else "🏢 Ընկերություններ:\n"+"\n".join(
             "#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")
             for x in rows[:50])
@@ -1235,7 +1235,7 @@ def _admin_resolve_semantic_entity(plan,state):
     # Application-specific requests are resolved against applications first.
     if entity_type in {"application","applications"} or "application" in requested:
         try:
-            raw=tools.execute("search_applications",{"query":entity_name,"limit":10})
+            raw=_admin_data_call("search_applications",{"query":entity_name,"limit":10})
             rows=(raw or {}).get("data") or (raw or {}).get("items") or []
             if rows:
                 exact=[r for r in rows if _norm(r.get("business_name") or r.get("name"))==_norm(entity_name)]
@@ -1248,7 +1248,7 @@ def _admin_resolve_semantic_entity(plan,state):
 
     # Named business/company requests resolve through the company search tool.
     try:
-        raw=tools.execute("search_companies",{"query":entity_name,"limit":10})
+        raw=_admin_data_call("search_companies",{"query":entity_name,"limit":10})
         rows=(raw or {}).get("data") or (raw or {}).get("items") or []
         if rows:
             exact=[r for r in rows if _norm(r.get("name") or r.get("business_name"))==_norm(entity_name)]
@@ -1266,7 +1266,7 @@ def _admin_resolve_semantic_entity(plan,state):
 
     # Finally resolve a partner by the same semantic search surface.
     try:
-        raw=tools.execute("search_partners",{"query":entity_name,"limit":10})
+        raw=_admin_data_call("search_partners",{"query":entity_name,"limit":10})
         rows=(raw or {}).get("data") or (raw or {}).get("items") or []
         if rows:
             exact=[r for r in rows if _norm(r.get("business_name") or r.get("name"))==_norm(entity_name)]
@@ -1413,8 +1413,8 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
     tools=DataTools("admin")
     if entity_type=="application" and entity_id:
         try:
-            result["application"]=tools.execute("get_application",{"application_id":int(entity_id)}).get("data",{}).get("application")
-            result["documents"]=tools.execute("get_documents",{"application_id":int(entity_id)}).get("data",{}).get("documents",[])
+            result["application"]=_admin_data_call("get_application",{"application_id":int(entity_id)}).get("data",{}).get("application")
+            result["documents"]=_admin_data_call("get_documents",{"application_id":int(entity_id)}).get("data",{}).get("documents",[])
         except DataToolError:
             pass
         app=result.get("application") or _admin_hydrate_application(entity_id)
@@ -1426,7 +1426,7 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
             result["documents"]=_admin_semantic_documents(entity_id)
         if app.get("partner_id") and ("partner" in needed or "verification" in needed):
             try:
-                result["partner"]=tools.execute("get_partner",{"partner_id":int(app["partner_id"])}).get("data",{}).get("partner")
+                result["partner"]=_admin_data_call("get_partner",{"partner_id":int(app["partner_id"])}).get("data",{}).get("partner")
             except DataToolError:
                 result["partner"]=_admin_safe(platform_db.one("""SELECT id,user_id,status,verification_status,
                     business_name,business_description,contact_share_policy,created_at,updated_at
@@ -1455,7 +1455,7 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
 
         if app.get("category_id") and ("services" in needed or "service" in needed):
             try:
-                result["services"]=tools.execute("get_services",{"category_id":int(app["category_id"])}).get("data",{}).get("items",[])
+                result["services"]=_admin_data_call("get_services",{"category_id":int(app["category_id"])}).get("data",{}).get("items",[])
             except DataToolError:
                 try:
                     result["services"]=_admin_safe(platform_db.rows(
@@ -1499,7 +1499,7 @@ def _admin_tool_context(plan, entity_type, entity_id):
             elif entity_type in {"business","company"} and name=="get_company":
                 args.setdefault("company_id",int(entity_id))
         try:
-            results.append(tools.execute(name,args))
+            results.append(_admin_data_call(name,args))
         except DataToolError as exc:
             results.append({"tool":name,"data":{},"error":str(exc)})
         except Exception as exc:
