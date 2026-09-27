@@ -192,8 +192,25 @@ def mark_clarification_answered(clarification_id):
 # Notifications
 
 def create_notification(user_id, title='', body='', kind='info', audience='user', data=None, delivered=False):
-    return execute('INSERT INTO notifications(user_id,audience,kind,title,body,data_json,delivered_telegram) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s) RETURNING *',
-                   (user_id,audience,kind,title,body,json_dump(data or {}),bool(delivered)),True)
+    # notifications.user_id references users.id, while some callers provide
+    # Telegram user ids. Resolve either form and keep notifications best-effort.
+    with _conn() as c:
+        with c.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM users WHERE id=%s OR telegram_id=%s "
+                "ORDER BY CASE WHEN id=%s THEN 0 ELSE 1 END LIMIT 1",
+                (user_id, user_id, user_id),
+            )
+            user = cur.fetchone()
+            if not user:
+                return None
+            cur.execute(
+                'INSERT INTO notifications(user_id,audience,kind,title,body,data_json,delivered_telegram) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s) RETURNING *',
+                (user["id"], audience, kind, title, body, json_dump(data or {}), bool(delivered)),
+            )
+            row = cur.fetchone()
+        c.commit()
+        return _safe(dict(row)) if row else None
 def mark_notification_delivered(nid):
     return execute('UPDATE notifications SET delivered_telegram=TRUE WHERE id=%s RETURNING *',(nid,),True)
 def list_notifications(user_id, unread_only=False, limit=50):
