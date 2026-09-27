@@ -119,11 +119,11 @@ function objectHours(o){
 function hoursSummary(o){const h=objectHours(o),days=['mon','tue','wed','thu','fri','sat','sun'];const labels={hy:{mon:'Երկ',tue:'Երք',wed:'Չրք',thu:'Հնգ',fri:'Ուրբ',sat:'Շբթ',sun:'Կիր'},ru:{mon:'Пн',tue:'Вт',wed:'Ср',thu:'Чт',fri:'Пт',sat:'Сб',sun:'Вс'},en:{mon:'Mon',tue:'Tue',wed:'Wed',thu:'Thu',fri:'Fri',sat:'Sat',sun:'Sun'}}[state.lang]||{};const parts=days.map(k=>h[k]?.closed?labels[k]+': '+(state.lang==='hy'?'փակ':state.lang==='ru'?'выходной':'closed'):(h[k]?.from&&h[k]?.to?labels[k]+': '+h[k].from+'–'+h[k].to:null)).filter(Boolean);return parts.length?parts.join(' · '):(state.lang==='hy'?'Ժամերը նշված չեն':state.lang==='ru'?'Часы не указаны':'Hours not set')}
 function objectRoom(id){const o=state.objects.find(x=>String(x.id)===String(id));if(!o)return;document.getElementById('business').innerHTML='<button class="back" onclick="openBusiness('+state.current.id+')">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h2>📍 '+esc(o.object_name||o.name)+'</h2><p>'+esc([o.marz,o.city,o.address].filter(Boolean).join(', '))+'</p></div><div class="actions"><button class="btn secondary" onclick="editObject('+o.id+')">✎ '+tr('objectEdit')+'</button><button class="btn danger" onclick="deleteAddress('+o.id+')">🗑</button></div></div><div class="section"><h3>'+tr('companyInfo')+'</h3><div class="grid2"><div><b>'+tr('name')+'</b><div class="muted">'+esc(o.object_name||o.name||'—')+'</div></div><div><b>'+tr('city')+'</b><div class="muted">'+esc(o.city||'—')+'</div></div><div><b>'+tr('address')+'</b><div class="muted">'+esc(o.address||'—')+'</div></div><div><b>Մարզ / Marz</b><div class="muted">'+esc(o.marz||'—')+'</div></div></div></div><div class="section"><h3>🕘 '+(state.lang==='hy'?'Աշխատանքային ժամեր':state.lang==='ru'?'Рабочие часы':'Working hours')+'</h3><div class="notice">'+esc(hoursSummary(o))+'</div></div><div class="notice">Հասցեն պատկանում է այս ընկերությանը։ Հասցեն հեռացնելու դեպքում հին պատվերների պատմությունը չի ջնջվում։</div></div>';setView('business',false)}
 
-async function addAddress(){const name=prompt(tr('objectName'));if(!name)return;const address=prompt(tr('address'));if(!address)return;const city=prompt(tr('city'));if(!city)return;const marz=prompt(tr('marz'));try{await api('/api/master/0/objects',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name,address,city,marz}});await openBusiness(state.current.id);showCompanySection('objects')}catch(e){toast(e.message)}}
+async async function addAddress(){const name=prompt(tr('objectName'));if(!name)return;const address=prompt(tr('address'));if(!address)return;const city=prompt(tr('city'));if(!city)return;const marz=prompt(tr('marz'));try{await api('/api/master/0/objects',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name,address,city,marz}});await openBusiness(state.current.id);showCompanySection('objects')}catch(e){toast(e.message)}}
 
-async function deleteAddress(id){const o=state.objects.find(x=>String(x.id)===String(id));if(!o)return;const label=[o.object_name||o.name,o.address].filter(Boolean).join(' — ');if(!confirm((state.lang==='hy'?'Ջնջե՞լ հասցեն՝ ':state.lang==='ru'?'Удалить адрес: ':'Delete address: ')+label+'?'))return;try{await api('/api/master/0/objects/'+id,{method:'DELETE',headers:{'X-Business-Id':String(state.current.id)}});await openBusiness(state.current.id);showCompanySection('objects')}catch(e){toast(e.message)}}
+async async function deleteAddress(id){const o=state.objects.find(x=>String(x.id)===String(id));if(!o)return;const label=[o.object_name||o.name,o.address].filter(Boolean).join(' — ');if(!confirm((state.lang==='hy'?'Ջնջե՞լ հասցեն՝ ':state.lang==='ru'?'Удалить адрес: ':'Delete address: ')+label+'?'))return;try{await api('/api/master/0/objects/'+id,{method:'DELETE',headers:{'X-Business-Id':String(state.current.id)}});await openBusiness(state.current.id);showCompanySection('objects')}catch(e){toast(e.message)}}
 
-async async function saveCompanyEdit(id){
+async function saveCompanyEdit(id){
   const b=state.businesses.find(x=>String(x.id)===String(id));if(!b)return;
   const name=document.getElementById('editCompanyName')?.value.trim()||'';
   const description=document.getElementById('editCompanyDescription')?.value||'';
@@ -187,7 +187,7 @@ function editObject(id){
   document.getElementById('editObjectName')?.focus();
   setView('business',false);
 }
-async function saveObjectEdit(id){
+async async function saveObjectEdit(id){
   const o=state.objects.find(x=>String(x.id)===String(id));if(!o||!state.current)return;
   const name=document.getElementById('editObjectName')?.value.trim()||'';
   const city=document.getElementById('editObjectCity')?.value.trim()||'';
@@ -214,7 +214,7 @@ function editService(id){
   document.getElementById('editServiceName')?.focus();
   setView('service',false);
 }
-async function saveServiceEdit(id){
+async async function saveServiceEdit(id){
   const s=state.services.find(x=>String(x.id)===String(id));if(!s||!state.current)return;
   const name=document.getElementById('editServiceName')?.value.trim()||'';
   const priceRaw=document.getElementById('editServicePrice')?.value.trim()||'';
