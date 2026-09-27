@@ -1474,12 +1474,10 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # still document_under_review. In that case this button is the
             # final approval/activation action and must not fail with
             # document_not_pending.
-            if doc["status"]=="approved":
-                pass
-            else:
-                row=_exec("""UPDATE partner_applications SET status='document_under_review',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
-                             WHERE id=%s RETURNING *""",(admin_id,aid),True)
-                return web.json_response({"ok":True,"application":row})
+            # This is an admin approval action. Once the document is
+            # approved here, continue through the same activation gate below.
+            # Do not stop at document_under_review: that status means the
+            # document is awaiting review, not that review has already passed.
 
         if not a.get("document_id"):
             return web.json_response({"ok":False,"error":"document_required"},status=409)
