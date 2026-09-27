@@ -518,6 +518,79 @@ def search_applications(status: str | None = None, marz: str | None = None,
     )
 
 
+
+def get_application_full(application_id: int, partner_id: int | None = None):
+    where = "a.id=%s"
+    params: list[Any] = [int(application_id)]
+    if partner_id is not None:
+        where += " AND a.partner_id=%s"
+        params.append(int(partner_id))
+    return one(
+        """SELECT a.*,p.user_id,p.business_name AS partner_business_name
+           FROM partner_applications a
+           LEFT JOIN partners p ON p.id=a.partner_id
+           WHERE """ + where,
+        tuple(params),
+    )
+
+
+def update_partner_application(application_id: int, *, partner_id: int,
+                                actor_user_id: int, payload: dict[str, Any]):
+    assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    current = get_application_full(int(application_id), partner_id=int(partner_id))
+    if not current:
+        return None
+    allowed = (
+        "business_name","location_marz","location_city","location_village","address",
+        "phone","direction_name","master_category_id","subcategory_name","category_id",
+        "service_name","price","description","object_name","object_id","payload_json",
+    )
+    values = {k: payload.get(k) for k in allowed if k in payload}
+    if "payload" in payload:
+        values["payload_json"] = json_dump(payload.get("payload") or {})
+    if not values:
+        return current
+    assignments = []
+    params: list[Any] = []
+    for key, value in values.items():
+        assignments.append(f"{key}=%s")
+        params.append(value)
+    params.append(int(application_id))
+    params.append(int(partner_id))
+    return execute(
+        "UPDATE partner_applications SET " + ",".join(assignments) +
+        ",updated_at=NOW() WHERE id=%s AND partner_id=%s RETURNING *",
+        tuple(params), returning=True,
+    )
+
+
+def submit_partner_application(application_id: int, *, partner_id: int, actor_user_id: int):
+    assert_partner_owns_partner(int(partner_id), int(actor_user_id))
+    app = get_application_full(int(application_id), partner_id=int(partner_id))
+    if not app:
+        return None
+    if str(app.get("status") or "") not in ("pending_partner","sent_back","draft","pending_admin"):
+        return None
+    services = []
+    payload = app.get("payload_json") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if isinstance(payload, dict):
+        services = payload.get("services") or []
+    if not str(app.get("business_name") or "").strip():
+        raise ValueError("business_name_required")
+    if not str(app.get("service_name") or "").strip() and not services:
+        raise ValueError("service_required")
+    new_status = "document_under_review" if app.get("document_id") else "pending_admin"
+    return execute(
+        "UPDATE partner_applications SET status=%s,updated_at=NOW() WHERE id=%s AND partner_id=%s RETURNING *",
+        (new_status, int(application_id), int(partner_id)), returning=True,
+    )
+
+
 def application_directions(limit: int = 200):
     """Return directions actually represented by partner applications.
 
