@@ -16,6 +16,7 @@ from typing import Any
 from aiohttp import web
 from notify import notify
 from ai_service import AIService
+import data_core
 
 from config import BOT_TOKEN
 from database import _connect
@@ -57,10 +58,7 @@ def _auth(request: web.Request) -> int:
 
 
 def _partner(uid: int) -> int:
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM partners WHERE user_id=%s", (uid,))
-            row = cur.fetchone()
+    row = data_core.get_partner_by_user(int(uid))
     if not row:
         raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "partner_not_found"}), content_type="application/json")
     return int(row["id"])
@@ -96,22 +94,15 @@ Use null for unknown scalar values. The current partner context is supplied in t
         return {"intent": "clarify", "reply": {"hy": "AI ծառայությունը ժամանակավորապես հասանելի չէ։", "ru": "AI сейчас временно недоступен. Попробуйте ещё раз позже.", "en": "AI is temporarily unavailable. Please try again later."}.get(language, "AI is temporarily unavailable. Please try again later.")}
 
 def _context(pid: int) -> dict[str, Any]:
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id,name,description,phone,status FROM partner_businesses WHERE partner_id=%s AND status='active' ORDER BY id", (pid,))
-            businesses = [dict(x) for x in cur.fetchall()]
-            cur.execute("""SELECT id,business_id,object_name,address,city,marz,phone
-                           FROM partner_objects
-                           WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
-                           ORDER BY business_id,id""", (pid,))
-            objects = [dict(x) for x in cur.fetchall()]
-            cur.execute("""SELECT id,business_id,name,description,price
-                           FROM services
-                           WHERE partner_id=%s AND (status IS NULL OR status <> 'deleted')
-                           ORDER BY business_id,id DESC""", (pid,))
-            services = [dict(x) for x in cur.fetchall()]
-    return {"businesses":businesses,"addresses":objects,"services":services}
-
+    """Read the partner's live data through Data Core only."""
+    businesses = data_core.list_companies(partner_id=int(pid), include_archived=False)
+    addresses = data_core.get_partner_addresses(int(pid))
+    services = data_core.list_services(partner_id=int(pid), limit=200)
+    return {
+        "businesses": businesses,
+        "addresses": addresses,
+        "services": services,
+    }
 
 def _clean_num(v):
     try:
@@ -530,17 +521,10 @@ def _context(pid: int) -> dict[str, Any]:
             )
             services = [dict(x) for x in cur.fetchall()]
 
-    from ai_context_layer import build_partner_context
-    try:
-        operational = build_partner_context(pid)
-    except Exception:
-        operational = ""
-
     return {
         "businesses": businesses,
         "addresses": objects,
         "services": services,
-        "operational_context": operational,
         "permissions": {
             "role": "partner",
             "can_read_own_data": True,
