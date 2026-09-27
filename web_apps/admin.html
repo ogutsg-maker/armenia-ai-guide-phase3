@@ -59,42 +59,59 @@ function renderStatServices(d){const s=d.summary||{},items=d.items||[];$('statVi
 function renderStatActivity(d){const render=(title,items)=>'<div class="detail"><b>'+title+'</b>'+(items||[]).map(x=>'<div class="item"><div class="row"><span>'+esc(x.name||'—')+'</span><span>'+badge(x.status)+'</span></div><div class="muted">#'+esc(x.id)+' · '+esc(x.created_at||'')+'</div></div>').join('')+'</div>';$('statView').innerHTML='<button class="btn soft backbtn" onclick="statBack()">← Ընդհանուր</button><h3>📈 Ակտիվություն</h3>'+render('Գործընկերներ',d.partners)+render('Ընկերություններ',d.companies)+render('Ծառայություններ',d.services);}
 function renderStatGaps(d){const g=d.gaps||{};const labels={directions_without_companies:'Ուղղություններ առանց ընկերությունների',subcategories_without_services:'Ենթակատեգորիաներ առանց ծառայությունների',services_without_category:'Ծառայություններ առանց կատեգորիայի',companies_without_address:'Ընկերություններ առանց հասցեի',companies_without_services:'Ընկերություններ առանց ծառայությունների',partners_without_companies:'Գործընկերներ առանց ընկերության'};$('statView').innerHTML='<button class="btn soft backbtn" onclick="statBack()">← Ընդհանուր</button><h3>⚠️ Բացեր և խնդիրներ</h3>'+Object.keys(labels).map(k=>'<div class="item"><div class="row"><span>'+esc(labels[k])+'</span><b>'+Number(g[k]||0)+'</b></div></div>').join('');}
 
-let ='companies';
 
+let registryType='companies';
+const registryState={marz:'',city:'',direction:'',subcategory:'',service:'',documents:'',address:'',status:'',company:'',min_price:'',max_price:'',date_from:'',date_to:'',payment:''};
+const registryFilterDefs={
+ companies:[['marz','Մարզ / Марз','text'],['city','Քաղաք / Город','text'],['direction','Ուղղություն','text'],['subcategory','Ենթակատեգորիա','text'],['service','Ծառայություն','text'],['documents','Փաստաթուղթ','select'],['address','Հասցե','text'],['status','Կարգավիճակ','text']],
+ services:[['company','Компания','text'],['direction','Ուղղություն','text'],['subcategory','Ենթակատեգորիա','text'],['service','Ծառայություն','text'],['city','Քաղաք','text'],['status','Կարգավիճակ','text'],['min_price','Գին от','number'],['max_price','Գին до','number']],
+ bookings:[['company','Компания','text'],['service','Услуга','text'],['city','Քաղաք','text'],['date_from','Ամսաթիվ от','date'],['date_to','Ամսաթիվ до','date'],['status','Կարգավիճակ','text'],['payment','Оплата','text']],
+ payments:[['company','Компания','text'],['status','Կարգավիճակ','text'],['min_price','Գումար от','number'],['max_price','Գումար до','number'],['date_from','Ամսաթիվ от','date'],['date_to','Ամսաթիվ до','date']],
+ partners:[['status','Կարգավիճակ','text']],
+ applications:[['status','Կարգավիճակ','text'],['date_from','Ամսաթիվ от','date'],['date_to','Ամսաթիվ до','date']]
+};
+function registrySetType(type){registryType=type;document.querySelectorAll('[data-regtype]').forEach(b=>{b.classList.toggle('active',b.dataset.regtype===type);b.classList.toggle('soft',b.dataset.regtype!==type)});renderRegistryFilters();registrySearch();}
 function renderRegistryFilters(){
- const defs=[]||[];
- $('').innerHTML=defs.map(([key,label,type])=>{
-   if(type==='select') return `<div class="-filter"><label>${label}</label><select id="rf_${key}" onchange=".${key}=this.value;()"><option value="">Բոլորը</option><option value="yes">Ունի</option><option value="no">Չկա</option></select></div>`;
-   return `<div class="-filter"><label>${label}</label><input id="rf_${key}" type="${type}" placeholder="${label}" value="${esc([key]||'')}" oninput=".${key}=this.value;()"></div>`;
+ const defs=registryFilterDefs[registryType]||[];
+ $('registryFilters').innerHTML=defs.map(([key,label,type])=>{
+   if(type==='select') return `<div class="registry-filter"><label>${label}</label><select id="rf_${key}" onchange="registryState.${key}=this.value;registrySearch()"><option value="">Բոլորը</option><option value="yes">Ունի</option><option value="no">Չկա</option></select></div>`;
+   return `<div class="registry-filter"><label>${label}</label><input id="rf_${key}" type="${type}" placeholder="${label}" value="${esc(registryState[key]||'')}" oninput="registryState.${key}=this.value;registryDebounced()"></div>`;
  }).join('');
 }
-let =null;
-
+let registryTimer=null;function registryDebounced(){clearTimeout(registryTimer);registryTimer=setTimeout(registrySearch,280)}
+function registryParams(){
+ const p=new URLSearchParams({type:registryType,limit:'200'});const q=$('registryQ')?.value?.trim()||'';if(q)p.set('q',q);
+ (registryFilterDefs[registryType]||[]).forEach(([key])=>{if(registryState[key])p.set(key,registryState[key])});return p.toString();
+}
+async function registrySearch(){
+ try{const d=await api('/api/admin/registry-search?'+registryParams());const items=d.items||[];$('registrySummary').textContent=`${items.length} արդյունք / результатов`;renderRegistryResults(items)}
+ catch(e){$('registryResults').innerHTML=`<div class="error">${esc(e.message)}</div>`}
+}
 function renderRegistryResults(items){
- if(!items.length){$('').innerHTML='`<div class="-empty">По заданным условиям ничего не найдено</div>`';return}
- $('').innerHTML=items.map(x=>{
-   if(==='companies')return `<div class="-row" onclick="openRegistryCompany(${Number(x.id)})"><div class="row"><b>🏢 ${esc(x.company_name||'Без названия')}</b>${badge(x.status)}</div><div class="meta"><span>📍 ${esc([x.marz,x.city,x.address].filter(Boolean).join(' · ')||'—')}</span><span>🛠 ${Number(x.service_count||0)} услуг</span><span>📄 ${Number(x.document_count||0)} документов</span><span>👤 ${esc(x.telegram_id||'—')}</span></div></div>`;
-   if(==='services')return `<div class="-row"><div class="row"><b>🛠 ${esc(x.service_name||'—')}</b><span>${x.price==null?'—':Number(x.price).toLocaleString()+' ֏'}</span></div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>📍 ${esc(x.marz||'')} ${esc(x.city||'')}</span><span>🧭 ${esc(x.direction||'—')} / ${esc(x.subcategory||'—')}</span><span>${badge(x.status)}</span></div></div>`;
-   if(==='bookings')return `<div class="-row"><div class="row"><b>📦 #${esc(x.id)} · ${esc(x.service_name||'—')}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>📍 ${esc(x.city||'—')}</span><span>💰 ${x.agreed_price==null?'—':Number(x.agreed_price).toLocaleString()+' '+esc(x.currency||'AMD')}</span><span>📅 ${esc(x.scheduled_at||x.created_at||'—')}</span></div></div>`;
-   if(==='payments')return `<div class="-row"><div class="row"><b>💳 Заказ #${esc(x.order_id)}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>🛠 ${esc(x.service_name||'—')}</span><span>💰 ${x.agreed_price==null?'—':Number(x.agreed_price).toLocaleString()+' '+esc(x.currency||'AMD')}</span><span>Комиссия: ${x.commission_amount==null?'—':Number(x.commission_amount).toLocaleString()}</span></div></div>`;
-   if(==='partners')return `<div class="-row"><div class="row"><b>🤝 ${esc(x.partner_name||'Партнёр')}</b>${badge(x.status)}</div><div class="meta"><span>Telegram ${esc(x.telegram_id||'—')}</span><span>🏢 ${Number(x.company_count||0)} компаний</span></div></div>`;
-   return `<div class="-row"><div class="row"><b>📨 Заявка #${esc(x.id)}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>👤 ${esc(x.telegram_id||'—')}</span><span>📅 ${esc(x.created_at||'—')}</span></div></div>`;
+ if(!items.length){$('registryResults').innerHTML='`<div class="registry-empty">По заданным условиям ничего не найдено</div>`';return}
+ $('registryResults').innerHTML=items.map(x=>{
+   if(registryType==='companies')return `<div class="registry-row" onclick="openRegistryCompany(${Number(x.id)})"><div class="row"><b>🏢 ${esc(x.company_name||'Без названия')}</b>${badge(x.status)}</div><div class="meta"><span>📍 ${esc([x.marz,x.city,x.address].filter(Boolean).join(' · ')||'—')}</span><span>🛠 ${Number(x.service_count||0)} услуг</span><span>📄 ${Number(x.document_count||0)} документов</span><span>👤 ${esc(x.telegram_id||'—')}</span></div></div>`;
+   if(registryType==='services')return `<div class="registry-row"><div class="row"><b>🛠 ${esc(x.service_name||'—')}</b><span>${x.price==null?'—':Number(x.price).toLocaleString()+' ֏'}</span></div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>📍 ${esc(x.marz||'')} ${esc(x.city||'')}</span><span>🧭 ${esc(x.direction||'—')} / ${esc(x.subcategory||'—')}</span><span>${badge(x.status)}</span></div></div>`;
+   if(registryType==='bookings')return `<div class="registry-row"><div class="row"><b>📦 #${esc(x.id)} · ${esc(x.service_name||'—')}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>📍 ${esc(x.city||'—')}</span><span>💰 ${x.agreed_price==null?'—':Number(x.agreed_price).toLocaleString()+' '+esc(x.currency||'AMD')}</span><span>📅 ${esc(x.scheduled_at||x.created_at||'—')}</span></div></div>`;
+   if(registryType==='payments')return `<div class="registry-row"><div class="row"><b>💳 Заказ #${esc(x.order_id)}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>🛠 ${esc(x.service_name||'—')}</span><span>💰 ${x.agreed_price==null?'—':Number(x.agreed_price).toLocaleString()+' '+esc(x.currency||'AMD')}</span><span>Комиссия: ${x.commission_amount==null?'—':Number(x.commission_amount).toLocaleString()}</span></div></div>`;
+   if(registryType==='partners')return `<div class="registry-row"><div class="row"><b>🤝 ${esc(x.partner_name||'Партнёр')}</b>${badge(x.status)}</div><div class="meta"><span>Telegram ${esc(x.telegram_id||'—')}</span><span>🏢 ${Number(x.company_count||0)} компаний</span></div></div>`;
+   return `<div class="registry-row"><div class="row"><b>📨 Заявка #${esc(x.id)}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>👤 ${esc(x.telegram_id||'—')}</span><span>📅 ${esc(x.created_at||'—')}</span></div></div>`;
  }).join('');
 }
 async function openRegistryCompany(id){
- $('').innerHTML='`<div class="muted">Բեռնում…</div>`';
+ $('registryResults').innerHTML='`<div class="muted">Բեռնում…</div>`';
  try{
-   const d=await api('/api/admin/-company/'+id);const c=d.company||{},objects=d.objects||[],services=d.services||[],docs=d.documents||[],bookings=d.bookings||[];
-   $('').innerHTML=`<div class="-detail"><button class="btn soft" onclick="()">← Назад к списку</button><div class="card" style="margin-top:8px">
+   const d=await api('/api/admin/registry-company/'+id);const c=d.company||{},objects=d.objects||[],services=d.services||[],docs=d.documents||[],bookings=d.bookings||[];
+   $('registryResults').innerHTML=`<div class="registry-detail"><button class="btn soft" onclick="registrySearch()">← Назад к списку</button><div class="card" style="margin-top:8px">
    <div class="row"><div><h2 style="margin:0">🏢 ${esc(c.name||'—')}</h2><div class="muted">Партнёр: ${esc(c.partner_name||'—')} · Telegram ${esc(c.telegram_id||'—')}</div></div>${badge(c.status)}</div>
    ${c.description?`<div class="detail"><b>Описание</b><div class="muted">${esc(c.description)}</div></div>`:''}${c.phone?`<div class="detail">☎ ${esc(c.phone)}</div>`:''}
-   <div class="-kpis" style="margin-top:10px"><div class="-kpi">📍 Адреса<b>${objects.length}</b></div><div class="-kpi">🛠 Услуги<b>${services.length}</b></div><div class="-kpi">📄 Документы<b>${docs.length}</b></div><div class="-kpi">📦 Брони<b>${bookings.length}</b></div></div>
-   <div class="-detail-section"><h3>📍 Адреса</h3>${objects.length?objects.map(o=>`<div class="item"><b>${esc(o.object_name||'Объект')}</b><div class="muted">${esc([o.marz,o.city,o.address].filter(Boolean).join(' · '))}</div></div>`).join(''):'<div class="empty">Нет адресов</div>'}</div>
-   <div class="-detail-section"><h3>🛠 Услуги</h3>${services.length?services.map(s=>`<div class="item"><div class="row"><b>${esc(s.name||'—')}</b><span>${s.price==null?'—':Number(s.price).toLocaleString()+' ֏'}</span></div><div class="muted">${esc(s.direction_name_am||s.direction_name_ru||'')} · ${esc(s.subcategory_name_am||s.subcategory_name_ru||'')} · ${badge(s.status)}</div></div>`).join(''):'<div class="empty">Нет услуг</div>'}</div>
-   <div class="-detail-section"><h3>📄 Документы</h3>${docs.length?docs.map(d=>`<div class="item"><div class="row"><span>📄 ${esc(d.original_filename||d.document_type||'document')}</span>${badge(d.status)}</div></div>`).join(''):'<div class="empty">Нет документов</div>'}</div>
-   <div class="-detail-section"><h3>📦 Брони</h3>${bookings.length?bookings.map(b=>`<div class="item"><div class="row"><span>#${esc(b.id)} · ${esc(b.service_name||'—')}</span>${badge(b.status)}</div><div class="muted">${esc(b.scheduled_at||b.created_at||'')} · ${b.agreed_price==null?'—':Number(b.agreed_price).toLocaleString()+' '+esc(b.currency||'AMD')}</div></div>`).join(''):'<div class="empty">Нет бронирований</div>'}</div>
+   <div class="registry-kpis" style="margin-top:10px"><div class="registry-kpi">📍 Адреса<b>${objects.length}</b></div><div class="registry-kpi">🛠 Услуги<b>${services.length}</b></div><div class="registry-kpi">📄 Документы<b>${docs.length}</b></div><div class="registry-kpi">📦 Брони<b>${bookings.length}</b></div></div>
+   <div class="registry-detail-section"><h3>📍 Адреса</h3>${objects.length?objects.map(o=>`<div class="item"><b>${esc(o.object_name||'Объект')}</b><div class="muted">${esc([o.marz,o.city,o.address].filter(Boolean).join(' · '))}</div></div>`).join(''):'<div class="empty">Нет адресов</div>'}</div>
+   <div class="registry-detail-section"><h3>🛠 Услуги</h3>${services.length?services.map(s=>`<div class="item"><div class="row"><b>${esc(s.name||'—')}</b><span>${s.price==null?'—':Number(s.price).toLocaleString()+' ֏'}</span></div><div class="muted">${esc(s.direction_name_am||s.direction_name_ru||'')} · ${esc(s.subcategory_name_am||s.subcategory_name_ru||'')} · ${badge(s.status)}</div></div>`).join(''):'<div class="empty">Нет услуг</div>'}</div>
+   <div class="registry-detail-section"><h3>📄 Документы</h3>${docs.length?docs.map(d=>`<div class="item"><div class="row"><span>📄 ${esc(d.original_filename||d.document_type||'document')}</span>${badge(d.status)}</div></div>`).join(''):'<div class="empty">Нет документов</div>'}</div>
+   <div class="registry-detail-section"><h3>📦 Брони</h3>${bookings.length?bookings.map(b=>`<div class="item"><div class="row"><span>#${esc(b.id)} · ${esc(b.service_name||'—')}</span>${badge(b.status)}</div><div class="muted">${esc(b.scheduled_at||b.created_at||'')} · ${b.agreed_price==null?'—':Number(b.agreed_price).toLocaleString()+' '+esc(b.currency||'AMD')}</div></div>`).join(''):'<div class="empty">Нет бронирований</div>'}</div>
    </div></div>`;
- }catch(e){$('').innerHTML=`<div class="error">${esc(e.message)}</div>`}
+ }catch(e){$('registryResults').innerHTML=`<div class="error">${esc(e.message)}</div>`}
 }
 async function loadPartners(){
  const d=await api('/api/admin/partner-applications');
@@ -673,6 +690,6 @@ async function loadAiPartnerCost(partnerId){
    (d.items||[]).map(x=>'<div class="item"><div class="row"><b>'+esc(x.provider)+' · '+esc(x.model)+'</b><span>'+Number(x.total_cost_usd||0).toFixed(6)+' USD</span></div><div class="muted">'+esc(x.chain)+' → '+esc(x.stage)+' → '+esc(x.operation)+'</div><div class="muted">'+Number(x.input_tokens||0).toLocaleString()+' input · '+Number(x.output_tokens||0).toLocaleString()+' output · '+Number(x.total_tokens||0).toLocaleString()+' total</div><div class="muted">'+esc(x.purpose||'')+'</div></div>').join('');
  }catch(e){alert(e.message||'AI usage error')}
 }
-async function loadPage(p){if(p==='overview'){await Promise.all([loadStats()])}else if(p==='partners'){renderRegistryFilters();await ();}else if(p==='cats')await loadCats();else if(p==='orders')await loadOrders();else if(p==='disputes')await loadDisputes();else if(p==='potential')await loadPotential();else if(p==='proposals'){await loadProposals();await loadSubcategoryProposals();await loadServiceDirectionRequests()}else if(p==='applications')await loadApplications();else if(p==='aiCosts'){await loadAiCosts();await loadProjectEconomics()}else if(p==='ai'){const el=$('adminAiInput');if(el&&!el.dataset.bound){el.dataset.bound='1';el.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendAdminAI()}})}}}
+async function loadPage(p){if(p==='overview'){await Promise.all([loadStats()])}else if(p==='partners'){renderRegistryFilters();await registrySearch();}else if(p==='cats')await loadCats();else if(p==='orders')await loadOrders();else if(p==='disputes')await loadDisputes();else if(p==='potential')await loadPotential();else if(p==='proposals'){await loadProposals();await loadSubcategoryProposals();await loadServiceDirectionRequests()}else if(p==='applications')await loadApplications();else if(p==='aiCosts'){await loadAiCosts();await loadProjectEconomics()}else if(p==='ai'){const el=$('adminAiInput');if(el&&!el.dataset.bound){el.dataset.bound='1';el.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendAdminAI()}})}}}
 (async()=>{if(await auth())await loadPage('overview').catch(showError)})();
 </script></body></html>
