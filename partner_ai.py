@@ -6,8 +6,8 @@ from ai_action_plan import registration_plan, service_action_plan, company_actio
 from ai_data_tools import DataTools
 from platform_db import (
     active_session, create_session, update_session, add_ai_message,
-    recent_ai_messages, catalog_tree, ensure_partner, update_partner,
-    upsert_direction, create_or_update_proposal, proposal, latest_clarification, mark_clarification_answered,
+    recent_ai_messages, ensure_partner, update_partner,
+    create_or_update_proposal, latest_clarification, mark_clarification_answered,
 )
 
 logger=logging.getLogger(__name__)
@@ -41,40 +41,17 @@ class PartnerAI:
         add_ai_message(session['id'],'user',text)
         history=recent_ai_messages(session['id'],14)
         clarification=latest_clarification(partner['id'])
-        catalog=_catalog_text(catalog_tree())
-        # Give the model a verified, compact view of the partner's current
-        # business structure so it can resolve natural-language references
-        # such as "BYUTI", "second address" or "that service" without IDs.
-        try:
-            dt=DataTools('partner', user_id)
-            companies=dt.execute('get_companies').get('data',{}).get('items',[])
-            addresses=dt.execute('get_addresses').get('data',{}).get('items',[])
-            services=dt.execute('get_services').get('data',{}).get('items',[])
-        except Exception:
-            companies,addresses,services=[],[],[]
-        business_context=json.dumps({
-            'companies':companies[:50],
-            'addresses':addresses[:100],
-            'services':services[:200],
-        },ensure_ascii=False)
         system=f'''Դու Armenia AI Guide-ի գործընկերոջ անձնական AI օգնականն ես։
 Դու չես ստիպում գործընկերոջը լրացնել ձևեր։ Գործընկերը խոսում է բնական լեզվով, իսկ դու նրա խոսքը վերածում ես կառուցվածքային տվյալների։
 Լեզուն՝ {lang}. Պատասխանիր նույն լեզվով, հնարավորինս բնական և կարճ։
 
 Քո կանոնները.
-1) Նախ օգտագործիր արդեն գոյություն ունեցող կատալոգը։
-2) Եթե համապատասխան ուղղություն/կատեգորիա/ենթակատեգորիա չկա, երբեք մի ասա «մեզ մոտ չկա»։ Առաջարկիր նոր կատալոգային կառուցվածք և նշիր catalog_proposal. Ակտիվ կատալոգը փոխում է միայն ադմինը։
-3) Եթե ադմինը վերադարձրել է ճշտման հարց, փոխանցիր այն գործընկերոջը բնական լեզվով և օգտագործիր նրա պատասխանը proposal-ը թարմացնելու համար։
-4) Գործընկերոջ հաստատումից հետո ստեղծիր/թարմացրու draft/pending ուղղությունը։
-5) Փաստաթուղթ պահանջելու ժամանակ հստակ ասա, որ պետք է սեղմել «Ներբեռնել փաստաթուղթ» և ուղարկել փաստաթուղթը։
-6) Մի հայտարարիր հաստատված ուղղություն կամ հաստատված գործընկեր, եթե ադմինը դա չի արել։
-7) Գործընկերոջ տվյալները կարող են գալ տեքստով, PDF/ֆոտոյով կամ գներով։
-
-Կատալոգը.
-{catalog}
-
-Գործընկերոջ իրական ընթացիկ կառուցվածքը (միայն DB-ից ստացված տվյալներ).
-{business_context}
+1) Գրանցման փուլում գործընկերը չի ընտրում ուղղություն, ենթակատեգորիա կամ կատալոգային ID։ AI-ը հավաքում է միայն գործընկերոջ բիզնեսային տվյալները։
+2) Եթե ադմինը վերադարձրել է ճշտման հարց, փոխանցիր այն գործընկերոջը բնական լեզվով և օգտագործիր նրա պատասխանը հայտը լրացնելու համար։
+3) Փաստաթուղթ պահանջելու ժամանակ հստակ ասա, որ պետք է սեղմել «Ներբեռնել փաստաթուղթ» և ուղարկել փաստաթուղթը։
+4) Մի հայտարարիր հաստատված ուղղություն կամ հաստատված գործընկեր, եթե ադմինը դա չի արել։
+5) Գործընկերոջ տվյալները կարող են գալ տեքստով, PDF/ֆոտոյով կամ գներով։
+6) Ընկերություններ, հասցեներ և ծառայություններ փոփոխելու դեպքում օգտագործիր միայն DataTools/Data Core գործողությունը՝ առանց նախապես ամբողջ բազան prompt-ի մեջ պատճենելու։
 
 Ընթացիկ կառուցված տվյալները.
 {json.dumps(ctx.get('profile',{}),ensure_ascii=False)}
@@ -161,16 +138,21 @@ class PartnerAI:
         elif proposal_id and data.get('confirmed'):
             # Admin still has to approve a catalog proposal; confirmation only means the partner agrees with the draft.
             pass
-        master_id=match.get('master_category_id')
-        category_ids=[int(x) for x in (match.get('category_ids') or []) if str(x).isdigit()]
-        if master_id:
-            try:
-                direction=upsert_direction(partner['id'],int(master_id),category_ids,'pending' if data.get('confirmed') else 'draft')
-                ctx['direction_id']=direction['id']
-                update_partner(partner['id'],business_name=ctx['profile'].get('business_name') or partner.get('business_name') or f'Գործընկեր {partner["id"]}',business_description=ctx['profile'].get('business_description') or partner.get('business_description') or '',profile_json=ctx['profile'],status='pending',verification_status='not_submitted')
-            except Exception:
-                logger.exception('Failed to persist partner direction')
-        if data.get('confirmed') and ctx.get('direction_id') and not proposal_data.get('needed'):
+        # Registration persists only partner profile data. Catalog direction/subcategory
+        # assignment is an admin-side concern and is intentionally not created here.
+        try:
+            if ctx.get('profile'):
+                update_partner(
+                    partner['id'],
+                    business_name=ctx['profile'].get('business_name') or partner.get('business_name') or f'Գործընկեր {partner["id"]}',
+                    business_description=ctx['profile'].get('business_description') or partner.get('business_description') or '',
+                    profile_json=ctx['profile'],
+                    status='pending',
+                    verification_status='not_submitted',
+                )
+        except Exception:
+            logger.exception('Failed to persist partner profile')
+        if data.get('confirmed'):
             ctx['awaiting_document']=True
         if clarification:
             ctx['last_admin_clarification_id']=clarification['id']
