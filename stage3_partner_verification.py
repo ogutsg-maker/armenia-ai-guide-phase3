@@ -1124,6 +1124,26 @@ async def api_admin_partner_block(request):
 
 
 
+def _safe(value):
+    """JSON-safe serializer for DB rows (dates/decimals/other adapters)."""
+    if isinstance(value, dict):
+        return {k: _safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_safe(v) for v in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    try:
+        import decimal
+        if isinstance(value, decimal.Decimal):
+            return float(value)
+    except Exception:
+        pass
+    return value
+
+
 async def api_admin_orders(request):
     _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     rows = _db_fetchall(
