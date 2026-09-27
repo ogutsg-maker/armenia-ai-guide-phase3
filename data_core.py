@@ -598,7 +598,7 @@ def save_partner_application_draft(*, user_id: int, profile: dict[str, Any]) -> 
             location_village,address,phone,direction_name,master_category_id,
             subcategory_name,category_id,service_name,price,description,
             payload_json)
-           VALUES(%s,'draft',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,%s,%s,%s,%s)
+           VALUES(%s,'pending_partner',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,%s,%s,%s,%s)
            RETURNING id AS application_id,*""",
         (partner_id,business_name,marz,city,village,address,phone,
          service_name,price,description,payload_json),
