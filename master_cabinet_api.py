@@ -774,7 +774,7 @@ async def api_service_create(request: web.Request):
                                   partner_id,business_id,status,business_name,location_marz,location_city,
                                   address,object_name,object_id,phone,direction_name,
                                   master_category_id,subcategory_name,service_name,price,description,ai_reason,payload_json)
-                               VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                               VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                                RETURNING id""",
                             (pid,app_bid,business_row.get("name") if app_bid is not None else match.get("proposed_business_name"),
                              object_row.get("marz"),object_row.get("city"),object_row.get("address"),
