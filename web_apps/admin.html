@@ -502,17 +502,35 @@ async function appAction(id,action){
    const payload=(x.payload_json&&typeof x.payload_json==='object')?x.payload_json:{};
    const isServiceProposal=payload.source==='partner_service';
    const isInitialRegistration=!isServiceProposal && x.status==='pending_admin';
-   if(action==='approve_service_proposal' && isInitialRegistration){
+   if(action==='approve' && isInitialRegistration){
+     // Initial registration is one Admin decision: first move the application
+     // into document workflow, then approve the already uploaded document and
+     // let the backend run the final activation gate.
      await post('/api/admin/partner-applications/'+id+'/action',{action:'approve'});
      const afterApprove=(await api('/api/admin/universal-applications')).applications||[];
      const a1=afterApprove.find(v=>Number(v.id)===Number(id))||{};
-     if(!a1.document_id) throw Error('document_required');
+     if(!a1.document_id){
+       await loadApplications();
+       return;
+     }
      await post('/api/admin/partner-applications/'+id+'/action',{action:'approve_document'});
    }else{
      let data={action};
-     if(action==='reject' || action==='send_to_partner')
-       data.admin_note=prompt(action==='send_to_partner'?'Ինչը պետք է ուղղի գործընկերը? / Что партнёр должен исправить?':'Պատճառ / Причина')||
-         (action==='send_to_partner'?'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.':'Մերժվել է ադմինիստրատորի կողմից');
+     if(action==='reject' || action==='send_to_partner'){
+       const promptValue=prompt(
+         action==='send_to_partner'
+           ? 'Ինչը պետք է ուղղի գործընկերը? / Что партнёр должен исправить?'
+           : 'Պատճառ / Причина',
+         action==='send_to_partner'
+           ? 'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.'
+           : 'Մերժվել է ադմինիստրատորի կողմից'
+       );
+       if(promptValue===null)return;
+       data.admin_note=promptValue.trim()||
+         (action==='send_to_partner'
+           ? 'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.'
+           : 'Մերժվել է ադմինիստրատորի կողմից');
+     }
      await post('/api/admin/partner-applications/'+id+'/action',data);
    }
    await loadApplications();
