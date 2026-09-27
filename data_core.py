@@ -1719,3 +1719,26 @@ def get_admin_setting(key: str, default: str = "") -> str:
     if isinstance(value, dict):
         value = value.get("value") or value.get("model")
     return str(value) if value is not None else str(default)
+
+
+def ensure_partner(user_id: int):
+    return platform_db.ensure_partner(int(user_id))
+
+
+def update_partner(partner_id: int, **fields):
+    return platform_db.update_partner(int(partner_id), **fields)
+
+
+def create_or_update_proposal(partner_id: int, data: dict, proposal_id: int | None = None):
+    return platform_db.create_or_update_proposal(int(partner_id), data, proposal_id)
+
+
+def latest_clarification(partner_id: int):
+    return platform_db.latest_clarification(int(partner_id))
+
+
+def mark_clarification_answered(clarification_id: int):
+    return platform_db.execute(
+        "UPDATE admin_clarifications SET status='answered',answered_at=NOW() WHERE id=%s RETURNING *",
+        (int(clarification_id),), True
+)
