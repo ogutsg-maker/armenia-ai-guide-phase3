@@ -53,6 +53,11 @@ def _admin_data_call(name: str, args: dict | None = None) -> dict:
             if aid is None and pid is None: raise DataToolError("application_or_partner_required")
             docs=data_core.get_documents(application_id=int(aid), limit=50) if aid is not None else data_core.get_documents(partner_id=int(pid), limit=50)
             return {"tool": name, "data": {"documents": docs}}
+        if name == "get_addresses":
+            pid=args.get("partner_id")
+            if pid is None: raise DataToolError("partner_id_required")
+            items=data_core.get_partner_addresses(int(pid),limit=min(max(int(args.get("limit") or 100),1),200))
+            return {"tool": name, "data": {"items": items, "count": len(items)}}
         if name == "get_services":
             pid=args.get("partner_id"); cid=args.get("company_id")
             if cid is not None:
@@ -62,6 +67,52 @@ def _admin_data_call(name: str, args: dict | None = None) -> dict:
             items=data_core.list_services(partner_id=int(pid) if pid is not None else None, category_id=int(args["category_id"]) if args.get("category_id") is not None else None, limit=min(max(int(args.get("limit") or 100),1),200))
             if cid is not None: items=[x for x in items if str(x.get("business_id"))==str(cid)]
             return {"tool": name, "data": {"items": items, "count": len(items)}}
+        if name == "get_orders":
+            items=data_core.search_orders(partner_id=int(args["partner_id"]) if args.get("partner_id") is not None else None,
+                                          company_id=int(args["company_id"]) if args.get("company_id") is not None else None,
+                                          status=str(args.get("status") or "").strip() or None,
+                                          city=str(args.get("city") or "").strip(),
+                                          limit=min(max(int(args.get("limit") or 100),1),200))
+            return {"tool": name, "data": {"items": items, "count": len(items)}}
+        if name == "search_catalog":
+            items=data_core.search_catalog(query=str(args.get("query") or "").strip(),
+                                           master_category_id=int(args["master_category_id"]) if args.get("master_category_id") is not None else None,
+                                           limit=min(max(int(args.get("limit") or 100),1),200))
+            return {"tool": name, "data": {"items": items, "count": len(items)}}
+        if name == "get_directions":
+            items=data_core.active_directions()
+            return {"tool": name, "data": {"items": items[:min(max(int(args.get("limit") or 200),1),200)], "count": len(items)}}
+        if name == "application_directions":
+            apps=data_core.search_applications(limit=200)
+            grouped={}
+            for a in apps:
+                mid=a.get("master_category_id")
+                if mid is None: continue
+                key=int(mid)
+                item=grouped.setdefault(key,{"id":key,"name_am":a.get("direction_name") or "—","application_count":0})
+                item["application_count"]+=1
+            items=sorted(grouped.values(),key=lambda x:(-int(x["application_count"]),int(x["id"])))
+            return {"tool": name, "data": {"items": items[:min(max(int(args.get("limit") or 200),1),200)], "count": len(items)}}
+        if name == "check_application":
+            aid=args.get("application_id")
+            if aid is None: raise DataToolError("application_id_required")
+            return {"tool": name, "data": data_core.check_application(int(aid))}
+        if name == "check_catalog_match":
+            service_name=str(args.get("service_name") or "").strip()
+            if not service_name: raise DataToolError("service_name_required")
+            candidates=data_core.search_catalog(query=service_name,
+                                                master_category_id=int(args["category_id"]) if args.get("category_id") is not None else None,
+                                                limit=20)
+            # Search the real catalogue only; rank approximate name similarity without inventing categories.
+            from difflib import SequenceMatcher
+            q=" ".join(service_name.casefold().split())
+            ranked=[]
+            for item in candidates:
+                names=[item.get("name_am"),item.get("name_ru"),item.get("name_en"),item.get("slug")]
+                score=max(SequenceMatcher(None,q," ".join(str(n or "").casefold().split())).ratio() for n in names if n)
+                ranked.append({**item,"match_score":round(score,3)})
+            ranked.sort(key=lambda x:x["match_score"],reverse=True)
+            return {"tool": name, "data": {"candidates": ranked[:10], "count": len(ranked)}}
         if name == "catalog_overview":
             return {"tool": name, "data": {"overview": data_core.catalog_overview() or {}}}
         if name == "ai_usage_summary":
@@ -100,7 +151,9 @@ def _admin_tool_registry(role="admin"):
     names = [
         "count","search_partners","search_applications","search_companies",
         "get_partner","get_company","get_application","get_application_full",
-        "get_documents","get_services","catalog_overview","ai_usage_summary",
+        "get_documents","get_addresses","get_services","get_orders",
+        "search_catalog","get_directions","application_directions",
+        "catalog_overview","ai_usage_summary","check_application","check_catalog_match",
     ]
     return [{"name": name, "description": "Read live data through Python Data Core."} for name in names]
 
