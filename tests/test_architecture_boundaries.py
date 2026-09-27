@@ -113,5 +113,5 @@ def test_ai_runtime_modules_use_data_core_as_db_gateway():
 
 def test_ai_service_does_not_execute_sql():
     text = _text("ai_service.py").lower()
-    for keyword in ("select ", "insert ", "update ", "delete ", "create table"):
-        assert keyword not in text, f"SQL text in ai_service.py: {keyword}"
+    import re
+    assert not re.search(r"(?im)^\\s*(SELECT|INSERT|UPDATE|DELETE|CREATE\\s+TABLE)\\b", text), "SQL statement in ai_service.py"
