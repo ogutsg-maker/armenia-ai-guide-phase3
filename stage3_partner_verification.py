@@ -356,8 +356,11 @@ async def api_partner_document_upload(request):
     if str(partner.get("status") or "") in ("blocked", "suspended"):
         return web.json_response({"ok": False, "error": "partner_not_allowed"}, status=403)
 
-    from master_cabinet_api import _business_id_for_partner
-    business_id = _business_id_for_partner(partner["id"])
+    business_row = _db_fetchone(
+        "SELECT id FROM partner_businesses WHERE partner_id=%s AND status<>'archived' ORDER BY is_default DESC,id LIMIT 1",
+        (partner["id"],),
+    )
+    business_id = int(business_row["id"]) if business_row else None
     if not business_id:
         return web.json_response({"ok": False, "error": "business_required"}, status=409)
 
