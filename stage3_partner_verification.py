@@ -16,6 +16,7 @@ import psycopg
 from aiohttp import web
 
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
+import data_core
 
 try:
     from notify import notify as _notify
@@ -1142,19 +1143,61 @@ async def api_admin_disputes(request):
 
 async def api_admin_dispute_resolve(request):
     admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
-    did = int(request.match_info["id"])
-    payload = await request.json()
+    try:
+        did = int(request.match_info["id"])
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid_dispute_id"}, status=400)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
     refund = bool(payload.get("refund"))
-    status = "cancelled" if refund else "completed"
-    row = _db_fetchone("SELECT id,status,data_json FROM bookings WHERE id=%s", (did,))
+    row = _db_fetchone(
+        "SELECT id,status,agreed_price,currency,partner_id,request_id,negotiation_id FROM bookings WHERE id=%s",
+        (did,),
+    )
     if not row or row.get("status") != "dispute":
         return web.json_response({"ok": False, "error": "dispute_not_found"}, status=404)
-    _db_execute(
-        "UPDATE bookings SET status=%s,data_json=COALESCE(data_json,'{}'::jsonb) || %s::jsonb,updated_at=NOW() WHERE id=%s",
-        (status, json.dumps({"dispute_resolved": True, "resolved_by": admin_id, "refund": refund} , ensure_ascii=False), did),
-    )
-    _audit(admin_id, "dispute_resolved", did, {"refund": refund, "status": status})
-    return web.json_response({"ok": True, "id": did, "status": status, "refund": refund})
+
+    if refund:
+        # A refund must use the canonical cancellation path so the refund is
+        # recorded in booking_cancellations/project_expenses and the related
+        # request/negotiation are closed consistently.
+        refund_amount = float(row.get("agreed_price") or 0)
+        updated = data_core.cancel_booking(
+            did, actor_role="admin", actor_id=admin_id,
+            new_status="refunded",
+            reason="Admin dispute resolution — full refund",
+            refund_amount=refund_amount,
+        )
+        if not updated:
+            return web.json_response({"ok": False, "error": "dispute_resolution_failed"}, status=409)
+        status = "refunded"
+    else:
+        updated = _db_execute(
+            """UPDATE bookings
+               SET status='completed',
+                   data_json=COALESCE(data_json,'{}'::jsonb) ||
+                     %s::jsonb,
+                   updated_at=NOW()
+               WHERE id=%s AND status='dispute'
+               RETURNING id""",
+            (json.dumps({"dispute_resolved": True, "resolved_by": admin_id, "refund": False}, ensure_ascii=False), did),
+        )
+        if not updated:
+            return web.json_response({"ok": False, "error": "dispute_resolution_failed"}, status=409)
+        status = "completed"
+
+    _audit(admin_id, "dispute_resolved", did, {
+        "refund": refund,
+        "refund_amount": float(row.get("agreed_price") or 0) if refund else 0,
+        "status": status,
+    })
+    return web.json_response({
+        "ok": True, "id": did, "status": status,
+        "refund": refund,
+        "refund_amount": float(row.get("agreed_price") or 0) if refund else 0,
+    })
 
 
 def register_stage3_routes(app, bot_token=None, admin_id=None):
