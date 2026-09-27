@@ -556,7 +556,7 @@ def _admin_context(limit=30,include_catalog=False):
 # =====================================================================
 # Dynamic Admin Query / Skills layer
 # =====================================================================
-# Legacy phrase-to-SQL query engine removed. AI reads use DataTools.
+# Legacy phrase-to-SQL query engine removed. AI reads use Data Core.
 
 async def _admin_execute(command):
     intent=str(command.get("intent") or "").strip()
@@ -1002,7 +1002,7 @@ async def _admin_ai_json(message,ctx):
     registry=_admin_tool_registry("admin")
     schemas=_admin_tool_schemas("admin")
     system="""You are the universal semantic planner for Armenia AI Guide admin.
-All business data is live in Supabase/PostgreSQL and is accessed only through the supplied Python DataTools/Data Core tools.
+All business data is live in Supabase/PostgreSQL and is accessed only through the supplied Python Python Data Core operations.
 Do not expect or request a prebuilt database context, platform index, cached entity profile, or duplicate business-data snapshot.
 Resolve named entities with the appropriate search/get tool, then read the requested live records.
 
@@ -1197,10 +1197,10 @@ def _admin_audit_application_catalog(app):
 
 
 def _admin_resolve_semantic_entity(plan,state):
-    """Resolve named entities only through the role-aware DataTools layer.
+    """Resolve named entities only through the role-aware Data Core layer.
 
     This keeps Admin AI on the same safe read path as every other AI caller:
-    Planner -> DataTools -> Data Core -> Supabase.
+    Planner -> Data Core -> Data Core -> Supabase.
     """
     entity_type=_norm(plan.get("entity_type") or plan.get("target"))
     entity_name=str(plan.get("entity_name") or "").strip()
@@ -1406,7 +1406,7 @@ def _admin_application_truth(app, documents=None, category=None):
             "approval_rule_note":"Չլրացված phone/description դաշտերը ինքնին սխալ չեն համարվում, քանի դեռ backend-ում դրանց պարտադիր լինելու կանոն չկա։"}
 
 def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
-    """Build factual context through the role-aware DataTools facade.
+    """Build factual context through the role-aware Data Core facade.
     Existing specialized checks remain available as a compatibility fallback.
     """
     result={}
@@ -1728,7 +1728,7 @@ async def _admin_semantic_answer(question,plan,state):
     # "full application" request can safely resolve to that single record.
     if wants_full and not plan.get("entity_id"):
         try:
-            only_apps=DataTools("admin").execute("search_applications",{"limit":2}).get("data",{}).get("items",[])
+            only_apps=Data Core("admin").execute("search_applications",{"limit":2}).get("data",{}).get("items",[])
             if len(only_apps)==1 and only_apps[0].get("id") is not None:
                 aid=int(only_apps[0]["id"])
                 plan["target"]="application"
@@ -1749,7 +1749,7 @@ async def _admin_semantic_answer(question,plan,state):
         candidates=[x for x in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", question or "")]
         for candidate in candidates:
             try:
-                rows=(DataTools("admin").execute(
+                rows=(Data Core("admin").execute(
                     "search_companies",{"query":candidate,"limit":5}
                 ).get("data") or {}).get("items",[])
                 exact=[row for row in rows if _norm(row.get("name") or row.get("business_name"))==_norm(candidate)]
@@ -1777,7 +1777,7 @@ async def _admin_semantic_answer(question,plan,state):
         # This prevents an entity-scoped service question from degrading into
         # a platform-wide count.
         try:
-            company_result=DataTools("admin").execute(
+            company_result=Data Core("admin").execute(
                 "search_companies",{"query":named,"limit":10}
             )
             company_data=company_result.get("data") if isinstance(company_result,dict) else {}
@@ -1930,19 +1930,19 @@ async def _admin_semantic_answer(question,plan,state):
     if target in simple_counts and not entity_scoped_read and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
         try:
             entity=simple_counts[target]
-            raw=DataTools("admin").execute("count",{"entity":entity})
+            raw=Data Core("admin").execute("count",{"entity":entity})
             facts=raw.get("data") if isinstance(raw,dict) else {}
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     elif target=="catalog_overview":
         try:
-            facts=DataTools("admin").execute("catalog_overview",{}).get("data",{})
+            facts=Data Core("admin").execute("catalog_overview",{}).get("data",{})
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     elif target=="ai_usage":
         try:
             days=int(plan.get("days") or 1)
-            facts=DataTools("admin").execute("ai_usage_summary",{"days":days}).get("data",{})
+            facts=Data Core("admin").execute("ai_usage_summary",{"days":days}).get("data",{})
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     else:
