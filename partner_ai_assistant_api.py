@@ -25,6 +25,27 @@ from telegram_webapp_auth import validate_telegram_webapp_init_data
 _PENDING: dict[str, tuple[float, int, dict[str, Any]]] = {}
 _PENDING_TTL = 10 * 60
 
+# Ephemeral conversational state only; the database remains the source of truth.
+_ACTIVE_BUSINESS: dict[int, tuple[float, int, str]] = {}
+_ACTIVE_BUSINESS_TTL = 30 * 60
+
+def _set_active_business(pid: int, business_id: int, name: str) -> None:
+    _ACTIVE_BUSINESS[int(pid)] = (time.time(), int(business_id), str(name or ""))
+
+def _get_active_business(pid: int, ctx: dict[str, Any]):
+    item = _ACTIVE_BUSINESS.get(int(pid))
+    if not item:
+        return None
+    ts, bid, _name = item
+    if time.time() - ts > _ACTIVE_BUSINESS_TTL:
+        _ACTIVE_BUSINESS.pop(int(pid), None)
+        return None
+    for b in ctx.get("businesses", []):
+        if int(b.get("id") or 0) == bid and str(b.get("status") or "active") != "archived":
+            return b
+    _ACTIVE_BUSINESS.pop(int(pid), None)
+    return None
+
 
 def _json_safe(value: Any):
     """Convert DB values to JSON-safe primitives before aiohttp serializes them."""
@@ -308,9 +329,8 @@ async def api_ai_command(request: web.Request):
                 command["business_id"] = int(svc["business_id"])
                 command["name"] = svc.get("name") or command.get("name")
 
-    # Resolve an explicitly named company deterministically. Do not depend on
-    # Groq returning business_id when the partner has already named the company
-    # in natural language (for example: "для моей компании BYUTI").
+    # Resolve the company deterministically. Explicit names win; phrases such
+    # as "այդ ընկերությունում" use the last company selected/created in chat.
     if intent == "add_service" and not command.get("business_id"):
         msg_norm = re.sub(r"\s+", " ", message.casefold()).strip()
         businesses = ctx.get("businesses", [])
@@ -321,6 +341,11 @@ async def api_ai_command(request: web.Request):
         ]
         if len(exact) == 1:
             command["business_id"] = int(exact[0]["id"])
+            _set_active_business(pid, int(exact[0]["id"]), str(exact[0].get("name") or ""))
+        elif re.search(r"(այդ|նոր|ընտրված)\s+(?:կոմպանիայում|ընկերությունում|ֆիրմայում)|\b(?:эта|этой|новой)\s+(?:компании|фирме)\b|\b(?:that|this|new)\s+(?:company|business)\b", message, re.IGNORECASE):
+            active = _get_active_business(pid, ctx)
+            if active:
+                command["business_id"] = int(active["id"])
         elif len(businesses) == 1:
             command["business_id"] = int(businesses[0]["id"])
     if intent in {"show_businesses","show_services","show_orders","show_profile","show_addresses","show_documents"}:
@@ -466,7 +491,8 @@ async def _execute_mutation(pid,c,ctx):
     price=_clean_num(c.get("price"))
     if intent=="add_service":
         if not bid:
-            return web.json_response({"ok":True,"reply":"Укажите, в какой компании добавить услугу."})
+            reply = {"hy":"Նշեք, թե որ ընկերությունում ավելացնել ծառայությունը։","ru":"Укажите, в какую компанию добавить услугу.","en":"Please specify which company should receive the service."}.get(str(c.get("language") or "hy"), "Նշեք ընկերությունը։")
+            return web.json_response({"ok":True,"reply":reply})
         candidates=[x for x in ctx.get("addresses",[]) if int(x.get("business_id") or 0)==bid]
         if oid:
             selected = next((x for x in candidates if int(x["id"]) == oid), None)
@@ -522,6 +548,7 @@ async def _execute_mutation(pid,c,ctx):
                 cur.execute("INSERT INTO partner_businesses(partner_id,name,description,phone,status) VALUES(%s,%s,%s,%s,'active') RETURNING id,name",(pid,name,description or None,phone))
                 row=cur.fetchone()
                 conn.commit()
+                _set_active_business(pid, int(row["id"]), str(row["name"] or ""))
                 return web.json_response({"ok":True,"reply":"✓ Компания «%s» создана."%row["name"],"data":{"business":dict(row)}})
             if intent in {"update_business","delete_business"}:
                 cur.execute("SELECT id,name FROM partner_businesses WHERE id=%s AND partner_id=%s AND status='active'",(bid,pid)); b=cur.fetchone()
