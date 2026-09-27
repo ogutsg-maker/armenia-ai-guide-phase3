@@ -302,7 +302,12 @@ async function loadPotential(){const d=await api('/api/admin/potential-partners'
 async function runResearch(){const q=$('researchQuery').value.trim();if(!q)return alert('Գրեք որոնման հարցումը');try{const d=await post('/api/admin/potential-partners/research',{query:q,location:'Armenia',limit:10});await loadPotential();alert('Գտնվեց՝ '+(d.results||[]).length)}catch(e){alert('AI որոնումը հասանելի չէ: '+e.message)}}
 async function structurePotential(){const raw=$('researchText').value.trim();if(!raw)return alert('Տեղադրեք աղբյուրի տեքստը');await post('/api/admin/potential-partners/structure',{raw_text:raw,source:'admin_research'});$('researchText').value='';await loadPotential()}
 async function loadProposals(){const d=await api('/api/admin/ai/catalog-proposals');$('proposalList').innerHTML=(d.items||[]).map(x=>`<div class="item"><div class="row"><b>${esc(x.proposed_master_category||'')} → ${esc(x.proposed_category||'')} → ${esc(x.proposed_subcategory||'')}</b>${badge(x.status)}</div><div>${esc(x.description||x.reason||'')}</div><div class="actions"><button class="btn ok" onclick="proposalAction(${x.id},'activate')">✓ Ակտիվացնել</button><button class="btn warn" onclick="proposalAction(${x.id},'clarify')">↩ Ճշտման</button><button class="btn danger" onclick="proposalAction(${x.id},'reject')">✕ Մերժել</button></div></div>`).join('')||'<div class="empty">AI առաջարկներ չկան</div>'}
-async function proposalAction(id,a){await post(`/api/admin/ai/catalog-proposals/${id}/${a}`,{});await loadProposals()}
+async function proposalAction(id,a){
+ if(a==='reject'&&!confirm('Մերժե՞լ այս AI առաջարկը։'))return;
+ if(a==='activate'&&!confirm('Ակտիվացնե՞լ այս AI առաջարկը կատալոգում։'))return;
+ try{await post(`/api/admin/ai/catalog-proposals/${id}/${a}`,{});await loadProposals();}
+ catch(e){alert(e.message||'Չհաջողվեց կատարել գործողությունը')}
+}
 async function loadServiceDirectionRequests(){
   const el=$('serviceDirectionRequestList');
   try{
@@ -461,12 +466,12 @@ async function loadApplications(){
    (x.status==='pending_admin'&&isServiceProposal&&serviceClassified&&(!isNewBusiness||!!x.document_id)?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել և ակտիվացնել</button>':'')+
    (x.status==='pending_admin'&&isServiceProposal&&serviceClassified&&isNewBusiness&&!x.document_id?'<span class="chip warn">⚠️ Սպասվում է փաստաթուղթ</span>':'')+
    (x.status==='pending_admin'&&isServiceProposal&&!serviceClassified?'<button class="btn secondary" onclick="editApplication('+x.id+')">✎ Դասակարգել</button>':'')+
-   (x.status==='pending_admin'&&!isServiceProposal?'<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել հայտը</button><button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել հայտը</button>':'')+
+   (x.status==='pending_admin'&&!isServiceProposal?'<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել հայտը</button><button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել հայտը</button>':'')+
    (x.status==='pending_partner'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել տվյալները → փաստաթուղթ</button>':'')+
    (x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':'')+
    ''+
    (!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':'')+
-   ((isServiceProposal&&x.status!=='approved')?'<button class="btn danger" onclick="appAction('+x.id+',\'delete\')">🗑 Ջնջել</button>':'')+
+   ((isServiceProposal&&x.status!=='approved')?'<button class="btn danger" onclick="if(confirm(\'Ջնջե՞լ այս ծառայության առաջարկը։\'))appAction('+x.id+',\'delete\')">🗑 Ջնջել</button>':'')+
    '</div></div>';
   }).join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
  }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
