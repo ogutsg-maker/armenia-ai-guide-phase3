@@ -183,7 +183,6 @@ function openService(id){
       '<div><b>'+tr('description')+'</b><div class="muted">'+esc(s.description||'—')+'</div></div>'+
       '<div><b>'+tr('object')+'</b><div class="muted">'+esc(location||'—')+'</div></div>'+
     '</div>'+
-    '<div class="section"><h3>'+tr('classification')+'</h3><div class="notice">'+esc(s.direction_name||d.direction_name||'—')+' · '+esc(s.subcategory_name||d.subcategory_name||'—')+'</div></div>'+
     '<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="editService('+s.id+')">✎ '+tr('serviceEdit')+'</button><button class="btn danger" onclick="deleteService('+s.id+')">🗑</button></div>'+
     '</div>';
   setView('service',false);
