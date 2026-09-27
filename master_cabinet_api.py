@@ -1244,6 +1244,31 @@ async def api_application_submit(request: web.Request):
     return web.json_response({"ok": True, "application": _json(row)})
 
 
+
+async def api_negotiations(request: web.Request):
+    uid = _auth_partner(request)
+    from marketplace_flow_api import partner_negotiations
+    return await partner_negotiations(request)
+
+
+async def api_negotiation_messages(request: web.Request):
+    uid = _auth_partner(request)
+    from marketplace_flow_api import partner_negotiation_messages
+    return await partner_negotiation_messages(request)
+
+
+async def api_negotiation_reply(request: web.Request):
+    uid = _auth_partner(request)
+    from marketplace_flow_api import partner_reply
+    return await partner_reply(request)
+
+
+async def api_negotiation_agree(request: web.Request):
+    uid = _auth_partner(request)
+    from marketplace_flow_api import partner_agree
+    return await partner_agree(request)
+
+
 def register_master_cabinet_routes(app, db=None, bot=None):
     """Register the complete current partner cabinet API.
 
@@ -1273,6 +1298,10 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/notifications/read", api_notifications_read_compat)
     app.router.add_post("/api/master/{id}/notifications/read-all", api_notifications_read_all)
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
+    app.router.add_get("/api/master/{id}/negotiations", api_negotiations)
+    app.router.add_get("/api/master/{id}/negotiations/{negotiation_id}", api_negotiation_messages)
+    app.router.add_post("/api/master/{id}/negotiations/{negotiation_id}/message", api_negotiation_reply)
+    app.router.add_post("/api/master/{id}/negotiations/{negotiation_id}/agree", api_negotiation_agree)
     app.router.add_get("/api/master/{id}/applications", api_applications)
     app.router.add_get("/api/master/{id}/documents", api_documents)
     app.router.add_get("/api/master/{id}/applications/{application_id}", api_application_get)
