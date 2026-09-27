@@ -221,24 +221,43 @@ async def api_ai_command(request: web.Request):
 
             # Keep a confirmed add-service action alive when an address is still missing.
             if command.get("intent") == "add_service" and not command.get("object_id"):
-                candidates = [
-                    x for x in ctx.get("addresses", [])
-                    if int(x.get("business_id") or 0) == int(command.get("business_id") or 0)
-                ]
-                if len(candidates) == 1:
-                    command["object_id"] = int(candidates[0]["id"])
+                if command.get("_address_confirmation"):
+                    address_text = str(command.get("_address_message") or "").strip()
+                    bid = int(command.get("business_id") or 0)
+                    actor_uid = int(command.get("actor_user_id") or uid)
+                    parts = [p.strip() for p in address_text.split(",") if p.strip()]
+                    city = parts[0] if len(parts) >= 2 else None
+                    address = ", ".join(parts[1:]) if len(parts) >= 2 else address_text
+                    created = data_core.create_partner_address(
+                        partner_id=pid,
+                        actor_user_id=actor_uid,
+                        company_id=bid,
+                        address=address,
+                        city=city,
+                        object_name=address_text,
+                    )
+                    command["object_id"] = int(created["id"])
+                    command.pop("_address_confirmation", None)
+                    command.pop("_address_message", None)
                 else:
-                    reply = {
-                        "hy": "Նշեք ծառայության հասցեն։ Օրինակ՝ «Գյումրի, Կենտրոնական 22»։",
-                        "ru": "Укажите адрес услуги. Например: «Гюмри, Центральная 22».",
-                        "en": "Please provide the service address, for example: “Gyumri, Kentronakan 22”.",
-                    }.get(language, "Նշեք ծառայության հասցեն։")
-                    return web.json_response({
-                        "ok": True,
-                        "reply": reply,
-                        "confirmation_id": token,
-                        "command": command,
-                    })
+                    candidates = [
+                        x for x in ctx.get("addresses", [])
+                        if int(x.get("business_id") or 0) == int(command.get("business_id") or 0)
+                    ]
+                    if len(candidates) == 1:
+                        command["object_id"] = int(candidates[0]["id"])
+                    else:
+                        reply = {
+                            "hy": "Նշեք ծառայության հասցեն։ Օրինակ՝ «Գյումրի, Կենտրոնական 22»։",
+                            "ru": "Укажите адрес услуги. Например: «Гюмրի, Центральная 22».",
+                            "en": "Please provide the service address, for example: “Gyumri, Kentronakan 22”.",
+                        }.get(language, "Նշեք ծառայության հասցեն։")
+                        return web.json_response({
+                            "ok": True,
+                            "reply": reply,
+                            "confirmation_id": token,
+                            "command": command,
+                        })
 
             _PENDING.pop(token, None)
             # Re-resolve the pending entity against the latest live context.
@@ -274,6 +293,41 @@ async def api_ai_command(request: web.Request):
                     pass
                 return result
 
+    # Continue the same confirmed add-service action when the partner
+    # supplies the missing address in the next message.
+    if normalized not in {
+        "да", "да да", "da", "yes", "y", "ok", "okay", "confirm", "confirmed",
+        "подтверждаю", "подтвердить", "согласен", "согласна",
+        "այո", "հա", "հաստատում եմ", "հաստատել",
+        "нет", "no", "n", "cancel", "отмена", "отменить",
+        "не надо", "не делай", "ոչ", "ոչ, պետք չէ", "չեղարկել"
+    }:
+        waiting = [
+            (ts, token, cmd)
+            for token, (ts, owner_pid, cmd) in _PENDING.items()
+            if owner_pid == pid
+            and time.time() - ts <= _PENDING_TTL
+            and cmd.get("intent") == "add_service"
+            and not cmd.get("object_id")
+        ]
+        if waiting:
+            _, token, command = max(waiting, key=lambda item: item[0])
+            command["actor_user_id"] = uid
+            command["_address_message"] = message
+            command["_address_confirmation"] = True
+            company = _entity_name(ctx, "businesses", command.get("business_id")) or "ընկերությունը"
+            reply = {
+                "hy": f'Ավելացնել «{message}» հասցեն «{company}» ընկերությանը և օգտագործել այն ծառայության համար։ Հաստատո՞ւմ եք։',
+                "ru": f'Добавить адрес «{message}» в компанию «{company}» и использовать его для услуги. Подтверждаете?',
+                "en": f'Add the address “{message}” to “{company}” and use it for the service. Confirm?',
+            }.get(language, f'Ավելացնել «{message}» հասցեն և օգտագործել այն ծառայության համար։ Հաստատո՞ւմ եք։')
+            return web.json_response({
+                "ok": True,
+                "reply": reply,
+                "confirmation_id": token,
+                "command": command,
+            })
+
     # Natural-language cancellation of the last pending action.
     if normalized in {
         "нет", "no", "n", "cancel", "отмена", "отменить",
@@ -298,6 +352,7 @@ async def api_ai_command(request: web.Request):
         return web.json_response({"ok":False,"error":"ai_command_failed","message":str(exc)[:240]},status=503)
     command["language"]=language
     command["message"]=message
+    command["actor_user_id"]=uid
     intent=command.get("intent")
 
     # Recover an explicit new-company name from mixed-language user text.
