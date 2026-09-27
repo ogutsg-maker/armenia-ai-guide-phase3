@@ -17,7 +17,7 @@ from typing import Any
 from groq import Groq
 from psycopg.rows import dict_row
 
-from database import _connect
+import data_core
 import ai_cost_center
 
 
@@ -57,19 +57,9 @@ class AIService:
 
     def _get_setting(self, key: str, default: str) -> str:
         try:
-            with _connect() as conn:
-                with conn.cursor(row_factory=dict_row) as cur:
-                    cur.execute("SELECT value_json FROM admin_settings WHERE key=%s", (key,))
-                    row = cur.fetchone()
-                    if row and row.get("value_json") is not None:
-                        value = row["value_json"]
-                        if isinstance(value, dict):
-                            value = value.get("value") or value.get("model")
-                        if value is not None:
-                            return str(value)
+            return data_core.get_admin_setting(str(key), str(default))
         except Exception:
-            pass
-        return default
+            return default
 
     def clean_sensitive_data(self, text: str) -> str:
         if self._get_setting("hide_contacts_before_payment", "true").lower() == "false":
