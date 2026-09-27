@@ -490,7 +490,6 @@ async function appAction(id,action){
      const a1=afterApprove.find(v=>Number(v.id)===Number(id))||{};
      if(!a1.document_id) throw Error('document_required');
      await post('/api/admin/partner-applications/'+id+'/action',{action:'approve_document'});
-     await post('/api/admin/partner-applications/'+id+'/action',{action:'activate'});
    }else{
      let data={action};
      if(action==='reject' || action==='send_to_partner')
