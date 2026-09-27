@@ -1410,7 +1410,6 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
     Existing specialized checks remain available as a compatibility fallback.
     """
     result={}
-    tools=DataTools("admin")
     if entity_type=="application" and entity_id:
         try:
             result["application"]=_admin_data_call("get_application",{"application_id":int(entity_id)}).get("data",{}).get("application")
@@ -1485,7 +1484,6 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
 def _admin_tool_context(plan, entity_type, entity_id):
     requests=plan.get("tool_requests") or []
     if not requests: return {}
-    tools=DataTools("admin")
     results=[]
     for req in requests[:6]:
         if not isinstance(req,dict): continue
