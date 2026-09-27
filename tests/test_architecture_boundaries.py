@@ -81,3 +81,37 @@ def test_removed_ai_layers_are_not_referenced():
 def test_partner_service_creation_is_in_data_core():
     text = _text("data_core.py")
     assert "def create_partner_service(" in text
+
+
+def test_legacy_ai_modules_are_deleted():
+    for name in (
+        "ai_action_plan.py",
+        "ai_context_builder.py",
+        "ai_context_layer.py",
+        "ai_data_tools.py",
+        "ai_schema.py",
+        "ai_first_partner_onboarding.py",
+    ):
+        assert not (ROOT / name).exists(), f"Obsolete AI layer still exists: {name}"
+
+
+def test_ai_runtime_modules_use_data_core_as_db_gateway():
+    files = (
+        "ai_service.py",
+        "ai_router.py",
+        "client_ai.py",
+        "partner_ai.py",
+        "partner_ai_assistant_api.py",
+        "partner_registration_ai.py",
+        "potential_partner_ai.py",
+    )
+    forbidden_imports = {"database", "platform_db", "ai_schema"}
+    for name in files:
+        imports = _imports(name)
+        assert not (imports & forbidden_imports), f"Direct DB/legacy import in {name}: {imports & forbidden_imports}"
+
+
+def test_ai_service_does_not_execute_sql():
+    text = _text("ai_service.py").lower()
+    for keyword in ("select ", "insert ", "update ", "delete ", "create table"):
+        assert keyword not in text, f"SQL text in ai_service.py: {keyword}"
