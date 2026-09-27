@@ -703,6 +703,29 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             row["services"]=enriched
             row["catalog_services"]=enriched
 
+            # Service proposals under an already approved direction do NOT need
+            # a new verification document. Documents are required only for a
+            # genuinely new direction or a new company.
+            is_service_proposal = payload.get("source") == "partner_service"
+            document_required = False
+            if is_service_proposal:
+                document_required = True
+                business_id = _safe_int(row.get("business_id"))
+                master_id = _safe_int(row.get("master_category_id") or payload.get("master_category_id"))
+                if business_id and master_id:
+                    approved = _one(
+                        """SELECT id FROM partner_directions
+                           WHERE partner_id=%s AND business_id=%s
+                             AND master_category_id=%s AND status='approved'
+                           LIMIT 1""",
+                        (p["id"], business_id, master_id),
+                    )
+                    if approved:
+                        document_required = False
+                if payload.get("new_business") is True or not business_id:
+                    document_required = True
+            row["document_required"] = document_required
+
         return web.json_response({"ok":True,"applications":rows})
 
     async def application_update(request):
