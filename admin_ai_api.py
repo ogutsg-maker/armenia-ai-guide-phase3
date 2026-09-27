@@ -1750,9 +1750,7 @@ async def _admin_semantic_answer(question,plan,state):
         candidates=[x for x in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", question or "")]
         for candidate in candidates:
             try:
-                rows=(Data Core("admin").execute(
-                    "search_companies",{"query":candidate,"limit":5}
-                ).get("data") or {}).get("items",[])
+                rows=_admin_data_call("search_companies", {"query":candidate,"limit":5}).get("data", {}).get("items",[])
                 exact=[row for row in rows if _norm(row.get("name") or row.get("business_name"))==_norm(candidate)]
                 if exact:
                     named=exact[0].get("name") or candidate
@@ -1778,9 +1776,7 @@ async def _admin_semantic_answer(question,plan,state):
         # This prevents an entity-scoped service question from degrading into
         # a platform-wide count.
         try:
-            company_result=Data Core("admin").execute(
-                "search_companies",{"query":named,"limit":10}
-            )
+            company_result=_admin_data_call("search_companies", {"query":named,"limit":10})
             company_data=company_result.get("data") if isinstance(company_result,dict) else {}
             company_rows=(company_data.get("items") if isinstance(company_data,dict) else None) or (
                 company_data.get("rows") if isinstance(company_data,dict) else None
@@ -1931,19 +1927,19 @@ async def _admin_semantic_answer(question,plan,state):
     if target in simple_counts and not entity_scoped_read and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
         try:
             entity=simple_counts[target]
-            raw=Data Core("admin").execute("count",{"entity":entity})
+            raw=_admin_data_call("count", {"entity":entity})
             facts=raw.get("data") if isinstance(raw,dict) else {}
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     elif target=="catalog_overview":
         try:
-            facts=Data Core("admin").execute("catalog_overview",{}).get("data",{})
+            facts=_admin_data_call("catalog_overview", {}).get("data", {})
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     elif target=="ai_usage":
         try:
             days=int(plan.get("days") or 1)
-            facts=Data Core("admin").execute("ai_usage_summary",{"days":days}).get("data",{})
+            facts=_admin_data_call("ai_usage_summary", {"days":days}).get("data", {})
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     else:
