@@ -1240,6 +1240,38 @@ async def api_admin_dispute_resolve(request):
 
 
 
+
+async def api_admin_registry_company(request):
+    _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    try:
+        bid=int(request.match_info["business_id"])
+    except (TypeError,ValueError):
+        return web.json_response({"ok":False,"error":"invalid_business_id"},status=400)
+    company=_db_fetchone("""SELECT pb.*,p.user_id AS telegram_id,p.business_name AS partner_name,p.status AS partner_status,
+                                  p.phone AS partner_phone
+                           FROM partner_businesses pb JOIN partners p ON p.id=pb.partner_id
+                           WHERE pb.id=%s""",(bid,))
+    if not company:
+        return web.json_response({"ok":False,"error":"company_not_found"},status=404)
+    objects=_db_fetchall("""SELECT * FROM partner_objects
+                            WHERE business_id=%s AND COALESCE(is_active,TRUE)=TRUE
+                            ORDER BY id""",(bid,))
+    services=_db_fetchall("""SELECT s.*,c.name_am AS subcategory_name_am,c.name_ru AS subcategory_name_ru,
+                                    c.name_en AS subcategory_name_en,
+                                    m.name_am AS direction_name_am,m.name_ru AS direction_name_ru,m.name_en AS direction_name_en
+                             FROM services s
+                             LEFT JOIN categories c ON c.id=s.category_id
+                             LEFT JOIN master_categories m ON m.id=c.master_category_id
+                             WHERE s.business_id=%s AND s.status IS DISTINCT FROM 'deleted'
+                             ORDER BY s.id DESC""",(bid,))
+    documents=_db_fetchall("""SELECT id,document_type,original_filename,status,created_at,reviewed_at
+                              FROM partner_verification_documents WHERE business_id=%s ORDER BY id DESC""",(bid,))
+    bookings=_db_fetchall("""SELECT id,status,service_name,agreed_price,currency,scheduled_at,created_at
+                             FROM bookings WHERE business_id=%s ORDER BY created_at DESC LIMIT 100""",(bid,))
+    return web.json_response({"ok":True,"company":_safe(company),"objects":_safe(objects),
+                              "services":_safe(services),"documents":_safe(documents),
+                              "bookings":_safe(bookings)})
+
 async def api_admin_registry(request):
     """Compact admin registry with one search/filter contract for companies,
     services, bookings and applications. Results stay small and drill into
@@ -1442,6 +1474,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None):
     app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
     app.router.add_get("/api/admin/registry-search", api_admin_registry)
+    app.router.add_get("/api/admin/registry-company/{business_id}", api_admin_registry_company)
     app.router.add_get("/api/admin/orders", api_admin_orders)
     app.router.add_get("/api/admin/disputes", api_admin_disputes)
     app.router.add_post("/api/admin/dispute/{id}/resolve", api_admin_dispute_resolve)
