@@ -374,6 +374,20 @@ async def _upload_direction_document(request, partner, direction_id):
     return web.json_response({"ok":True,"document":doc,"direction_id":direction_id,"status":"pending"})
 
 
+def _admin_guard(request):
+    raw = request.headers.get("X-Telegram-Init-Data", "").strip() or request.query.get("tgwad", "").strip()
+    if not raw:
+        raise web.HTTPUnauthorized(text='{"ok":false,"error":"telegram_init_data_required"}', content_type="application/json")
+    try:
+        user = validate_telegram_webapp_init_data(raw, BOT_TOKEN)
+    except TelegramWebAppAuthError as exc:
+        raise web.HTTPUnauthorized(text='{"ok":false,"error":"telegram_init_data_invalid"}', content_type="application/json")
+    admin_id = int(os.getenv("ADMIN_TELEGRAM_ID", "0") or os.getenv("ADMIN_ID", "0") or 0)
+    if not admin_id or int(user["id"]) != admin_id:
+        raise web.HTTPForbidden(text='{"ok":false,"error":"admin_access_required"}', content_type="application/json")
+    return int(user["id"])
+
+
 def register_partner_direction_routes(app, db=None, bot=None):
     app["partner_direction_bot"] = bot
     ensure_partner_direction_schema()
