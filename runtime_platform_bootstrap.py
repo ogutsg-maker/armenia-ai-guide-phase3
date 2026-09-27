@@ -146,13 +146,13 @@ def _install_ai_first_partner_flow(main,db):
         previous=data.get("partner_profile") or {}
         history.append({"role":"user","content":text})
         from partner_registration_ai import extract
-        from ai_first_partner_onboarding import create_partner_application_draft
+        import data_core
         profile=await extract(text,history,db,previous_profile=previous,pending_field=None)
         merged=dict(previous)
         for k,v in (profile or {}).items():
             if k not in ("missing","ready") and v not in (None,"",[],{}):
                 merged[k]=v
-        result=create_partner_application_draft(db,uid,merged)
+        result=data_core.save_partner_application_draft(user_id=int(uid), profile=merged)
         await state.clear()
         messages={
             "hy":"🤖 Ձեր տեղեկությունները հավաքեցի։ Բացել եմ ամբողջական հայտը․ լրացրեք բաց դաշտերը, ստուգեք ուղղությունն ու ենթաուղղությունները, կցեք փաստաթուղթը և սեղմեք «Համաձայն եմ / Ուղարկել հայտը»։",
@@ -167,12 +167,6 @@ async def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
     if db is None or ai is None:return
     from platform_schema import ensure_platform_schema; ensure_platform_schema()
-    # Hydrate the AI schema contract from the live Supabase/PostgreSQL database
-    # only after the platform schema is initialized. This is metadata-only and
-    # never grants the model arbitrary SQL access.
-    from ai_schema import inspector as ai_schema_inspector
-    ai_schema_inspector.hydrate()
-    app["ai_schema_snapshot"] = ai_schema_inspector.get_snapshot()
     from partner_directions_api import ensure_partner_direction_schema,register_partner_direction_routes
     ensure_partner_direction_schema()
     from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()
