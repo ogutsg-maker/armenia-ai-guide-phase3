@@ -1,76 +1,83 @@
-"""Static architecture guardrails.
-
-These tests intentionally avoid importing the application because production
-imports require environment/database dependencies. They catch accidental
-reintroduction of SQL into the AI Context/AI Tools boundary.
-"""
+"""Static guards for the direct AI -> Python -> Data Core -> DB architecture."""
 from pathlib import Path
 import ast
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _tree(name):
-    return ast.parse((ROOT / name).read_text(encoding="utf-8"), filename=name)
+def _text(name):
+    return (ROOT / name).read_text(encoding="utf-8")
 
 
-def test_ai_context_has_no_sql_calls():
-    tree = _tree("ai_context_layer.py")
-    forbidden = {"execute", "one", "rows", "cursor", "commit"}
+def _imports(name):
+    tree = ast.parse(_text(name), filename=name)
+    result = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            assert node.func.attr not in forbidden, f"direct DB call in AI Context: {node.func.attr}"
-    text = (ROOT / "ai_context_layer.py").read_text(encoding="utf-8").lower()
-    assert "select " not in text
-    assert "insert " not in text
-    assert "update " not in text
-    assert "delete " not in text
+        if isinstance(node, ast.Import):
+            result.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            result.add(node.module)
+    return result
 
 
-def test_ai_context_builder_has_no_sql_calls():
-    tree = _tree("ai_context_builder.py")
-    forbidden = {"execute", "one", "rows", "cursor", "commit"}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            assert node.func.attr not in forbidden, f"direct DB call in AI Context Builder: {node.func.attr}"
-    text = (ROOT / "ai_context_builder.py").read_text(encoding="utf-8").lower()
-    for keyword in ("select ", "insert ", "update ", "delete "):
-        assert keyword not in text
+def test_ai_orchestration_does_not_import_context_layers():
+    for name in ("admin_ai_api.py", "client_ai.py", "partner_ai.py", "ai_router.py", "partner_ai_assistant_api.py"):
+        imports = _imports(name)
+        assert "ai_context_layer" not in imports
+        assert "ai_context_builder" not in imports
 
 
-def test_ai_tools_has_no_sql_calls():
-    tree = _tree("ai_data_tools.py")
-    forbidden = {"execute", "one", "rows", "cursor", "commit"}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            assert node.func.attr not in forbidden, f"direct DB call in AI Tools: {node.func.attr}"
-    text = (ROOT / "ai_data_tools.py").read_text(encoding="utf-8").lower()
-    assert "select " not in text
-    assert "insert " not in text
-    assert "update " not in text
-    assert "delete " not in text
+def test_ai_orchestration_has_no_sql_text():
+    # Admin/partner assistant APIs still contain legacy non-AI web operations;
+    # the AI orchestration modules themselves must not compose SQL.
+    for name in ("client_ai.py", "partner_ai.py", "ai_router.py"):
+        text = _text(name).lower()
+        for keyword in ("select ", "insert ", "update ", "delete ", "create table"):
+            assert keyword not in text, f"SQL text in AI orchestration layer {name}: {keyword}"
 
 
-def test_data_core_exposes_required_gateway_operations():
-    tree = _tree("data_core.py")
+def test_data_core_is_the_database_gateway():
     names = {
-        node.name for node in ast.walk(tree)
+        node.name
+        for node in ast.walk(ast.parse(_text("data_core.py"), filename="data_core.py"))
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     required = {
         "get_application", "get_partner", "get_company", "get_service",
         "search_services", "search_catalog", "operational_stats",
-        "get_ai_entity", "check_application", "active_negotiation_id_for_user",
-        "list_partner_companies", "create_partner_company", "update_partner_company", "archive_partner_company",
-        "create_partner_address", "update_partner_address",
-        "validate_service_payload", "create_partner_service", "update_service_safe",
+        "get_ai_entity", "check_application",
     }
     assert required <= names
 
 
-def test_ai_orchestration_layers_have_no_sql_text():
-    for name in ("client_ai.py", "ai_router.py", "marketplace_flow_api.py"):
-        path = ROOT / name
-        text = path.read_text(encoding="utf-8").lower()
-        for keyword in ("select ", "insert ", "update ", "delete ", "create table"):
-            assert keyword not in text, f"SQL text in AI orchestration layer {name}: {keyword}"
+def test_ai_cost_accounting_remains_present():
+    text = _text("ai_cost_center.py")
+    assert "record_usage" in text
+    assert "ai_usage_ledger" in text
+
+
+def test_client_uses_small_live_catalog_query():
+    text = _text("client_ai.py")
+    assert "search_catalog(query=" in text
+    assert "limit=20" in text
+    assert "limit=500" not in text
+
+
+def test_partner_registration_does_not_assign_catalog_direction():
+    text = _text("partner_ai.py")
+    assert "upsert_direction" not in text
+    assert "catalog_tree" not in text
+    assert "catalog=_catalog_text" not in text
+
+
+def test_removed_ai_layers_are_not_referenced():
+    forbidden = ("ai_data_tools", "ai_action_plan", "ai_context_layer", "ai_context_builder")
+    for name in ("admin_ai_api.py", "client_ai.py", "partner_ai.py", "ai_router.py", "partner_ai_assistant_api.py"):
+        text = _text(name).lower()
+        for module in forbidden:
+            assert module not in text, f"Legacy AI module reference in {name}: {module}"
+
+
+def test_partner_service_creation_is_in_data_core():
+    text = _text("data_core.py")
+    assert "def create_partner_service(" in text

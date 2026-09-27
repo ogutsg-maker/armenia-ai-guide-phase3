@@ -16,6 +16,7 @@ from typing import Any
 from aiohttp import web
 from notify import notify
 from ai_service import AIService
+import data_core
 
 from config import BOT_TOKEN
 from database import _connect
@@ -57,10 +58,7 @@ def _auth(request: web.Request) -> int:
 
 
 def _partner(uid: int) -> int:
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM partners WHERE user_id=%s", (uid,))
-            row = cur.fetchone()
+    row = data_core.get_partner_by_user(int(uid))
     if not row:
         raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "partner_not_found"}), content_type="application/json")
     return int(row["id"])
@@ -83,8 +81,10 @@ clarify.
 Never invent IDs. Use only IDs from CONTEXT. If an operation changes or deletes data,
 set needs_confirmation=true. Read-only intents do not need confirmation.
 For add_service extract name, price, description, business_id, object_id when clearly known.
+For add_business, when the partner explicitly says "new company/new business/նոր ֆիրմա/նոր ընկերություն/новая фирма/новая компания", create add_business and extract the new company name from the same message when present.
 For update/delete identify an existing entity by id only when the context supports it.
 If ambiguous, use clarify and ask one concise question.
+IMPORTANT LANGUAGE RULE: reply MUST be written entirely in the requested language. If language is "hy", use Armenian only (company/service names may remain as supplied). Never answer in English or Russian when language is "hy".
 Return a JSON object with exactly these keys:
 intent, reply, needs_confirmation, business_id, object_id, service_id, name, description, phone, city, marz, address, price, contact_phone, reason.
 Use null for unknown scalar values. The current partner context is supplied in the user message.
@@ -96,22 +96,15 @@ Use null for unknown scalar values. The current partner context is supplied in t
         return {"intent": "clarify", "reply": {"hy": "AI ծառայությունը ժամանակավորապես հասանելի չէ։", "ru": "AI сейчас временно недоступен. Попробуйте ещё раз позже.", "en": "AI is temporarily unavailable. Please try again later."}.get(language, "AI is temporarily unavailable. Please try again later.")}
 
 def _context(pid: int) -> dict[str, Any]:
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id,name,description,phone,status FROM partner_businesses WHERE partner_id=%s AND status='active' ORDER BY id", (pid,))
-            businesses = [dict(x) for x in cur.fetchall()]
-            cur.execute("""SELECT id,business_id,object_name,address,city,marz,phone
-                           FROM partner_objects
-                           WHERE partner_id=%s AND COALESCE(is_active,TRUE)=TRUE
-                           ORDER BY business_id,id""", (pid,))
-            objects = [dict(x) for x in cur.fetchall()]
-            cur.execute("""SELECT id,business_id,name,description,price
-                           FROM services
-                           WHERE partner_id=%s AND (status IS NULL OR status <> 'deleted')
-                           ORDER BY business_id,id DESC""", (pid,))
-            services = [dict(x) for x in cur.fetchall()]
-    return {"businesses":businesses,"addresses":objects,"services":services}
-
+    """Read the partner's live data through Data Core only."""
+    businesses = data_core.list_companies(partner_id=int(pid), include_archived=False)
+    addresses = data_core.get_partner_addresses(int(pid))
+    services = data_core.list_services(partner_id=int(pid), limit=200)
+    return {
+        "businesses": businesses,
+        "addresses": addresses,
+        "services": services,
+    }
 
 def _clean_num(v):
     try:
@@ -180,6 +173,11 @@ async def api_ai_command(request: web.Request):
     message=str(data.get("message") or "").strip()
     language=str(data.get("language") or "hy")
     if language not in {"hy","ru","en"}: language="hy"
+    # Prefer the language of the actual message over a stale frontend selector.
+    if re.search(r"[\u0531-\u058F]", message):
+        language = "hy"
+    elif re.search(r"[А-Яа-яЁё]", message):
+        language = "ru"
     if not message:
         return web.json_response({"ok":False,"error":"message_required"},status=400)
     ctx=_context(pid)
@@ -259,6 +257,24 @@ async def api_ai_command(request: web.Request):
     command["message"]=message
     intent=command.get("intent")
 
+    # Recover an explicit new-company name from mixed-language user text.
+    if intent == "add_business" and not str(command.get("name") or "").strip():
+        m = re.search(
+            r"(?:նոր\s+(?:ֆիրմա|ընկերություն)|new\s+(?:company|business)|нов(?:ая|ую)\s+(?:фирма|компан(?:ия|ию)))\s*[,;:\-]?\s*(.+)$",
+            message,
+            re.IGNORECASE,
+        )
+        if m:
+            command["name"] = m.group(1).strip(" .,!?:;-")
+
+    # Confirmation text is generated by Python so Groq cannot switch languages.
+    if intent in {
+        "add_business","update_business","delete_business",
+        "add_service","update_service","delete_service",
+        "add_address","update_address","delete_address",
+    } and command.get("needs_confirmation"):
+        command["reply"] = _local_preview_reply(command, ctx, language)
+
     # Resolve an existing service from the live partner context before mutation.
     # AI still decides the intent; Python only verifies the target entity.
     # The message itself is also used as a deterministic entity hint. This is
@@ -316,6 +332,62 @@ async def api_ai_command(request: web.Request):
         return web.json_response({"ok":True,"reply":str(command.get("reply") or _preview(command,ctx,language)),"confirmation_id":token,"command":command})
     return await _execute_mutation(pid,command,ctx)
 
+
+
+
+def _local_preview_reply(c, ctx, lang):
+    intent = str(c.get("intent") or "")
+    name = str(c.get("name") or "").strip()
+    price = c.get("price")
+    company = _entity_name(ctx, "businesses", c.get("business_id")) if c.get("business_id") else ""
+
+    if lang == "hy":
+        if intent == "add_business":
+            return f'Ստեղծել նոր ընկերություն «{name}»։ Հաստատո՞ւմ եք։'
+        if intent == "add_service":
+            details = f' «{name}»'
+            if price not in (None, ""):
+                details += f'՝ {price} դրամ'
+            return f'{company or "Ձեր ընկերությունում"} ավելացնել ծառայությունը{details}։ Հաստատո՞ւմ եք։'
+        if intent == "update_business":
+            return f'Փոփոխել «{name or company}» ընկերության տվյալները։ Հաստատո՞ւմ եք։'
+        if intent == "delete_business":
+            return f'Ջնջել «{name or company}» ընկերությունը։ Հաստատո՞ւմ եք։'
+        if intent == "add_address":
+            return 'Ավելացնել նոր հասցե։ Հաստատո՞ւմ եք։'
+        if intent == "update_address":
+            return 'Փոփոխել հասցեն։ Հաստատո՞ւմ եք։'
+        if intent == "delete_address":
+            return 'Ջնջել հասցեն։ Հաստատո՞ւմ եք։'
+        if intent == "update_service":
+            return f'Փոփոխել «{name}» ծառայությունը։ Հաստատո՞ւմ եք։'
+        if intent == "delete_service":
+            return f'Ջնջել «{name}» ծառայությունը։ Հաստատո՞ւմ եք։'
+
+    if lang == "ru":
+        if intent == "add_business":
+            return f'Создать новую компанию «{name}». Подтверждаете?'
+        if intent == "add_service":
+            details = f' «{name}»'
+            if price not in (None, ""):
+                details += f': {price} драм'
+            return f'Добавить услугу{details} в «{company or "вашу компанию"}». Подтверждаете?'
+        if intent == "update_business":
+            return f'Изменить данные компании «{name or company}». Подтверждаете?'
+        if intent == "delete_business":
+            return f'Удалить компанию «{name or company}». Подтверждаете?'
+        if intent == "add_address":
+            return 'Добавить новый адрес. Подтверждаете?'
+        if intent == "update_address":
+            return 'Изменить адрес. Подтверждаете?'
+        if intent == "delete_address":
+            return 'Удалить адрес. Подтверждаете?'
+        if intent == "update_service":
+            return f'Изменить услугу «{name}». Подтверждаете?'
+        if intent == "delete_service":
+            return f'Удалить услугу «{name}». Подтверждаете?'
+
+    return str(c.get("reply") or "Please confirm this change.")
 
 def _preview(c,ctx,lang):
     intent=c.get("intent","")
@@ -530,17 +602,10 @@ def _context(pid: int) -> dict[str, Any]:
             )
             services = [dict(x) for x in cur.fetchall()]
 
-    from ai_context_layer import build_partner_context
-    try:
-        operational = build_partner_context(pid)
-    except Exception:
-        operational = ""
-
     return {
         "businesses": businesses,
         "addresses": objects,
         "services": services,
-        "operational_context": operational,
         "permissions": {
             "role": "partner",
             "can_read_own_data": True,

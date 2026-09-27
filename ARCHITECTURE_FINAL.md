@@ -1,306 +1,126 @@
-# Armenia AI Guide — Final AI-First Architecture
+# Armenia AI Guide — Final AI/Data Architecture
 
-## 1. Non-negotiable rule
+## Principle
 
-The existing Supabase/PostgreSQL database is the source of truth.
+The real business database is the only source of truth.
 
-**Do not recreate, reset, or replace the existing database for this architecture.**
+There is no AI database, platform index, duplicated entity cache, or large prebuilt business context between AI and PostgreSQL.
 
-The architecture is introduced above the existing schema. A database migration is added only when a real business capability cannot be represented by the current schema.
-
-## 2. Layers
+## Runtime path
 
 ```
-CLIENT / PARTNER / ADMIN
-          |
-          v
-       AI CORE
-          |
-          v
-      AI CONTEXT
-          |
-          v
-       AI TOOLS
-          |
-          v
-      DATA CORE
-          |
-          v
- SUPABASE / POSTGRESQL
+Client ────┐
+Partner ───┼──> Groq AI
+Admin ─────┘       ↓
+                Python
+                   ↓
+                Data Core
+                   ↓
+          Supabase / PostgreSQL
+                   ↓
+                Data Core
+                   ↓
+                Python
+                   ↓
+                Groq AI
+                   ↓
+          Client / Partner / Admin
 ```
 
-The return path is the same in reverse.
+## Responsibilities
 
-### AI Core
+### Groq AI
+- understands natural language;
+- extracts intent, entities and user-provided values;
+- chooses the appropriate Python operation when a planner is used;
+- never invents database facts or IDs;
+- never receives SQL credentials.
 
-Understands natural language, extracts intent, classifies requests, plans tool usage and produces human-readable responses.
-
-AI may receive the user's raw message directly.
-
-AI must not:
-- access SQL;
-- access Supabase credentials;
-- invent entity IDs;
-- invent partners/services/prices;
-- bypass permissions;
-- mutate business data without an allowed action.
-
-### AI Context
-
-Builds the smallest verified business context required for the current AI task.
-
-Examples:
-- Client Context: request + real search results + relevant negotiation state.
-- Partner Context: own company/service/order/negotiation data.
-- Admin Context: question + verified Data Core result + relevant history.
-- Registration Context: draft application + extracted facts + allowed catalog subset.
-
-AI Context does not become a second database.
-
-### AI Tools
-
-Tools are the controlled action interface exposed to AI.
-
-Read examples:
-- get_application
-- search_applications
-- count
-- get_partner
-- search_partners
-- search_services
-- search_catalog
-- get_documents
-- get_orders
-- get_negotiation
-
-Write examples:
-- make_offer
-- counter_offer
-- accept_offer
-- reject_offer
-- update_service_price
-- approve_application
-- reject_application
-- approve_document
-- delete_company
-
-Write tools are confirmation-required unless an explicit server-side business rule says otherwise.
+### Python
+- authenticates the caller;
+- determines role: client, partner or admin;
+- validates arguments;
+- resolves named entities against live database data;
+- applies business rules and permissions;
+- asks for confirmation before protected mutations;
+- formats the verified result for AI/user.
 
 ### Data Core
+Data Core is the single application-owned gateway to the real database.
 
-Data Core is the only application-owned gateway from AI Context/Tools to real business data.
+It performs:
+- reads and searches;
+- counts;
+- entity resolution;
+- ownership/permission checks;
+- writes and validation;
+- persistence and history.
 
-Responsibilities:
-- database reads/writes;
-- validation;
-- role and ownership checks;
-- allowed entity IDs;
-- business rules;
-- search/filtering;
-- persistence;
-- history/audit integration;
-- compatibility with the current database schema.
+No second business-data representation is created for AI.
 
-The model never receives arbitrary SQL.
+### Supabase / PostgreSQL
+Stores the actual business facts:
+- users;
+- partners;
+- companies;
+- addresses;
+- services;
+- applications;
+- catalog;
+- orders;
+- negotiations;
+- documents;
+- AI usage ledger.
 
-## 3. Client
+Existing schema and data are preserved. This architecture does not reset or recreate the database.
 
-Natural language is the primary interface.
+## AI usage statistics
 
-Example:
-
-> Мне нужна стрижка в Раздане до 5000 драм.
-
-Flow:
-
-```
-message
- -> Client AI
- -> Client Context
- -> search_services tool
- -> Data Core
- -> existing DB
- -> real candidates
- -> Client Context
- -> AI response
-```
-
-Only real active/approved marketplace data may be presented as marketplace results.
-
-## 4. Partner
-
-Partner registration is free-form.
-
-Partner describes the business, location, services, prices, phone and schedule.
-
-Flow:
+AI accounting remains independent from business-data context:
 
 ```
-free text
- -> Partner AI extraction
- -> validation
- -> application draft
- -> partner review
- -> submit
- -> admin review
- -> approval
- -> company/services
+Groq → Python → ai_cost_center → ai_usage_ledger → Admin statistics
 ```
 
-The partner does not need to select master direction/subcategory during onboarding.
+Every model call may be recorded with provider, model, operation, token usage and cost. Accounting failures must not break the user request.
 
-Catalog classification is an internal system task and uses IDs from the existing catalog.
+## Client
 
-## 5. Partner companies
+Client requests use live catalog/service data.
 
-A partner may own multiple companies.
+Only the smallest verified records required for the current request may be sent to Groq. The complete catalog is never copied into a persistent AI context.
 
-```
-Partner
-  + Company A
-      + addresses
-      + services
-      + documents
-      + orders
-  + Company B
-      + addresses
-      + services
-      + documents
-      + orders
-```
+## Partner
 
-Partner ownership is enforced by Data Core, not by AI prompts.
+Partner onboarding collects the partner's own business information.
 
-## 6. Negotiations
+During registration the partner does not select direction/subcategory/catalog IDs. Catalog classification is an admin/application concern after submission.
 
-Negotiation is a real business object, not AI memory.
+Company, address and service changes use Python/Data Core operations and are protected by ownership and confirmation rules.
 
-```
-Client
- -> Client AI
- -> Client Context
- -> Negotiation Tool
- -> Data Core
- -> database
- -> Partner Context
- -> Partner AI
- -> Partner
-```
+## Admin
 
-Every meaningful offer is persisted.
-
-Example:
-
-```
-6000 AMD -> client offer
-7500 AMD -> partner counter-offer
-7000 AMD -> client counter-offer
-7000 AMD -> accepted
-```
-
-The final agreed price comes from the persisted negotiation state, not from the model's memory.
-
-The same negotiation is visible to both sides through separate role-specific contexts.
-
-## 7. Admin
-
-Admin has normal UI controls plus the AI Secretary.
-
-Natural language examples:
-
-- «Քանի հայտ ունենք»
-- «Покажи полную заявку #36»
-- «Какие заявки из Котайка?»
-- «Покажи услуги BYUTI»
-- «Покажи историю цены Armenia Auto»
-
-Read requests can execute immediately.
-
-Mutations require confirmation:
-
-```
-Admin request
- -> AI plan
- -> confirmation
- -> write tool
- -> Data Core
- -> database
- -> audit/history
-```
-
-## 8. Potential partners
-
-Potential partners are separate from registered partners.
-
-```
-Research source / Admin / AI discovery
- -> structured potential partner
- -> verification
- -> contact
- -> invitation
- -> registration
- -> application
- -> approval
- -> real partner
-```
-
-Finding a business never automatically creates an approved marketplace partner.
-
-No fake partner is generated from AI text.
-
-## 9. Catalog
-
-The current catalog remains the source of classification IDs.
-
-Hierarchical classification:
-
-```
-service text
- -> master direction
- -> only that direction's active subcategories
- -> validated existing ID
-```
-
-AI cannot invent a category ID.
-
-## 10. Database policy
-
-Current schema and data remain in place.
-
-No "fresh database" is required for the AI architecture.
-
-If a new table/column is eventually required:
-1. identify the exact missing business capability;
-2. create a versioned migration;
-3. preserve existing IDs/data;
-4. test against the current deployment;
-5. deploy the migration separately from application code.
-
-## 11. Provenance
-
-Important facts should retain their source where the existing schema supports it.
+Admin AI is a natural-language database assistant.
 
 Examples:
-- price from application #36;
-- status changed by admin;
-- final negotiation price;
-- document verification status.
+- "քանի հայտ ունենք" → live COUNT;
+- "ինչ ուղղություններով կան հայտեր" → live application-direction query;
+- "ինչ ծառայություններ ունի BYUTI-ն" → resolve BYUTI → live company/service query;
+- "ամբողջական հայտը ցույց տուր" → use the current application/entity reference → live application + documents query.
 
-AI answers factual "where did this come from?" questions from Data Core/history, not from model memory.
+A read operation executes immediately. A protected mutation requires confirmation.
 
-## 12. Implementation status in this branch
+## Removed architecture
 
-The first architecture migration introduces `data_core.py` as the canonical DB gateway and routes the shared AI Context, AI data tools and Client AI data access through it.
+The following are not part of the runtime data path:
+- AI Context database/index;
+- duplicated platform index;
+- prebuilt entity snapshots used as a substitute for database reads;
+- large persistent AI business-data context;
+- LangChain/CrewAI/AutoGen orchestration.
 
-This is deliberately incremental: the existing database and business data are preserved while direct data access is moved behind the Data Core boundary.
+Legacy AI Context / AI Tools modules have been removed from the runtime. There is no compatibility data layer between AI and Data Core.
 
-Next migrations should move remaining domain modules behind named Data Core operations and add confirmation-aware write tools for negotiation/admin actions.
+## Golden rule
 
-## 13. Golden rule
-
-**AI thinks.  
-AI Context gives AI the correct verified context.  
-AI Tools define what AI is allowed to request.  
-Data Core validates and performs the real operation.  
-Supabase stores the fact.**
-
+**AI understands. Python validates. Data Core reads/writes. PostgreSQL stores the fact.**

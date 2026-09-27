@@ -10,9 +10,68 @@ from platform_db import proposals, review_proposal, edit_proposal, add_clarifica
 from potential_partner_ai import PotentialPartnerAI
 from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
-from ai_data_tools import DataTools, DataToolError
-from ai_context_builder import build_ai_context
+import data_core
 import ai_cost_center
+
+
+class DataToolError(Exception):
+    """Local compatibility error for the admin planner; business data stays in Data Core."""
+
+
+def _admin_data_call(name: str, args: dict | None = None) -> dict:
+    args = args if isinstance(args, dict) else {}
+    name = str(name or "").strip()
+    try:
+        if name == "count":
+            entity = str(args.get("entity") or "").strip().lower()
+            return {"tool": name, "data": {"entity": entity, "count": data_core.count(entity)}}
+        if name == "search_partners":
+            items = data_core.search_partners(str(args.get("query") or ""), str(args.get("city") or ""), min(max(int(args.get("limit") or 20),1),100))
+            return {"tool": name, "data": {"items": items, "count": len(items)}}
+        if name == "search_applications":
+            items = data_core.search_applications(status=str(args.get("status") or "").strip() or None, marz=str(args.get("marz") or "").strip() or None, city=str(args.get("city") or "").strip() or None, limit=min(max(int(args.get("limit") or 50),1),200))
+            q=str(args.get("query") or "").strip().casefold()
+            if q:
+                items=[x for x in items if q in str(x.get("business_name") or "").casefold() or q in str(x.get("service_name") or "").casefold() or q in str(x.get("description") or "").casefold()]
+            return {"tool": name, "data": {"items": items, "count": len(items)}}
+        if name == "search_companies":
+            items = data_core.search_companies(str(args.get("query") or ""), str(args.get("marz") or ""), str(args.get("city") or ""), min(max(int(args.get("limit") or 50),1),200))
+            return {"tool": name, "data": {"items": items, "count": len(items)}}
+        if name == "get_partner":
+            return {"tool": name, "data": {"partner": data_core.get_partner(int(args["partner_id"])) if args.get("partner_id") is not None else None}}
+        if name == "get_company":
+            return {"tool": name, "data": {"company": data_core.get_company(int(args["company_id"])) if args.get("company_id") is not None else None}}
+        if name == "get_application":
+            return {"tool": name, "data": {"application": data_core.get_application(int(args["application_id"])) if args.get("application_id") is not None else None}}
+        if name == "get_application_full":
+            aid=args.get("application_id")
+            if aid is None: raise DataToolError("application_id_required")
+            app=data_core.get_application(int(aid))
+            return {"tool": name, "data": {"application": app, "documents": data_core.get_documents(application_id=int(aid), limit=50) if app else []}}
+        if name == "get_documents":
+            aid=args.get("application_id"); pid=args.get("partner_id")
+            if aid is None and pid is None: raise DataToolError("application_or_partner_required")
+            docs=data_core.get_documents(application_id=int(aid), limit=50) if aid is not None else data_core.get_documents(partner_id=int(pid), limit=50)
+            return {"tool": name, "data": {"documents": docs}}
+        if name == "get_services":
+            pid=args.get("partner_id"); cid=args.get("company_id")
+            if cid is not None:
+                company=data_core.get_company(int(cid))
+                if not company: raise DataToolError("company_not_found")
+                pid=int(company["partner_id"])
+            items=data_core.list_services(partner_id=int(pid) if pid is not None else None, category_id=int(args["category_id"]) if args.get("category_id") is not None else None, limit=min(max(int(args.get("limit") or 100),1),200))
+            if cid is not None: items=[x for x in items if str(x.get("business_id"))==str(cid)]
+            return {"tool": name, "data": {"items": items, "count": len(items)}}
+        if name == "catalog_overview":
+            return {"tool": name, "data": {"overview": data_core.catalog_overview() or {}}}
+        if name == "ai_usage_summary":
+            days=min(max(int(args.get("days") or 1),1),365)
+            return {"tool": name, "data": {"summary": data_core.ai_usage_summary(days) or {}, "days": days}}
+        raise DataToolError("unsupported_admin_read")
+    except DataToolError:
+        raise
+    except Exception as exc:
+        raise DataToolError(str(exc)) from exc
 
 
 def _norm(text):
@@ -38,13 +97,16 @@ def _admin_localized(lang,key,**kwargs):
     return _ADMIN_LOCALES.get(lang,_ADMIN_LOCALES["ru"]).get(key,key).format(**kwargs)
 
 def _admin_tool_registry(role="admin"):
-    """Compact machine-readable registry supplied to the planner."""
-    tools=DataTools(role)
-    return tools.available_tools()
+    names = [
+        "count","search_partners","search_applications","search_companies",
+        "get_partner","get_company","get_application","get_application_full",
+        "get_documents","get_services","catalog_overview","ai_usage_summary",
+    ]
+    return [{"name": name, "description": "Read live data through Python Data Core."} for name in names]
 
 
 def _admin_tool_schemas(role="admin"):
-    """Planner-facing argument contract; business validation remains in DataTools."""
+    """Planner-facing argument contract; business validation remains in Data Core."""
     common={
         "query":{"type":"string"},
         "city":{"type":"string"},
@@ -495,7 +557,7 @@ def _admin_context(limit=30,include_catalog=False):
 # =====================================================================
 # Dynamic Admin Query / Skills layer
 # =====================================================================
-# Legacy phrase-to-SQL query engine removed. AI reads use DataTools.
+# Legacy phrase-to-SQL query engine removed. AI reads use Data Core.
 
 async def _admin_execute(command):
     intent=str(command.get("intent") or "").strip()
@@ -504,26 +566,25 @@ async def _admin_execute(command):
         aid=int(aid) if aid is not None else None
     except (TypeError,ValueError):
         aid=None
-    tools=DataTools("admin")
     if intent=="show_application_count":
-        data=tools.execute("count",{"entity":"applications"}).get("data") or {}
+        data=_admin_data_call("count",{"entity":"applications"}).get("data") or {}
         return "📨 Հայտերի քանակը՝ "+str(data.get("count") or 0)+"։"
     if intent=="show_partner_count":
-        data=tools.execute("count",{"entity":"partners"}).get("data") or {}
+        data=_admin_data_call("count",{"entity":"partners"}).get("data") or {}
         return "🤝 Գործընկերների քանակը՝ "+str(data.get("count") or 0)+"։"
     if intent=="show_applications":
-        rows=(tools.execute("search_applications",{"limit":30}).get("data") or {}).get("items",[])
+        rows=(_admin_data_call("search_applications",{"limit":30}).get("data") or {}).get("items",[])
         if not rows: return "📨 Հայտեր չկան։"
         return "📨 Հայտեր ("+str(len(rows))+"):\n"+"\n".join(
             "#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("service_name") or "—")
             for x in rows[:20])
     if intent=="show_partners":
-        rows=(tools.execute("search_partners",{"limit":50}).get("data") or {}).get("items",[])
+        rows=(_admin_data_call("search_partners",{"limit":50}).get("data") or {}).get("items",[])
         return "🤝 Գործընկերներ չկան։" if not rows else "🤝 Գործընկերներ:\n"+"\n".join(
             "#"+str(x.get("id"))+" · "+str(x.get("business_name") or "—")+" · "+str(x.get("status") or "—")
             for x in rows[:30])
     if intent=="show_businesses":
-        rows=(tools.execute("search_companies",{"limit":100}).get("data") or {}).get("items",[])
+        rows=(_admin_data_call("search_companies",{"limit":100}).get("data") or {}).get("items",[])
         return "🏢 Ընկերություններ չկան։" if not rows else "🏢 Ընկերություններ:\n"+"\n".join(
             "#"+str(x.get("id"))+" · "+str(x.get("name") or "—")+" · "+str(x.get("status") or "—")
             for x in rows[:50])
@@ -535,7 +596,7 @@ def _admin_full_application_text(aid):
     if not aid:
         return "Укажите номер заявки."
     try:
-        result=DataTools("admin").execute("get_application_full",{"application_id":int(aid)})
+        result=_admin_data_call("get_application_full",{"application_id":int(aid)})
         payload=result.get("data") or {}
         app=payload.get("application")
         docs=payload.get("documents") or []
@@ -916,16 +977,6 @@ def _admin_planner_context(ctx):
 
     focused_type=str(ctx.get("last_focused_entity_type") or active.get("entity_type") or "").strip()
     focused_id=ctx.get("last_focused_entity_id") or ctx.get("last_focused_application_id") or active.get("entity_id")
-    ai_context=""
-    try:
-        ai_context=build_ai_context(
-            focused_type or None,
-            focused_id,
-            include_platform_index=True,
-        )
-    except Exception:
-        ai_context=""
-
     return {
         "active_context":{
             "scope":str(active.get("scope") or "")[:80],
@@ -939,7 +990,6 @@ def _admin_planner_context(ctx):
             "type":focused_type[:40],
             "id":focused_id
         },
-        "ai_context":ai_context[:14000],
         "last_query_target":str(ctx.get("last_query_target") or ctx.get("last_result_kind") or "")[:60],
         "last_rows":compact_rows,
         "history":compact_history,
@@ -953,6 +1003,10 @@ async def _admin_ai_json(message,ctx):
     registry=_admin_tool_registry("admin")
     schemas=_admin_tool_schemas("admin")
     system="""You are the universal semantic planner for Armenia AI Guide admin.
+All business data is live in Supabase/PostgreSQL and is accessed only through the supplied Python Python Data Core operations.
+Do not expect or request a prebuilt database context, platform index, cached entity profile, or duplicate business-data snapshot.
+Resolve named entities with the appropriate search/get tool, then read the requested live records.
+
 Understand Armenian, Russian, English, mixed language, transliteration, typos and short follow-ups.
 You are NOT a database client. You may only request tools from the supplied registry.
 Never invent IDs, database fields, SQL, table names or results. Resolve entities from context or request a search tool.
@@ -985,7 +1039,6 @@ TOOL_SCHEMAS:
         "message":str(message or "")[:1500],
         "context":planner_ctx,
         "previous_tool_results":ctx.get("compact_tool_results",[]) if isinstance(ctx,dict) else [],
-        "ai_context":planner_ctx.get("ai_context","")
     },ensure_ascii=False,default=str)
     raw,provider,model=await _admin_ai_completion(
         [{"role":"system","content":system},{"role":"user","content":payload}],
@@ -1145,10 +1198,10 @@ def _admin_audit_application_catalog(app):
 
 
 def _admin_resolve_semantic_entity(plan,state):
-    """Resolve named entities only through the role-aware DataTools layer.
+    """Resolve named entities only through the role-aware Data Core layer.
 
     This keeps Admin AI on the same safe read path as every other AI caller:
-    Planner -> DataTools -> Data Core -> Supabase.
+    Planner -> Data Core -> Data Core -> Supabase.
     """
     entity_type=_norm(plan.get("entity_type") or plan.get("target"))
     entity_name=str(plan.get("entity_name") or "").strip()
@@ -1178,12 +1231,12 @@ def _admin_resolve_semantic_entity(plan,state):
     if not entity_name:
         return None,None
 
-    tools=DataTools("admin")
+    tools=None
     requested={str(x).casefold() for x in (plan.get("data_needed") or [])}
     # Application-specific requests are resolved against applications first.
     if entity_type in {"application","applications"} or "application" in requested:
         try:
-            raw=tools.execute("search_applications",{"query":entity_name,"limit":10})
+            raw=_admin_data_call("search_applications",{"query":entity_name,"limit":10})
             rows=(raw or {}).get("data") or (raw or {}).get("items") or []
             if rows:
                 exact=[r for r in rows if _norm(r.get("business_name") or r.get("name"))==_norm(entity_name)]
@@ -1196,7 +1249,7 @@ def _admin_resolve_semantic_entity(plan,state):
 
     # Named business/company requests resolve through the company search tool.
     try:
-        raw=tools.execute("search_companies",{"query":entity_name,"limit":10})
+        raw=_admin_data_call("search_companies",{"query":entity_name,"limit":10})
         rows=(raw or {}).get("data") or (raw or {}).get("items") or []
         if rows:
             exact=[r for r in rows if _norm(r.get("name") or r.get("business_name"))==_norm(entity_name)]
@@ -1214,7 +1267,7 @@ def _admin_resolve_semantic_entity(plan,state):
 
     # Finally resolve a partner by the same semantic search surface.
     try:
-        raw=tools.execute("search_partners",{"query":entity_name,"limit":10})
+        raw=_admin_data_call("search_partners",{"query":entity_name,"limit":10})
         rows=(raw or {}).get("data") or (raw or {}).get("items") or []
         if rows:
             exact=[r for r in rows if _norm(r.get("business_name") or r.get("name"))==_norm(entity_name)]
@@ -1354,15 +1407,14 @@ def _admin_application_truth(app, documents=None, category=None):
             "approval_rule_note":"Չլրացված phone/description դաշտերը ինքնին սխալ չեն համարվում, քանի դեռ backend-ում դրանց պարտադիր լինելու կանոն չկա։"}
 
 def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
-    """Build factual context through the role-aware DataTools facade.
+    """Build factual context through the role-aware Data Core facade.
     Existing specialized checks remain available as a compatibility fallback.
     """
     result={}
-    tools=DataTools("admin")
     if entity_type=="application" and entity_id:
         try:
-            result["application"]=tools.execute("get_application",{"application_id":int(entity_id)}).get("data",{}).get("application")
-            result["documents"]=tools.execute("get_documents",{"application_id":int(entity_id)}).get("data",{}).get("documents",[])
+            result["application"]=_admin_data_call("get_application",{"application_id":int(entity_id)}).get("data",{}).get("application")
+            result["documents"]=_admin_data_call("get_documents",{"application_id":int(entity_id)}).get("data",{}).get("documents",[])
         except DataToolError:
             pass
         app=result.get("application") or _admin_hydrate_application(entity_id)
@@ -1374,7 +1426,7 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
             result["documents"]=_admin_semantic_documents(entity_id)
         if app.get("partner_id") and ("partner" in needed or "verification" in needed):
             try:
-                result["partner"]=tools.execute("get_partner",{"partner_id":int(app["partner_id"])}).get("data",{}).get("partner")
+                result["partner"]=_admin_data_call("get_partner",{"partner_id":int(app["partner_id"])}).get("data",{}).get("partner")
             except DataToolError:
                 result["partner"]=_admin_safe(platform_db.one("""SELECT id,user_id,status,verification_status,
                     business_name,business_description,contact_share_policy,created_at,updated_at
@@ -1403,7 +1455,7 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
 
         if app.get("category_id") and ("services" in needed or "service" in needed):
             try:
-                result["services"]=tools.execute("get_services",{"category_id":int(app["category_id"])}).get("data",{}).get("items",[])
+                result["services"]=_admin_data_call("get_services",{"category_id":int(app["category_id"])}).get("data",{}).get("items",[])
             except DataToolError:
                 try:
                     result["services"]=_admin_safe(platform_db.rows(
@@ -1433,7 +1485,6 @@ def _admin_semantic_entity_data(entity_type,entity_id,data_needed,state):
 def _admin_tool_context(plan, entity_type, entity_id):
     requests=plan.get("tool_requests") or []
     if not requests: return {}
-    tools=DataTools("admin")
     results=[]
     for req in requests[:6]:
         if not isinstance(req,dict): continue
@@ -1447,7 +1498,7 @@ def _admin_tool_context(plan, entity_type, entity_id):
             elif entity_type in {"business","company"} and name=="get_company":
                 args.setdefault("company_id",int(entity_id))
         try:
-            results.append(tools.execute(name,args))
+            results.append(_admin_data_call(name,args))
         except DataToolError as exc:
             results.append({"tool":name,"data":{},"error":str(exc)})
         except Exception as exc:
@@ -1678,7 +1729,7 @@ async def _admin_semantic_answer(question,plan,state):
     # "full application" request can safely resolve to that single record.
     if wants_full and not plan.get("entity_id"):
         try:
-            only_apps=DataTools("admin").execute("search_applications",{"limit":2}).get("data",{}).get("items",[])
+            only_apps=Data Core("admin").execute("search_applications",{"limit":2}).get("data",{}).get("items",[])
             if len(only_apps)==1 and only_apps[0].get("id") is not None:
                 aid=int(only_apps[0]["id"])
                 plan["target"]="application"
@@ -1699,7 +1750,7 @@ async def _admin_semantic_answer(question,plan,state):
         candidates=[x for x in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", question or "")]
         for candidate in candidates:
             try:
-                rows=(DataTools("admin").execute(
+                rows=(Data Core("admin").execute(
                     "search_companies",{"query":candidate,"limit":5}
                 ).get("data") or {}).get("items",[])
                 exact=[row for row in rows if _norm(row.get("name") or row.get("business_name"))==_norm(candidate)]
@@ -1727,7 +1778,7 @@ async def _admin_semantic_answer(question,plan,state):
         # This prevents an entity-scoped service question from degrading into
         # a platform-wide count.
         try:
-            company_result=DataTools("admin").execute(
+            company_result=Data Core("admin").execute(
                 "search_companies",{"query":named,"limit":10}
             )
             company_data=company_result.get("data") if isinstance(company_result,dict) else {}
@@ -1880,19 +1931,19 @@ async def _admin_semantic_answer(question,plan,state):
     if target in simple_counts and not entity_scoped_read and str(plan.get("intent") or "").casefold() in {"count","count_entities","count_partners","count_applications","count_services","count_directions","count_subcategories","count_ai_usage"}:
         try:
             entity=simple_counts[target]
-            raw=DataTools("admin").execute("count",{"entity":entity})
+            raw=Data Core("admin").execute("count",{"entity":entity})
             facts=raw.get("data") if isinstance(raw,dict) else {}
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     elif target=="catalog_overview":
         try:
-            facts=DataTools("admin").execute("catalog_overview",{}).get("data",{})
+            facts=Data Core("admin").execute("catalog_overview",{}).get("data",{})
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     elif target=="ai_usage":
         try:
             days=int(plan.get("days") or 1)
-            facts=DataTools("admin").execute("ai_usage_summary",{"days":days}).get("data",{})
+            facts=Data Core("admin").execute("ai_usage_summary",{"days":days}).get("data",{})
         except Exception as exc:
             facts={"error":str(exc)[:180]}
     else:
@@ -2582,6 +2633,5 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_post('/api/admin/potential-partners/structure',potential_structure)
     app.router.add_post('/api/admin/potential-partners/research',potential_research)
     app.router.add_post('/api/admin/potential-partners/{id}/status',potential_status)
-
 
 

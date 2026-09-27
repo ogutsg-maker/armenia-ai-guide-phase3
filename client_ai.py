@@ -12,7 +12,12 @@ class ClientAI:
             try: ctx = json.loads(ctx)
             except Exception: ctx = {}
         add_ai_message(session['id'], 'user', text)
-        cats = search_catalog(limit=500)
+        # Query the live catalog first; send only small verified candidates to Groq.
+        # The full catalog is never copied into the AI context.
+        try:
+            cats = search_catalog(query=str(text or "")[:120], limit=20)
+        except Exception:
+            cats = []
         analysis = await self.ai.analyze_request(text, cats)
         location = analysis.city or analysis.village or analysis.marz or analysis.location
         if not ctx.get('request_id'):
