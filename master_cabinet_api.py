@@ -984,6 +984,9 @@ async def api_reviews(request: web.Request):
 async def api_documents(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
+    bid = _business_id(request, pid)
+    if not bid:
+        return web.json_response({"ok": True, "documents": []})
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""SELECT id,partner_id,business_id,document_type,original_filename,mime_type,file_size,status,
@@ -1018,11 +1021,12 @@ async def api_service_catalog(request: web.Request):
                 JOIN master_categories m ON m.id=c.master_category_id
                 JOIN partner_directions pd
                   ON pd.partner_id=%s
+                 AND pd.business_id=%s
                  AND pd.master_category_id=c.master_category_id
                  AND pd.status='approved'
                 WHERE c.is_active=TRUE AND m.is_active=TRUE
                 ORDER BY c.master_category_id, c.id
-            """, (pid,))
+            """, (pid,bid))
             rows = cur.fetchall()
     return web.json_response({"ok": True, "categories": _json(rows)})
 
