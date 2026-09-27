@@ -536,10 +536,17 @@ async function loadApplications(){
    (x.status==='document_under_review'?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_document\')">✓ Հաստատել փաստաթուղթը</button>':'')+
    ''+
    (!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':'')+
-   ((isServiceProposal&&x.status!=='approved')?'<button class="btn danger" onclick="if(confirm(\'Ջնջե՞լ այս ծառայության առաջարկը։\'))appAction('+x.id+',\'delete\')">🗑 Ջնջել</button>':'')+
+   (x.status!=='approved'?'<button class="btn danger" onclick="deleteAdminApplication('+x.id+')">🗑 Ջնջել</button>':'')+
    '</div></div>';
   }).join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
  }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
+}
+
+async function deleteAdminApplication(id){
+ const rows=(await api('/api/admin/universal-applications')).applications||[]; const x=rows.find(v=>Number(v.id)===Number(id)); if(!x)return;
+ if(String(x.status||'')==='approved'){alert('Հաստատված հայտը չի ջնջվում։');return}
+ if(!confirm('Ջնջե՞լ հայտը #'+id+'?'))return;
+ try{await post('/api/admin/partner-applications/'+id+'/action',{action:'delete'});await Promise.all([loadApplications(),loadStats()]);alert('Հայտը ջնջված է։')}catch(e){alert(e.message||'Չհաջողվեց ջնջել հայտը')}
 }
 async function openApplicationDoc(partnerId,documentId){try{const d=await api('/api/admin/partner-applications/'+partnerId+'/documents/'+documentId+'/url');if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(e){alert(e.message||'Չհաջողվեց բացել փաստաթուղթը')}}
 async function editApplication(id){
