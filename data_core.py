@@ -702,39 +702,59 @@ def get_documents(application_id: int | None = None, partner_id: int | None = No
 
 
 
-def search_orders(partner_id: int | None = None, company_id: int | None = None,
-                  status: str | None = None, city: str = "", limit: int = 100):
-    """Read canonical bookings for admin reporting and AI queries."""
+def search_orders(actor_role: str = "admin", actor_id: int | None = None,
+                 partner_id: int | None = None, company_id: int | None = None,
+                 status: str | None = None, city: str = "", limit: int = 100):
+    """List visible canonical bookings with role and optional entity filters.
+
+    This is the single public search surface used by both admin AI and reports.
+    """
     if not _table_exists("bookings"):
         return []
-    where=["1=1"]
-    params=[]
+    where = ["1=1"]
+    params: list[Any] = []
+    role = str(actor_role or "admin").strip().lower()
+    if role == "client":
+        if actor_id is None:
+            return []
+        where.append("b.client_id=%s")
+        params.append(int(actor_id))
+    elif role == "partner":
+        if actor_id is None:
+            return []
+        partner = get_partner_by_user(int(actor_id))
+        if not partner:
+            return []
+        where.append("b.partner_id=%s")
+        params.append(int(partner["id"]))
+    elif role != "admin":
+        return []
     if partner_id is not None:
-        where.append("b.partner_id=%s"); params.append(int(partner_id))
+        where.append("b.partner_id=%s")
+        params.append(int(partner_id))
     if company_id is not None:
-        where.append("b.business_id=%s"); params.append(int(company_id))
+        where.append("b.business_id=%s")
+        params.append(int(company_id))
     if status:
-        where.append("b.status=%s"); params.append(str(status))
+        where.append("b.status=%s")
+        params.append(str(status).strip())
     if city:
         where.append("""EXISTS (
             SELECT 1 FROM service_requests sr
             WHERE sr.id=b.request_id AND sr.city ILIKE %s
         )""")
-        params.append("%"+str(city).strip()+"%")
-    params.append(max(1,min(int(limit or 100),200)))
+        params.append("%" + str(city).strip() + "%")
+    params.append(max(1, min(int(limit or 100), 200)))
     return rows(
-        """SELECT b.id,b.status,b.client_id,b.partner_id,b.business_id,
-                  b.service_id,b.service_name,b.agreed_price,b.currency,
-                  b.commission_amount,b.partner_amount,b.scheduled_at,b.created_at,
-                  p.business_name AS partner_business_name,
-                  pb.name AS company_name,
-                  sr.city
+        """SELECT b.*, p.business_name AS partner_business_name,
+                  pb.name AS company_name, sr.city
            FROM bookings b
            LEFT JOIN partners p ON p.id=b.partner_id
            LEFT JOIN partner_businesses pb ON pb.id=b.business_id
            LEFT JOIN service_requests sr ON sr.id=b.request_id
-           WHERE """+" AND ".join(where)+
-        " ORDER BY b.created_at DESC LIMIT %s", tuple(params)
+           WHERE """ + " AND ".join(where) +
+        " ORDER BY b.updated_at DESC, b.id DESC LIMIT %s",
+        tuple(params),
     )
 
 
@@ -764,40 +784,6 @@ def get_order(order_id: int, actor_role: str = "admin", actor_id: int | None = N
         "SELECT b.*, p.business_name AS partner_business_name "
         "FROM bookings b LEFT JOIN partners p ON p.id=b.partner_id "
         "WHERE " + " AND ".join(where),
-        tuple(params),
-    )
-
-
-def search_orders(actor_role: str = "admin", actor_id: int | None = None,
-                  status: str | None = None, limit: int = 50):
-    """List visible bookings/orders with role-scoped ownership."""
-    if not _table_exists("bookings"):
-        return []
-    where = ["1=1"]
-    params: list[Any] = []
-    role = str(actor_role or "admin").strip().lower()
-    if role == "client":
-        if actor_id is None:
-            return []
-        where.append("b.client_id=%s")
-        params.append(int(actor_id))
-    elif role == "partner":
-        partner = get_partner_by_user(int(actor_id)) if actor_id is not None else None
-        if not partner:
-            return []
-        where.append("b.partner_id=%s")
-        params.append(int(partner["id"]))
-    elif role != "admin":
-        return []
-    if status:
-        where.append("b.status=%s")
-        params.append(str(status).strip())
-    params.append(max(1, min(int(limit or 50), 200)))
-    return rows(
-        "SELECT b.*, p.business_name AS partner_business_name "
-        "FROM bookings b LEFT JOIN partners p ON p.id=b.partner_id "
-        "WHERE " + " AND ".join(where) +
-        " ORDER BY b.updated_at DESC, b.id DESC LIMIT %s",
         tuple(params),
     )
 
