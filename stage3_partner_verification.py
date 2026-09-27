@@ -1256,7 +1256,9 @@ async def api_admin_registry_company(request):
     objects=_db_fetchall("""SELECT * FROM partner_objects
                             WHERE business_id=%s AND COALESCE(is_active,TRUE)=TRUE
                             ORDER BY id""",(bid,))
-    services=_db_fetchall("""SELECT s.*,c.name_am AS subcategory_name_am,c.name_ru AS subcategory_name_ru,
+    services=[]
+    try:
+        services=_db_fetchall("""SELECT s.*,c.name_am AS subcategory_name_am,c.name_ru AS subcategory_name_ru,
                                     c.name_en AS subcategory_name_en,
                                     m.name_am AS direction_name_am,m.name_ru AS direction_name_ru,m.name_en AS direction_name_en
                              FROM services s
@@ -1264,6 +1266,8 @@ async def api_admin_registry_company(request):
                              LEFT JOIN master_categories m ON m.id=c.master_category_id
                              WHERE s.business_id=%s AND s.status IS DISTINCT FROM 'deleted'
                              ORDER BY s.id DESC""",(bid,))
+    except Exception:
+        services=[]
     documents=_db_fetchall("""SELECT id,document_type,original_filename,status,created_at,reviewed_at
                               FROM partner_verification_documents WHERE business_id=%s ORDER BY id DESC""",(bid,))
     bookings=_db_fetchall("""SELECT id,status,service_name,agreed_price,currency,scheduled_at,created_at
