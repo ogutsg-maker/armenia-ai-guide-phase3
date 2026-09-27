@@ -356,6 +356,11 @@ async def api_partner_document_upload(request):
     if str(partner.get("status") or "") in ("blocked", "suspended"):
         return web.json_response({"ok": False, "error": "partner_not_allowed"}, status=403)
 
+    from master_cabinet_api import _business_id_for_partner
+    business_id = _business_id_for_partner(partner["id"])
+    if not business_id:
+        return web.json_response({"ok": False, "error": "business_required"}, status=409)
+
     reader = await request.multipart()
     document_type = "business_document"
     direction_id = None
@@ -394,15 +399,15 @@ async def api_partner_document_upload(request):
     try:
         if direction_id is None:
             row = _db_fetchone(
-                "SELECT id FROM partner_directions WHERE partner_id=%s AND status IN ('draft','pending','rejected') ORDER BY id DESC LIMIT 1",
-                (partner["id"],),
+                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND status IN ('draft','pending','rejected') ORDER BY id DESC LIMIT 1",
+                (partner["id"],business_id),
             )
             if row:
                 direction_id = int(row["id"])
         if direction_id is not None:
             row = _db_fetchone(
-                "SELECT id,status FROM partner_directions WHERE id=%s AND partner_id=%s",
-                (direction_id, partner["id"]),
+                "SELECT id,status FROM partner_directions WHERE id=%s AND partner_id=%s AND business_id=%s",
+                (direction_id, partner["id"],business_id),
             )
             if not row:
                 return web.json_response({"ok": False, "error": "partner_direction_not_found"}, status=404)
@@ -424,14 +429,14 @@ async def api_partner_document_upload(request):
     try:
         if storage_ok:
             doc = _db_execute(
-                "INSERT INTO partner_verification_documents(partner_id,partner_direction_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status) VALUES(%s,%s,%s,%s,%s,NULL,%s,%s,'pending') RETURNING id, document_type, original_filename, mime_type, file_size, status, created_at",
-                (partner["id"], direction_id, document_type, original, path, mime, len(data)),
+                "INSERT INTO partner_verification_documents(partner_id,business_id,partner_direction_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status) VALUES(%s,%s,%s,%s,%s,%s,NULL,%s,%s,'pending') RETURNING id, document_type, original_filename, mime_type, file_size, status, created_at",
+                (partner["id"], business_id, direction_id, document_type, original, path, mime, len(data)),
                 returning=True,
             )
         else:
             doc = _db_execute(
-                "INSERT INTO partner_verification_documents(partner_id,partner_direction_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status) VALUES(%s,%s,%s,%s,NULL,%s,%s,%s,'pending') RETURNING id, document_type, original_filename, mime_type, file_size, status, created_at",
-                (partner["id"], direction_id, document_type, original, bytes(data), mime, len(data)),
+                "INSERT INTO partner_verification_documents(partner_id,partner_direction_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status) VALUES(%s,%s,%s,%s,%s,NULL,%s,%s,'pending') RETURNING id, document_type, original_filename, mime_type, file_size, status, created_at",
+                (partner["id"], business_id, direction_id, document_type, original, bytes(data), mime, len(data)),
                 returning=True,
             )
         _db_execute("UPDATE partners SET verification_status=CASE WHEN status='approved' THEN verification_status ELSE 'pending' END, rejection_reason=NULL, status=CASE WHEN status IN ('draft','rejected') THEN 'pending' ELSE status END WHERE id=%s", (partner["id"],))
@@ -454,12 +459,13 @@ async def api_partner_document_upload(request):
                    SELECT id FROM partner_applications
                    WHERE partner_id=%s
                      AND status='document_pending'
+                     AND business_id=%s
                      AND document_id IS NULL
                    ORDER BY created_at DESC,id DESC
                    LIMIT 1
                )
                RETURNING id,business_id""",
-            (doc["id"], partner["id"]),
+            (doc["id"], partner["id"], business_id),
             returning=True,
         )
         if linked:
