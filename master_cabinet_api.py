@@ -1163,6 +1163,25 @@ async def api_business_create(request: web.Request):
     return web.json_response({"ok": True, "business": _json(row)})
 
 
+async def api_business_update(request: web.Request):
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    from data_core import update_partner_company
+    try:
+        business_id = int(request.match_info["business_id"])
+        data = await request.json()
+        row = update_partner_company(
+            company_id=business_id,
+            actor_user_id=uid,
+            name=data.get("name"),
+            description=data.get("description"),
+            phone=data.get("phone"),
+        )
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    return web.json_response({"ok": True, "business": _json(row)})
+
+
 async def api_business_delete(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -1310,6 +1329,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_get("/api/master/{id}/businesses", api_businesses)
     app.router.add_post("/api/master/{id}/businesses", api_business_create)
     app.router.add_delete("/api/master/{id}/businesses/{business_id}", api_business_delete)
+    app.router.add_post("/api/master/{id}/businesses/{business_id}", api_business_update)
     app.router.add_post("/api/master/{id}/ai-command", api_ai_command)
     app.router.add_post("/api/master/{id}/ai-command/confirm", api_ai_command_confirm)
     app.router.add_get("/api/master/{id}/settings", api_settings)
