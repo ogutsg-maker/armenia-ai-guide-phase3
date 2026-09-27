@@ -420,7 +420,7 @@ async function saveApplicationEdit(id){
  await post('/api/admin/partner-applications/'+id+'/action',data);
  await loadApplications();
 }
-async async function loadApplications(){
+async function loadApplications(){
  const el=$('applicationsList');
  try{
   await getApplicationCatalog();
