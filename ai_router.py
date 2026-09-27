@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 
-from data_core import active_session, create_session, add_ai_message, update_session, active_negotiation_id_for_user
+import data_core
 from client_ai import ClientAI
 from partner_ai import PartnerAI
 
@@ -34,11 +34,11 @@ class AIRouter:
         self.partner_ai = PartnerAI(ai)
 
     def _orchestrator_session(self, user_id: int, role: str) -> dict:
-        return active_session(user_id, role, "orchestrator") or create_session(user_id, role, "orchestrator", {"history": [], "last_module": None})
+        return data_core.active_session(user_id, role, "orchestrator") or data_core.create_session(user_id, role, "orchestrator", {"history": [], "last_module": None})
 
     def _active_negotiation_id(self, user_id: int) -> int | None:
         try:
-            return active_negotiation_id_for_user(int(user_id))
+            return data_core.active_negotiation_id_for_user(int(user_id))
         except Exception:
             return None
 
@@ -61,7 +61,7 @@ class AIRouter:
         if isinstance(ctx, str):
             try: ctx = json.loads(ctx)
             except Exception: ctx = {}
-        add_ai_message(session["id"], "user", text)
+        data_core.add_ai_message(session["id"], "user", text)
         neg_id = self._active_negotiation_id(user_id)
         decision = await self.ai.route_message(text, role, {
             "active_sessions": (ctx.get("history") or [])[-5:],
@@ -97,6 +97,6 @@ class AIRouter:
         history.append({"module": result["module"], "text": text[:200]})
         ctx["history"] = history[-20:]
         ctx["last_module"] = result["module"]
-        update_session(session["id"], ctx)
-        add_ai_message(session["id"], "ai", result.get("reply", ""), {"module": result["module"], "decision": decision})
+        data_core.update_session(session["id"], ctx)
+        data_core.add_ai_message(session["id"], "ai", result.get("reply", ""), {"module": result["module"], "decision": decision})
         return result
