@@ -25,6 +25,12 @@ def _materialize_proposal_services(p, category_id):
         try: payload=_json.loads(payload)
         except Exception: payload={}
     if not isinstance(payload,dict):
+        payload={}
+    business_id=p.get('business_id') or payload.get('business_id')
+    if not business_id:
+        b=one("SELECT id FROM partner_businesses WHERE partner_id=%s AND status<>'archived' ORDER BY is_default DESC,id LIMIT 1",(partner_id,))
+        business_id=b.get('id') if b else None
+    if not isinstance(payload,dict):
         return 0
     services=payload.get('services') or []
     description=str(payload.get('description') or '')[:1000]
@@ -38,11 +44,13 @@ def _materialize_proposal_services(p, category_id):
         try: price=float(item.get('price')) if item.get('price') not in (None,'') else None
         except (TypeError,ValueError): price=None
         data_json=_json.dumps({'ai_source':True,'price_type':item.get('price_type') or 'unknown','from_proposal':True},ensure_ascii=False)
-        existing=one("SELECT id FROM services WHERE partner_id=%s AND name=%s AND status<>'deleted' ORDER BY id DESC LIMIT 1",(partner_id,name))
+        if not business_id:
+            continue
+        existing=one("SELECT id FROM services WHERE partner_id=%s AND business_id=%s AND name=%s AND status<>'deleted' ORDER BY id DESC LIMIT 1",(partner_id,business_id,name))
         if existing:
-            execute("UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,status='pending',data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",(category_id,price,data_json,existing['id']))
+            execute("UPDATE services SET category_id=%s,subcategory_id=NULL,price=%s,status='pending',business_id=%s,data_json=%s::jsonb,updated_at=NOW() WHERE id=%s",(category_id,price,business_id,data_json,existing['id']))
         else:
-            execute("INSERT INTO services(partner_id,category_id,subcategory_id,name,description,price,status,data_json) VALUES(%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb)",(partner_id,category_id,name,description,price,data_json))
+            execute("INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,data_json) VALUES(%s,%s,%s,NULL,%s,%s,%s,'pending',%s::jsonb)",(partner_id,business_id,category_id,name,description,price,data_json))
         count+=1
     return count
 
@@ -70,7 +78,23 @@ def activate_proposal(proposal_id, admin_id, data=None):
     # proposal payload (not a separate taxonomy table).
     subrow=None
     if p.get('partner_id'):
-        pd=execute("INSERT INTO partner_directions(partner_id,master_category_id,status) VALUES(%s,%s,'pending') ON CONFLICT(partner_id,master_category_id) DO UPDATE SET updated_at=NOW() RETURNING id",(p['partner_id'],m['id']),True)
+        import json as _json
+        payload=p.get('payload_json') or {}
+        if isinstance(payload,str):
+            try: payload=_json.loads(payload)
+            except Exception: payload={}
+        if not isinstance(payload,dict): payload={}
+        business_id=p.get('business_id') or payload.get('business_id')
+        if not business_id:
+            b=one("SELECT id FROM partner_businesses WHERE partner_id=%s AND status<>'archived' ORDER BY is_default DESC,id LIMIT 1",(p['partner_id'],))
+            business_id=b.get('id') if b else None
+        if not business_id:
+            raise ValueError('business_required')
+        pd=execute("""INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+                      VALUES(%s,%s,%s,'pending')
+                      ON CONFLICT(business_id,master_category_id)
+                      DO UPDATE SET updated_at=NOW() RETURNING id""",
+                   (p['partner_id'],business_id,m['id']),True)
         if pd:
             execute("INSERT INTO partner_direction_categories(partner_direction_id,category_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(pd['id'],c['id']))
             # Attach a document uploaded before proposal activation to the new direction.
@@ -80,6 +104,7 @@ def activate_proposal(proposal_id, admin_id, data=None):
             # payload_json when it could not map the direction, so approving
             # the new direction here must recreate those services — otherwise
             # they would be lost in the "new direction (proposal)" branch.
+            p['business_id']=business_id
             _materialize_proposal_services(p, c['id'])
             session=active_session(one('SELECT user_id FROM partners WHERE id=%s',(p['partner_id'],))['user_id'],'partner','onboarding')
             if session:
