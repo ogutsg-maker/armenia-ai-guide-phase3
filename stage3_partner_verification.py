@@ -1247,10 +1247,13 @@ async def api_admin_registry_company(request):
         bid=int(request.match_info["business_id"])
     except (TypeError,ValueError):
         return web.json_response({"ok":False,"error":"invalid_business_id"},status=400)
-    company=_db_fetchone("""SELECT pb.*,p.user_id AS telegram_id,p.business_name AS partner_name,p.status AS partner_status,
+    try:
+        company=_db_fetchone("""SELECT pb.*,p.user_id AS telegram_id,p.business_name AS partner_name,p.status AS partner_status,
                                   p.phone AS partner_phone
                            FROM partner_businesses pb JOIN partners p ON p.id=pb.partner_id
                            WHERE pb.id=%s""",(bid,))
+    except Exception as exc:
+        return web.json_response({"ok":False,"error":"company_lookup_failed","detail":str(exc)},status=500)
     if not company:
         return web.json_response({"ok":False,"error":"company_not_found"},status=404)
     try:
