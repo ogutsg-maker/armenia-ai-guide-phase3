@@ -1147,14 +1147,7 @@ TOOL_SCHEMAS:
     if not isinstance(data,dict):
         raise RuntimeError("groq returned non-object planner output")
 
-    except json.JSONDecodeError:
-        start=raw.find("{")
-        if start<0:
-            raise RuntimeError(f"{provider} returned invalid planner JSON")
-        try:
-            data,_end=json.JSONDecoder().raw_decode(raw[start:])
-        except json.JSONDecodeError:
-            raise RuntimeError(f"{provider} returned invalid planner JSON")
+    # AIManager.chat_json already validates and decodes the planner response.
     if not isinstance(data,dict):
         raise RuntimeError(f"{provider} returned non-object planner output")
     data["ai_provider"]=provider
