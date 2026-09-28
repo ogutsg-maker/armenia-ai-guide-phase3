@@ -949,7 +949,8 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
     master_catalog = []
     key = os.getenv("GROQ_API_KEY", "").strip()
 
-    if not key or AsyncGroq is None:
+    try:
+            if not key or AsyncGroq is None:
         data = _heuristic(text)
         if pending_field in {"business_name", "marz", "city", "address", "phone", "district"}:
             data[pending_field] = _norm(text)
@@ -959,28 +960,6 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         data = _recover_obvious_facts(combined_text, data)
         # Keep Groq extraction authoritative for service names.
         # Do not maintain category/service keyword recovery dictionaries here.
-        recovered = []
-
-        if price_mentions and len(data.get("services") or []) < len(price_mentions):
-            # Add only genuinely missing price-bearing services. Existing GPT
-            # names/translation/catalogue IDs remain authoritative.
-            existing_prices = {
-                int(float(x.get("price")))
-                for x in (data.get("services") or [])
-                if isinstance(x, dict) and x.get("price") not in (None, "")
-            }
-            for item in recovered:
-                if len(data.get("services") or []) >= len(price_mentions):
-                    break
-                try:
-                    price = int(float(item.get("price")))
-                except (TypeError, ValueError):
-                    continue
-                if price in existing_prices:
-                    continue
-                data.setdefault("services", []).append(item)
-                existing_prices.add(price)
-
         data = _recover_obvious_facts(combined_text, data)
         # Groq has already returned validated DB subcategory IDs. The block
         # below resolves those IDs back to their master/category labels for
