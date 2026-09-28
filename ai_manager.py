@@ -321,6 +321,124 @@ class AIManager:
         return "Sorry, a technical error occurred. Please try again later."
 
     @staticmethod
+    def _approx_tokens(value: Any) -> int:
+        """Cheap token estimate used only for request-size protection."""
+        try:
+            return max(1, (len(str(value)) + 3) // 4)
+        except Exception:
+            return 1
+
+    @classmethod
+    def _compact_tool_result(cls, name: str, result: Any, max_chars: int = 5000) -> str:
+        """Keep tool-loop context small without changing backend truth."""
+        if not isinstance(result, dict):
+            text = str(result or "")
+            return text[:max_chars]
+
+        if name == "admin_catalog_candidates":
+            compact = {
+                "ok": bool(result.get("ok", True)),
+                "application_id": result.get("application_id"),
+                "items": [],
+            }
+            for item in result.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                row = {
+                    "service_index": item.get("service_index"),
+                    "service_name": item.get("service_name"),
+                    "current_category": item.get("current_category"),
+                    "candidates": [],
+                }
+                for candidate in (item.get("candidates") or [])[:6]:
+                    if not isinstance(candidate, dict):
+                        continue
+                    row["candidates"].append({
+                        "catalog_name": candidate.get("catalog_name"),
+                        "master_name_am": candidate.get("master_name_am"),
+                        "name_ru": candidate.get("name_ru"),
+                        "name_en": candidate.get("name_en"),
+                    })
+                compact["items"].append(row)
+            return json.dumps(compact, ensure_ascii=False, default=str)[:max_chars]
+
+        if name == "get_application":
+            compact = {
+                key: result.get(key)
+                for key in (
+                    "ok", "id", "application_id", "status", "company_name",
+                    "business_name", "marz", "city", "address", "phone",
+                    "working_hours", "description",
+                )
+                if key in result
+            }
+            service_items = result.get("service_items")
+            if isinstance(service_items, list):
+                compact["service_items"] = [
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "service_index", "name", "price", "price_type",
+                            "catalog_name", "category_name_am",
+                            "category_name_ru", "needs_admin_review",
+                        )
+                        if key in item
+                    }
+                    for item in service_items
+                    if isinstance(item, dict)
+                ]
+            return json.dumps(compact, ensure_ascii=False, default=str)[:max_chars]
+
+        try:
+            encoded = json.dumps(result, ensure_ascii=False, default=str)
+        except Exception:
+            encoded = str(result)
+        return encoded[:max_chars]
+
+    @classmethod
+    def _compact_history(
+        cls,
+        history: list[dict[str, Any]] | None,
+        *,
+        max_chars: int = 7000,
+        max_items: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Token-budget history: preserve recent turns, discard bulky tool payloads."""
+        source = list(history or [])
+        selected: list[dict[str, Any]] = []
+        used = 0
+
+        for item in reversed(source):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "user")
+            content = str(item.get("content") or "")
+
+            if role == "tool":
+                tool_name = str(
+                    (item.get("data") or {}).get("tool_name") or ""
+                )
+                content = cls._compact_tool_result(tool_name, content, 2800)
+            else:
+                content = content[:1800]
+
+            candidate = {
+                "role": role,
+                "content": content,
+            }
+            if item.get("tool_call_id"):
+                candidate["tool_call_id"] = item["tool_call_id"]
+
+            size = len(json.dumps(candidate, ensure_ascii=False, default=str))
+            if selected and (len(selected) >= max_items or used + size > max_chars):
+                continue
+            selected.append(candidate)
+            used += size
+
+        selected.reverse()
+        return selected
+
+    @staticmethod
     def _is_confirmation(message: str) -> bool:
         return " ".join(str(message or "").strip().casefold().split()) in _CONFIRMATIONS
 
@@ -424,6 +542,14 @@ class AIManager:
         language = language or self._lang(message)
         trusted = self._trusted(role, telegram_id, extra_context)
         history = await self._supabase_history(telegram_id, role)
+        # Never send raw historical tool payloads back to Groq. Admin requests
+        # can otherwise accumulate catalogue/application JSON and exceed the
+        # model's 8k TPM input limit.
+        history = self._compact_history(
+            history,
+            max_chars=6000 if role == ContextType.ADMIN else 8000,
+            max_items=6 if role == ContextType.ADMIN else 8,
+        )
         session_context = await self._session_context(telegram_id, role)
         state = SessionState.from_dict(session_context)
         tools = ToolRegistry(
@@ -507,6 +633,15 @@ class AIManager:
         last_tool_result: dict[str, Any] | None = None
 
         for round_no in range(self.max_tool_rounds):
+            estimated_input_tokens = self._approx_tokens(
+                json.dumps(messages, ensure_ascii=False, default=str)
+                + json.dumps(definitions or [], ensure_ascii=False, default=str)
+            )
+            if estimated_input_tokens > 6500:
+                logger.warning(
+                    "AIManager prompt budget high: context=%s round=%s estimated_input_tokens=%s",
+                    role.value, round_no, estimated_input_tokens,
+                )
             try:
                 response = await self.client.chat.completions.create(
                     model=self.model,
@@ -627,9 +762,11 @@ class AIManager:
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
-                    "content": json.dumps(
-                        result, ensure_ascii=False, default=str
-                    )[:12000],
+                    "content": self._compact_tool_result(
+                        name,
+                        result,
+                        5000 if role == ContextType.ADMIN else 7000,
+                    ),
                 })
 
                 # Persist a small, backend-derived focus state for pronouns and
