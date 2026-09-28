@@ -686,25 +686,45 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         purpose="structured partner extraction/classification",
     )
 
-def _dynamic_catalog_match_score(service_name: str, catalog_name: str) -> float:
-    """Score a service against one live DB catalogue label.
+async def _semantic_catalog_match(
+    services: list[dict],
+    catalog_rows: list[dict],
+    threshold: float = 0.72,
+) -> list[dict]:
+    """Match extracted services against live DB category embeddings."""
+    from embeddings_matcher import match_service_to_catalog
 
-    The catalogue is the only source of valid IDs.  The score combines
-    character similarity and token similarity so inflected/word-order
-    differences are handled better than a plain equality check.
-    """
-    left = _norm(service_name).lower()
-    right = _norm(catalog_name).lower()
-    if not left or not right:
-        return 0.0
+    out = [dict(x) for x in services]
+    for item in out:
+        if _safe_int(item.get("matched_subcategory_id")) is not None:
+            continue
 
-    if left == right:
-        return 1.0
+        name = _norm(item.get("name") or item.get("service_name"))
+        if not name:
+            continue
 
-    ratio = fuzz.ratio(left, right) / 100.0
-    token = fuzz.token_set_ratio(left, right) / 100.0
-    weighted = (ratio * 0.55) + (token * 0.45)
-    return min(1.0, weighted)
+        match = await match_service_to_catalog(name, threshold=threshold)
+        if not match:
+            continue
+
+        item["matched_subcategory_id"] = _safe_int(match["category_id"])
+        item["direction_id"] = _safe_int(match["master_id"])
+        item["match_confidence"] = float(match["similarity"])
+        item["match_method"] = "embedding_cosine"
+        item["subcategory_name"] = (
+            _norm(match.get("category_am"))
+            or _norm(match.get("category_ru"))
+            or _norm(match.get("category_en"))
+            or None
+        )
+        item["direction_name"] = (
+            _norm(match.get("master_am"))
+            or _norm(match.get("master_ru"))
+            or _norm(match.get("master_en"))
+            or None
+        )
+
+    return out
 
 
 def _dynamic_catalog_match(
@@ -1062,10 +1082,10 @@ async def extract(
         # Classification is completely independent from Groq.
         # Every candidate and every assigned ID comes from the live DB.
         catalog_rows = get_catalog(db)
-        classified_services = _dynamic_catalog_match(
+        classified_services = await _semantic_catalog_match(
             services,
             catalog_rows,
-            threshold=0.70,
+            threshold=float(os.getenv("CATALOG_EMBEDDING_THRESHOLD", "0.72")),
         )
 
         data["services"] = classified_services
