@@ -647,8 +647,20 @@ Confirm?"
                             pass
 
                     if isinstance(items, list):
+                        # Keep the backend-derived display objects in session state so
+                        # "show next" can render the next item without re-querying.
+                        # Do not store arbitrary model-provided data here.
                         safe_items = [
-                            {"id": x.get("id")}
+                            {
+                                str(k): v
+                                for k, v in x.items()
+                                if str(k) in {
+                                    "id", "name", "title", "status", "price",
+                                    "currency", "description", "company_name",
+                                    "business_name", "partner_id", "client_id",
+                                    "address", "phone", "created_at", "updated_at",
+                                }
+                            }
                             for x in items
                             if isinstance(x, dict) and x.get("id") is not None
                         ][:50]
@@ -658,7 +670,10 @@ Confirm?"
                             first = safe_items[0]
                             if len(safe_items) == 1:
                                 patch["last_displayed_entity_id"] = {
-                                    "type": "order" if "order" in name else "entity",
+                                    "type": (
+                                        "order" if "order" in name
+                                        else ("service" if "service" in name else "entity")
+                                    ),
                                     "id": first["id"],
                                 }
                     if name == "get_my_companies" and isinstance(items, list) and items:
