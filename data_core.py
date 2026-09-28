@@ -494,6 +494,35 @@ def get_application(application_id: int):
     )
 
 
+def count_entities(*, entity: str, status: str | None = None, marz: str | None = None,
+                   city: str | None = None) -> int:
+    """Backend-only exact counts for the conversational AI tools."""
+    entity = str(entity or "").strip().lower()
+    if entity == "applications":
+        where = ["1=1"]; params = []
+        if status:
+            where.append("a.status=%s"); params.append(status)
+        if marz:
+            where.append("a.location_marz ILIKE %s"); params.append(f"%{marz}%")
+        if city:
+            where.append("a.location_city ILIKE %s"); params.append(f"%{city}%")
+        row = one("SELECT COUNT(*) AS n FROM partner_applications a WHERE " + " AND ".join(where), tuple(params))
+        return int(row.get("n") or 0) if row else 0
+    if entity == "partners":
+        row = one("SELECT COUNT(*) AS n FROM partners p WHERE p.status <> 'archived'", ())
+        return int(row.get("n") or 0) if row else 0
+    if entity == "services":
+        where = ["s.status <> 'deleted'"]; params = []
+        if status:
+            where.append("s.status=%s"); params.append(status)
+        row = one("SELECT COUNT(*) AS n FROM services s WHERE " + " AND ".join(where), tuple(params))
+        return int(row.get("n") or 0) if row else 0
+    if entity == "companies":
+        row = one("SELECT COUNT(*) AS n FROM partner_businesses b WHERE b.status <> 'archived'", ())
+        return int(row.get("n") or 0) if row else 0
+    raise ValueError("unsupported_entity")
+
+
 def search_applications(status: str | None = None, marz: str | None = None,
                         city: str | None = None, limit: int = 50):
     where = ["1=1"]
