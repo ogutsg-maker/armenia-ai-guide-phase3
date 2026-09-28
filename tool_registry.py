@@ -71,6 +71,17 @@ class ToolRegistry:
                         "limit": {"type": "integer"},
                     },
                 ),
+                self._fn(
+                    "get_my_orders",
+                    "List the authenticated client's orders.",
+                    {"status": _nullable("string"), "limit": {"type": "integer"}},
+                ),
+                self._fn(
+                    "get_my_order",
+                    "Get one authenticated client's order by ID.",
+                    {"order_id": {"type": "integer"}},
+                    ["order_id"],
+                ),
             ]
 
         if self.context_type == ContextType.PARTNER:
@@ -242,6 +253,24 @@ class ToolRegistry:
 
     async def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         args = dict(args or {})
+
+        if self.context_type == ContextType.CLIENT and name == "get_my_orders":
+            return {"ok": True, "items": data_core.search_orders(
+                actor_role="client",
+                actor_id=self.telegram_id,
+                status=args.get("status"),
+                limit=max(1, min(int(args.get("limit") or 20), 50)),
+            )}
+
+        if self.context_type == ContextType.CLIENT and name == "get_my_order":
+            item = data_core.get_order(
+                int(args["order_id"]),
+                actor_role="client",
+                actor_id=self.telegram_id,
+            )
+            if not item:
+                raise PermissionError("order_not_owned_or_not_found")
+            return {"ok": True, "item": item}
 
         if self.context_type == ContextType.CLIENT and name == "search_services":
             return {
