@@ -32,9 +32,9 @@ class HistoryProvider:
         storage_role = self._storage_role(role)
         user_id = self._resolve_internal_user_id(telegram_id)
         return (
-            data_core.active_session(int(telegram_id), storage_role, "ai_manager")
+            data_core.active_session(int(user_id), storage_role, "ai_manager")
             or data_core.create_session(
-                int(telegram_id), storage_role, "ai_manager",
+                int(user_id), storage_role, "ai_manager",
                 {"history_version": 1},
             )
         )
