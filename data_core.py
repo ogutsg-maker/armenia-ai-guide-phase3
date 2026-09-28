@@ -112,6 +112,84 @@ def search_catalog(query: str = "", master_category_id: int | None = None, limit
     )
 
 
+def _catalog_text(value: Any) -> str:
+    """Normalize multilingual catalog text for backend matching."""
+    import re
+    text = str(value or "").casefold().strip()
+    text = text.replace("ё", "е")
+    text = re.sub(r"[^\w\s\u0530-\u058F\u0400-\u04FF-]+", " ", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _catalog_tokens(value: Any) -> set[str]:
+    return {x for x in _catalog_text(value).split() if len(x) >= 2}
+
+
+def _catalog_match_score(query: str, candidate: str) -> float:
+    """Dynamic multilingual string/semantic-proxy score; no catalog IDs are hardcoded."""
+    q = _catalog_text(query)
+    c = _catalog_text(candidate)
+    if not q or not c:
+        return 0.0
+    if q == c:
+        return 1.0
+    qt = _catalog_tokens(q)
+    ct = _catalog_tokens(c)
+    if not qt or not ct:
+        return 0.0
+    overlap = len(qt & ct) / max(1, len(qt | ct))
+    containment = 1.0 if q in c or c in q else 0.0
+    def grams(s: str) -> set[str]:
+        compact = s.replace(" ", "")
+        return {compact[i:i+2] for i in range(max(0, len(compact)-1))}
+    qg, cg = grams(q), grams(c)
+    bigram = len(qg & cg) / max(1, len(qg | cg)) if qg and cg else 0.0
+    return min(1.0, 0.60 * overlap + 0.25 * bigram + 0.15 * containment)
+
+
+def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -> list[dict[str, Any]]:
+    """Resolve service names against the live catalog without hardcoded IDs."""
+    catalog = search_catalog(limit=max(100, min(int(limit or 500), 500)))
+    resolved: list[dict[str, Any]] = []
+    for service in services:
+        item = dict(service)
+        name = str(item.get("name") or "").strip()
+        if not name:
+            resolved.append(item)
+            continue
+        candidates: list[tuple[float, dict[str, Any]]] = []
+        for cat in catalog:
+            names = (cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug"))
+            score = max((_catalog_match_score(name, x) for x in names if x), default=0.0)
+            candidates.append((score, cat))
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        best_score, best = candidates[0] if candidates else (0.0, None)
+        second_score = candidates[1][0] if len(candidates) > 1 else 0.0
+        if best and best_score >= 0.52 and (best_score - second_score) >= 0.06:
+            item.update({
+                "category_id": int(best["id"]),
+                "master_category_id": int(best["master_category_id"]),
+                "category_name_am": best.get("name_am"),
+                "category_name_ru": best.get("name_ru"),
+                "category_name_en": best.get("name_en"),
+                "master_name_am": best.get("master_name_am"),
+                "master_name_ru": best.get("master_name_ru"),
+                "master_name_en": best.get("master_name_en"),
+                "catalog_match_score": round(float(best_score), 4),
+                "catalog_match_status": "matched",
+            })
+        else:
+            item.update({
+                "category_id": None,
+                "master_category_id": None,
+                "catalog_match_score": round(float(best_score), 4),
+                "catalog_match_status": "needs_admin_review",
+            })
+        resolved.append(item)
+    return resolved
+
+
 def active_directions():
     return rows(
         """SELECT id,name_am,name_ru,name_en,slug,is_active
