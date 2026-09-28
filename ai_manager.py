@@ -201,8 +201,6 @@ class AIManager:
     def _is_confirmation(message:str)->bool:
         return " ".join((message or "").strip().casefold().split()) in {"yes","да","подтверждаю","подтвердить","confirm","ok","այո","հա","հաստատում եմ","հաստատել"}
 
-")
-
     async def handle_message(self, telegram_id:int, user_message:str, context_type:AIContext|ContextType|str, *, extra_context:dict[str,Any]|None=None, language:str|None=None)->dict[str,Any]:
         """Telegram/WebApp-compatible canonical entry point."""
         return await self.chat(
