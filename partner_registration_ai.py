@@ -1328,11 +1328,39 @@ Return only the supplied JSON schema."""
             normalized_services.append(item)
         data["services"] = normalized_services
 
-        # Classification is internal. Groq may return a real DB id; if it
-        # returns null, recover it from the live catalogue without hard-coded
-        # service/category keyword tables.
-        data["services"] = _resolve_service_ids_dynamically(normalized_services, catalog_rows)
-        normalized_services = data["services"]
+        # Classification is internal. Groq may return a real DB id. For
+        # unresolved services, use the already-known top-level direction and
+        # ask the semantic matcher to choose ONLY among that direction's live
+        # database subcategories. Never invent IDs and never use a keyword table.
+        candidate_catalog = catalog_rows
+        resolved_master_id = _safe_int(data.get("master_category_id"))
+        if resolved_master_id is None:
+            try:
+                recovered_master = _recover_master_category(db, combined_text, data)
+                resolved_master_id = _safe_int(recovered_master.get("master_category_id"))
+            except Exception:
+                resolved_master_id = None
+
+        if resolved_master_id is not None:
+            scoped_catalog = [
+                row for row in catalog_rows
+                if _safe_int(row.get("master_id")) == resolved_master_id
+            ]
+            if scoped_catalog:
+                candidate_catalog = scoped_catalog
+
+        normalized_services = _fallback_catalog_match(normalized_services, candidate_catalog)
+        if any(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services):
+            try:
+                normalized_services = await _ai_match_services(
+                    None,
+                    model,
+                    normalized_services,
+                    candidate_catalog,
+                )
+            except Exception:
+                pass
+        data["services"] = normalized_services
 
         matched_ids = [
             _safe_int(s.get("matched_subcategory_id"))
