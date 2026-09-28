@@ -710,6 +710,8 @@ async def extract_partner_registration_json(
     *,
     model: str = "openai/gpt-oss-20b",
     max_tokens: int = 900,
+    telegram_id: int | None = None,
+    application_id: int | None = None,
 ) -> dict:
     """Extract partner facts only.
 
@@ -879,6 +881,8 @@ async def extract(
                 os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
             ).strip() or "openai/gpt-oss-20b",
             max_tokens=900,
+            telegram_id=telegram_id,
+            application_id=application_id,
         )
 
         data = dict(previous_profile)
@@ -1060,9 +1064,14 @@ async def extract(
         logging.getLogger(__name__).info(
             "PARTNER_CLASSIFICATION: services=%s catalog_rows=%s matched=%s unresolved=%s",
             len(data.get("services") or []),
-            len(catalog_rows),
-            len(matched),
-            len(data.get("services") or []) - len(matched),
+            len(catalog_rows) if "catalog_rows" in locals() else 0,
+            len(matched) if "matched" in locals() else 0,
+            max(
+                0,
+                len(data.get("services") or []) - (
+                    len(matched) if "matched" in locals() else 0
+                ),
+            ),
         )
 
     except Exception as exc:
