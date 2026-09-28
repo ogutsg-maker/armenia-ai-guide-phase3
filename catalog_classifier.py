@@ -128,20 +128,52 @@ def _token_overlap_ratio(service_tokens: set[str], category_tokens: set[str]) ->
 
 
 def _direct_match_score(service: Any, category: Any) -> float:
-    """Return 1.0 for a high-confidence exact/root/token match, else 0."""
+    """
+    Score a deterministic token/root match without allowing one generic word
+    to dominate a multi-word service.
+
+    Example:
+        "լվացքի մեքենաներ" vs "Ավտոմեքենայի ախտորոշում"
+        -> only "մեքենա" overlaps, so this is NOT a direct match.
+
+        "լվացքի մեքենաներ" vs "Լվացքի մեքենաների վերանորոգում"
+        -> both meaningful service tokens are covered, so this is a
+           high-confidence direct match.
+    """
     service_tokens = _tokens(service)
     category_tokens = _tokens(category)
 
     if not service_tokens or not category_tokens:
         return 0.0
 
-    # Direct root match is high confidence.
-    if _root_token_match(service_tokens, category_tokens):
-        return 1.0
+    # A direct match requires coverage of the service's meaningful tokens.
+    # A single shared generic/root token must never be enough for a
+    # multi-token service.
+    matched_tokens = 0
+    for service_token in service_tokens:
+        if len(service_token) < 4:
+            continue
 
-    # More than 80% of the meaningful service tokens must occur in the
-    # category. With a one-token service this requires an exact token match.
-    if _token_overlap_ratio(service_tokens, category_tokens) > TOKEN_OVERLAP_GATE:
+        matched = False
+        for category_token in category_tokens:
+            if service_token == category_token:
+                matched = True
+                break
+
+            if len(service_token) >= 5 and service_token in category_token:
+                matched = True
+                break
+
+            if len(category_token) >= 5 and category_token in service_token:
+                matched = True
+                break
+
+        if matched:
+            matched_tokens += 1
+
+    coverage = matched_tokens / len(service_tokens)
+
+    if coverage > TOKEN_OVERLAP_GATE:
         return 1.0
 
     return 0.0
