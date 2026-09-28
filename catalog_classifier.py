@@ -5,6 +5,28 @@ import json
 import logging
 import os
 
+import data_core
+
+
+async def get_catalog(db=None) -> list[dict]:
+    """Read the active catalogue through the existing Data Core DB layer."""
+    rows = []
+    try:
+        for row in data_core.rows(
+            """SELECT m.id AS master_id,m.name_am AS master_am,m.name_ru AS master_ru,
+                      m.name_en AS master_en,m.slug AS master_slug,
+                      c.id AS category_id,c.name_am AS category_am,c.name_ru AS category_ru,
+                      c.name_en AS category_en,c.slug AS category_slug
+               FROM master_categories m
+               JOIN categories c ON c.master_category_id=m.id
+               WHERE m.is_active=TRUE AND c.is_active=TRUE
+               ORDER BY m.id,c.id"""
+        ):
+            rows.append(dict(row))
+    except Exception:
+        logger.exception("Failed to load live catalogue.")
+    return rows
+
 from groq import AsyncGroq
 
 logger = logging.getLogger(__name__)
