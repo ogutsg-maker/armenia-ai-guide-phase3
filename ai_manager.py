@@ -575,9 +575,15 @@ Confirm?"
                             "current_entity_id": item.get("id"),
                             "current_entity_type": (
                                 "application" if name.endswith("application")
-                                else "entity"
+                                else ("order" if "order" in name else "entity")
                             ),
                         })
+                        current_list = session_context.get("current_list") or []
+                        item_id = item.get("id")
+                        for idx, row in enumerate(current_list):
+                            if isinstance(row, dict) and str(row.get("id")) == str(item_id):
+                                patch["current_position"] = idx
+                                break
                     if isinstance(items, list):
                         safe_items = [
                             {"id": x.get("id")}
