@@ -349,8 +349,7 @@ def prepare_catalog_resolution(*, application_id: int, mappings: list[dict[str, 
                 } for row in validated],
             },
         },
-        "summary": "
-".join(summary_lines),
+        "summary": "\\n".join(summary_lines),
         "changes": validated,
     }
 
