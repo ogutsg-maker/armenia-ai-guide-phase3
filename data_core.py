@@ -548,6 +548,83 @@ def search_applications(status: str | None = None, marz: str | None = None,
 
 
 
+def admin_get_pending_applications(limit: int = 50):
+    return search_applications(
+        status=None,
+        limit=max(1, min(int(limit or 50), 200)),
+    )
+
+
+def admin_get_partner_profile(partner_id: int):
+    return one(
+        """SELECT p.id,p.user_id,p.business_name,p.business_description,p.status,
+                  p.verification_status,p.created_at,
+                  u.telegram_id,u.username,u.full_name,u.phone,u.is_verified,u.is_frozen,
+                  u.lang,u.rating_avg,u.rating_count
+           FROM partners p
+           LEFT JOIN users u ON u.telegram_id=p.user_id
+           WHERE p.id=%s""",
+        (int(partner_id),),
+    )
+
+
+def admin_approve_application(application_id: int, admin_telegram_id: int):
+    row = get_application_full(int(application_id))
+    if not row:
+        raise ValueError("application_not_found")
+    status = str(row.get("status") or "").lower()
+    if status in {"approved", "rejected"}:
+        raise ValueError("application_already_final")
+    return one(
+        """UPDATE partner_applications
+           SET status='document_pending',reviewed_at=NOW(),updated_at=NOW()
+           WHERE id=%s AND status NOT IN ('approved','pending_partner')
+           RETURNING *""",
+        (int(application_id),),
+    )
+
+
+def admin_reject_application(application_id: int, reason: str, admin_telegram_id: int):
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("reason_required")
+    row = get_application_full(int(application_id))
+    if not row:
+        raise ValueError("application_not_found")
+    return one(
+        """UPDATE partner_applications
+           SET status='rejected',admin_note=%s,reviewed_at=NOW(),updated_at=NOW()
+           WHERE id=%s AND status NOT IN ('approved',)
+           RETURNING *""",
+        (reason[:3000], int(application_id)),
+    )
+
+
+def admin_suspend_partner(partner_id: int, reason: str, admin_telegram_id: int):
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("reason_required")
+    partner = get_partner(int(partner_id))
+    if not partner:
+        raise ValueError("partner_not_found")
+    user_id = int(partner.get("user_id") or 0)
+    if not user_id:
+        raise ValueError("partner_user_not_found")
+    return one(
+        """UPDATE users
+           SET is_frozen=TRUE
+           WHERE telegram_id=%s
+           RETURNING telegram_id,is_frozen""",
+        (user_id,),
+    )
+
+
+def admin_view_audit_logs(limit: int = 50):
+    # The current branch has no canonical audit-log table/API. Do not invent
+    # one here: callers receive an explicit backend capability error.
+    raise NotImplementedError("audit_log_backend_not_configured")
+
+
 def get_application_full(application_id: int, partner_id: int | None = None):
     where = "a.id=%s"
     params: list[Any] = [int(application_id)]
