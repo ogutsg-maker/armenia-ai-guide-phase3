@@ -16,8 +16,21 @@ class HistoryProvider:
         normalized = str(role or "").strip().lower()
         return "partner" if normalized == "registration" else normalized
 
+    @staticmethod
+    def _resolve_internal_user_id(telegram_id: int) -> int:
+        user = data_core.get_user_by_telegram_id(int(telegram_id))
+        if not user:
+            user = data_core.ensure_user_by_telegram_id(int(telegram_id))
+        user_id = int(user.get("id") or 0)
+        if user_id <= 0:
+            raise RuntimeError(
+                f"Unable to resolve internal users.id for telegram_id={telegram_id}"
+            )
+        return user_id
+
     def _session(self, telegram_id: int, role: str):
         storage_role = self._storage_role(role)
+        user_id = self._resolve_internal_user_id(telegram_id)
         return (
             data_core.active_session(int(telegram_id), storage_role, "ai_manager")
             or data_core.create_session(
