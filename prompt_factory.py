@@ -23,10 +23,10 @@ def as_context_type(value: ContextType|str)->ContextType:
 
 class PromptFactory:
     @classmethod
-    def build(cls,context_type:ContextType|str,*,message:str,history:list[dict[str,Any]]|None=None,trusted_context:dict[str,Any]|None=None,language:str="hy")->str:
+    def build(cls,context_type:ContextType|str,*,message:str,history:list[dict[str,Any]]|None=None,trusted_context:dict[str,Any]|None=None,language:str="hy",task_instructions:str|None=None)->str:
         role=as_context_type(context_type)
         return ("[AI_ROLE_INSTRUCTIONS]\n"+_ROLE_INSTRUCTIONS[role]+"\n[/AI_ROLE_INSTRUCTIONS]\n\n"
                 "[TRUSTED_BACKEND_CONTEXT]\n"+json.dumps(trusted_context or {},ensure_ascii=False,default=str)+"\n[/TRUSTED_BACKEND_CONTEXT]\n\n"
                 "[CONVERSATION_HISTORY]\n"+json.dumps(history or [],ensure_ascii=False,default=str)+"\n[/CONVERSATION_HISTORY]\n\n"
                 f"[LANGUAGE]\n{language}\n[/LANGUAGE]\n\n"
-                "[CURRENT_USER_MESSAGE]\n"+str(message or "")+"\n[/CURRENT_USER_MESSAGE]")
+                "[TASK_INSTRUCTIONS]\n"+str(task_instructions or "")+"\n[/TASK_INSTRUCTIONS]\n\n[CURRENT_USER_MESSAGE]\n"+str(message or "")+"\n[/CURRENT_USER_MESSAGE]")
