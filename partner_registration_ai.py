@@ -572,43 +572,6 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             seen.add(key); result.append(item)
     return result
 
-def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[dict]:
-    """Apply only a generic exact catalogue-label match before semantic AI.
-
-    This function deliberately contains NO service/category keyword table.
-    The database is the only source of valid subcategory IDs. If wording is
-    different (synonyms, Armenian morphology, transliteration, etc.), the
-    unresolved service is passed to _ai_match_services for semantic matching.
-    """
-    out = [dict(x) for x in services]
-    label_map: dict[str, int] = {}
-
-    for row in catalog or []:
-        cid = _safe_int(row.get("category_id"))
-        if cid is None:
-            continue
-        for key in ("category_am", "category_ru", "category_en"):
-            label = _norm(row.get(key)).lower()
-            if label:
-                label_map.setdefault(label, cid)
-
-    for item in out:
-        if _safe_int(item.get("matched_subcategory_id")) is not None:
-            continue
-
-        name = _norm(item.get("name") or item.get("service_name")).lower()
-        if not name:
-            continue
-
-        cid = label_map.get(name)
-        if cid is not None:
-            item["matched_subcategory_id"] = cid
-            item["match_confidence"] = 1.0
-            item["match_reason"] = "Exact active database catalogue-label match."
-
-    return out
-
-
 async def classify_profile_catalog(db, profile: dict) -> dict:
     """Reclassify the services of an already extracted partner profile.
 
@@ -1005,98 +968,12 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
         data["ready"] = not data["missing"]
         return data
 
-    model = os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")).strip() or "openai/gpt-oss-20b"
+    model = os.getenv(
+        "PARTNER_ONBOARDING_MODEL",
+        os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+    ).strip() or "openai/gpt-oss-20b"
     if model in {"llama-3.1-8b-instant", "llama-3.3-70b-versatile"}:
         model = "openai/gpt-oss-20b"
-    client = AsyncGroq(api_key=key)
-
-    schema = {
-        "type": "object",
-        "properties": {
-            "business_name": {"type": ["string", "null"]},
-            "marz": {"type": ["string", "null"]},
-            "address": {"type": ["string", "null"]},
-            "phone": {"type": ["string", "null"]},
-            "working_hours": {"type": ["string", "null"]},
-            "business_action": {"type": "string"},
-            "proposed_business_name": {"type": ["string", "null"]},
-            "city": {"type": ["string", "null"]},
-            "district": {"type": ["string", "null"]},
-            "direction": {"type": ["string", "null"]},
-            "master_category_id": {"type": ["integer", "null"]},
-            "subcategory_names": {"type": "array", "items": {"type": "string"}},
-            "description": {"type": "string"},
-            "confidence": {"type": "number"},
-            "ambiguities": {"type": "array", "items": {"type": "string"}},
-            "needs_review": {"type": "boolean"},
-            "services": {"type": "array", "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "raw_sub_direction": {"type": ["string", "null"]},
-                    "price": {"type": ["number", "null"]},
-                    "price_type": {"type": "string"},
-                    "matched_subcategory_id": {"type": ["integer", "null"]},
-                },
-                "required": ["name", "raw_sub_direction", "price", "price_type", "matched_subcategory_id"],
-                "additionalProperties": False,
-            }},
-                    },
-        "required": ["business_name", "marz", "city", "address", "phone", "working_hours", "business_action", "proposed_business_name", "district", "direction",
-                     "master_category_id", "subcategory_names", "description",
-                     "confidence", "ambiguities", "needs_review", "services"],
-        "additionalProperties": False,
-    }
-
-    system = """You are the AI registration concierge for Armenia AI Guide.
-Understand Armenian, Russian and English.
-Extract facts from the partner's current message and accumulated history.
-Extract marz/region, exact address, business phone, and working hours when stated. Never invent them.
-WORKING HOURS: preserve the stated schedule. For «ամեն օր՝ ժամը 09:00-ից մինչև 19:00-ը» return «Ամեն օր՝ 09:00–19:00». Never leave working_hours null when an explicit schedule is present.
-You are doing strict Named Entity Recognition (NER) and classification, not free-form form filling.
-Never copy a complete sentence into a field.
-BUSINESS NAME: extract only the proper business/organization name. For "BYUTI անունով սրահ" return "BYUTI", never "սրահ BYUTI" and never surrounding context.
-LOCATION: normalize Armenian/Russian/English inflected place names to the canonical city name. For example "Հրազդանում" -> "Հրազդան". Derive marz only from a known city-to-marz relationship or an explicitly stated marz; never invent an address.
-SERVICE EXTRACTION IS STRICT AND COUNTED: every explicit monetary amount in the source must correspond to exactly one atomic service object. Count price-bearing services, not arbitrary numbers. Phone numbers, house numbers and district numbers are NOT prices. If a service is introduced by "և", "ու", "նաև", "and", "also", "и", or "а", remove only the connector and preserve the complete service phrase and its price.
-SERVICE NAMES: every price-bearing service is a separate atomic entity. One complete service + its price = ONE object. Never split a complete service phrase into fragments. For example, "կանացի մազերի կտրում՝ 3000 դրամից" is exactly ONE service; do NOT also create "կտրում" with 3000. Likewise "մազերի ներկում՝ 5000 դրամից" is ONE service; do NOT also create "ներկում". Strip only introductions, conjunctions, location text, business context, punctuation and grammatical endings; preserve meaningful modifiers such as "կանացի", "երեկոյան", "հարսանեկան" when they distinguish the service. Use a clean noun phrase suitable for a price list: "կանացի մազերի կտրում" -> "կանացի մազերի կտրում"; "մազերի ներկում" -> "մազերի ներկում"; "սանրվածք" -> "սանրվածք"; "մատնահարդարում" -> "մատնահարդարում"; "պեդիկյուր" -> "պեդիկյուր"; "երեկոյան դիմահարդարում" -> "երեկոյան դիմահարդարում". Never put words such as "սկսվում է", "դրամից", "սրահում", "ունեմ", "անունով", a city, or the business name into service_name.
-ARMENIAN FEW-SHOT SERVICE EXAMPLES:
-Input: "կանացի մազերի կտրում՝ 3000 դրամից"
-Output: one service: {"name":"կանացի մազերի կտրում","price":3000,"price_type":"from"}
-Input: "մազերի ներկում՝ 5000 դրամից"
-Output: one service: {"name":"մազերի ներկում","price":5000,"price_type":"from"}
-Input: "երեկոյան դիմահարդարում՝ 5000 դրամից"
-Output: one service: {"name":"երեկոյան դիմահարդարում","price":5000,"price_type":"from"}
-If the same text contains a complete phrase and one of its component words, treat the complete phrase as the service and never create a second fragment with the same price/context.
-PRICES: output only the numeric amount. "3000 դրամից", "սկսվում է 3000 դրամից", "от 3000", "from 3000" => price=3000 and price_type="from". An exact "3000 դրամ" => price_type="fixed".
-KEEP ENTITIES SEPARATE: business, city, address, phone, direction, subcategory, service, price and working hours are different fields. Do not merge them.
-Keep every stated service as a separate object, including several services in one sentence.
-For every service also return raw_sub_direction: 1-3 clean Armenian words describing the narrow service specialization, in base/nominative form. This is a search phrase for the database, not a new category. Examples: "Ֆոտոստուդիա", "Հարսանեկան լուսանկարում", "Անհատական ֆոտոսեսիա", "Տեսանկարահանում".
-Do not invent a catalogue ID. matched_subcategory_id must remain null in this extraction step.
-If a current business is supplied in PREVIOUS PROFILE, decide whether the new request belongs to that same business or clearly describes a separate organization. Return business_action as same_business or new_business and proposed_business_name when new_business.
-Determine the platform direction yourself; never ask the partner to choose it.
-Do not invent missing information: use null and let the form collect it.
-If the message clearly describes another organization than PREVIOUS PROFILE, use business_action="new_business".
-If it is clearly another service of the same organization, use business_action="same_business".
-If genuinely ambiguous, use same_business, set needs_review=true, and explain the ambiguity.
-
-TOP-LEVEL DIRECTIONS:
-Do NOT classify the partner into the platform catalogue in this step.
-The catalogue is handled by a separate Admin Classification AI after the
-partner profile is complete. Keep direction/master_category_id null.
-""" + json.dumps(master_catalog, ensure_ascii=False) + """
-If the business does not genuinely fit any supplied direction, return master_category_id=null.
-matched_subcategory_id MUST remain null in this extraction step.
-Return only the supplied JSON schema."""
-
-    user_content = (
-        "PREVIOUS PROFILE:\n" + json.dumps(previous_profile, ensure_ascii=False)
-        + "\nPENDING FIELD:\n" + str(pending_field or "")
-        + "\nHISTORY:\n" + json.dumps([
-            {"role": str(x.get("role") or ""), "content": _norm(x.get("content") or "")[:1200]}
-            for x in history[-4:]
-        ], ensure_ascii=False)
-        + "\nNEW MESSAGE:\n" + _norm(text)[:3000]
-    )
 
     try:
         # FINAL partner-registration extractor:
