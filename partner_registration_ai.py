@@ -1113,32 +1113,32 @@ Return only the supplied JSON schema."""
 
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
 
-        # Deterministic price counting is a guard against lost services. It
-        # recognizes monetary amounts only, so phone/address numbers are not
-        # counted as services.
+        # Deterministic validation: count explicit monetary mentions, but NEVER
+        # replace a valid GPT extraction merely because the language differs.
         price_mentions = _extract_price_mentions(combined_text)
         recovered = _recover_services_from_history(
             history + [{"role": "user", "content": text}]
         )
-        if recovered and (not data.get("services") or len(recovered) >= len(data.get("services") or [])):
-            # The history parser is authoritative when it can account for all
-            # explicit price-bearing services. It does not invent catalogue IDs.
-            data["services"] = recovered
-
         if price_mentions and len(data.get("services") or []) < len(price_mentions):
-            data["services"] = await _recover_missing_services(
-                client, model, combined_text, data.get("services") or [], price_mentions
-            )
+            # Add only genuinely missing price-bearing services. Existing GPT
+            # names/translation/catalogue IDs remain authoritative.
+            existing_prices = {
+                int(float(x.get("price")))
+                for x in (data.get("services") or [])
+                if isinstance(x, dict) and x.get("price") not in (None, "")
+            }
+            for item in recovered:
+                if len(data.get("services") or []) >= len(price_mentions):
+                    break
+                try:
+                    price = int(float(item.get("price")))
+                except (TypeError, ValueError):
+                    continue
+                if price in existing_prices:
+                    continue
+                data.setdefault("services", []).append(item)
+                existing_prices.add(price)
 
-        # Deterministic service recovery is authoritative whenever it can
-        # account for the explicit monetary amounts. This prevents Groq from
-        # silently dropping one service from a multi-service sentence.
-        if recovered and len(recovered) == len(price_mentions):
-            data["services"] = recovered
-        elif price_mentions and len(data.get("services") or []) < len(price_mentions):
-            data["services"] = await _recover_missing_services(
-                client, model, combined_text, data.get("services") or [], price_mentions
-            )
         data = _recover_obvious_facts(combined_text, data)
         # Catalogue classification is intentionally deferred to Admin Classification AI.
 
