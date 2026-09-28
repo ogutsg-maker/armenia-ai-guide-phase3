@@ -207,7 +207,8 @@ async def api_ai_command(request: web.Request):
     from prompt_factory import ContextType
 
     try:
-        result = await AIManager().handle_message(
+        manager = request.app.get("ai_manager") or AIManager()
+        result = await manager.handle_message(
             uid,
             message,
             ContextType.PARTNER,
@@ -238,7 +239,8 @@ async def api_ai_command_confirm(request: web.Request):
     from prompt_factory import ContextType
 
     try:
-        result = await AIManager().handle_message(
+        manager = request.app.get("ai_manager") or AIManager()
+        result = await manager.handle_message(
             uid,
             "yes",
             ContextType.PARTNER,
