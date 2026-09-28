@@ -228,7 +228,33 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         )
         recovered_services = _recover_services_from_history(source_history)
         if recovered_services:
-            profile["services"] = recovered_services
+            # Recovery supplements the AI result; it must never replace
+            # services that Groq extracted but which happen to have no explicit
+            # price in the message.
+            existing_services = [
+                dict(x) for x in (profile.get("services") or [])
+                if isinstance(x, dict) and str(x.get("name") or "").strip()
+            ]
+            by_name = {
+                str(x.get("name") or "").strip().lower(): x
+                for x in existing_services
+            }
+            for recovered in recovered_services:
+                name = str(recovered.get("name") or "").strip()
+                if not name:
+                    continue
+                key = name.lower()
+                if key in by_name:
+                    current = by_name[key]
+                    if current.get("price") in (None, "") and recovered.get("price") not in (None, ""):
+                        current["price"] = recovered.get("price")
+                    if current.get("price_type") in (None, "", "unknown") and recovered.get("price_type"):
+                        current["price_type"] = recovered.get("price_type")
+                else:
+                    existing_services.append(dict(recovered))
+                    by_name[key] = existing_services[-1]
+            if existing_services:
+                profile["services"] = existing_services
     except Exception:
         logger.exception("Partner deterministic extraction fallback failed")
 
