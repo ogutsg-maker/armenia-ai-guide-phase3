@@ -35,6 +35,38 @@ class AIManager:
             if p: ctx["partner_id"]=p.get("id")
         return ctx
 
+    async def chat_json(self, telegram_id:int, context_type:ContextType|str, message:str, *, task_instructions:str, extra_context:dict[str,Any]|None=None, language:str|None=None, max_tokens:int=1800)->dict[str,Any]:
+        """Structured JSON completion through the same unified manager."""
+        role=as_context_type(context_type)
+        language=language or self._lang(message)
+        history=self.history.get(telegram_id,role.value.lower())
+        prompt=PromptFactory.build(role,message=message,history=history,
+            trusted_context=self._trusted(role,telegram_id,extra_context),
+            language=language,task_instructions=task_instructions)
+        started=time.monotonic()
+        self.history.append(telegram_id,role.value.lower(),"user",message,{"context_type":role.value,"structured":True})
+        response=await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role":"user","content":prompt}],
+            response_format={"type":"json_object"},
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+        usage=getattr(response,"usage",None)
+        ai_cost_center.record_usage(provider="groq",model=self.model,
+            chain=role.value.lower(),stage="manager",operation="json",
+            purpose="Unified AIManager structured extraction",user_id=telegram_id,
+            input_tokens=int(getattr(usage,"prompt_tokens",getattr(usage,"input_tokens",0)) or 0),
+            output_tokens=int(getattr(usage,"completion_tokens",getattr(usage,"output_tokens",0)) or 0),
+            cached_tokens=0,reasoning_tokens=0)
+        raw=(response.choices[0].message.content or "{}").strip()
+        try:
+            parsed=json.loads(raw)
+        except Exception as exc:
+            raise RuntimeError("AIManager returned invalid JSON") from exc
+        self.history.append(telegram_id,role.value.lower(),"ai",raw,{"structured":True,"latency_ms":round((time.monotonic()-started)*1000)})
+        return parsed
+
     async def chat(self, telegram_id:int, context_type:ContextType|str, message:str, *, extra_context:dict[str,Any]|None=None, language:str|None=None)->dict[str,Any]:
         role=as_context_type(context_type)
         language=language or self._lang(message)
