@@ -118,7 +118,7 @@ class AIManager:
         messages=[{"role":"user","content":prompt}]
         started=time.monotonic()
         await self._save_supabase_history(telegram_id,role,"user",message,{"context_type":role.value})
-        pending=self.history.get_pending(telegram_id,role.value.lower())
+        pending=await self._get_pending(telegram_id,role)
         if pending and message.strip().casefold() in {"yes","да","այո","հա","հաստատել","հաստատում եմ","confirm","ok"}:
             result=await tools.execute_confirmed(pending["name"],pending["args"])
             await self._clear_pending(telegram_id,role)
@@ -134,12 +134,7 @@ class AIManager:
                 temperature=0.1,max_tokens=1600,
             )
             usage=getattr(response,"usage",None)
-            ai_cost_center.record_usage(provider="groq",model=self.model,
-                chain=role.value.lower(),stage="manager",operation="chat",
-                purpose="Unified AIManager",user_id=telegram_id,
-                input_tokens=int(getattr(usage,"prompt_tokens",getattr(usage,"input_tokens",0)) or 0),
-                output_tokens=int(getattr(usage,"completion_tokens",getattr(usage,"output_tokens",0)) or 0),
-                cached_tokens=0,reasoning_tokens=0)
+            await self._cost_log(telegram_id,role,usage,time.monotonic()-started,extra_context=extra_context)
             msg=response.choices[0].message
             calls=getattr(msg,"tool_calls",None) or []
             if not calls:
