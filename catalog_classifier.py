@@ -6,6 +6,7 @@ catalogue using deterministic, conservative matching.
 """
 from __future__ import annotations
 
+# json is required by the semantic resolver and payload serialization.
 import json
 import logging
 import os
