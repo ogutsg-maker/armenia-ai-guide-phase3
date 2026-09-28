@@ -992,14 +992,18 @@ async def extract(
         try:
             from catalog_classifier import classify_services_batch, get_catalog
 
-            service_names = [
-                _norm(x.get("name") or x.get("service_name"))
+            extracted_services = [
+                {
+                    "name": _norm(x.get("name") or x.get("service_name")),
+                    "price": x.get("price"),
+                    "price_type": _norm(x.get("price_type") or "fixed").lower(),
+                }
                 for x in services
                 if _norm(x.get("name") or x.get("service_name"))
             ]
             classified_services = await classify_services_batch(
                 db,
-                service_names,
+                extracted_services,
                 telegram_id=telegram_id,
                 application_id=application_id,
             )
