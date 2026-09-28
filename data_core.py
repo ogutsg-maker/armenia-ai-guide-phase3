@@ -279,6 +279,92 @@ def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] 
     return {"application_id": int(application_id), "items": result}
 
 
+def prepare_application_service_price_update(*, application_id: int, service_index: int,
+                                             price: float, actor_user_id: int) -> dict[str, Any]:
+    """Validate an application service price change and return a confirmation action."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    if price < 0:
+        raise ValueError("invalid_service_price")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    services = application_service_items(int(application_id))
+    service = next((x for x in services if int(x["service_index"]) == int(service_index)), None)
+    if not service:
+        raise ValueError("service_not_found")
+    token = secrets.token_urlsafe(24)
+    return {
+        "ok": True,
+        "status": "awaiting_user_confirmation",
+        "requires_confirmation": True,
+        "confirmation_token": token,
+        "action": {
+            "name": "admin_apply_application_service_price",
+            "args": {
+                "application_id": int(application_id),
+                "service_index": int(service_index),
+                "price": float(price),
+                "confirmation_token": token,
+            },
+        },
+        "summary": (
+            f"Փոխել հայտ #{int(application_id)}-ի «{service['name']}» ծառայության "
+            f"գինը {service.get('price') or 0} ֏ → {float(price):g} ֏?"
+        ),
+    }
+
+
+def apply_application_service_price(*, application_id: int, service_index: int,
+                                     price: float, confirmation_token: str,
+                                     actor_user_id: int) -> dict[str, Any]:
+    """Apply a previously previewed service price change atomically."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    if not confirmation_token or len(confirmation_token) < 20:
+        raise PermissionError("invalid_confirmation_token")
+    if price < 0:
+        raise ValueError("invalid_service_price")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    services = _application_payload_services(app)
+    index = int(service_index)
+    if index < 0 or index >= len(services):
+        raise ValueError("service_not_found")
+    updated = [dict(x) for x in services]
+    old_price = updated[index].get("price")
+    updated[index]["price"] = float(price)
+    payload = app.get("payload_json") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload = dict(payload)
+    payload["services"] = updated
+    row = execute(
+        "UPDATE partner_applications SET payload_json=%s, updated_at=NOW() "
+        "WHERE id=%s RETURNING *",
+        (json_dump(payload), int(application_id)),
+        returning=True,
+    )
+    if not row:
+        raise RuntimeError("application_service_price_update_failed")
+    return {
+        "ok": True,
+        "application_id": int(application_id),
+        "service_index": index,
+        "service_name": str(updated[index].get("name") or updated[index].get("service_name") or ""),
+        "old_price": old_price,
+        "price": float(price),
+        "status": row.get("status"),
+        "message": "application_service_price_updated",
+    }
+
+
 def prepare_catalog_resolution(*, application_id: int, mappings: list[dict[str, Any]],
                                actor_user_id: int) -> dict[str, Any]:
     """Validate proposed mappings and prepare an explicit confirmation action."""
