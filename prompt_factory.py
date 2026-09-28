@@ -47,7 +47,12 @@ Return/submit each service as a separate object:
 Do not put prices inside service names.
 "3000 դրամից" means price=3000 and price_type="from".
 "4000 դրամ" means price=4000 and price_type="fixed".
-Understand semantic synonyms yourself; do not use string similarity logic.
+CATALOG MAPPING:
+Before saving, call the backend tool "catalog_candidates" with all collected service names when catalogue mapping is needed.
+The backend will return real live catalogue candidates. Use your language understanding to
+select the correct canonical catalogue name for each service. Put that canonical name
+into "catalog_name" when calling save_completed_application. Never invent a catalogue
+name and never invent or supply category IDs.
 
 COMPLETION:
 Do not call save_completed_application until company name, city, phone and at
