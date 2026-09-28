@@ -887,6 +887,33 @@ def _match_services_universal(db, services, master_id):
     return out
 
 
+def _build_categories_tree(categories_list: list[dict]) -> list[dict]:
+    """Build a compact, database-backed semantic classification tree for Groq.
+
+    One row represents one active DB subcategory. The model receives real IDs
+    and multilingual labels only; no hard-coded service keywords are used.
+    """
+    tree = []
+    seen = set()
+    for row in categories_list or []:
+        category_id = _safe_int(row.get("category_id") if isinstance(row, dict) else None)
+        if category_id is None:
+            category_id = _safe_int(row.get("id") if isinstance(row, dict) else None)
+        if category_id is None or category_id in seen:
+            continue
+        seen.add(category_id)
+
+        master_id = _safe_int(row.get("master_id") if isinstance(row, dict) else None)
+        tree.append({
+            "id": category_id,
+            "parent_id": master_id,
+            "name_ru": _norm(row.get("category_ru") or row.get("name_ru")) if isinstance(row, dict) else "",
+            "name_am": _norm(row.get("category_am") or row.get("name_am")) if isinstance(row, dict) else "",
+            "name_en": _norm(row.get("category_en") or row.get("name_en")) if isinstance(row, dict) else "",
+        })
+    return tree
+
+
 async def extract_partner_registration_json(
     raw_text: str,
     categories_list: list[dict],
@@ -894,95 +921,72 @@ async def extract_partner_registration_json(
     model: str = "openai/gpt-oss-20b",
     max_tokens: int = 1800,
 ) -> dict:
-    """Strict NER-only partner registration extraction.
+    """Extract partner facts and semantically map each service to a real DB subcategory.
 
-    IMPORTANT: this function deliberately does NOT receive or send the full
-    catalogue to Groq. Catalogue matching is a separate step after extraction.
-    Sending hundreds of multilingual catalogue rows here caused 30K+ token
-    requests and Groq 413/TPM failures.
+    The classification tree is generated dynamically from the active database
+    catalogue immediately before the Groq request. No service/category keywords
+    are hard-coded into the prompt.
     """
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key:
         raise RuntimeError("GROQ_API_KEY is not configured")
 
-    # Keep the extraction context bounded. The deterministic recovery layer
-    # below still sees the complete local conversation, while Groq only needs
-    # enough recent text to understand the facts in this turn.
     source = _norm(raw_text)
     if len(source) > 9000:
         source = source[-9000:]
 
-    instruction = """You are the Armenia AI Guide partner-registration NER extractor.
+    categories_tree = _build_categories_tree(categories_list)
+    categories_json = json.dumps(categories_tree, ensure_ascii=False, separators=(",", ":"))
+
+    instruction = """You are the Armenia AI Guide partner-registration AI.
 Understand Armenian, Russian and English.
 
-Return ONLY one JSON object with these keys:
-company_or_name, marz, city, address, phone, working_hours, document_type, extracted_services.
-
-Do NOT classify into a platform catalogue. Do NOT invent category IDs.
-The field matched_subcategory_id must not be returned; the application code
-will set it to null and a separate resolver will assign real DB IDs later.
+Return ONLY one JSON object with:
+company_or_name, marz, city, address, phone, working_hours, document_type,
+extracted_services.
 
 FACT EXTRACTION:
+- Extract only facts explicitly present in the partner text.
+- Never invent a business name, location, phone, address, schedule, service or price.
 - company_or_name: exact business/company/organization name if explicitly stated.
-  For «BYUTI անունով սրահ» return «BYUTI», not «սրահ BYUTI».
-- city: canonical city/locality name. «Հրազդանում» -> «Հրազդան».
-- marz: infer only when the city-to-marz relation is reliable or the marz is
-  explicitly stated. Never invent a location.
-- address: only the actual street/building/address portion.
-- phone: preserve the phone number; normalize obvious formatting only.
+- city: canonical city/locality name. Normalize inflected forms.
+- marz: infer only from a reliable city-to-marz relationship or explicit text.
+- address: only the actual address portion.
+- phone: preserve the stated phone number.
 - working_hours: preserve an explicit schedule.
-- document_type: passport, license, certificate, etc. only when explicitly
-  mentioned; otherwise null.
+- document_type: only when explicitly mentioned; otherwise null.
 
-SERVICE EXTRACTION IS STRICT AND SEMANTIC:
-- Extract real service units, not merely the words next to a price.
-- Never invent a price. Never lose an explicitly stated price.
-- Phone numbers, house numbers and unrelated numbers are not prices.
-- A complete service phrase is ONE service. Do not split a single service into
-  fragments. «կանացի մազերի կտրում՝ 3000 դրամից» => exactly one service
-  «կանացի մազերի կտրում».
-- KEEP ENUMERATIONS ATOMIC: when a sentence lists several independent
-  services, subjects or specializations separated by commas, «և», «ու», «նաև»,
-  semicolons or similar enumeration, create one service object for EACH
-  independent item when the context indicates that each item is separately
-  offered. Do not collapse the whole list into one generic service.
-- GENERIC SERVICE + SUBJECT LIST: if a generic training/service term is
-  followed by a list of independent subjects or specializations, treat the
-  listed subjects as separate service units when the wording means the
-  business provides that training/service in each subject. Example:
-  «նախապատրաստական ուսուցում, մաթեմատիկա, ֆիզիկա, հայոց լեզու, քիմիա,
-  կենսաբանություն, առարկաներով։ 25000 դրամից սկսած» should normally produce
-  five separate services:
-  «նախապատրաստում մաթեմատիկայից»,
-  «նախապատրաստում ֆիզիկայից»,
-  «նախապատրաստում հայոց լեզվից»,
-  «նախապատրաստում քիմիայից»,
-  «նախապատրաստում կենսաբանությունից».
-  Do NOT also create a sixth generic «նախապատրաստական ուսուցում» object
-  unless the text clearly offers it as a separate service.
-- SHARED PRICE: a single price stated after an enumeration can apply to ALL
-  enumerated service units when grammar/context indicates one common starting
-  price for the listed services. In that case copy the same numeric price and
-  price_type to each service object. This is intentional duplication of the
-  shared price, not invention.
-- If different prices are explicitly attached to different services, preserve
-  the correct service-to-price association and never copy one service's price
-  to another.
-- Do not split a complete phrase such as «երեկոյան դիմահարդարում» into
-  «երեկոյան» and «դիմահարդարում».
-- Keep meaningful modifiers such as «կանացի», «երեկոյան», «հարսանեկան».
-- Remove only conversational wrappers such as «ունեմ», «մատուցում եմ»,
-  «սկսվում է», «դրամից», «սրահում».
-- «և», «ու», «նաև», «and», «also», «и», «а» are connectors; preserve the
-  separate service items on both sides when they are independent services.
+SERVICE EXTRACTION:
+- Extract real, atomic services. A complete service phrase is one service.
+- Keep independent services in an enumeration as separate objects.
+- Preserve meaningful modifiers that distinguish services.
+- Do not turn a whole sentence, business name, address, phone number or price
+  explanation into a service name.
+- Never invent a price. Every explicit service price must stay attached to its
+  correct service.
+- A shared price after a clearly enumerated list may apply to every listed
+  service when the grammar/context makes that relationship explicit.
 - price is numeric only.
-- «3000 դրամից», «սկսած 3000 դրամից», «от 3000», «from 3000» =>
-  price_type="from".
-- Exact «3000 դրամ» => price_type="fixed".
-- If a service has no explicit price, price may be null, but do not create
-  unpriced duplicates of an already extracted price-bearing service.
-- user_service_name must be a clean price-list service phrase, not a whole
-  sentence.
+- «3000 դրամից», «от 3000», «from 3000» => price_type="from".
+- Exact stated price => price_type="fixed".
+
+SEMANTIC CLASSIFICATION:
+You MUST perform semantic meaning-based analysis of EVERY extracted service.
+Compare the actual meaning, scope and purpose of the service with the supplied
+categories_tree. Select the closest matching database subcategory by meaning,
+not by literal keyword overlap.
+
+Use the category's real database ID in matched_subcategory_id.
+matched_subcategory_id MUST be exactly one id from categories_tree, or null.
+Never invent an ID, transform an ID, or copy an ID from outside categories_tree.
+
+Choose null ONLY when there is genuinely no reasonable semantic match in the
+provided tree. Do not use null merely because the service wording differs from
+the category wording, language or grammatical form.
+
+Do not classify the partner by guessing from its business name alone. Classify
+each service independently. The same partner may have services mapped to
+different subcategories.
 
 Return:
 {
@@ -997,7 +1001,8 @@ Return:
     {
       "user_service_name": string,
       "price": number|null,
-      "price_type": "fixed"|"from"
+      "price_type": "fixed"|"from",
+      "matched_subcategory_id": number|null
     }
   ]
 }
@@ -1005,8 +1010,10 @@ Return:
 Never return markdown or explanatory text."""
 
     user = (
-        "PARTNER TEXT:\n" + source
-        + "\n\nIMPORTANT: extract only facts explicitly present in this text."
+        "categories_tree:\n" + categories_json
+        + "\n\nPARTNER TEXT:\n" + source
+        + "\n\nIMPORTANT: extract the facts and classify every extracted service "
+          "only against the supplied categories_tree. Return only valid JSON."
     )
 
     client = AsyncGroq(api_key=key)
@@ -1025,6 +1032,12 @@ Never return markdown or explanatory text."""
     if not isinstance(parsed, dict):
         raise RuntimeError("Invalid partner registration JSON")
 
+    valid_ids = {
+        _safe_int(row.get("id"))
+        for row in categories_tree
+        if _safe_int(row.get("id")) is not None
+    }
+
     services = []
     seen = set()
     for item in parsed.get("extracted_services") or []:
@@ -1033,6 +1046,7 @@ Never return markdown or explanatory text."""
         name = _norm(item.get("user_service_name") or item.get("name"))
         if not name:
             continue
+
         raw_price = item.get("price")
         try:
             price = float(raw_price) if raw_price is not None else None
@@ -1045,7 +1059,11 @@ Never return markdown or explanatory text."""
         if price_type not in {"fixed", "from"}:
             price_type = "fixed"
 
-        key_tuple = (name.lower(), price, price_type)
+        matched_id = _safe_int(item.get("matched_subcategory_id"))
+        if matched_id not in valid_ids:
+            matched_id = None
+
+        key_tuple = (name.lower(), price, price_type, matched_id)
         if key_tuple in seen:
             continue
         seen.add(key_tuple)
@@ -1055,7 +1073,7 @@ Never return markdown or explanatory text."""
             "raw_sub_direction": name,
             "price": price,
             "price_type": price_type,
-            "matched_subcategory_id": None,
+            "matched_subcategory_id": matched_id,
         })
 
     parsed["company_or_name"] = _norm(parsed.get("company_or_name")) or None
@@ -1071,9 +1089,8 @@ Never return markdown or explanatory text."""
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
     previous_profile = previous_profile or {}
-    # Partner Intake AI deliberately does NOT classify the business into the
-    # platform catalogue. Catalogue classification is a separate Admin
-    # Classification AI step executed after the partner profile is understood.
+    # Partner Intake AI extracts facts and performs dynamic semantic service
+    # classification against the active DB catalogue supplied to Groq.
     master_catalog = []
     key = os.getenv("GROQ_API_KEY", "").strip()
 
@@ -1252,7 +1269,9 @@ Return only the supplied JSON schema."""
                 existing_prices.add(price)
 
         data = _recover_obvious_facts(combined_text, data)
-        # Catalogue classification is intentionally deferred to Admin Classification AI.
+        # Groq has already returned validated DB subcategory IDs. The block
+        # below resolves those IDs back to their master/category labels for
+        # the application/admin representation.
 
         # Normalize service objects so the form always receives a stable shape,
         # even when Groq uses legacy service_name instead of name.
@@ -1275,11 +1294,9 @@ Return only the supplied JSON schema."""
             normalized_services.append(item)
         data["services"] = normalized_services
 
-        # Registration is intentionally classification-free. Direction, subcategory
-        # and catalogue IDs are assigned/reviewed after submission by Admin.
-        # Keep catalogue classification internal: the partner never chooses
-        # a direction, but a validated matched subcategory can populate the
-        # internal direction/subcategory shown to Admin.
+        # Classification is internal. The partner never chooses a direction,
+        # while the backend can use the validated DB IDs returned by Groq
+        # to populate the admin-side direction/subcategory fields.
         matched_ids = [
             _safe_int(s.get("matched_subcategory_id"))
             for s in normalized_services
