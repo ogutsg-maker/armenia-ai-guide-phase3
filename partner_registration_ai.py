@@ -950,7 +950,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
     key = os.getenv("GROQ_API_KEY", "").strip()
 
     try:
-            if not key or AsyncGroq is None:
+        if not key or AsyncGroq is None:
         data = _heuristic(text)
         if pending_field in {"business_name", "marz", "city", "address", "phone", "district"}:
             data[pending_field] = _norm(text)
