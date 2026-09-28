@@ -1334,6 +1334,63 @@ Return only the supplied JSON schema."""
 
         # Normalize service objects so the form always receives a stable shape,
         # even when Groq uses legacy service_name instead of name.
+def _resolve_service_ids_dynamically(services: list[dict], catalog_rows: list[dict]) -> list[dict]:
+    """Resolve missing service IDs against the live DB catalogue without hard-coded keywords.
+
+    First use exact normalized multilingual label matches; then use token overlap
+    as a conservative fallback. This is only a safety net when Groq returns null.
+    """
+    import difflib
+
+    def norm_tokens(value):
+        s = re.sub(r"[^\w\u0531-\u058F]+", " ", _norm(value).lower())
+        return {x for x in s.split() if len(x) > 2}
+
+    candidates = []
+    for row in catalog_rows or []:
+        cid = _safe_int(row.get("category_id"))
+        if cid is None:
+            continue
+        labels = [
+            _norm(row.get("category_am")),
+            _norm(row.get("category_ru")),
+            _norm(row.get("category_en")),
+        ]
+        token_sets = [norm_tokens(x) for x in labels if x]
+        candidates.append((cid, labels, token_sets, row))
+
+    for svc in services or []:
+        if not isinstance(svc, dict) or _safe_int(svc.get("matched_subcategory_id")) is not None:
+            continue
+        name = _norm(svc.get("name"))
+        if not name:
+            continue
+        name_low = name.lower()
+        # Exact multilingual catalogue label match.
+        exact = next(
+            (item for item in candidates
+             if any(name_low == label.lower() for label in item[1] if label)),
+            None,
+        )
+        if exact:
+            svc["matched_subcategory_id"] = exact[0]
+            continue
+
+        nt = norm_tokens(name)
+        scored = []
+        for cid, labels, token_sets, row in candidates:
+            overlap = max((len(nt & ts) / max(1, len(nt | ts)) for ts in token_sets), default=0.0)
+            fuzzy = max((difflib.SequenceMatcher(None, name_low, label.lower()).ratio()
+                         for label in labels if label), default=0.0)
+            score = overlap * 0.72 + fuzzy * 0.28
+            scored.append((score, cid, row))
+        scored.sort(reverse=True, key=lambda x: x[0])
+        if scored and scored[0][0] >= 0.68:
+            svc["matched_subcategory_id"] = scored[0][1]
+
+    return services
+
+
         normalized_services = []
         for item in (data.get("services") or []):
             if not isinstance(item, dict):
@@ -1351,6 +1408,13 @@ Return only the supplied JSON schema."""
             item["price_type"] = _norm(item.get("price_type") or "fixed") or "fixed"
             item["matched_subcategory_id"] = _safe_int(item.get("matched_subcategory_id"))
             normalized_services.append(item)
+        data["services"] = normalized_services
+
+        # Groq is authoritative when it returns a valid DB ID. If it
+        # conservatively returns null, recover only from the live DB catalogue
+        # using exact/strong semantic-label similarity; no hard-coded service
+        # keyword list is used.
+        normalized_services = _resolve_service_ids_dynamically(normalized_services, catalog_rows)
         data["services"] = normalized_services
 
         # Classification is internal. The partner never chooses a direction,
