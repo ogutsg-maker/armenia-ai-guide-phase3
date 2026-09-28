@@ -492,10 +492,11 @@ async def classify_services_batch(
     telegram_id: int | None = None,
     application_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Classify structured extracted services while preserving price metadata.
+    """Resolve services semantically against live catalog labels.
 
-    Only service["name"] participates in matching. Price and price_type are
-    carried through unchanged and never influence catalogue classification.
+    Groq selects a canonical live catalog label. Python validates that exact
+    label and resolves the real category/direction IDs. Fuzzy matching is never
+    used as the final classifier.
     """
     services = []
     for item in extracted_services or []:
@@ -508,279 +509,71 @@ async def classify_services_batch(
         price_type = str(item.get("price_type") or "fixed").strip().lower()
         if price_type not in {"fixed", "from"}:
             price_type = "fixed"
-        services.append({
-            "name": name,
-            "price": price,
-            "price_type": price_type,
-        })
+        services.append({"name": name, "price": price, "price_type": price_type})
 
     if not services:
         return []
-
-    safe = [
-        {
-            "service_name": item["name"],
-            "price": item["price"],
-            "price_type": item["price_type"],
-            "subcategory_id": None,
-            "direction_id": None,
-        }
-        for item in services
-    ]
 
     try:
         catalog_rows = await get_catalog(db)
         if not catalog_rows:
             logger.error("Live catalogue is empty or unavailable.")
-            return safe
-
-        def row_score(service_name: str, row: dict[str, Any]) -> float:
-            return max(
-                get_match_ratio(service_name, row.get("category_am", "")),
-                get_match_ratio(service_name, row.get("category_ru", "")),
-                get_match_ratio(service_name, row.get("category_en", "")),
-            )
-
-        def ranked_candidates(
-            service_name: str,
-            rows: list[dict[str, Any]],
-        ) -> list[tuple[float, dict[str, Any]]]:
-            ranked = [
-                (row_score(service_name, row), row)
-                for row in rows
-                if row.get("category_id") is not None
-                and row.get("master_id") is not None
+            return [
+                {"service_name": x["name"], "price": x["price"], "price_type": x["price_type"],
+                 "subcategory_id": None, "direction_id": None}
+                for x in services
             ]
-            ranked.sort(key=lambda item: item[0], reverse=True)
-            return ranked
 
-        # PASS 1 — derive dynamic direction from strong lexical evidence.
-        strong_votes: list[int] = []
-        for item in services:
-            name = item["name"]
-            ranked = ranked_candidates(name, catalog_rows)
-            if not ranked:
-                logger.warning(
-                    "Catalogue pass-1: no candidates for service='%s'.", name
-                )
-                continue
-
-            best_score, best_row = ranked[0]
-            logger.info(
-                "Catalogue pass-1: service='%s' best_category=%s "
-                "best_category_am='%s' master_id=%s score=%.4f",
-                name,
-                best_row.get("category_id"),
-                best_row.get("category_am"),
-                best_row.get("master_id"),
-                best_score,
-            )
-            if best_score >= FUZZY_CONFIDENCE_GATE:
-                master_id = _safe_int(best_row.get("master_id"))
-                if master_id is not None:
-                    strong_votes.append(master_id)
-
-        # MAJORITY VOTE — same dynamic context mechanism, but never supplied
-        # to the semantic model as an ID.
-        batch_master_context: int | None = None
-        if len(strong_votes) >= 2:
-            vote_counts: dict[int, int] = {}
-            for master_id in strong_votes:
-                vote_counts[master_id] = vote_counts.get(master_id, 0) + 1
-
-            ordered_votes = sorted(
-                vote_counts.items(),
-                key=lambda item: item[1],
-                reverse=True,
-            )
-            winner_id, winner_votes = ordered_votes[0]
-            second_votes = ordered_votes[1][1] if len(ordered_votes) > 1 else 0
-            if winner_votes > second_votes and winner_votes / len(strong_votes) >= 0.50:
-                batch_master_context = winner_id
-
-            logger.info(
-                "Catalogue majority vote: votes=%s winner=%s "
-                "winner_votes=%s total_strong_votes=%s context=%s",
-                vote_counts,
-                winner_id,
-                winner_votes,
-                len(strong_votes),
-                batch_master_context,
-            )
-        else:
-            logger.info(
-                "Catalogue majority vote: insufficient strong votes=%s; "
-                "batch_master_context=None",
-                strong_votes,
-            )
-
-        filtered_rows = (
-            [
-                row for row in catalog_rows
-                if _safe_int(row.get("master_id")) == batch_master_context
-            ]
-            if batch_master_context is not None
-            else catalog_rows
+        semantic = await _semantic_resolve_unresolved(
+            services=[x["name"] for x in services],
+            candidate_rows=catalog_rows,
         )
+        by_name = {}
+        for row in catalog_rows:
+            for key in ("category_am", "category_ru", "category_en"):
+                value = row.get(key)
+                if value:
+                    by_name[_normalize_text(value)] = row
 
-        logger.info(
-            "Catalogue pass-2 context=%s candidate_rows=%s",
-            batch_master_context,
-            len(filtered_rows),
-        )
-
-        final_classified: list[dict[str, Any]] = []
-        unresolved: list[tuple[str, float]] = []
-
+        result = []
+        unresolved = []
         for item in services:
-            name = item["name"]
-            ranked = ranked_candidates(name, filtered_rows)
-            if ranked:
-                best_score, best_row = ranked[0]
-                second_score = ranked[1][0] if len(ranked) > 1 else 0.0
-            else:
-                best_score, second_score, best_row = 0.0, 0.0, None
-
-            margin = best_score - second_score
-            confidence_ok = best_score >= FUZZY_CONFIDENCE_GATE
-            margin_required = best_score < 0.95
-            margin_ok = (not margin_required) or margin >= 0.10
-
-            accepted = (
-                best_row is not None
-                and best_row.get("category_id") is not None
-                and best_row.get("master_id") is not None
-                and confidence_ok
-                and margin_ok
-            )
-
-            base = {
-                "service_name": name,
-                "price": item["price"],
-                "price_type": item["price_type"],
-            }
-
-            logger.info(
-                "Catalogue pass-2: service='%s' best_category=%s "
-                "best_category_am='%s' direction=%s best=%.4f second=%.4f "
-                "margin=%.4f confidence_ok=%s margin_ok=%s context=%s",
-                name,
-                best_row.get("category_id") if best_row else None,
-                best_row.get("category_am") if best_row else None,
-                best_row.get("master_id") if best_row else None,
-                best_score,
-                second_score,
-                margin,
-                confidence_ok,
-                margin_ok,
-                batch_master_context,
-            )
-
-            if accepted:
-                final_classified.append({
+            proposal = semantic.get(_normalize_text(item["name"])) or {}
+            row = by_name.get(_normalize_text(proposal.get("category_name") or ""))
+            base = {"service_name": item["name"], "price": item["price"], "price_type": item["price_type"]}
+            if row and row.get("category_id") is not None and row.get("master_id") is not None:
+                result.append({
                     **base,
-                    "subcategory_id": best_row["category_id"],
-                    "direction_id": best_row["master_id"],
-                    "subcategory_name_am": best_row.get("category_am"),
-                    "subcategory_name_ru": best_row.get("category_ru"),
-                    "subcategory_name_en": best_row.get("category_en"),
+                    "subcategory_id": row["category_id"],
+                    "direction_id": row["master_id"],
+                    "subcategory_name_am": row.get("category_am"),
+                    "subcategory_name_ru": row.get("category_ru"),
+                    "subcategory_name_en": row.get("category_en"),
+                    "catalog_match_status": "semantic_confirmed",
                 })
             else:
-                final_classified.append({
+                result.append({
                     **base,
                     "subcategory_id": None,
-                    "direction_id": batch_master_context,
+                    "direction_id": None,
                     "subcategory_name_am": None,
                     "subcategory_name_ru": None,
                     "subcategory_name_en": None,
+                    "catalog_match_status": "needs_admin_review",
                 })
-                unresolved.append((name, best_score))
-
-        # SEMANTIC BRIDGE — one batch request for all unresolved/disputed
-        # phrases. This is intentionally text-only: no IDs go to Groq.
-        if unresolved:
-            semantic = await _semantic_resolve_unresolved(
-                services=[name for name, _score in unresolved],
-                candidate_rows=filtered_rows,
-            )
-
-            by_category_name = {
-                _normalize_text(
-                    str(
-                        row.get("category_am")
-                        or row.get("category_ru")
-                        or row.get("category_en")
-                        or ""
-                    )
-                ): row
-                for row in filtered_rows
-                if row.get("category_id") is not None
-            }
-
-            still_unresolved: list[tuple[str, float]] = []
-            for item in final_classified:
-                if item.get("subcategory_id") is not None:
-                    continue
-
-                service_key = _normalize_text(item["service_name"])
-                proposal = semantic.get(service_key)
-                if not proposal:
-                    still_unresolved.append(
-                        next(
-                            (
-                                pair for pair in unresolved
-                                if _normalize_text(pair[0]) == service_key
-                            ),
-                            (item["service_name"], 0.0),
-                        )
-                    )
-                    continue
-
-                row = by_category_name.get(
-                    _normalize_text(proposal.get("category_name"))
-                )
-                if not row:
-                    still_unresolved.append(
-                        next(
-                            (
-                                pair for pair in unresolved
-                                if _normalize_text(pair[0]) == service_key
-                            ),
-                            (item["service_name"], 0.0),
-                        )
-                    )
-                    continue
-
-                item["subcategory_id"] = row["category_id"]
-                item["direction_id"] = row["master_id"]
-                item["subcategory_name_am"] = row.get("category_am")
-                item["subcategory_name_ru"] = row.get("category_ru")
-                item["subcategory_name_en"] = row.get("category_en")
-
-                logger.info(
-                    "Catalogue semantic accepted: '%s' -> '%s' "
-                    "(category=%s direction=%s)",
-                    item["service_name"],
-                    row.get("category_am"),
-                    row.get("category_id"),
-                    row.get("master_id"),
-                )
-
-            unresolved = still_unresolved
+                unresolved.append((item["name"], 0.0))
 
         await _notify_unclassified_services(
             services=unresolved,
             telegram_id=telegram_id,
             application_id=application_id,
         )
-
-        return final_classified
-
+        return result
     except Exception as exc:
-        logger.error(
-            "classify_services_batch failed: %s",
-            exc,
-            exc_info=True,
-        )
-        return safe
+        logger.error("classify_services_batch failed: %s", exc, exc_info=True)
+        return [
+            {"service_name": x["name"], "price": x["price"], "price_type": x["price_type"],
+             "subcategory_id": None, "direction_id": None}
+            for x in services
+        ]
 
