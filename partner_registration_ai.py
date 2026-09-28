@@ -735,11 +735,8 @@ async def extract_partner_registration_json(
 
     telegram_id = incoming_telegram_id
 
-    # Registration can be started from a browser test before a real partner
-    # row exists. ai_sessions.user_id is an FK to users.id, so never pass a
-    # Telegram ID (and especially never 0) into that column. Resolve the
-    # internal user first and create a minimal test partner user when this is
-    # the dedicated browser fallback account.
+    # Browser tests may arrive without a Telegram ID. Ensure the canonical
+    # users.telegram_id row exists before AIManager touches the session.
     try:
         user_row = data_core.ensure_user_by_telegram_id(int(telegram_id))
         if not user_row:
@@ -747,14 +744,11 @@ async def extract_partner_registration_json(
                 f"Unable to ensure users row for telegram_id={telegram_id}"
             )
 
-        # The canonical users identity is telegram_id. There is no users.id
-        # column in the current schema; ai_sessions.user_id uses this same
-        # Telegram identity through the existing Data Core/session layer.
-        internal_user_id = int(user_row.get("telegram_id") or telegram_id)
+        session_user_id = int(user_row.get("telegram_id") or telegram_id)
         logger.info(
-            "Registration AI session identity resolved: telegram_id=%s users.id=%s",
+            "Registration AI session identity resolved: telegram_id=%s session_user_id=%s",
             telegram_id,
-            internal_user_id,
+            session_user_id,
         )
     except Exception:
         raise
