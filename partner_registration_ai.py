@@ -573,7 +573,13 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     return result
 
 
-async def classify_profile_catalog(db, profile: dict) -> dict:
+async def classify_profile_catalog(
+    db,
+    profile: dict,
+    *,
+    telegram_id: int | None = None,
+    application_id: int | None = None,
+) -> dict:
     """Compatibility entry point using the new live-catalogue batch classifier."""
     from catalog_classifier import classify_services_batch, get_catalog
 
@@ -586,7 +592,12 @@ async def classify_profile_catalog(db, profile: dict) -> dict:
         return {"services": [], "master_category_id": None, "confidence": 0.0, "needs_review": False, "ambiguities": []}
 
     names = [_norm(x.get("name") or x.get("service_name")) for x in services]
-    classified = await classify_services_batch(db, names)
+    classified = await classify_services_batch(
+        db,
+        names,
+        telegram_id=telegram_id,
+        application_id=application_id,
+    )
     by_name = {_norm(x.get("service_name")): x for x in classified}
     catalog_rows = await get_catalog(db)
     catalog_map = {
@@ -845,6 +856,9 @@ async def extract(
     db,
     previous_profile: dict | None = None,
     pending_field: str | None = None,
+    *,
+    telegram_id: int | None = None,
+    application_id: int | None = None,
 ) -> dict:
     """Extract partner facts, then classify services against the live DB catalogue.
 
@@ -972,7 +986,12 @@ async def extract(
                 for x in services
                 if _norm(x.get("name") or x.get("service_name"))
             ]
-            classified_services = await classify_services_batch(db, service_names)
+            classified_services = await classify_services_batch(
+                db,
+                service_names,
+                telegram_id=telegram_id,
+                application_id=application_id,
+            )
             classified_map = {_norm(x.get("service_name")): x for x in classified_services}
 
             catalog_rows = await get_catalog(db)
