@@ -728,7 +728,7 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         purpose="structured partner extraction/classification",
     )
 
-async async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
+async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
     """Use Groq for semantic service -> real catalogue matching inside one direction.
     The model receives only the active subcategories of the already selected
     direction and may return only IDs supplied in that catalogue.
