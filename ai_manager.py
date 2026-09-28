@@ -144,10 +144,27 @@ class AIManager:
         role = self._storage_role(context)
 
         def read():
+            # ai_sessions.user_id references the internal users.id, not
+            # users.telegram_id. Registration/WebApp requests identify the
+            # caller by Telegram ID, so always resolve/create the canonical
+            # users row before touching ai_sessions.
+            import data_core
+
+            actor_telegram_id = int(telegram_id)
+            if actor_telegram_id <= 0:
+                raise ValueError("invalid_telegram_id")
+
+            user = data_core.ensure_user_by_telegram_id(actor_telegram_id)
+            if not user or not user.get("id"):
+                raise RuntimeError(
+                    f"Unable to resolve internal users.id for telegram_id={actor_telegram_id}"
+                )
+
+            internal_user_id = int(user["id"])
             return (
-                platform_db.active_session(int(telegram_id), role, "ai_manager")
+                platform_db.active_session(internal_user_id, role, "ai_manager")
                 or platform_db.create_session(
-                    int(telegram_id), role, "ai_manager", {"history_version": 1}
+                    internal_user_id, role, "ai_manager", {"history_version": 1}
                 )
             )
 
