@@ -117,7 +117,7 @@ class AIManager:
         return parsed
 
     async def chat(self, telegram_id:int, context_type:ContextType|str, message:str, *, extra_context:dict[str,Any]|None=None, language:str|None=None)->dict[str,Any]:
-        role=as_context_type(context_type)
+        role=self._context(context_type)
         language=language or self._lang(message)
         tools=ToolRegistry(telegram_id=telegram_id,context_type=role,trusted_context=extra_context)
         history=await self._supabase_history(telegram_id,role,self.max_history)
@@ -202,3 +202,13 @@ class AIManager:
         return " ".join((message or "").strip().casefold().split()) in {"yes","да","подтверждаю","подтвердить","confirm","ok","այո","հա","հաստատում եմ","հաստատել"}
 
 ")
+
+    async def handle_message(self, telegram_id:int, user_message:str, context_type:AIContext|ContextType|str, *, extra_context:dict[str,Any]|None=None, language:str|None=None)->dict[str,Any]:
+        """Telegram/WebApp-compatible canonical entry point."""
+        return await self.chat(
+            telegram_id,
+            self._context(context_type),
+            user_message,
+            extra_context=extra_context,
+            language=language,
+        )
