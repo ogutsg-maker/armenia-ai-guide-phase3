@@ -8,11 +8,20 @@ class HistoryProvider:
     def __init__(self, limit: int = 20):
         self.limit = max(2, min(int(limit), 50))
 
+    @staticmethod
+    def _storage_role(role: str) -> str:
+        # Registration is a partner-onboarding context, but ai_sessions.role
+        # only accepts the persisted application roles. Keep the AI prompt
+        # context as REGISTRATION while storing history under PARTNER.
+        normalized = str(role or "").strip().lower()
+        return "partner" if normalized == "registration" else normalized
+
     def _session(self, telegram_id: int, role: str):
+        storage_role = self._storage_role(role)
         return (
-            data_core.active_session(int(telegram_id), role.lower(), "ai_manager")
+            data_core.active_session(int(telegram_id), storage_role, "ai_manager")
             or data_core.create_session(
-                int(telegram_id), role.lower(), "ai_manager",
+                int(telegram_id), storage_role, "ai_manager",
                 {"history_version": 1},
             )
         )
