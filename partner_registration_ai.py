@@ -6,7 +6,6 @@ import os
 import re
 from typing import Any
 
-from thefuzz import fuzz
 
 import data_core
 
