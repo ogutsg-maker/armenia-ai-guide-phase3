@@ -453,6 +453,154 @@ class AIManager:
         normalized = normalized.strip(" .,!?:;՝։\"'«»")
         return normalized in _CANCELS
 
+    @staticmethod
+    def _normalize_admin_text(value: str) -> str:
+        import re
+        text = str(value or "").casefold().replace("ё", "е")
+        text = re.sub(r"[^0-9a-zа-яёա-ֆևօ]+", " ", text)
+        return " ".join(text.split()).strip()
+
+    @classmethod
+    def _extract_admin_price_edit(
+        cls,
+        message: str,
+        services: list[dict[str, Any]],
+    ) -> tuple[int, str] | None:
+        """Safely recognize an explicit price edit against a live application service.
+
+        This is deliberately narrow: it only activates when the user supplies a
+        numeric price and the service name matches exactly (after normalization)
+        one of the backend-owned service names. Ambiguous semantic requests still
+        go through Groq/tools.
+        """
+        import re
+        text = str(message or "")
+        lower = text.casefold()
+        if not any(word in lower for word in (
+            "գին", "գն", "փոխ", "փուխ", "цена", "стоим", "price", "change",
+            "измен", "помен", "փոփոխ",
+        )):
+            return None
+        match = re.search(r"(?<!\d)(\d{1,3}(?:[\s.,]\d{3})+|\d{3,7})(?!\d)", text)
+        if not match:
+            return None
+        raw_price = re.sub(r"[\s.,]", "", match.group(1))
+        try:
+            price = int(raw_price)
+        except ValueError:
+            return None
+        if price < 0 or price > 100_000_000:
+            return None
+
+        normalized = cls._normalize_admin_text(text)
+        candidates: list[tuple[int, str]] = []
+        for service in services or []:
+            name = str(service.get("name") or "").strip()
+            if not name:
+                continue
+            n = cls._normalize_admin_text(name)
+            if not n:
+                continue
+            # Exact phrase match only. Never guess between similar services.
+            if re.search(r"(?<![\wա-ֆ])" + re.escape(n) + r"(?![\wա-ֆ])", normalized):
+                candidates.append((int(service.get("service_index") or 0), name))
+        if len(candidates) != 1:
+            return None
+        return candidates[0][0], candidates[0][1]
+
+    async def _admin_fast_path(
+        self,
+        telegram_id: int,
+        message: str,
+        session_context: dict[str, Any],
+        language: str,
+    ) -> dict[str, Any] | None:
+        """Deterministic path for explicit admin application price edits.
+
+        No Groq request is made here. Backend resolves the application/service,
+        validates the price and creates the real confirmation action.
+        """
+        if not message:
+            return None
+        import re
+        app_id = None
+        m = re.search(r"(?:#|№)\s*(\d+)", str(message))
+        if m:
+            app_id = int(m.group(1))
+        stored_id = session_context.get("active_application_id")
+        if app_id is None and stored_id:
+            try:
+                app_id = int(stored_id)
+            except (TypeError, ValueError):
+                app_id = None
+        if not app_id:
+            return None
+
+        import data_core
+        app = data_core.get_application_full(app_id)
+        if not app:
+            return None
+        services = data_core.application_service_items(app_id)
+
+        # Remember only the stable ID, not the full application JSON.
+        await self._update_session_context(
+            telegram_id,
+            ContextType.ADMIN,
+            {"active_application_id": app_id},
+        )
+
+        price_edit = self._extract_admin_price_edit(message, services)
+        if not price_edit:
+            # A bare "fix application #39" is deterministic too: load it and
+            # ask what should be changed without spending a Groq call.
+            if re.search(r"(?:հայտ|заяв|application)", str(message).casefold()):
+                names = [str(x.get("name") or "") for x in services if x.get("name")]
+                if language == "hy":
+                    reply = (
+                        f"Հայտ #{app_id}-ը բացված է։ "
+                        f"Ծառայություններ՝ {', '.join(names)}։ "
+                        "Ո՞ր ծառայությունը կամ հատկությունն եք ցանկանում փոխել։"
+                    )
+                elif language == "ru":
+                    reply = (
+                        f"Заявка #{app_id} открыта. Услуги: {', '.join(names)}. "
+                        "Что именно изменить?"
+                    )
+                else:
+                    reply = (
+                        f"Application #{app_id} is open. Services: {', '.join(names)}. "
+                        "What would you like to change?"
+                    )
+                return {"reply": reply, "fast_path": True, "application_id": app_id}
+            return None
+
+        service_index, service_name = price_edit
+        try:
+            import data_core
+            preview = data_core.prepare_application_service_price_update(
+                application_id=app_id,
+                service_index=service_index,
+                price=price_edit and int(re.search(r"(\d{1,3}(?:[\s.,]\d{3})+|\d{3,7})", str(message)).group(1).replace(" ", "").replace(",", "").replace(".", "")),
+                actor_user_id=telegram_id,
+            )
+            action = dict(preview.get("action") or {})
+            await self._set_pending(telegram_id, ContextType.ADMIN, action)
+            summary = str(preview.get("summary") or "")
+            await self._save_history(
+                telegram_id, ContextType.ADMIN, "ai", summary,
+                {"fast_path": True, "pending_action": action},
+            )
+            return {
+                "reply": summary,
+                "confirmation_pending": True,
+                "fast_path": True,
+                "tool_result": preview,
+            }
+        except Exception as exc:
+            logger.exception("Admin deterministic price fast path failed")
+            return {"reply": self._error_text(language), "error": str(exc)}
+
+
     async def _pending(self, telegram_id: int, context: ContextType):
         ctx = await self._session_context(telegram_id, context)
         return SessionState.from_dict(ctx).pending_action
@@ -606,6 +754,16 @@ class AIManager:
             max_items=5 if role == ContextType.ADMIN else 8,
         )
         session_context = await self._session_context(telegram_id, role)
+
+        # Admin explicit application edits have a backend-owned fast path.
+        # This is intentionally before tool definitions/Groq construction.
+        if role == ContextType.ADMIN:
+            fast = await self._admin_fast_path(
+                telegram_id, message, session_context, language
+            )
+            if fast is not None:
+                return fast
+
         state = SessionState.from_dict(session_context)
         tools = ToolRegistry(
             telegram_id=int(telegram_id),
