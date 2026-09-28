@@ -214,7 +214,15 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
         pass
     history.append({"role": "user", "content": text})
     from partner_registration_ai import extract, missing_question
-    profile = await extract(text, history, db, previous_profile=previous, pending_field=pending)
+    profile = await extract(
+        text,
+        history,
+        db,
+        previous_profile=previous,
+        pending_field=pending,
+        telegram_id=uid,
+        application_id=data.get("partner_application_id"),
+    )
 
     # Final deterministic safety net for the WebApp. The partner's original
     # message is authoritative for obvious facts and explicitly priced
