@@ -48,16 +48,38 @@ class HistoryProvider:
             if isinstance(data, str):
                 try: data = json.loads(data)
                 except Exception: data = {}
-            out.append({
-                "role": "assistant" if row.get("sender_role") in {"ai", "assistant"} else "user",
+            sender_role = str(row.get("sender_role") or "").strip().lower()
+            if sender_role in {"ai", "assistant"}:
+                history_role = "assistant"
+            elif sender_role == "tool":
+                history_role = "tool"
+            elif sender_role == "system":
+                history_role = "system"
+            else:
+                history_role = "user"
+            item = {
+                "role": history_role,
                 "content": str(row.get("message_text") or row.get("text") or ""),
                 "data": data or {},
-            })
+            }
+            if row.get("tool_call_id"):
+                item["tool_call_id"] = row["tool_call_id"]
+            out.append(item)
         return out
 
-    def append(self, telegram_id: int, role: str, sender: str, content: str, data: dict[str, Any] | None = None):
+    def append(
+        self,
+        telegram_id: int,
+        role: str,
+        sender: str,
+        content: str,
+        data: dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
+    ):
         session = self._session(telegram_id, role)
-        return data_core.add_ai_message(session["id"], sender, str(content or ""), data or {})
+        return data_core.add_ai_message(
+            session["id"], sender, str(content or ""), data or {}, tool_call_id
+        )
 
     def set_pending(self, telegram_id: int, role: str, pending: dict[str, Any] | None):
         session = self._session(telegram_id, role)
