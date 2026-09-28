@@ -120,6 +120,12 @@ class ToolRegistry:
                 contexts=(ContextType.CLIENT, ContextType.PARTNER, ContextType.ADMIN),
             ),
             self._spec(
+                "get_next_item",
+                "Show the next item from the backend-owned current list. If there is no next item, say so. Never guess an item outside the stored list.",
+                {},
+                contexts=(ContextType.CLIENT, ContextType.PARTNER, ContextType.ADMIN),
+            ),
+            self._spec(
                 "search_services",
                 "Search real approved marketplace services. Never invent results.",
                 {
@@ -403,6 +409,23 @@ class ToolRegistry:
 
         if name == "resolve_current_entity":
             return self.resolve_reference(str(args["entity_type"]).strip().lower())
+
+        if name == "get_next_item":
+            items = self.session_state.get("current_list") or []
+            try:
+                index = int(self.session_state.get("current_pagination_index") or 0)
+            except (TypeError, ValueError):
+                index = 0
+            next_index = index + 1
+            if next_index >= len(items):
+                return {"ok": True, "has_next": False, "message": "no_next_item"}
+            item = items[next_index]
+            return {
+                "ok": True,
+                "has_next": True,
+                "item": item,
+                "pagination": {"index": next_index, "total": len(items)},
+            }
 
         if name == "search_services":
             return {"ok": True, "items": data_core.search_services(
