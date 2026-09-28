@@ -957,88 +957,10 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
             data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown", "matched_subcategory_id": None}]
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
         data = _recover_obvious_facts(combined_text, data)
-        recovered = _recover_services_from_history(history + [{"role": "user", "content": text}])
-        if recovered:
-            data["services"] = recovered
-        # Business name is mandatory even when Groq is unavailable.
-        data["missing"] = [
-            key for key in ("business_name", "marz", "city", "phone", "services")
-            if not data.get(key)
-        ]
-        data["ready"] = not data["missing"]
-        return data
+        # Keep Groq extraction authoritative for service names.
+        # Do not maintain category/service keyword recovery dictionaries here.
+        recovered = []
 
-    model = os.getenv(
-        "PARTNER_ONBOARDING_MODEL",
-        os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-    ).strip() or "openai/gpt-oss-20b"
-    if model in {"llama-3.1-8b-instant", "llama-3.3-70b-versatile"}:
-        model = "openai/gpt-oss-20b"
-
-    try:
-        # FINAL partner-registration extractor:
-        # one USER message, GPT-OSS-20B, JSON mode, low reasoning.
-        # The active catalogue is supplied directly from the database.
-        catalog_rows = get_catalog(db)
-        strict_data = await extract_partner_registration_json(
-            combined_text if 'combined_text' in locals() else (
-                " ".join([str(x.get("content") or "") for x in history] + [text])
-            ),
-            model=model,
-            max_tokens=900,
-        )
-        data = dict(previous_profile)
-
-        mapping = {
-            "company_or_name": "business_name",
-            "marz": "marz",
-            "city": "city",
-            "address": "address",
-            "phone": "phone",
-            "working_hours": "working_hours",
-        }
-        for source, target in mapping.items():
-            value = strict_data.get(source)
-            if value not in (None, ""):
-                data[target] = value
-
-        data["document_type"] = strict_data.get("document_type")
-        data["description"] = _norm(text) or data.get("description") or ""
-
-        ai_services = strict_data.get("extracted_services") or []
-        data["services"] = ai_services if isinstance(ai_services, list) else []
-
-        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
-
-        # Deterministic validation: count explicit monetary mentions, but NEVER
-        # replace a valid GPT extraction merely because the language differs.
-        price_mentions = _extract_price_mentions(combined_text)
-        recovered = _recover_services_from_history(
-            history + [{"role": "user", "content": text}]
-        )
-        if not recovered:
-            low = combined_text.lower()
-            repair_context = bool(re.search(r"վերանորոգ|ремонт|repair", low))
-            if repair_context:
-                service_tail = re.search(
-                    r"(?:մասնավորապես|մասնավորապես՝|specifically|а именно)\s+(.+?)(?=\s*,\s*(?:ք|քաղաք)\b|\s+(?:ք|քաղաք)\s+|\s+ժամը\b|\s+հեռ\.?\b|$)",
-                    combined_text, flags=re.I
-                )
-                if service_tail:
-                    items = re.split(r"\s*,\s*|\s+և\s+|\s+ու\s+", service_tail.group(1))
-                    for raw_item in items:
-                        item_name = _norm(raw_item).strip(" .;:՝")
-                        if not item_name:
-                            continue
-                        # Preserve the user's service wording.
-                        # Category IDs are assigned only by the live DB matcher.
-                        recovered.append({
-                            "name": item_name,
-                            "raw_sub_direction": item_name,
-                            "price": None,
-                            "price_type": "fixed",
-                            "matched_subcategory_id": None,
-                        })
         if price_mentions and len(data.get("services") or []) < len(price_mentions):
             # Add only genuinely missing price-bearing services. Existing GPT
             # names/translation/catalogue IDs remain authoritative.
