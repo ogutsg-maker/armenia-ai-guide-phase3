@@ -735,6 +735,46 @@ async def extract_partner_registration_json(
 
     telegram_id = incoming_telegram_id
 
+    # Registration can be started from a browser test before a real partner
+    # row exists. ai_sessions.user_id is an FK to users.id, so never pass a
+    # Telegram ID (and especially never 0) into that column. Resolve the
+    # internal user first and create a minimal test partner user when this is
+    # the dedicated browser fallback account.
+    try:
+        user_row = data_core.one(
+            "SELECT id FROM users WHERE telegram_id=%s LIMIT 1",
+            (telegram_id,),
+        )
+        if not user_row:
+            if telegram_id != 1831076171:
+                raise RuntimeError(
+                    f"Unable to resolve internal users.id for telegram_id={telegram_id}"
+                )
+            logger.info(
+                "Тестовый пользователь %s не найден. Создаем временную запись в users.",
+                telegram_id,
+            )
+            user_row = data_core.one(
+                """INSERT INTO users (telegram_id, role, username)
+                   VALUES (%s, 'partner', 'test_partner_browser')
+                   ON CONFLICT (telegram_id) DO UPDATE
+                   SET telegram_id=EXCLUDED.telegram_id
+                   RETURNING id""",
+                (telegram_id,),
+            )
+        internal_user_id = int((user_row or {}).get("id") or 0)
+        if internal_user_id <= 0:
+            raise RuntimeError(
+                f"Unable to resolve internal users.id for telegram_id={telegram_id}"
+            )
+        logger.info(
+            "Registration AI session identity resolved: telegram_id=%s users.id=%s",
+            telegram_id,
+            internal_user_id,
+        )
+    except Exception:
+        raise
+
     source = _norm(raw_text)
     if len(source) > 9000:
         source = source[-9000:]
