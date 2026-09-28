@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -38,6 +39,43 @@ _CONFIRMATIONS = {
 _CANCELS = {
     "no", "нет", "ոչ", "չեղարկել", "отмена", "отменить", "cancel",
 }
+
+
+@dataclass
+class SessionState:
+    """Backend-owned conversational state persisted in platform_db.context_json."""
+    last_displayed_entity_id: dict[str, Any] | None = None
+    current_pagination_index: int = 0
+    pending_action: dict[str, Any] | None = None
+    current_list: list[dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any] | None) -> "SessionState":
+        value = dict(value or {})
+        last = value.get("last_displayed_entity_id")
+        if last is not None and not isinstance(last, dict):
+            last = {"type": value.get("current_entity_type") or "entity", "id": last}
+        try:
+            index = max(0, int(value.get("current_pagination_index", value.get("current_position", 0)) or 0))
+        except (TypeError, ValueError):
+            index = 0
+        items = value.get("current_list")
+        if not isinstance(items, list):
+            items = []
+        return cls(
+            last_displayed_entity_id=last,
+            current_pagination_index=index,
+            pending_action=value.get("pending_action") or value.get("ai_manager_pending_action"),
+            current_list=items[:50],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "last_displayed_entity_id": self.last_displayed_entity_id,
+            "current_pagination_index": self.current_pagination_index,
+            "pending_action": self.pending_action,
+            "current_list": self.current_list[:50],
+        }
 
 
 class AIManager:
@@ -280,18 +318,22 @@ Confirm?"
 
     async def _pending(self, telegram_id: int, context: ContextType):
         ctx = await self._session_context(telegram_id, context)
-        return ctx.get("ai_manager_pending_action")
+        return SessionState.from_dict(ctx).pending_action
 
     async def _set_pending(
         self, telegram_id: int, context: ContextType, action: dict[str, Any]
     ):
         return await self._update_session_context(
-            telegram_id, context, {"ai_manager_pending_action": action}
+            telegram_id, context, {"pending_action": action}
         )
 
     async def _clear_pending(self, telegram_id: int, context: ContextType):
         ctx = await self._session_context(telegram_id, context)
+        ctx.pop("pending_action", None)
         ctx.pop("ai_manager_pending_action", None)
+        state = SessionState.from_dict(ctx)
+        state.pending_action = None
+        ctx.update(state.to_dict())
         return await self._update_session_context(
             telegram_id, context, ctx, replace=True
         )
@@ -369,10 +411,12 @@ Confirm?"
         role = self._context(context_type)
         language = language or self._lang(message)
         trusted = self._trusted(role, telegram_id, extra_context)
+        state = SessionState.from_dict(session_context)
         tools = ToolRegistry(
             telegram_id=int(telegram_id),
             context_type=role,
             trusted_context=trusted,
+            session_state=state.to_dict(),
         )
         definitions = tools.definitions()
         history = await self._supabase_history(telegram_id, role)
@@ -571,18 +615,24 @@ Confirm?"
                     item = result.get("item")
                     items = result.get("items")
                     if isinstance(item, dict) and item.get("id") is not None:
+                        entity_type = (
+                            "application" if name.endswith("application")
+                            else ("order" if "order" in name else
+                                  ("service" if "service" in name else "entity"))
+                        )
                         patch.update({
+                            "last_displayed_entity_id": {
+                                "type": entity_type,
+                                "id": item.get("id"),
+                            },
                             "current_entity_id": item.get("id"),
-                            "current_entity_type": (
-                                "application" if name.endswith("application")
-                                else ("order" if "order" in name else "entity")
-                            ),
+                            "current_entity_type": entity_type,
                         })
                         current_list = session_context.get("current_list") or []
                         item_id = item.get("id")
                         for idx, row in enumerate(current_list):
                             if isinstance(row, dict) and str(row.get("id")) == str(item_id):
-                                patch["current_position"] = idx
+                                patch["current_pagination_index"] = idx
                                 break
                     if isinstance(items, list):
                         safe_items = [
@@ -592,7 +642,13 @@ Confirm?"
                         ][:50]
                         if safe_items:
                             patch["current_list"] = safe_items
-                            patch["current_position"] = 0
+                            patch["current_pagination_index"] = 0
+                            first = safe_items[0]
+                            if len(safe_items) == 1:
+                                patch["last_displayed_entity_id"] = {
+                                    "type": "order" if "order" in name else "entity",
+                                    "id": first["id"],
+                                }
                     if name == "get_my_companies" and isinstance(items, list) and items:
                         patch["current_company_id"] = items[0].get("id")
                     if name == "get_my_services" and isinstance(items, list) and items:
