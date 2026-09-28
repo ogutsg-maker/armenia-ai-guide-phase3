@@ -1,6 +1,7 @@
 """Unified AI entry point for REGISTRATION/CLIENT/PARTNER/ADMIN."""
 from __future__ import annotations
 import asyncio, json, logging, os, time
+from enum import Enum
 from typing import Any
 from groq import AsyncGroq
 import platform_db
@@ -157,7 +158,7 @@ class AIManager:
                     await self._save_supabase_history(telegram_id,role,"ai",reply,{"confirmation_required":True})
                     return {"reply":reply,"confirmation_required":True,"tool_calls":tool_calls_log}
                 messages.append({"role":"tool","tool_call_id":call.id,"content":json.dumps(result,ensure_ascii=False,default=str)[:12000]})
-        raise RuntimeError("AI tool loop limit reached
+        raise RuntimeError("AI tool loop limit reached")
 
     async def _set_pending(self, telegram_id:int, context:ContextType, pending:dict):
         def _write():
