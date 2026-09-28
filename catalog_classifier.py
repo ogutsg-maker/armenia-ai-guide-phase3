@@ -180,7 +180,18 @@ def _direct_match_score(service: Any, category: Any) -> float:
 
 
 def _fuzzy_score(service: Any, category: Any) -> float:
-    """SequenceMatcher score over normalized/stemmed token text."""
+    """
+    Conservative fuzzy similarity.
+
+    Fuzzy similarity is a ranking signal, not proof of semantic equivalence.
+    In particular, it must never turn one shared generic word into a strong
+    direction vote for a multi-word service.
+
+    Rules:
+      * exact/near-exact single meaningful token may be strong;
+      * multi-token phrases need meaningful-token coverage;
+      * otherwise fuzzy score is capped below the strong-vote gate.
+    """
     service_tokens = _tokens(service)
     category_tokens = _tokens(category)
 
@@ -189,8 +200,46 @@ def _fuzzy_score(service: Any, category: Any) -> float:
 
     left = " ".join(sorted(service_tokens))
     right = " ".join(sorted(category_tokens))
-    return SequenceMatcher(None, left, right).ratio()
+    raw = SequenceMatcher(None, left, right).ratio()
 
+    if len(service_tokens) == 1:
+        token = next(iter(service_tokens))
+        if token in category_tokens:
+            return 1.0
+        # A single-word query may use fuzzy matching, but only when the words
+        # are genuinely close in form. This remains category-agnostic.
+        token_scores = [SequenceMatcher(None, token, candidate).ratio()
+                        for candidate in category_tokens]
+        return max(token_scores, default=0.0) if raw >= 0.80 else 0.0
+
+    # For a multi-word service, calculate how many meaningful service roots
+    # are actually represented in the candidate.
+    matched = 0
+    for service_token in service_tokens:
+        if len(service_token) < 4:
+            continue
+        if any(
+            service_token == category_token
+            or (len(service_token) >= 5 and service_token in category_token)
+            or (len(category_token) >= 5 and category_token in service_token)
+            for category_token in category_tokens
+        ):
+            matched += 1
+
+    coverage = matched / len(service_tokens)
+
+    # Strong fuzzy score is allowed only when the candidate covers essentially
+    # the whole service phrase. A generic word such as "մեքենա" therefore
+    # cannot create a strong vote for "սառնարանների վերանորոգում".
+    if coverage >= 0.80:
+        return max(raw, 0.80)
+
+    # Partial lexical evidence can still rank a candidate, but it is
+    # deliberately capped below FUZZY_CONFIDENCE_GATE.
+    if coverage > 0:
+        return min(raw, 0.69)
+
+    return 0.0
 
 def _safe_int(value: Any) -> int | None:
     try:

@@ -188,253 +188,76 @@ def _address_label(ctx, ident):
 
 
 async def api_ai_command(request: web.Request):
-    uid=_auth(request); pid=_partner(uid)
-    data=await request.json()
-    message=str(data.get("message") or "").strip()
-    language=str(data.get("language") or "hy")
-    if language not in {"hy","ru","en"}: language="hy"
-    # Prefer the language of the actual message over a stale frontend selector.
-    if re.search(r"[\u0531-\u058F]", message):
+    """Canonical partner conversational endpoint backed by AIManager."""
+    uid = _auth(request)
+    _partner(uid)
+    data = await request.json()
+    message = str(data.get("message") or "").strip()
+    language = str(data.get("language") or "hy")
+    if language not in {"hy", "ru", "en"}:
+        language = "hy"
+    if re.search(r"[\\u0531-\\u058F]", message):
         language = "hy"
     elif re.search(r"[А-Яа-яЁё]", message):
         language = "ru"
     if not message:
-        return web.json_response({"ok":False,"error":"message_required"},status=400)
-    ctx=_context(pid)
+        return web.json_response({"ok": False, "error": "message_required"}, status=400)
 
-    # Natural-language confirmation: if the partner answers "да / yes / այո"
-    # after a pending action, treat it exactly like pressing the Confirm button.
-    normalized = re.sub(r"[\s.!?,;:]+", " ", message.lower()).strip()
-    if normalized in {
-        "да", "да да", "da", "yes", "y", "ok", "okay", "confirm", "confirmed",
-        "подтверждаю", "подтвердить", "согласен", "согласна",
-        "այո", "հա", "հաստատում եմ", "հաստատել"
-    }:
-        pending = [
-            (ts, token, cmd)
-            for token, (ts, owner_pid, cmd) in _PENDING.items()
-            if owner_pid == pid and time.time() - ts <= _PENDING_TTL
-        ]
-        if pending:
-            _, token, command = max(pending, key=lambda item: item[0])
-
-            # Keep a confirmed add-service action alive when an address is still missing.
-            if command.get("intent") == "add_service" and not command.get("object_id"):
-                if command.get("_address_confirmation"):
-                    address_text = str(command.get("_address_message") or "").strip()
-                    bid = int(command.get("business_id") or 0)
-                    actor_uid = int(command.get("actor_user_id") or uid)
-                    parts = [p.strip() for p in address_text.split(",") if p.strip()]
-                    city = parts[0] if len(parts) >= 2 else None
-                    address = ", ".join(parts[1:]) if len(parts) >= 2 else address_text
-                    created = data_core.create_partner_address(
-                        partner_id=pid,
-                        actor_user_id=actor_uid,
-                        company_id=bid,
-                        address=address,
-                        city=city,
-                        object_name=address_text,
-                    )
-                    command["object_id"] = int(created["id"])
-                    command.pop("_address_confirmation", None)
-                    command.pop("_address_message", None)
-                else:
-                    candidates = [
-                        x for x in ctx.get("addresses", [])
-                        if int(x.get("business_id") or 0) == int(command.get("business_id") or 0)
-                    ]
-                    if len(candidates) == 1:
-                        command["object_id"] = int(candidates[0]["id"])
-                    else:
-                        reply = {
-                            "hy": "Նշեք ծառայության հասցեն։ Օրինակ՝ «Գյումրի, Կենտրոնական 22»։",
-                            "ru": "Укажите адрес услуги. Например: «Гюмրի, Центральная 22».",
-                            "en": "Please provide the service address, for example: “Gyumri, Kentronakan 22”.",
-                        }.get(language, "Նշեք ծառայության հասցեն։")
-                        return web.json_response({
-                            "ok": True,
-                            "reply": reply,
-                            "confirmation_id": token,
-                            "command": command,
-                        })
-
-            _PENDING.pop(token, None)
-            # Re-resolve the pending entity against the latest live context.
-            # The original AI response may have omitted service_id/name.
-            pending_intent = command.get("intent")
-            if pending_intent in {"update_service", "delete_service"}:
-                pending_name = re.sub(r"\s+", " ", str(command.get("name") or "").casefold()).strip()
-                if not pending_name:
-                    pending_name = re.sub(r"\s+", " ", str(command.get("message") or "").casefold()).strip()
-                candidates = []
-                for svc in ctx.get("services", []):
-                    svc_name = re.sub(r"\s+", " ", str(svc.get("name") or "").casefold()).strip()
-                    if svc_name and svc_name in pending_name:
-                        candidates.append(svc)
-                if len(candidates) == 1:
-                    command["service_id"] = int(candidates[0]["id"])
-                    command["business_id"] = int(candidates[0]["business_id"])
-                    command["name"] = candidates[0].get("name")
-            result = await _execute_mutation(pid, command, ctx, uid)
-            if isinstance(result, web.Response):
-                # Rebuild the partner context after every confirmed mutation.
-                # The next AI turn therefore always sees fresh business data.
-                try:
-                    fresh_ctx = _context(pid)
-                    result.headers["X-AI-Context-Refreshed"] = "1"
-                    result.headers["X-AI-Context-Version"] = "live"
-                    result.headers["X-AI-Context-Entities"] = str(
-                        len(fresh_ctx.get("businesses", []))
-                        + len(fresh_ctx.get("services", []))
-                        + len(fresh_ctx.get("addresses", []))
-                    )
-                except Exception:
-                    pass
-                return result
-
-    # Continue the same confirmed add-service action when the partner
-    # supplies the missing address in the next message.
-    if normalized not in {
-        "да", "да да", "da", "yes", "y", "ok", "okay", "confirm", "confirmed",
-        "подтверждаю", "подтвердить", "согласен", "согласна",
-        "այո", "հա", "հաստատում եմ", "հաստատել",
-        "нет", "no", "n", "cancel", "отмена", "отменить",
-        "не надо", "не делай", "ոչ", "ոչ, պետք չէ", "չեղարկել"
-    }:
-        waiting = [
-            (ts, token, cmd)
-            for token, (ts, owner_pid, cmd) in _PENDING.items()
-            if owner_pid == pid
-            and time.time() - ts <= _PENDING_TTL
-            and cmd.get("intent") == "add_service"
-            and not cmd.get("object_id")
-        ]
-        if waiting:
-            _, token, command = max(waiting, key=lambda item: item[0])
-            command["actor_user_id"] = uid
-            command["_address_message"] = message
-            command["_address_confirmation"] = True
-            company = _entity_name(ctx, "businesses", command.get("business_id")) or "ընկերությունը"
-            reply = {
-                "hy": f'Ավելացնել «{message}» հասցեն «{company}» ընկերությանը և օգտագործել այն ծառայության համար։ Հաստատո՞ւմ եք։',
-                "ru": f'Добавить адрес «{message}» в компанию «{company}» и использовать его для услуги. Подтверждаете?',
-                "en": f'Add the address “{message}” to “{company}” and use it for the service. Confirm?',
-            }.get(language, f'Ավելացնել «{message}» հասցեն և օգտագործել այն ծառայության համար։ Հաստատո՞ւմ եք։')
-            return web.json_response({
-                "ok": True,
-                "reply": reply,
-                "confirmation_id": token,
-                "command": command,
-            })
-
-    # Natural-language cancellation of the last pending action.
-    if normalized in {
-        "нет", "no", "n", "cancel", "отмена", "отменить",
-        "не надо", "не делай", "ոչ", "ոչ, պետք չէ", "չեղարկել"
-    }:
-        pending = [
-            (ts, token)
-            for token, (ts, owner_pid, _) in _PENDING.items()
-            if owner_pid == pid and time.time() - ts <= _PENDING_TTL
-        ]
-        if pending:
-            _, token = max(pending, key=lambda item: item[0])
-            _PENDING.pop(token, None)
-            return web.json_response({
-                "ok": True,
-                "reply": {"hy": "Գործողությունը չեղարկվեց։", "ru": "Действие отменено.", "en": "Action cancelled."}.get(language, "Action cancelled.")
-            })
+    from ai_manager import AIManager
+    from prompt_factory import ContextType
 
     try:
-        command=await _ai_json(message,language,ctx)
-    except Exception as exc:
-        return web.json_response({"ok":False,"error":"ai_command_failed","message":str(exc)[:240]},status=503)
-    command["language"]=language
-    command["message"]=message
-    command["actor_user_id"]=uid
-    intent=command.get("intent")
-
-    # Recover an explicit new-company name from mixed-language user text.
-    if intent == "add_business" and not str(command.get("name") or "").strip():
-        m = re.search(
-            r"(?:նոր\s+(?:ֆիրմա|ընկերություն)|new\s+(?:company|business)|нов(?:ая|ую)\s+(?:фирма|компан(?:ия|ию)))\s*[,;:\-]?\s*(.+)$",
+        manager = request.app.get("ai_manager") or AIManager()
+        result = await manager.handle_message(
+            uid,
             message,
-            re.IGNORECASE,
+            ContextType.PARTNER,
+            language=language,
         )
-        if m:
-            command["name"] = m.group(1).strip(" .,!?:;-")
+    except Exception as exc:
+        return _json_response({
+            "ok": False,
+            "error": "ai_command_failed",
+            "message": str(exc)[:240],
+        }, status=503)
 
-    # Confirmation text is generated by Python so Groq cannot switch languages.
-    if intent in {
-        "add_business","update_business","delete_business",
-        "add_service","update_service","delete_service",
-        "add_address","update_address","delete_address",
-    } and command.get("needs_confirmation"):
-        command["reply"] = _local_preview_reply(command, ctx, language)
-
-    # Resolve an existing service from the live partner context before mutation.
-    # AI still decides the intent; Python only verifies the target entity.
-    # The message itself is also used as a deterministic entity hint. This is
-    # important for short requests such as "Удали педикюр": the model may return
-    # delete_service without a name, while the live context contains exactly one
-    # matching service.
-    if intent in {"update_service", "delete_service"}:
-        wanted = re.sub(r"\s+", " ", str(command.get("name") or "").casefold()).strip()
-        if not wanted:
-            msg_norm = re.sub(r"\s+", " ", message.casefold()).strip()
-            matches_from_message = []
-            for svc in ctx.get("services", []):
-                service_name = re.sub(r"\s+", " ", str(svc.get("name") or "").casefold()).strip()
-                if service_name and service_name in msg_norm:
-                    matches_from_message.append(svc)
-            if len(matches_from_message) == 1:
-                wanted = re.sub(r"\s+", " ", str(matches_from_message[0].get("name") or "").casefold()).strip()
-                command["name"] = matches_from_message[0].get("name")
-        if wanted and not command.get("service_id"):
-            candidates = []
-            for svc in ctx.get("services", []):
-                service_name = re.sub(r"\s+", " ", str(svc.get("name") or "").casefold()).strip()
-                if service_name and (service_name == wanted or wanted in service_name or service_name in wanted):
-                    candidates.append(svc)
-            if len(candidates) == 1:
-                command["service_id"] = int(candidates[0]["id"])
-                command["business_id"] = int(candidates[0]["business_id"])
-        if command.get("service_id"):
-            svc = next((x for x in ctx.get("services", []) if int(x.get("id")) == int(command["service_id"])), None)
-            if svc:
-                command["business_id"] = int(svc["business_id"])
-                command["name"] = svc.get("name") or command.get("name")
-
-    # Resolve the company deterministically. Explicit names win; phrases such
-    # as "այդ ընկերությունում" use the last company selected/created in chat.
-    if intent == "add_service" and not command.get("business_id"):
-        msg_norm = re.sub(r"\s+", " ", message.casefold()).strip()
-        businesses = ctx.get("businesses", [])
-        exact = [
-            b for b in businesses
-            if str(b.get("name") or "").casefold().strip()
-            and str(b.get("name") or "").casefold().strip() in msg_norm
-        ]
-        if len(exact) == 1:
-            command["business_id"] = int(exact[0]["id"])
-            _set_active_business(pid, int(exact[0]["id"]), str(exact[0].get("name") or ""))
-        elif re.search(r"(այդ|նոր|ընտրված)\s+(?:կոմպանիայում|ընկերությունում|ֆիրմայում)|\b(?:эта|этой|новой)\s+(?:компании|фирме)\b|\b(?:that|this|new)\s+(?:company|business)\b", message, re.IGNORECASE):
-            active = _get_active_business(pid, ctx)
-            if active:
-                command["business_id"] = int(active["id"])
-        elif len(businesses) == 1:
-            command["business_id"] = int(businesses[0]["id"])
-    if intent in {"show_businesses","show_services","show_orders","show_profile","show_addresses","show_documents"}:
-        return await _execute_read(pid,command,ctx)
-    if intent=="clarify" or not intent:
-        return web.json_response({"ok":True,"reply":str(command.get("reply") or "Пожалуйста, уточните запрос."),"command":command})
-    if intent not in {"show_businesses","show_services","show_orders","clarify"}:
-        token=_pending_add(pid,command)
-        return web.json_response({"ok":True,"reply":str(command.get("reply") or _preview(command,ctx,language)),"confirmation_id":token,"command":command})
-    return await _execute_mutation(pid,command,ctx,uid)
+    return _json_response({
+        "ok": True,
+        "reply": result.get("reply") or "",
+        "confirmation_required": bool(result.get("confirmation_required")),
+        "confirmed": bool(result.get("confirmed")),
+        "tool_result": result.get("tool_result"),
+        "tool_calls": result.get("tool_calls") or [],
+    })
 
 
+async def api_ai_command_confirm(request: web.Request):
+    """Compatibility endpoint: confirmation is now stored by AIManager."""
+    uid = _auth(request)
+    _partner(uid)
+    from ai_manager import AIManager
+    from prompt_factory import ContextType
 
+    try:
+        manager = request.app.get("ai_manager") or AIManager()
+        result = await manager.handle_message(
+            uid,
+            "yes",
+            ContextType.PARTNER,
+        )
+    except Exception as exc:
+        return _json_response({
+            "ok": False,
+            "error": "ai_confirmation_failed",
+            "message": str(exc)[:240],
+        }, status=503)
+
+    return _json_response({
+        "ok": True,
+        "reply": result.get("reply") or "",
+        "confirmed": bool(result.get("confirmed")),
+        "tool_result": result.get("tool_result"),
+    })
 
 def _local_preview_reply(c, ctx, lang):
     intent = str(c.get("intent") or "")

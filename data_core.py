@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 import json
+import os
 
 import platform_db
 
@@ -105,6 +106,27 @@ def get_user(user_id: int):
            FROM users WHERE telegram_id=%s""",
         (int(user_id),),
     )
+
+
+def is_admin(telegram_id: int) -> bool:
+    """Canonical backend authorization check for administrative operations."""
+    try:
+        actor_id = int(telegram_id)
+    except (TypeError, ValueError):
+        return False
+
+    user = get_user(actor_id) or {}
+    role = str(user.get("role") or "").strip().lower()
+    if role == "admin":
+        return True
+
+    configured_raw = os.getenv("ADMIN_TELEGRAM_ID", "").strip()
+    if not configured_raw:
+        return False
+    try:
+        return actor_id == int(configured_raw)
+    except (TypeError, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +516,35 @@ def get_application(application_id: int):
     )
 
 
+def count_entities(*, entity: str, status: str | None = None, marz: str | None = None,
+                   city: str | None = None) -> int:
+    """Backend-only exact counts for the conversational AI tools."""
+    entity = str(entity or "").strip().lower()
+    if entity == "applications":
+        where = ["1=1"]; params = []
+        if status:
+            where.append("a.status=%s"); params.append(status)
+        if marz:
+            where.append("a.location_marz ILIKE %s"); params.append(f"%{marz}%")
+        if city:
+            where.append("a.location_city ILIKE %s"); params.append(f"%{city}%")
+        row = one("SELECT COUNT(*) AS n FROM partner_applications a WHERE " + " AND ".join(where), tuple(params))
+        return int(row.get("n") or 0) if row else 0
+    if entity == "partners":
+        row = one("SELECT COUNT(*) AS n FROM partners p WHERE p.status <> 'archived'", ())
+        return int(row.get("n") or 0) if row else 0
+    if entity == "services":
+        where = ["s.status <> 'deleted'"]; params = []
+        if status:
+            where.append("s.status=%s"); params.append(status)
+        row = one("SELECT COUNT(*) AS n FROM services s WHERE " + " AND ".join(where), tuple(params))
+        return int(row.get("n") or 0) if row else 0
+    if entity == "companies":
+        row = one("SELECT COUNT(*) AS n FROM partner_businesses b WHERE b.status <> 'archived'", ())
+        return int(row.get("n") or 0) if row else 0
+    raise ValueError("unsupported_entity")
+
+
 def search_applications(status: str | None = None, marz: str | None = None,
                         city: str | None = None, limit: int = 50):
     where = ["1=1"]
@@ -517,6 +568,87 @@ def search_applications(status: str | None = None, marz: str | None = None,
         tuple(params),
     )
 
+
+
+def admin_get_pending_applications(limit: int = 50):
+    return rows(
+        """SELECT a.*,p.business_name AS partner_business_name
+           FROM partner_applications a
+           LEFT JOIN partners p ON p.id=a.partner_id
+           WHERE a.status NOT IN ('approved','rejected','pending_partner','deleted')
+           ORDER BY a.id DESC LIMIT %s""",
+        (max(1, min(int(limit or 50), 200)),),
+    )
+
+
+def admin_get_partner_profile(partner_id: int):
+    return one(
+        """SELECT p.id,p.user_id,p.business_name,p.business_description,p.status,
+                  p.verification_status,p.created_at,
+                  u.telegram_id,u.username,u.full_name,u.phone,u.is_verified,u.is_frozen,
+                  u.lang,u.rating_avg,u.rating_count
+           FROM partners p
+           LEFT JOIN users u ON u.telegram_id=p.user_id
+           WHERE p.id=%s""",
+        (int(partner_id),),
+    )
+
+
+def admin_approve_application(application_id: int, admin_telegram_id: int):
+    row = get_application_full(int(application_id))
+    if not row:
+        raise ValueError("application_not_found")
+    status = str(row.get("status") or "").lower()
+    if status in {"approved", "rejected"}:
+        raise ValueError("application_already_final")
+    return one(
+        """UPDATE partner_applications
+           SET status='document_pending',reviewed_at=NOW(),updated_at=NOW()
+           WHERE id=%s AND status NOT IN ('approved','pending_partner')
+           RETURNING *""",
+        (int(application_id),),
+    )
+
+
+def admin_reject_application(application_id: int, reason: str, admin_telegram_id: int):
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("reason_required")
+    row = get_application_full(int(application_id))
+    if not row:
+        raise ValueError("application_not_found")
+    return one(
+        """UPDATE partner_applications
+           SET status='rejected',admin_note=%s,reviewed_at=NOW(),updated_at=NOW()
+           WHERE id=%s AND status NOT IN ('approved',)
+           RETURNING *""",
+        (reason[:3000], int(application_id)),
+    )
+
+
+def admin_suspend_partner(partner_id: int, reason: str, admin_telegram_id: int):
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("reason_required")
+    partner = get_partner(int(partner_id))
+    if not partner:
+        raise ValueError("partner_not_found")
+    user_id = int(partner.get("user_id") or 0)
+    if not user_id:
+        raise ValueError("partner_user_not_found")
+    return one(
+        """UPDATE users
+           SET is_frozen=TRUE
+           WHERE telegram_id=%s
+           RETURNING telegram_id,is_frozen""",
+        (user_id,),
+    )
+
+
+def admin_view_audit_logs(limit: int = 50):
+    # The current branch has no canonical audit-log table/API. Do not invent
+    # one here: callers receive an explicit backend capability error.
+    raise NotImplementedError("audit_log_backend_not_configured")
 
 
 def get_application_full(application_id: int, partner_id: int | None = None):

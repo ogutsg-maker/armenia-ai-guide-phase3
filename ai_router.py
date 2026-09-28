@@ -7,6 +7,8 @@ import logging
 import data_core
 from client_ai import ClientAI
 from partner_ai import PartnerAI
+from ai_manager import AIManager
+from prompt_factory import ContextType, as_context_type
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +30,13 @@ _NEGOTIATION_HINT = {
 
 
 class AIRouter:
-    def __init__(self, ai):
+    def __init__(self, ai=None):
+        # ai is retained for backward-compatible construction by main.py.
+        # Role-specific AI work now goes through the unified AIManager.
         self.ai = ai
-        self.client_ai = ClientAI(ai)
-        self.partner_ai = PartnerAI(ai)
+        self.manager = AIManager()
+        self.client_ai = ClientAI(self.manager)
+        self.partner_ai = PartnerAI(self.manager)
 
     def _orchestrator_session(self, user_id: int, role: str) -> dict:
         return data_core.active_session(user_id, role, "orchestrator") or data_core.create_session(user_id, role, "orchestrator", {"history": [], "last_module": None})
@@ -63,40 +68,34 @@ class AIRouter:
             except Exception: ctx = {}
         data_core.add_ai_message(session["id"], "user", text)
         neg_id = self._active_negotiation_id(user_id)
-        decision = await self.ai.route_message(text, role, {
-            "active_sessions": (ctx.get("history") or [])[-5:],
-            "active_negotiation_id": neg_id,
-            "last_module": ctx.get("last_module"),
-        })
-        module = decision.get("module", "client_search")
-        chain = self._select_chain(role, module)
-        rlang = decision.get("language") or lang
-        result = {"module": module, "chain": chain, "confidence": decision.get("confidence", 0.0)}
-
-        if module == "negotiation" and neg_id:
-            result["reply"] = _NEGOTIATION_HINT.get(rlang, _NEGOTIATION_HINT["ru"])
-            result["negotiation_id"] = neg_id
-        elif module == "partner_onboarding" and role == "partner":
-            out = await self.partner_ai.process(user_id, text, rlang)
-            result["reply"] = out.get("reply", "")
-        elif module == "support":
-            result["reply"] = _SUPPORT_HINT.get(rlang, _SUPPORT_HINT["ru"])
-        elif module == "smalltalk":
-            result["reply"] = _SMALLTALK.get(rlang, _SMALLTALK["ru"])
+        # Routing is deterministic; AIManager is the single AI execution
+        # layer. This removes the previous second Groq routing call.
+        if role == "admin":
+            out = await self.manager.chat(
+                int(user_id), ContextType.ADMIN, text,
+                extra_context={"active_negotiation_id": neg_id},
+                language=lang,
+            )
+            result = {"module":"admin_secretary","chain":"admin_secretary",
+                      "confidence":1.0,"reply":out.get("reply","")}
+        elif neg_id and role == "client":
+            result = {"module":"negotiation","chain":"negotiation",
+                      "confidence":1.0,
+                      "reply":_NEGOTIATION_HINT.get(lang,_NEGOTIATION_HINT["ru"]),
+                      "negotiation_id":neg_id}
         elif role == "partner":
-            # A partner message that is not a negotiation/support message still
-            # belongs to the business onboarding/catalog assistant.
-            out = await self.partner_ai.process(user_id, text, rlang)
-            result["module"] = "partner_onboarding"
-            result["reply"] = out.get("reply", "")
+            out = await self.partner_ai.process(user_id, text, lang)
+            result = {"module":"partner_onboarding","chain":"partner_registration",
+                      "confidence":1.0,"reply":out.get("reply","")}
         else:
-            result["module"] = "client_search"
-            result["reply"] = await self.client_ai.process(user_id, text, rlang)
+            result = {"module":"client_search","chain":"client_search",
+                      "confidence":1.0,
+                      "reply":await self.client_ai.process(user_id,text,lang)}
 
         history = ctx.get("history") or []
         history.append({"module": result["module"], "text": text[:200]})
         ctx["history"] = history[-20:]
         ctx["last_module"] = result["module"]
         data_core.update_session(session["id"], ctx)
-        data_core.add_ai_message(session["id"], "ai", result.get("reply", ""), {"module": result["module"], "decision": decision})
+        data_core.add_ai_message(session["id"], "ai", result.get("reply", ""), {"module": result["module"], "unified_ai": True})
         return result
