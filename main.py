@@ -221,7 +221,7 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     # services. This runs even when Groq returns 400/429 or malformed JSON.
     try:
         from partner_registration_ai import _recover_obvious_facts, _recover_services_from_history
-        source_history = history + [{"role": "user", "content": text}]
+        source_history = history if (history and str(history[-1].get("content") or "").strip() == text.strip()) else history + [{"role": "user", "content": text}]
         profile = _recover_obvious_facts(
             " ".join(str(x.get("content") or "") for x in source_history),
             dict(profile or {}),
