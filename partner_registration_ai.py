@@ -193,6 +193,17 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                 break
 
     if not out.get("business_name"):
+        # Compact real-world form: "BIT servis կազմակերպությունը ..."
+        m = re.search(
+            r"^\s*([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'\- ]{1,80}?)\s+"
+            r"(?:կազմակերպ(?:ությունը|ությունն)|կազմակերպություն|բիզնես(?:ը)?|ընկեր(?:ությունը|ություն)|սրահ(?:ը)?|"
+            r"service|servis|սերվիս)\b",
+            raw, flags=re.I
+        )
+        if m:
+            out["business_name"] = _norm(m.group(1)).strip(" .,;:()«»\"'")
+
+    if not out.get("business_name"):
         name_patterns = [
             r"[«\"']([^«»\"']{1,100})[»\"']\s+(?:անունով\s+)?(?:սրահ|բիզնես|կազմակերպություն|(?:տուրիստական\s+)?ընկերություն)",
             r"([A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9][A-Za-zА-Яа-яЁёԱ-Ֆա-ֆ0-9._&'_-]{0,60})\s+անունով\s+(?:սրահ|բիզնես|կազմակերպություն)",
@@ -219,8 +230,20 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                 out["business_name"] = _norm(m.group(1)).strip(" .,;:()«»\"'")
 
     # Deterministic recovery of contact/location facts if Groq fails.
+    # Generic Armenian compact location: "ք Երևան, Օրբելու 22".
+    if not out.get("city"):
+        m = re.search(r"\bք(?:աղաք)?\s+([\u0531-\u058FԱ-Ֆա-ֆ-]{3,})\b", raw, flags=re.I)
+        if m:
+            out["city"] = _normalize_place_name(m.group(1))
+    if not out.get("address") and out.get("city"):
+        m = re.search(
+            r"\bք(?:աղաք)?\s+[\u0531-\u058FԱ-Ֆա-ֆ-]{3,}\s*[,՝:]\s*([^.!?։\n]+?)(?=\s*,\s*(?:ժամը|ամեն|աշխատ)|\s*\.\s*|\s+ժամը\b|$)",
+            raw, flags=re.I
+        )
+        if m:
+            out["address"] = _norm(m.group(1)).strip(" .,;:")
     if not out.get("phone"):
-        m = re.search(r"(?:հեռախոս(?:ահամար)?|телефон|phone)\s*[:՝-]?\s*(0\d[\d\s().-]{6,})", raw, flags=re.I)
+        m = re.search(r"(?:հեռախոս(?:ահամար)?|հեռ\.?|телефон|phone)\s*[:՝-]?\s*(\+?\d[\d\s().-]{7,})", raw, flags=re.I)
         if m:
             out["phone"] = _norm(m.group(1)).strip(" .,-")
         else:
@@ -233,7 +256,7 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
             out["address"] = _norm(m.group(1)).strip(" .,;")
     if not out.get("working_hours"):
         hour_patterns = [
-            r"(?:ամեն\s+օր)\s*(?:՝|:|-)?\s*(?:ժամը\s*)?(\d{1,2}:\d{2})\s*(?:-ից|ից)?\s*(?:մինչև|[-–—])\s*(\d{1,2}:\d{2})\s*(?:-ը|ը)?",
+            r"(?:ամեն\s+օր\s*)?(?:՝|:|-)?\s*(?:ժամը\s*)?(\d{1,2}[\.:]\d{2})\s*(?:-ից|ից)?\s*(?:մինչև|[-–—])\s*(\d{1,2}[\.:]\d{2})\s*(?:-ը|ը)?",
             r"(?:daily|every\s+day|ежедневно)\s*[:\-]?\s*(\d{1,2}:\d{2})\s*(?:-|до|to)\s*(\d{1,2}:\d{2})",
             r"(?:աշխատում\s+ենք|աշխատանքային\s+ժամ(?:երը|եր)?|ժամերը)\s*(?:՝|:|-)?\s*([^.!?։\n]+)"
         ]
@@ -887,14 +910,16 @@ def _match_services_universal(db, services, master_id):
     return out
 
 
-def _build_categories_tree(categories_list: list[dict]) -> list[dict]:
-    """Build a very compact DB-backed classification tree.
+def _build_categories_tree(categories_list: list[dict], source_text: str = "") -> list[dict]:
+    """Build the smallest useful DB-backed semantic classification tree.
 
-    Groq has an 8K TPM limit on the current tier, so do not send redundant
-    slugs, English labels or duplicated master labels. Armenian/Russian names
-    plus the real subcategory id and parent master id are sufficient for
-    semantic matching.
+    Groq's current 8K TPM limit makes a fully bilingual 320-row tree too large
+    because Armenian/Russian text tokenizes expensively. Prefer the language
+    actually used by the partner; keep the other language only as fallback for
+    mixed/Latin input. IDs remain the real database subcategory IDs.
     """
+    has_arm = bool(re.search(r"[\u0531-\u058F]", source_text or ""))
+    has_cyr = bool(re.search(r"[А-Яа-яЁё]", source_text or ""))
     tree = []
     seen = set()
     for row in categories_list or []:
@@ -904,13 +929,16 @@ def _build_categories_tree(categories_list: list[dict]) -> list[dict]:
         if category_id is None or category_id in seen:
             continue
         seen.add(category_id)
-        master_id = _safe_int(row.get("master_id"))
-        tree.append({
-            "id": category_id,
-            "parent_id": master_id,
-            "name_ru": _norm(row.get("category_ru") or row.get("name_ru")),
-            "name_am": _norm(row.get("category_am") or row.get("name_am")),
-        })
+        am = _norm(row.get("category_am") or row.get("name_am"))
+        ru = _norm(row.get("category_ru") or row.get("name_ru"))
+        if has_arm and not has_cyr:
+            name = am or ru
+        elif has_cyr and not has_arm:
+            name = ru or am
+        else:
+            name = am or ru
+        if name:
+            tree.append({"id": category_id, "parent_id": _safe_int(row.get("master_id")), "name": name})
     return tree
 
 
@@ -935,7 +963,7 @@ async def extract_partner_registration_json(
     if len(source) > 9000:
         source = source[-9000:]
 
-    categories_tree = _build_categories_tree(categories_list)
+    categories_tree = _build_categories_tree(categories_list, source)
     categories_json = json.dumps(categories_tree, ensure_ascii=False, separators=(",", ":"))
 
     instruction = """You are the Armenia AI Guide partner-registration AI.
@@ -1217,7 +1245,7 @@ Return only the supplied JSON schema."""
             ),
             catalog_rows,
             model=model,
-            max_tokens=1800,
+            max_tokens=900,
         )
         data = dict(previous_profile)
 
@@ -1248,6 +1276,37 @@ Return only the supplied JSON schema."""
         recovered = _recover_services_from_history(
             history + [{"role": "user", "content": text}]
         )
+        if not recovered:
+            low = combined_text.lower()
+            repair_context = bool(re.search(r"վերանորոգ|ремонт|repair", low))
+            if repair_context:
+                service_tail = re.search(
+                    r"(?:մասնավորապես|մասնավորապես՝|specifically|а именно)\s+(.+?)(?=\s*,\s*(?:ք|քաղաք)\b|\s+(?:ք|քաղաք)\s+|\s+ժամը\b|\s+հեռ\.?\b|$)",
+                    combined_text, flags=re.I
+                )
+                if service_tail:
+                    items = re.split(r"\s*,\s*|\s+և\s+|\s+ու\s+", service_tail.group(1))
+                    for raw_item in items:
+                        item_name = _norm(raw_item).strip(" .;:՝")
+                        if not item_name:
+                            continue
+                        if re.search(r"սառնարան", item_name, re.I):
+                            item_name = "Սառնարանների վերանորոգում"
+                        elif re.search(r"լվացքի\s+մեքեն", item_name, re.I):
+                            item_name = "Լվացքի մեքենաների վերանորոգում"
+                        elif re.search(r"աման\s+լվ", item_name, re.I):
+                            item_name = "Աման լվացման սարքերի վերանորոգում"
+                        elif re.search(r"փոշեկուլ", item_name, re.I):
+                            item_name = "Փոշեկուլների վերանորոգում"
+                        else:
+                            item_name = item_name + " վերանորոգում"
+                        recovered.append({
+                            "name": item_name,
+                            "raw_sub_direction": item_name,
+                            "price": None,
+                            "price_type": "fixed",
+                            "matched_subcategory_id": None,
+                        })
         if price_mentions and len(data.get("services") or []) < len(price_mentions):
             # Add only genuinely missing price-bearing services. Existing GPT
             # names/translation/catalogue IDs remain authoritative.
