@@ -131,21 +131,31 @@ def get_catalog_for_master(db=None, master_id: int | None = None) -> list[dict]:
 
 
 def _heuristic(text: str) -> dict:
-    low = _norm(text).lower()
-    aliases = {
-        "Недвижимость": ["недвиж", "квартир", "дом", "участок", "аренд", "продаж", "real estate"],
-        "Красота и уход": ["салон", "парикмах", "маникюр", "педикюр", "барбер", "космет", "beauty", "hair"],
-        "Питание и кулинария": ["ресторан", "кафе", "пицц", "еда", "кухн", "food"],
-        "Пассажирские перевозки и такси": ["такси", "трансфер", "перевоз", "transport"],
-        "Автоуслуги": ["авто", "машин", "шиномонтаж", "автосервис", "car"],
-        "Туризм и путешествия": ["экскурс", "гид", "тур", "поездк", "travel", "tour"],
-        "Спорт и фитнес": ["спорт", "фитнес", "тренер", "fitness"],
-        "IT и цифровые услуги": ["it", "програм", "сайт", "компьютер", "software", "digital"],
+    """Minimal non-classifying fallback when Groq is unavailable."""
+    raw = _norm(text)
+    return {
+        "business_name": None,
+        "city": None,
+        "district": None,
+        "marz": None,
+        "address": None,
+        "phone": None,
+        "working_hours": None,
+        "direction": None,
+        "master_category_id": None,
+        "subcategory_names": [],
+        "description": raw,
+        "services": [],
+        "missing": [
+            "business_name",
+            "marz",
+            "city",
+            "address",
+            "phone",
+            "services",
+        ],
+        "ready": False,
     }
-    direction = next((name for name, words in aliases.items() if any(w in low for w in words)), None)
-    return {"business_name": None, "city": None, "district": None, "direction": direction,
-            "master_category_id": None, "subcategory_names": [], "description": _norm(text),
-            "services": [], "missing": ["business_name", "marz", "city", "address", "phone", "services"], "ready": False}
 
 
 def _recover_obvious_facts(text: str, data: dict) -> dict:
@@ -270,12 +280,6 @@ def _recover_obvious_facts(text: str, data: dict) -> dict:
                 else:
                     out["working_hours"] = _norm(hm.group(1))
                 break
-
-    if not out.get("direction") and re.search(
-        r"ֆոտոստուդ|լուսանկար|ֆոտոսեսիա|տեսանկարահանում|տեսանյութ|фотостуд|фотосес|видеосъём|видеосъем|photograph|video",
-        low, flags=re.I
-    ):
-        out["direction"] = "📸 Ֆոտո և տեսանյութ"
 
     if out.get("city"):
         out["city"] = _normalize_place_name(out.get("city"))
