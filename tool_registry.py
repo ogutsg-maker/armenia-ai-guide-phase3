@@ -457,6 +457,10 @@ class ToolRegistry:
                 "has_next": True,
                 "item": item,
                 "pagination": {"index": next_index, "total": len(items)},
+                "display_entity": {
+                    "id": item.get("id") if isinstance(item, dict) else None,
+                    "type": self.session_state.get("current_entity_type") or "entity",
+                },
             }
 
         if name == "search_services":
