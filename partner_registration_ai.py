@@ -718,9 +718,22 @@ async def extract_partner_registration_json(
     Groq never sees catalogue IDs and never performs category classification.
     Classification is performed afterwards by Python against the live DB.
     """
-    # WebApp debug fallback: legacy registration requests can arrive without\n    # a Telegram ID. Never pass 0 into AI session storage because ai_sessions\n    # requires a real user record. This fallback is limited to the registration\n    # test flow and uses the known test account from the current runtime logs.\n    if not telegram_id or int(telegram_id) == 0:\n        import logging\n        logging.getLogger("partner_registration_ai").info(\n            "Входящий telegram_id равен 0. Используем тестовый fallback_id=1831076171 для отладки сессии."\n        )\n        telegram_id = 1831076171\n\n    key = os.getenv("GROQ_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("GROQ_API_KEY is not configured")
+    # WebApp debug fallback: registration tests may arrive without a usable
+    # Telegram ID. Never pass 0 into AIManager/session storage.
+    import logging
+    logger = logging.getLogger("partner_registration_ai")
+    try:
+        incoming_telegram_id = int(telegram_id or 0)
+    except (TypeError, ValueError):
+        incoming_telegram_id = 0
+
+    if incoming_telegram_id <= 0:
+        logger.info(
+            "Входящий telegram_id равен 0/None. Используем тестовый fallback_id=1831076171 для отладки сессии."
+        )
+        incoming_telegram_id = 1831076171
+
+    telegram_id = incoming_telegram_id
 
     source = _norm(raw_text)
     if len(source) > 9000:
