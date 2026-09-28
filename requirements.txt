@@ -25,3 +25,6 @@ pypdf>=5.0
 
 # Dynamic service catalogue matching
 thefuzz>=0.22,<1.0
+
+# Embeddings / semantic catalogue matching
+openai>=1.100,<2.0
