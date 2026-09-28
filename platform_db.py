@@ -192,21 +192,33 @@ def mark_clarification_answered(clarification_id):
 # Notifications
 
 def create_notification(user_id, title='', body='', kind='info', audience='user', data=None, delivered=False):
-    # notifications.user_id references users.id, while some callers provide
-    # Telegram user ids. Resolve either form and keep notifications best-effort.
+    """Create a notification using the canonical users.telegram_id identity.
+
+    The users table has no synthetic id column in this project. Notification
+    callers may pass a Telegram id, so resolve and persist that exact canonical
+    identity instead of attempting users.id lookups.
+    """
     with _conn() as c:
         with c.cursor() as cur:
             cur.execute(
-                "SELECT id FROM users WHERE id=%s OR telegram_id=%s "
-                "ORDER BY CASE WHEN id=%s THEN 0 ELSE 1 END LIMIT 1",
-                (user_id, user_id, user_id),
+                "SELECT telegram_id FROM users WHERE telegram_id=%s LIMIT 1",
+                (user_id,),
             )
             user = cur.fetchone()
             if not user:
                 return None
+
             cur.execute(
                 'INSERT INTO notifications(user_id,audience,kind,title,body,data_json,delivered_telegram) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s) RETURNING *',
-                (user["id"], audience, kind, title, body, json_dump(data or {}), bool(delivered)),
+                (
+                    user["telegram_id"],
+                    audience,
+                    kind,
+                    title,
+                    body,
+                    json_dump(data or {}),
+                    bool(delivered),
+                ),
             )
             row = cur.fetchone()
         c.commit()
