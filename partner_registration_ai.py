@@ -894,58 +894,99 @@ async def extract_partner_registration_json(
     model: str = "openai/gpt-oss-20b",
     max_tokens: int = 1800,
 ) -> dict:
-    """Strict partner registration extraction: one USER message only."""
+    """Strict NER-only partner registration extraction.
+
+    IMPORTANT: this function deliberately does NOT receive or send the full
+    catalogue to Groq. Catalogue matching is a separate step after extraction.
+    Sending hundreds of multilingual catalogue rows here caused 30K+ token
+    requests and Groq 413/TPM failures.
+    """
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key:
         raise RuntimeError("GROQ_API_KEY is not configured")
 
-    instruction = r"""Ты — эксперт-аналитик данных и главный модератор платформы услуг. Твоя задача — проанализировать входящий текст от партнера, очистить его от мусора, дубликатов, исправить опечатки, перевести ключевые текстовые значения на русский язык и разложить всё строго по полочкам в формате JSON.
+    # Keep the extraction context bounded. The deterministic recovery layer
+    # below still sees the complete local conversation, while Groq only needs
+    # enough recent text to understand the facts in this turn.
+    source = _norm(raw_text)
+    if len(source) > 9000:
+        source = source[-9000:]
 
-**ВХОДЯЩИЙ ТЕКСТ ПАРТНЕРА:**
-${rawText}
+    instruction = """You are the Armenia AI Guide partner-registration NER extractor.
+Understand Armenian, Russian and English.
 
-**СПИСОК НАШИХ ДОСТУПНЫХ КАТЕГОРИЙ И ПОДКАТЕГОРИЙ (Используй ТОЛЬКО эти ID):**
-${JSON.stringify(categoriesList)}
+Return ONLY one JSON object with these keys:
+company_or_name, marz, city, address, phone, working_hours, document_type, extracted_services.
 
-**ПРАВИЛА ИЗВЛЕЧЕНИЯ ДАННЫХ:**
+Do NOT classify into a platform catalogue. Do NOT invent category IDs.
+The field matched_subcategory_id must not be returned; the application code
+will set it to null and a separate resolver will assign real DB IDs later.
 
-1. **company_or_name**: Если указано название компании — пиши его. Если только имя мастера — пиши имя. Если ничего нет — оставь `null`.
-2. **marz**: Область (Марз) в Армении. Если в тексте только город (например, Раздан), ИИ должен проявить логику и автоматически определить Марз (для Раздана это Котайк). Пиши на русском.
-3. **city**: Город или населенный пункт на русском (например, "Раздан").
-4. **address**: Улица, номер дома/офиса. Очисти от названия города.
-5. **phone**: Номер телефона. Приведи строго к международному формату (например, `+374XXXXXXXX`).
-6. **working_hours**: График работы (например, "09:00 - 20:00"). Если не указан — `null`.
-7. **document_type**: Постарайся понять из контекста, упоминает ли пользователь документ (паспорт, лицензия, сертификат). Если нет — `null`.
-8. **extracted_services**: Это массив объектов. Для каждой обнаруженной услуги в тексте создай объект:
-   - `user_service_name`: Оригинальное название услуги, как его задумал мастер (переведи на русский, например: "Ремонт стиральных машин").
-   - `price`: Число (минимальная цена). Извлеки только цифру (например, из "5000 դրամից սկսած" вытащи `5000`). Если цены нет — `null`.
-   - `matched_subcategory_id`: Сравни услугу мастера с нашим Списком Доступных Категорий. Найди наиболее подходящую подкатегорию и вставь её `ID`. Если точного совпадения нет, выбери максимально близкую по смыслу.
+FACT EXTRACTION:
+- company_or_name: exact business/company/organization name if explicitly stated.
+  For «BYUTI անունով սրահ» return «BYUTI», not «սրահ BYUTI».
+- city: canonical city/locality name. «Հրազդանում» -> «Հրազդան».
+- marz: infer only when the city-to-marz relation is reliable or the marz is
+  explicitly stated. Never invent a location.
+- address: only the actual street/building/address portion.
+- phone: preserve the phone number; normalize obvious formatting only.
+- working_hours: preserve an explicit schedule.
+- document_type: passport, license, certificate, etc. only when explicitly
+  mentioned; otherwise null.
 
-**ТРЕБОВАНИЕ К ОТВЕТУ:**
-Выведи строго JSON-объект без какого-либо лишнего текста, вступлений или разметки markdown (без ```json). Только чистый JSON.
+SERVICE EXTRACTION IS STRICT:
+- Every explicit monetary amount must map to exactly one atomic service.
+- Never lose a price and never invent a price.
+- Phone numbers, house numbers and unrelated numbers are not prices.
+- A complete phrase is ONE service. Do not split it into fragments.
+  «կանացի մազերի կտրում՝ 3000 դրամից» => one service named
+  «կանացի մազերի կտրում».
+  «մազերի ներկում՝ 4000 դրամ» => one service named «մազերի ներկում».
+  «երեկոյան դիմահարդարում՝ 5000 դրամ» => one service.
+- Keep meaningful modifiers such as «կանացի», «երեկոյան», «հարսանեկան».
+- Remove only conversational wrappers such as «ունեմ», «մատուցում եմ»,
+  «սկսվում է», «դրամից», «սրահում».
+- «և», «ու», «նաև», «and», «also», «и», «а» are connectors; do not turn them
+  into service names.
+- price is numeric only.
+- «3000 դրամից», «от 3000», «from 3000» => price_type="from".
+- Exact «3000 դրամ» => price_type="fixed".
+- If a service has no explicit price, price may be null, but do not create
+  unpriced duplicates of a price-bearing service.
+- user_service_name must be a clean service phrase, not a whole sentence.
 
-**КРИТИЧЕСКИЕ ОГРАНИЧЕНИЯ:**
-- Никогда не придумывай отсутствующие данные.
-- Каждый явно указанный денежный ценник должен соответствовать ровно одной услуге. Не теряй ни один ценник.
-- "5 000 ֏", "5000֏", "5000 դրամ", "5 000 AMD", "5000 драм" — это цена 5000.
-- Телефон, номер дома и другие числа не считать ценой без денежного контекста.
-- Исправляй только очевидные опечатки.
-- Не создавай дубликаты одной и той же услуги.
-- matched_subcategory_id может быть ТОЛЬКО одним из ID, присутствующих в переданном списке. Если подходящего варианта нет — null.
-- Если поле невозможно надежно определить, используй null.
-- Для каждого явно указанного денежного ценника должна существовать соответствующая услуга.
-"""
+Return:
+{
+  "company_or_name": string|null,
+  "marz": string|null,
+  "city": string|null,
+  "address": string|null,
+  "phone": string|null,
+  "working_hours": string|null,
+  "document_type": string|null,
+  "extracted_services": [
+    {
+      "user_service_name": string,
+      "price": number|null,
+      "price_type": "fixed"|"from"
+    }
+  ]
+}
 
-    content = (
-        instruction
-        .replace("${rawText}", _norm(raw_text)[:12000])
-        .replace("${JSON.stringify(categoriesList)}", json.dumps(categories_list, ensure_ascii=False))
+Never return markdown or explanatory text."""
+
+    user = (
+        "PARTNER TEXT:\n" + source
+        + "\n\nIMPORTANT: extract only facts explicitly present in this text."
     )
 
     client = AsyncGroq(api_key=key)
     response = await client.chat.completions.create(
         model=model,
-        messages=[{"role": "user", "content": content}],
+        messages=[
+            {"role": "system", "content": instruction},
+            {"role": "user", "content": user},
+        ],
         response_format={"type": "json_object"},
         reasoning_effort="low",
         temperature=0,
@@ -955,18 +996,12 @@ ${JSON.stringify(categoriesList)}
     if not isinstance(parsed, dict):
         raise RuntimeError("Invalid partner registration JSON")
 
-    valid_ids = {
-        _safe_int(x.get("category_id") if "category_id" in x else x.get("id"))
-        for x in categories_list
-        if isinstance(x, dict)
-    }
-    valid_ids.discard(None)
-
     services = []
+    seen = set()
     for item in parsed.get("extracted_services") or []:
         if not isinstance(item, dict):
             continue
-        name = _norm(item.get("user_service_name"))
+        name = _norm(item.get("user_service_name") or item.get("name"))
         if not name:
             continue
         raw_price = item.get("price")
@@ -976,28 +1011,22 @@ ${JSON.stringify(categoriesList)}
             price = None
         if price is not None and price.is_integer():
             price = int(price)
-        cid = _safe_int(item.get("matched_subcategory_id"))
-        if cid not in valid_ids:
-            cid = None
 
-        # Infer price type from the original partner text.
-        price_type = "fixed"
-        if price is not None:
-            token = str(int(price)) if isinstance(price, float) and price.is_integer() else str(price)
-            m = re.search(
-                rf"(?<!\d){re.escape(token)}(?!\d)\s*(?:դրամ(?:ից|ով|ի)?|դր\.?|֏|amd|dram|дրամ(?:ов|а)?|амд)?",
-                _norm(raw_text), flags=re.I
-            )
-            nearby = _norm(raw_text[max(0, m.start()-90):min(len(raw_text), m.end()+30)]) if m else ""
-            if re.search(r"(?:դրամ)?ից\b|(?:\bот\b|\bfrom\b|\bstarting\b|սկս(?:վում\s+է|վում\s+են|ած))", nearby, flags=re.I):
-                price_type = "from"
+        price_type = _norm(item.get("price_type") or "fixed").lower()
+        if price_type not in {"fixed", "from"}:
+            price_type = "fixed"
+
+        key_tuple = (name.lower(), price, price_type)
+        if key_tuple in seen:
+            continue
+        seen.add(key_tuple)
 
         services.append({
             "name": name,
             "raw_sub_direction": name,
             "price": price,
             "price_type": price_type,
-            "matched_subcategory_id": cid,
+            "matched_subcategory_id": None,
         })
 
     parsed["company_or_name"] = _norm(parsed.get("company_or_name")) or None
