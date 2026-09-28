@@ -787,20 +787,19 @@ Do not output matched_subcategory_id."""
 
     user = "PARTNER TEXT:\n" + source
 
-    client = AsyncGroq(api_key=key)
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": instruction},
-            {"role": "user", "content": user},
-        ],
-        response_format={"type": "json_object"},
-        reasoning_effort="low",
-        temperature=0,
+    from ai_manager import AIManager
+    from prompt_factory import ContextType
+
+    manager = AIManager(model=model)
+    parsed = await manager.chat_json(
+        telegram_id=int(telegram_id or 0),
+        context_type=ContextType.REGISTRATION,
+        message=user,
+        task_instructions=instruction,
+        extra_context={"application_id": application_id} if application_id is not None else None,
+        language="hy",
         max_tokens=max_tokens,
     )
-
-    parsed = _parse_json(response.choices[0].message.content or "{}")
     if not isinstance(parsed, dict):
         raise RuntimeError("Invalid partner registration JSON")
 
