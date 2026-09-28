@@ -1328,6 +1328,27 @@ Return only the supplied JSON schema."""
             normalized_services.append(item)
         data["services"] = normalized_services
 
+        # Preserve explicit enumerated repair services from the source.
+        # This extracts entities only; catalogue IDs are still assigned below
+        # from the live database and semantic matcher.
+        if re.search(r"վերանորոգ|ремонт|repair", combined_text, flags=re.I):
+            enum_match = re.search(
+                r"(?:մասնավորապես|մասնավորապես՝|specifically|а именно)\s+(.+?)(?=\s*,\s*(?:ք|քաղաք)\b|\s+(?:ք|քաղաք)\s+|\s+ժամը\b|\s+հեռ\.?\b|$)",
+                combined_text, flags=re.I
+            )
+            if enum_match:
+                raw_items = [_norm(x).strip(" .;:՝") for x in re.split(r"\s*,\s*|\s+և\s+|\s+ու\s+", enum_match.group(1))]
+                raw_items = [x for x in raw_items if x]
+                if len(raw_items) >= 2:
+                    normalized_services = [{
+                        "name": x if re.search(r"վերանորոգ", x, re.I) else x + " վերանորոգում",
+                        "raw_sub_direction": x,
+                        "price": None,
+                        "price_type": "fixed",
+                        "matched_subcategory_id": None,
+                    } for x in raw_items]
+                    data["services"] = normalized_services
+
         # Classification is internal. Groq may return a real DB id. For
         # unresolved services, use the already-known top-level direction and
         # ask the semantic matcher to choose ONLY among that direction's live
@@ -1349,6 +1370,13 @@ Return only the supplied JSON schema."""
             if scoped_catalog:
                 candidate_catalog = scoped_catalog
 
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.info(
+            "PARTNER_CLASSIFICATION: services=%s catalog_rows=%s master_id=%s candidates=%s",
+            len(normalized_services), len(catalog_rows), resolved_master_id, len(candidate_catalog)
+        )
+
         normalized_services = _fallback_catalog_match(normalized_services, candidate_catalog)
         if any(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services):
             try:
@@ -1358,8 +1386,19 @@ Return only the supplied JSON schema."""
                     normalized_services,
                     candidate_catalog,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.exception("PARTNER_CLASSIFICATION: semantic Groq matcher failed: %s", exc)
+
+        if any(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services) and resolved_master_id is not None:
+            try:
+                normalized_services = _match_services_universal(db, normalized_services, resolved_master_id)
+                _log.info(
+                    "PARTNER_CLASSIFICATION: pg_similarity unresolved=%s",
+                    sum(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services),
+                )
+            except Exception as exc:
+                _log.exception("PARTNER_CLASSIFICATION: pg similarity failed: %s", exc)
+
         data["services"] = normalized_services
 
         matched_ids = [
