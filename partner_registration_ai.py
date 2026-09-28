@@ -661,16 +661,12 @@ async def classify_profile_catalog(db, profile: dict) -> dict:
                 "category_en": row.get("name_en"),
             })
 
-    matched = _fallback_catalog_match(services, catalog)
+    matched = _dynamic_catalog_match(
+        services,
+        catalog,
+        threshold=0.70,
+    )
 
-    # If deterministic matching did not resolve everything, ask the existing
-    # semantic matcher. _groq_json is provider-gateway backed, so no provider
-    # client is required here.
-    if any(_safe_int(x.get("matched_subcategory_id")) is None for x in matched):
-        try:
-            matched = await _ai_match_services(None, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"), matched, catalog)
-        except Exception:
-            pass
 
     unresolved = [
         str(x.get("name") or x.get("service_name") or "").strip()
