@@ -934,26 +934,55 @@ FACT EXTRACTION:
 - document_type: passport, license, certificate, etc. only when explicitly
   mentioned; otherwise null.
 
-SERVICE EXTRACTION IS STRICT:
-- Every explicit monetary amount must map to exactly one atomic service.
-- Never lose a price and never invent a price.
+SERVICE EXTRACTION IS STRICT AND SEMANTIC:
+- Extract real service units, not merely the words next to a price.
+- Never invent a price. Never lose an explicitly stated price.
 - Phone numbers, house numbers and unrelated numbers are not prices.
-- A complete phrase is ONE service. Do not split it into fragments.
-  «կանացի մազերի կտրում՝ 3000 դրամից» => one service named
+- A complete service phrase is ONE service. Do not split a single service into
+  fragments. «կանացի մազերի կտրում՝ 3000 դրամից» => exactly one service
   «կանացի մազերի կտրում».
-  «մազերի ներկում՝ 4000 դրամ» => one service named «մազերի ներկում».
-  «երեկոյան դիմահարդարում՝ 5000 դրամ» => one service.
+- KEEP ENUMERATIONS ATOMIC: when a sentence lists several independent
+  services, subjects or specializations separated by commas, «և», «ու», «նաև»,
+  semicolons or similar enumeration, create one service object for EACH
+  independent item when the context indicates that each item is separately
+  offered. Do not collapse the whole list into one generic service.
+- GENERIC SERVICE + SUBJECT LIST: if a generic training/service term is
+  followed by a list of independent subjects or specializations, treat the
+  listed subjects as separate service units when the wording means the
+  business provides that training/service in each subject. Example:
+  «նախապատրաստական ուսուցում, մաթեմատիկա, ֆիզիկա, հայոց լեզու, քիմիա,
+  կենսաբանություն, առարկաներով։ 25000 դրամից սկսած» should normally produce
+  five separate services:
+  «նախապատրաստում մաթեմատիկայից»,
+  «նախապատրաստում ֆիզիկայից»,
+  «նախապատրաստում հայոց լեզվից»,
+  «նախապատրաստում քիմիայից»,
+  «նախապատրաստում կենսաբանությունից».
+  Do NOT also create a sixth generic «նախապատրաստական ուսուցում» object
+  unless the text clearly offers it as a separate service.
+- SHARED PRICE: a single price stated after an enumeration can apply to ALL
+  enumerated service units when grammar/context indicates one common starting
+  price for the listed services. In that case copy the same numeric price and
+  price_type to each service object. This is intentional duplication of the
+  shared price, not invention.
+- If different prices are explicitly attached to different services, preserve
+  the correct service-to-price association and never copy one service's price
+  to another.
+- Do not split a complete phrase such as «երեկոյան դիմահարդարում» into
+  «երեկոյան» and «դիմահարդարում».
 - Keep meaningful modifiers such as «կանացի», «երեկոյան», «հարսանեկան».
 - Remove only conversational wrappers such as «ունեմ», «մատուցում եմ»,
   «սկսվում է», «դրամից», «սրահում».
-- «և», «ու», «նաև», «and», «also», «и», «а» are connectors; do not turn them
-  into service names.
+- «և», «ու», «նաև», «and», «also», «и», «а» are connectors; preserve the
+  separate service items on both sides when they are independent services.
 - price is numeric only.
-- «3000 դրամից», «от 3000», «from 3000» => price_type="from".
+- «3000 դրամից», «սկսած 3000 դրամից», «от 3000», «from 3000» =>
+  price_type="from".
 - Exact «3000 դրամ» => price_type="fixed".
 - If a service has no explicit price, price may be null, but do not create
-  unpriced duplicates of a price-bearing service.
-- user_service_name must be a clean service phrase, not a whole sentence.
+  unpriced duplicates of an already extracted price-bearing service.
+- user_service_name must be a clean price-list service phrase, not a whole
+  sentence.
 
 Return:
 {
