@@ -501,6 +501,7 @@ class AIManager:
             return {"reply": reply, "confirmation_pending": True}
 
         tool_log: list[dict[str, Any]] = []
+        last_tool_result: dict[str, Any] | None = None
 
         for round_no in range(self.max_tool_rounds):
             try:
@@ -541,7 +542,7 @@ class AIManager:
                         "latency_ms": round((time.monotonic() - started) * 1000),
                     },
                 )
-                return {"reply": reply, "tool_calls": tool_log}
+                return {"reply": reply, "tool_calls": tool_log, **({"tool_result": last_tool_result} if last_tool_result else {})}
 
             assistant_calls = []
             for call in calls:
@@ -568,6 +569,8 @@ class AIManager:
                         raise ValueError("tool_arguments_must_be_object")
                     args = decoded
                     result = await tools.execute(name, args)
+                    if isinstance(result, dict):
+                        last_tool_result = result
                 except Exception as exc:
                     result = {"ok": False, "error": str(exc)[:1000]}
 
