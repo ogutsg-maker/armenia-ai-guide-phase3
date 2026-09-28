@@ -306,14 +306,13 @@ def _already_alerted(
         row = platform_db.one(
             """SELECT n.id
                FROM notifications n
-               JOIN users u ON u.id=n.user_id
-               WHERE (u.id=%s OR u.telegram_id=%s)
+               JOIN users u ON u.telegram_id=n.user_id
+               WHERE u.telegram_id=%s
                  AND n.kind='catalog_unclassified_service'
                  AND COALESCE(n.data_json->>'application_id','')=%s
                  AND n.data_json->'services' @> %s::jsonb
                LIMIT 1""",
             (
-                admin_telegram_id,
                 admin_telegram_id,
                 str(application_id),
                 service_filter,
