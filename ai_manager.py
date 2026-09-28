@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio, json, logging, os, time
 from typing import Any
 from groq import AsyncGroq
+import platform_db
 import ai_cost_center
 from history_provider import HistoryProvider
 from prompt_factory import ContextType, as_context_type, PromptFactory
@@ -10,14 +11,23 @@ from tool_registry import ToolRegistry
 
 logger=logging.getLogger(__name__)
 
+class AIContext(Enum):
+    REGISTRATION = "registration"
+    CLIENT = "client"
+    PARTNER = "partner"
+    ADMIN = "admin"
+
+
 class AIManager:
-    def __init__(self, *, history_provider: HistoryProvider|None=None, model: str|None=None):
+    def __init__(self, db_pool=None, *, history_provider: HistoryProvider|None=None, model: str|None=None, max_history: int = 10, max_tool_rounds: int = 4):
         key=os.getenv("GROQ_API_KEY","").strip()
         if not key: raise RuntimeError("GROQ_API_KEY is not configured")
         self.client=AsyncGroq(api_key=key)
+        self.db=db_pool
         self.model=model or os.getenv("GROQ_MODEL","openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
         self.history=history_provider or HistoryProvider()
-        self.max_tool_rounds=4
+        self.max_history=max(2,min(int(max_history),50))
+        self.max_tool_rounds=max(1,min(int(max_tool_rounds),8))
 
     @staticmethod
     def _lang(text: str) -> str:
@@ -35,16 +45,44 @@ class AIManager:
             if p: ctx["partner_id"]=p.get("id")
         return ctx
 
+    async def _supabase_history(self, telegram_id:int, context:ContextType, limit:int|None=None):
+        role=context.value.lower()
+        size=max(2,min(int(limit or self.max_history),50))
+        def _read():
+            session=platform_db.active_session(int(telegram_id),role,"ai_manager") or platform_db.create_session(int(telegram_id),role,"ai_manager",{"history_version":1})
+            rows=platform_db.recent_ai_messages(int(session["id"]),size)
+            return [{"role":"assistant" if str(x.get("sender_role") or "").lower() in {"ai","assistant"} else "user","content":str(x.get("message_text") or x.get("text") or "")} for x in rows if str(x.get("sender_role") or "").lower()!="tool"]
+        return await asyncio.to_thread(_read)
+
+    async def _save_supabase_history(self, telegram_id:int, context:ContextType, sender:str, content:str, metadata:dict|None=None):
+        def _write():
+            session=platform_db.active_session(int(telegram_id),context.value.lower(),"ai_manager") or platform_db.create_session(int(telegram_id),context.value.lower(),"ai_manager",{"history_version":1})
+            return platform_db.add_ai_message(int(session["id"]),sender,str(content or "")[:12000],metadata or {})
+        return await asyncio.to_thread(_write)
+
+    async def _cost_log(self, telegram_id:int, context:ContextType, usage, elapsed:float, *, status="success", error="", extra_context=None):
+        data=usage.model_dump() if hasattr(usage,"model_dump") else (usage if isinstance(usage,dict) else {})
+        partner_id=(extra_context or {}).get("partner_id")
+        try: partner_id=int(partner_id) if partner_id is not None else None
+        except (TypeError,ValueError): partner_id=None
+        return await asyncio.to_thread(ai_cost_center.record_usage,
+            provider="groq",model=self.model,chain=context.value.lower(),stage="manager",
+            operation="chat",purpose="Unified AIManager",user_id=int(telegram_id),
+            partner_id=partner_id,input_tokens=int(data.get("prompt_tokens") or data.get("input_tokens") or 0),
+            output_tokens=int(data.get("completion_tokens") or data.get("output_tokens") or 0),
+            cached_tokens=int(data.get("prompt_cached_tokens") or data.get("cached_tokens") or 0),
+            reasoning_tokens=int(data.get("reasoning_tokens") or 0),status=status,error=error)
+
     async def chat_json(self, telegram_id:int, context_type:ContextType|str, message:str, *, task_instructions:str, extra_context:dict[str,Any]|None=None, language:str|None=None, max_tokens:int=1800)->dict[str,Any]:
         """Structured JSON completion through the same unified manager."""
         role=as_context_type(context_type)
         language=language or self._lang(message)
-        history=self.history.get(telegram_id,role.value.lower())
+        history=await self._supabase_history(telegram_id,role,self.max_history)
         prompt=PromptFactory.build(role,message=message,history=history,
             trusted_context=self._trusted(role,telegram_id,extra_context),
             language=language,task_instructions=task_instructions)
         started=time.monotonic()
-        self.history.append(telegram_id,role.value.lower(),"user",message,{"context_type":role.value,"structured":True})
+        await self._save_supabase_history(telegram_id,role,"user",message,{"context_type":role.value,"structured":True})
         kwargs={
             "model":self.model,
             "messages":[{"role":"user","content":prompt}],
@@ -68,7 +106,7 @@ class AIManager:
             parsed=json.loads(raw)
         except Exception as exc:
             raise RuntimeError("AIManager returned invalid JSON") from exc
-        self.history.append(telegram_id,role.value.lower(),"ai",raw,{"structured":True,"latency_ms":round((time.monotonic()-started)*1000)})
+        await self._save_supabase_history(telegram_id,role,"ai",raw,{"structured":True,"latency_ms":round((time.monotonic()-started)*1000)})
         return parsed
 
     async def chat(self, telegram_id:int, context_type:ContextType|str, message:str, *, extra_context:dict[str,Any]|None=None, language:str|None=None)->dict[str,Any]:
