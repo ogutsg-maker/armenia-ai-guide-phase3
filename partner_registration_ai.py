@@ -704,6 +704,38 @@ def _build_categories_tree(categories_list: list[dict], source_text: str = "") -
     return tree
 
 
+async def run_groq_extraction_layer(raw_text: str, client, model: str) -> dict:
+    """Minimal first-stage Groq extractor: facts only, no catalogue IDs."""
+    user_prompt = f"""Ты — эксперт-аналитик платформы услуг. Твоя задача — извлечь структурированные данные из свободного текста регистрации партнера.
+
+ВХОДЯЩИЙ ТЕКСТ ПАРТНЕРА:
+{raw_text}
+
+Ты ДОЛЖЕН вернуть СТРОГО JSON-объект со следующими ключами:
+- business_name: (строка, название компании/салона)
+- marz: (строка, область на русском)
+- city: (строка, город на русском)
+- address: (строка, улица/центр)
+- phone: (строка, телефон)
+- working_hours: (строка, часы работы)
+- services: (массив СТРОК, где каждая строка — это отдельное НАЗВАНИЕ услуги, очищенное от цен. Например: ["մազերի կտրում", "մատնահարդարում", "հարդարում"])
+
+Никакого другого текста, кроме чистого JSON, не выводи."""
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": user_prompt}],
+        response_format={"type": "json_object"},
+        reasoning_effort="low",
+        max_tokens=900,
+    )
+    raw = (response.choices[0].message.content or "{}").strip()
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Groq extraction result must be a JSON object")
+    return parsed
+
+
 async def extract_partner_registration_json(
     raw_text: str,
     categories_list: list[dict] | None = None,
@@ -762,80 +794,14 @@ async def extract_partner_registration_json(
     if len(source) > 9000:
         source = source[-9000:]
 
-    instruction = """You are the Armenia AI Guide partner-registration extraction AI.
-Understand Armenian, Russian and English.
+    from groq import AsyncGroq
 
-Your ONLY job is to extract factual information from the partner's text.
-Do NOT classify services and do NOT return category IDs.
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not configured")
 
-Return ONLY this JSON object:
-{
-  "company_or_name": string|null,
-  "marz": string|null,
-  "city": string|null,
-  "address": string|null,
-  "phone": string|null,
-  "working_hours": string|null,
-  "document_type": string|null,
-  "extracted_services": [
-    {
-      "name": string,
-      "price": number|null,
-      "price_type": "fixed"|"from"
-    }
-  ]
-}
-
-FACT EXTRACTION:
-- Extract only facts explicitly present in the partner text.
-- Never invent a business name, location, phone, address, schedule, service or price.
-- company_or_name: exact business/company/organization name if explicitly stated.
-- city: normalize an explicitly stated city/locality, including ordinary inflected forms.
-- marz: use an explicit marz/region or a reliable city-to-marz relationship only.
-- address: return only the actual address.
-- phone: preserve the stated phone number.
-- working_hours: preserve an explicit schedule.
-- document_type: only when explicitly mentioned; otherwise null.
-
-SERVICE EXTRACTION:
-- Extract only actual services offered by the partner.
-- Return every independent service as a separate object.
-- Keep the user's wording or only lightly normalize grammar/spacing.
-- Preserve meaningful modifiers that distinguish one service from another.
-- Do not replace a service with a catalogue/category name.
-- Do not invent, merge, split, classify, translate or reinterpret services beyond
-  what is needed to make each service name readable.
-- Never put a business name, address, phone number, schedule or explanation into
-  a service name.
-- Never invent a price.
-- Keep every explicit price attached to the correct service.
-- A shared price may be attached to multiple enumerated services only when the
-  source grammar clearly applies that price to all of them.
-- price is numeric only.
-- "3000 դրամից", "от 3000", "from 3000" => price_type="from".
-- Exact stated price => price_type="fixed".
-
-Do not output markdown or explanatory text.
-Do not output category_id.
-Do not output subcategory_id.
-Do not output direction_id.
-Do not output matched_subcategory_id."""
-
-    user = "PARTNER TEXT:\n" + source
-
-    from ai_manager import AIManager
-    from prompt_factory import ContextType
-
-    manager = AIManager(model=model)
-    parsed = await manager.chat_json(
-        telegram_id=int(telegram_id or 0),
-        context_type=ContextType.REGISTRATION,
-        message=user,
-        task_instructions=instruction,
-        extra_context={"application_id": application_id} if application_id is not None else None,
-        language="hy",
-        max_tokens=max_tokens,
-    )
+    client = AsyncGroq(api_key=api_key)
+    parsed = await run_groq_extraction_layer(source, client, model)
     if not isinstance(parsed, dict):
         raise RuntimeError("Invalid partner registration JSON")
 
@@ -846,31 +812,31 @@ Do not output matched_subcategory_id."""
 
     services = []
     seen = set()
-    for item in parsed.get("extracted_services") or []:
-        if not isinstance(item, dict):
+    for item in parsed.get("services") or parsed.get("extracted_services") or []:
+        if isinstance(item, str):
+            name = _norm(item)
+            raw_price = None
+            price_type = "fixed"
+        elif isinstance(item, dict):
+            name = _norm(item.get("name") or item.get("user_service_name") or item.get("service_name"))
+            raw_price = item.get("price")
+            price_type = _norm(item.get("price_type") or "fixed").lower()
+        else:
             continue
-
-        name = _norm(item.get("name") or item.get("user_service_name"))
         if not name:
             continue
-
-        raw_price = item.get("price")
         try:
             price = float(raw_price) if raw_price is not None else None
         except (TypeError, ValueError):
             price = None
         if price is not None and price.is_integer():
             price = int(price)
-
-        price_type = _norm(item.get("price_type") or "fixed").lower()
         if price_type not in {"fixed", "from"}:
             price_type = "fixed"
-
         key_tuple = (name.lower(), price, price_type)
         if key_tuple in seen:
             continue
         seen.add(key_tuple)
-
         services.append({
             "name": name,
             "raw_sub_direction": name,
@@ -879,7 +845,7 @@ Do not output matched_subcategory_id."""
             "matched_subcategory_id": None,
         })
 
-    parsed["company_or_name"] = _norm(parsed.get("company_or_name")) or None
+    parsed["company_or_name"] = _norm(parsed.get("company_or_name") or parsed.get("business_name")) or None
     parsed["marz"] = _norm(parsed.get("marz")) or None
     parsed["city"] = _norm(parsed.get("city")) or None
     parsed["address"] = _norm(parsed.get("address")) or None
