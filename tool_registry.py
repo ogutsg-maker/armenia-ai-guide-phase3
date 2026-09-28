@@ -17,6 +17,7 @@ from prompt_factory import ContextType, as_context_type
 
 class ToolType(Enum):
     READ = "read"
+    AUTO_COMMIT = "auto_commit"
     ACTION_CONFIRM = "action_requires_confirmation"
 
 
@@ -95,7 +96,34 @@ class ToolRegistry:
         c = (ContextType.CLIENT,)
         p = (ContextType.PARTNER,)
         a = (ContextType.ADMIN,)
+        r = (ContextType.REGISTRATION,)
         return [
+            self._spec(
+                "save_completed_application",
+                "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never call it before all required fields are known.",
+                {
+                    "company_name": {"type": "string"},
+                    "city": {"type": "string"},
+                    "phone": {"type": "string"},
+                    "services": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "price": _nullable("number"),
+                                "price_type": {"type": "string", "enum": ["from", "fixed"]},
+                            },
+                            "required": ["name", "price", "price_type"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                required=("company_name", "city", "phone", "services"),
+                tool_type=ToolType.AUTO_COMMIT,
+                contexts=r,
+            ),
             self._spec(
                 "resolve_current_entity",
                 "Resolve a pronoun/reference such as 'it' only from backend session state. If there is no unique current entity, return a clarification question. Never guess.",
@@ -388,6 +416,73 @@ class ToolRegistry:
     def spec(self, name: str) -> ToolSpec | None:
         return next((s for s in self._visible_specs() if s.name == name), None)
 
+    def _save_completed_application(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Persist a completed registration using only backend-owned identity."""
+        if self.context_type != ContextType.REGISTRATION:
+            raise PermissionError("registration_tool_only")
+
+        company_name = str(args.get("company_name") or "").strip()
+        city = str(args.get("city") or "").strip()
+        phone = str(args.get("phone") or "").strip()
+        raw_services = args.get("services")
+        if not company_name or not city or not phone or not isinstance(raw_services, list):
+            raise ValueError("registration_required_fields_missing")
+
+        services: list[dict[str, Any]] = []
+        for raw in raw_services:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name") or "").strip()
+            if not name:
+                continue
+            price = raw.get("price")
+            if price not in (None, ""):
+                try:
+                    price = float(price)
+                except (TypeError, ValueError):
+                    raise ValueError("invalid_service_price")
+                if price < 0:
+                    raise ValueError("invalid_service_price")
+            price_type = str(raw.get("price_type") or "").strip().lower()
+            if price_type not in {"from", "fixed"}:
+                raise ValueError("invalid_price_type")
+            services.append({"name": name, "price": price, "price_type": price_type})
+
+        if not services:
+            raise ValueError("service_required")
+
+        profile = {
+            "business_name": company_name,
+            "city": city,
+            "phone": phone,
+            "services": services,
+        }
+        draft = data_core.save_partner_application_draft(
+            user_id=self.telegram_id,
+            profile=profile,
+        )
+        application_id = int(draft.get("application_id") or draft.get("id") or 0)
+        if not application_id:
+            raise RuntimeError("application_save_failed")
+        partner = data_core.get_partner_by_user(self.telegram_id) or {}
+        partner_id = int(partner.get("id") or 0)
+        if not partner_id:
+            raise RuntimeError("partner_not_found_after_save")
+        submitted = data_core.submit_partner_application(
+            application_id,
+            partner_id=partner_id,
+            actor_user_id=self.telegram_id,
+        )
+        if not submitted:
+            raise RuntimeError("application_submit_failed")
+        return {
+            "ok": True,
+            "application_id": application_id,
+            "status": submitted.get("status") or "pending_admin",
+            "profile": profile,
+            "message": "application_saved",
+        }
+
     def _state_entity_id(self, entity_type: str) -> int | None:
         state = self.session_state
         last = state.get("last_displayed_entity_id")
@@ -435,6 +530,11 @@ class ToolRegistry:
         spec = self.spec(name)
         if not spec:
             raise PermissionError("tool_not_allowed")
+
+        if spec.tool_type == ToolType.AUTO_COMMIT:
+            if name == "save_completed_application":
+                return self._save_completed_application(args)
+            raise PermissionError("auto_commit_not_implemented")
 
         if spec.tool_type == ToolType.ACTION_CONFIRM:
             return self._prepare_action_checked(name, args)
