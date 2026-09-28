@@ -616,10 +616,14 @@ Confirm?"
                     items = result.get("items")
                     if isinstance(item, dict) and item.get("id") is not None:
                         entity_type = (
-                            "application" if name.endswith("application")
-                            else ("order" if "order" in name else
-                                  ("service" if "service" in name else "entity"))
-                        )
+                            str(session_context.get("current_entity_type") or "").strip()
+                            if name == "get_next_item"
+                            else (
+                                "application" if name.endswith("application")
+                                else ("order" if "order" in name else
+                                      ("service" if "service" in name else "entity"))
+                            )
+                        ) or "entity"
                         patch.update({
                             "last_displayed_entity_id": {
                                 "type": entity_type,
