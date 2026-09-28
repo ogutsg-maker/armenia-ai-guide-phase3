@@ -45,13 +45,17 @@ class AIManager:
             language=language,task_instructions=task_instructions)
         started=time.monotonic()
         self.history.append(telegram_id,role.value.lower(),"user",message,{"context_type":role.value,"structured":True})
-        response=await self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role":"user","content":prompt}],
-            response_format={"type":"json_object"},
-            temperature=0,
-            max_tokens=max_tokens,
-        )
+        kwargs={
+            "model":self.model,
+            "messages":[{"role":"user","content":prompt}],
+            "temperature":0,
+            "max_tokens":max_tokens,
+        }
+        # gpt-oss on Groq is more reliable with prompt-constrained JSON than
+        # response_format=json_object.
+        if "gpt-oss" not in self.model.lower():
+            kwargs["response_format"]={"type":"json_object"}
+        response=await self.client.chat.completions.create(**kwargs)
         usage=getattr(response,"usage",None)
         ai_cost_center.record_usage(provider="groq",model=self.model,
             chain=role.value.lower(),stage="manager",operation="json",
