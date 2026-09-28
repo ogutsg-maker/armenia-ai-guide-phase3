@@ -28,7 +28,7 @@ class HistoryProvider:
                 except Exception: data = {}
             out.append({
                 "role": "assistant" if row.get("sender_role") in {"ai", "assistant"} else "user",
-                "content": str(row.get("text") or ""),
+                "content": str(row.get("message_text") or row.get("text") or ""),
                 "data": data or {},
             })
         return out
