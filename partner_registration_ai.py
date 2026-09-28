@@ -887,6 +887,74 @@ def _match_services_universal(db, services, master_id):
     return out
 
 
+async def extract_partner_registration_json(
+    raw_text: str, categories_list: list[dict], *, model: str = "openai/gpt-oss-20b", max_tokens: int = 1800
+) -> dict:
+    """Strict one-user-message partner registration extraction for Groq."""
+    key = os.getenv("GROQ_API_KEY", "").strip()
+    if not key: raise RuntimeError("GROQ_API_KEY is not configured")
+    instruction = """Ты — эксперт-аналитик данных и главный модератор платформы услуг. Твоя задача — проанализировать входящий текст от партнера, очистить его от мусора, дубликатов, исправить опечатки, перевести ключевые текстовые значения на русский язык и разложить всё строго по полочкам в формате JSON.
+
+ВХОДЯЩИЙ ТЕКСТ ПАРТНЕРА:
+__RAW_TEXT__
+
+СПИСОК НАШИХ ДОСТУПНЫХ КАТЕГОРИЙ И ПОДКАТЕГОРИЙ (Используй ТОЛЬКО эти ID):
+__CATEGORIES__
+
+ПРАВИЛА ИЗВЛЕЧЕНИЯ ДАННЫХ:
+1. company_or_name: название компании; если только имя мастера — имя; иначе null.
+2. marz: область Армении. Если указан только город, определи марз; например Раздан -> Котайк. Пиши на русском.
+3. city: город/населенный пункт на русском.
+4. address: улица и номер дома/офиса без названия города.
+5. phone: международный формат +374XXXXXXXX.
+6. working_hours: график или null.
+7. document_type: паспорт/лицензия/сертификат или другой документ, иначе null.
+8. extracted_services: отдельный объект на каждую услугу: user_service_name на русском, price как минимальная цена или null, matched_subcategory_id только из переданного списка.
+
+КРИТИЧЕСКИЕ ПРАВИЛА:
+- Никогда не придумывай отсутствующие данные.
+- Каждый явно указанный денежный ценник соответствует ровно одной услуге; не теряй ценники.
+- 5 000 ֏, 5000֏, 5000 դրամ, 5 000 AMD, 5000 драм -> 5000.
+- Телефон, номер дома и другие числа не считать ценой без денежного контекста.
+- Исправляй только очевидные опечатки; не создавай дубликаты.
+- matched_subcategory_id может быть только реальным ID из переданного списка; иначе null.
+- Если город однозначно определяет марз, заполни marz.
+- Если значение нельзя надежно вывести — null.
+- Сохраняй отдельные услуги даже в одном предложении.
+- Верни только JSON без markdown.
+
+ФОРМАТ:
+{"company_or_name":null,"marz":null,"city":null,"address":null,"phone":null,"working_hours":null,"document_type":null,"extracted_services":[{"user_service_name":"","price":null,"matched_subcategory_id":null}]}
+"""
+    content = instruction.replace("__RAW_TEXT__", _norm(raw_text)[:12000]).replace("__CATEGORIES__", json.dumps(categories_list, ensure_ascii=False))
+    client = AsyncGroq(api_key=key)
+    response = await client.chat.completions.create(
+        model=model, messages=[{"role":"user","content":content}],
+        response_format={"type":"json_object"}, reasoning_effort="low", temperature=0, max_tokens=max_tokens
+    )
+    parsed = _parse_json(response.choices[0].message.content or "{}")
+    if not isinstance(parsed, dict): raise RuntimeError("Invalid partner registration JSON")
+    valid_ids = {_safe_int(x.get("category_id") if "category_id" in x else x.get("id")) for x in categories_list if isinstance(x, dict)}
+    valid_ids.discard(None)
+    services=[]
+    for item in parsed.get("extracted_services") or []:
+        if not isinstance(item, dict): continue
+        name=_norm(item.get("user_service_name"))
+        if not name: continue
+        try: price=float(item.get("price")) if item.get("price") is not None else None
+        except (TypeError,ValueError): price=None
+        if price is not None and price.is_integer(): price=int(price)
+        cid=_safe_int(item.get("matched_subcategory_id")); cid=cid if cid in valid_ids else None
+        services.append({"name":name,"raw_sub_direction":name,"price":price,"price_type":"fixed","matched_subcategory_id":cid})
+    parsed["company_or_name"]=_norm(parsed.get("company_or_name")) or None
+    parsed["marz"]=_norm(parsed.get("marz")) or None
+    parsed["city"]=_norm(parsed.get("city")) or None
+    parsed["address"]=_norm(parsed.get("address")) or None
+    parsed["phone"]=_norm(parsed.get("phone")) or None
+    parsed["working_hours"]=_norm(parsed.get("working_hours")) or None
+    parsed["document_type"]=_norm(parsed.get("document_type")) or None
+    parsed["extracted_services"]=services
+    return parsed
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
     previous_profile = previous_profile or {}
     # Partner Intake AI deliberately does NOT classify the business into the
