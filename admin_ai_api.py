@@ -559,7 +559,7 @@ def _admin_session(admin_id):
         state={"last_focused_application_id":None,"last_focused_field":None,"last_focused_entity_type":None,"last_focused_entity_id":None,
                "active_context":{"scope":"","subject":"","intent":"","query":"","filters":{},"entity_type":"","entity_id":None},
                "response_language":None,"last_shown_applications":[],"current_list":[],"current_position":None,
-               "last_query":None,"last_query_target":None,"last_shown_query_rows":[],"last_result_kind":None,"last_result_facts":None,"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"last_error_context":None,"retry_count":0,"updated_at":now}
+               "last_query":None,"last_query_target":None,"last_shown_query_rows":[],"last_result_kind":None,"last_result_facts":None,"pending_action":None,"waiting_for_input":None,"history":[],"last_action":None,"last_action_failed":False,"last_error":None,"admin_id":sid,"last_error_context":None,"retry_count":0,"updated_at":now}
         _ADMIN_SESSIONS[sid]=state
     state["updated_at"]=now
     return state
