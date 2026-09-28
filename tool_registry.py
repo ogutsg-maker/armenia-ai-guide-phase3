@@ -307,6 +307,30 @@ class ToolRegistry:
                 contexts=p,
             ),
             self._spec(
+                "admin_preview_application_service_price",
+                "Validate an application service price change and prepare an explicit confirmation action.",
+                {
+                    "application_id": {"type": "integer"},
+                    "service_index": {"type": "integer"},
+                    "price": {"type": "number"},
+                },
+                required=("application_id", "service_index", "price"),
+                contexts=a,
+            ),
+            self._spec(
+                "admin_apply_application_service_price",
+                "Final application service price write. Executable only through explicit confirmation.",
+                {
+                    "application_id": {"type": "integer"},
+                    "service_index": {"type": "integer"},
+                    "price": {"type": "number"},
+                    "confirmation_token": {"type": "string"},
+                },
+                required=("application_id", "service_index", "price", "confirmation_token"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
                 "admin_catalog_candidates",
                 "Return live catalogue candidates for each service in a real application. This is a READ-only candidate list: choose only an exact canonical catalogue name returned here. Never invent category names or IDs.",
                 {
@@ -730,6 +754,14 @@ class ToolRegistry:
                 )}
 
         if self.context_type == ContextType.ADMIN:
+            if name == "admin_preview_application_service_price":
+                return data_core.prepare_application_service_price_update(
+                    application_id=int(args["application_id"]),
+                    service_index=int(args["service_index"]),
+                    price=float(args["price"]),
+                    actor_user_id=self.telegram_id,
+                )
+
             if name == "admin_catalog_candidates":
                 application_id = int(args["application_id"])
                 service_indexes = args.get("service_indexes")
@@ -841,6 +873,16 @@ class ToolRegistry:
         if self.context_type == ContextType.ADMIN:
             if not self._admin_allowed():
                 raise PermissionError("admin_required")
+            if name == "admin_preview_application_service_price":
+                application_id = int(args["application_id"])
+                service_index = int(args["service_index"])
+                price = float(args["price"])
+                return data_core.prepare_application_service_price_update(
+                    application_id=application_id,
+                    service_index=service_index,
+                    price=price,
+                    actor_user_id=self.telegram_id,
+                )
             if name == "admin_approve_application":
                 application_id = int(args["application_id"])
                 app = data_core.get_application_full(application_id)
@@ -1047,6 +1089,15 @@ class ToolRegistry:
         if self.context_type == ContextType.ADMIN:
             if not self._admin_allowed():
                 raise PermissionError("admin_required")
+            if name == "admin_apply_application_service_price":
+                return data_core.apply_application_service_price(
+                    application_id=int(args["application_id"]),
+                    service_index=int(args["service_index"]),
+                    price=float(args["price"]),
+                    confirmation_token=str(args.get("confirmation_token") or ""),
+                    actor_user_id=self.telegram_id,
+                )
+
             if name == "admin_apply_catalog_resolution":
                 return data_core.apply_catalog_resolution(
                     application_id=int(args["application_id"]),
