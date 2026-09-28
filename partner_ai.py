@@ -289,12 +289,21 @@ class PartnerAI:
                 data_core.update_session(session["id"], ctx)
 
         try:
-            data = await self.ai.chat_json(
-                system, text, max_tokens=1200,
-                chain="partner_registration", stage="dialogue",
-                operation="partner_profile_extraction",
-                purpose="Extract business profile, services, prices and partner-side actions",
-                user_id=user_id, partner_id=int(partner["id"]),
+            from ai_manager import AIManager
+            from prompt_factory import ContextType
+            manager = AIManager()
+            data = await manager.chat_json(
+                int(user_id),
+                ContextType.PARTNER,
+                text,
+                task_instructions=system,
+                extra_context={
+                    "partner_id": int(partner["id"]),
+                    "profile": ctx.get("profile", {}),
+                    "session_id": int(session["id"]),
+                },
+                language=lang,
+                max_tokens=1200,
             )
         except Exception:
             logger.exception("Partner AI failed")
