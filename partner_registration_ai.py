@@ -753,6 +753,11 @@ async def extract_partner_registration_json(
     except Exception:
         raise
 
+    logger.info(
+        "DEBUG EXTRACTION - Incoming raw_text from frontend: %r",
+        raw_text,
+    )
+
     source = _norm(raw_text)
     if len(source) > 9000:
         source = source[-9000:]
@@ -833,6 +838,11 @@ Do not output matched_subcategory_id."""
     )
     if not isinstance(parsed, dict):
         raise RuntimeError("Invalid partner registration JSON")
+
+    logger.info(
+        "DEBUG EXTRACTION - Groq first-layer extracted data: %s",
+        parsed,
+    )
 
     services = []
     seen = set()
