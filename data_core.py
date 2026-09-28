@@ -107,6 +107,27 @@ def get_user(user_id: int):
     )
 
 
+def is_admin(telegram_id: int) -> bool:
+    """Canonical backend authorization check for administrative operations."""
+    try:
+        actor_id = int(telegram_id)
+    except (TypeError, ValueError):
+        return False
+
+    user = get_user(actor_id) or {}
+    role = str(user.get("role") or "").strip().lower()
+    if role == "admin":
+        return True
+
+    configured_raw = os.getenv("ADMIN_TELEGRAM_ID", "").strip()
+    if not configured_raw:
+        return False
+    try:
+        return actor_id == int(configured_raw)
+    except (TypeError, ValueError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Partners / companies / services
 # ---------------------------------------------------------------------------
