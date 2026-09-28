@@ -547,8 +547,8 @@ class AIManager:
         # model's 8k TPM input limit.
         history = self._compact_history(
             history,
-            max_chars=6000 if role == ContextType.ADMIN else 8000,
-            max_items=6 if role == ContextType.ADMIN else 8,
+            max_chars=4000 if role == ContextType.ADMIN else 7000,
+            max_items=5 if role == ContextType.ADMIN else 8,
         )
         session_context = await self._session_context(telegram_id, role)
         state = SessionState.from_dict(session_context)
@@ -765,7 +765,7 @@ class AIManager:
                     "content": self._compact_tool_result(
                         name,
                         result,
-                        5000 if role == ContextType.ADMIN else 7000,
+                        3500 if role == ContextType.ADMIN else 7000,
                     ),
                 })
 
