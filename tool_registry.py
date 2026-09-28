@@ -7,12 +7,12 @@ the authenticated Telegram user inside data_core.
 from __future__ import annotations
 from typing import Any
 import data_core
-from prompt_factory import ContextType
+from prompt_factory import ContextType, as_context_type
 
 class ToolRegistry:
     def __init__(self, *, telegram_id: int, context_type: ContextType | str, trusted_context: dict[str, Any] | None = None):
         self.telegram_id = int(telegram_id)
-        self.context_type = ContextType(str(context_type))
+        self.context_type = as_context_type(context_type)
         self.trusted_context = trusted_context or {}
 
     def _admin_allowed(self) -> bool:
