@@ -579,12 +579,15 @@ class AIManager:
                     "arguments": args,
                     "result": result,
                 })
+                # ai_messages.sender_role is constrained by the existing DB schema.
+                # Keep tool execution trace in metadata, but store the row as assistant
+                # so a tool-specific sender_role can never break the conversation.
                 await self._save_history(
                     telegram_id,
                     role,
-                    "tool",
+                    "assistant",
                     name,
-                    {"arguments": args, "result": result},
+                    {"kind": "tool", "tool_name": name, "arguments": args, "result": result},
                 )
 
                 if result.get("requires_confirmation"):
