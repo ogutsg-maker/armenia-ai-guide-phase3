@@ -6,6 +6,8 @@ import os
 import re
 from typing import Any
 
+from thefuzz import fuzz
+
 import data_core
 
 try:
@@ -561,13 +563,6 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
         is_from = bool("ից" in full or re.search(r"\b(?:от|from|starting\s+at|սկսվում\s+են|սկսվում\s+է)\b", full, re.I))
         is_per_unit = bool(re.search(r"\b(?:քմ|քառակուսի\s*մետր|кв\.?\s*м|за\s+кв\.?\s*м|պարապմունք|занят(?:ие|ия)|за\s+занятие)\b", full, re.I))
         price_type = ("from_per_unit" if is_from else "fixed_per_unit") if is_per_unit else ("from" if is_from else "fixed")
-        arm_clean = {
-            "սանրվածքները": "Սանրվածք", "սանրվածքը": "Սանրվածք",
-            "գունավորումը": "Գունավորում", "ոճավորումը": "Ոճավորում",
-            "մատնահարդարումը": "Մատնահարդարում", "պեդիկյուրը": "Պեդիկյուր",
-            "դիմահարդարումը": "Դիմահարդարում",
-        }
-        name = arm_clean.get(name.lower().strip("՝:- "), name)
         found.append({"name": name, "raw_sub_direction": name, "price": price, "price_type": price_type, "matched_subcategory_id": None})
 
     result=[]; seen=set()
@@ -728,162 +723,89 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         purpose="structured partner extraction/classification",
     )
 
-async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
-    """Use Groq for semantic service -> real catalogue matching inside one direction.
-    The model receives only the active subcategories of the already selected
-    direction and may return only IDs supplied in that catalogue.
+def _dynamic_catalog_match_score(service_name: str, catalog_name: str) -> float:
+    """Score a service against one live DB catalogue label.
+
+    The catalogue is the only source of valid IDs.  The score combines
+    character similarity and token similarity so inflected/word-order
+    differences are handled better than a plain equality check.
     """
-    if not services or not catalog:
-        return services
+    left = _norm(service_name).lower()
+    right = _norm(catalog_name).lower()
+    if not left or not right:
+        return 0.0
 
-    unresolved = []
-    for index, item in enumerate(services):
-        if not isinstance(item, dict):
-            continue
-        if _safe_int(item.get("matched_subcategory_id")) is not None:
-            continue
-        unresolved.append({
-            "index": index,
-            "service": _norm(item.get("name")),
-            "specialization": _norm(item.get("raw_sub_direction") or item.get("name")),
-        })
-    if not unresolved:
-        return services
+    if left == right:
+        return 1.0
 
-    catalogue = [
-        {
-            "id": _safe_int(row.get("category_id")),
-            "am": _norm(row.get("category_am")),
-            "ru": _norm(row.get("category_ru")),
-            "en": _norm(row.get("category_en")),
-        }
-        for row in catalog
-        if _safe_int(row.get("category_id")) is not None
-    ]
-    valid_ids = {x["id"] for x in catalogue}
-
-    schema = {
-        "type": "object",
-        "properties": {
-            "matches": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "service_index": {"type": "integer"},
-                        "matched_subcategory_id": {"type": ["integer", "null"]},
-                        "confidence": {"type": "number"},
-                        "reason": {"type": "string"},
-                    },
-                    "required": ["service_index", "matched_subcategory_id", "confidence", "reason"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["matches"],
-        "additionalProperties": False,
-    }
-
-    system = """You classify partner services against a real catalogue.
-Understand Armenian, Russian and English semantically, including inflected forms,
-synonyms and ordinary service wording.
-
-IMPORTANT:
-- The catalogue below belongs to ONE already selected top-level direction.
-- Match each service by meaning, not literal spelling.
-- Armenian/Russian/English names are equivalent labels for the same catalogue item.
-- A service phrase may be very different from the catalogue wording.
-- Example: "տրանսֆեր դեպի Ծաղկաձոր" means the catalogue item "Թրանսֆեր".
-- Example: "յոգայի դասեր" means the catalogue item for Yoga.
-- Example: "գիպսաստվարաթղթի աշխատանքներ" means the catalogue item for drywall/plasterboard work.
-- Example: "տեսանկարահանում" means the catalogue item for video filming/video recording.
-- Example: "տորթերի պատվերներ" means the catalogue item for cakes/cake orders.
-- Never invent an ID.
-- matched_subcategory_id MUST be one of the IDs in the supplied catalogue or null.
-- If one catalogue item is clearly the semantic match, select it.
-- Do not choose a merely similar but different service.
-- Return one result for every supplied service index."""
-
-    user = "SERVICES:\n" + json.dumps(unresolved, ensure_ascii=False) +            "\n\nACTIVE SUBCATEGORIES OF THIS DIRECTION:\n" + json.dumps(catalogue, ensure_ascii=False)
-
-    try:
-        result = await _groq_json(
-            client, model, system, user,
-            "partner_service_catalog_match", schema, 900
-        )
-    except Exception:
-        return services
-
-    out = [dict(x) for x in services]
-    for match in result.get("matches") or []:
-        try:
-            idx = int(match.get("service_index"))
-        except (TypeError, ValueError):
-            continue
-        if idx < 0 or idx >= len(out):
-            continue
-        cid = _safe_int(match.get("matched_subcategory_id"))
-        if cid is None or cid not in valid_ids:
-            continue
-        confidence = float(match.get("confidence") or 0)
-        if confidence >= 0.55:
-            out[idx]["matched_subcategory_id"] = cid
-            out[idx]["match_confidence"] = min(1.0, max(0.0, confidence))
-            out[idx]["match_reason"] = _norm(match.get("reason")) or "Semantic catalogue match."
-    return out
+    ratio = fuzz.ratio(left, right) / 100.0
+    token = fuzz.token_set_ratio(left, right) / 100.0
+    weighted = (ratio * 0.55) + (token * 0.45)
+    return min(1.0, weighted)
 
 
-def _match_services_universal(db, services, master_id):
-    """Resolve each AI service phrase to a real active subcategory in PostgreSQL.
+def _dynamic_catalog_match(
+    services: list[dict],
+    catalog_rows: list[dict],
+    threshold: float = 0.70,
+) -> list[dict]:
+    """Assign real DB subcategory IDs using only the live catalogue.
 
-    Groq supplies semantic text; PostgreSQL owns the final ID decision.
-    No subcategory IDs are invented by the model.
+    No AI-generated IDs, keyword dictionaries, category aliases or hardcoded
+    service/category mappings are used.  Every assigned ID and parent direction
+    comes directly from the current database rows.
     """
-    if not services or _safe_int(master_id) is None:
-        return services
-
     out = [dict(x) for x in services]
+
+    candidates = []
+    for row in catalog_rows or []:
+        category_id = _safe_int(row.get("category_id") or row.get("id"))
+        master_id = _safe_int(row.get("master_id") or row.get("master_category_id"))
+        if category_id is None:
+            continue
+
+        labels = [
+            _norm(row.get("category_am") or row.get("name_am")),
+            _norm(row.get("category_ru") or row.get("name_ru")),
+            _norm(row.get("category_en") or row.get("name_en")),
+        ]
+        labels = [x for x in labels if x]
+        if labels:
+            candidates.append((category_id, master_id, labels))
+
     for item in out:
         if _safe_int(item.get("matched_subcategory_id")) is not None:
             continue
 
-        query = _norm(item.get("raw_sub_direction") or item.get("name"))
-        if not query:
+        service_name = _norm(item.get("name") or item.get("service_name"))
+        if not service_name:
             continue
 
-        try:
-            matches = db.find_similar_subcategories(_safe_int(master_id), query, limit=3)
-        except Exception:
-            matches = []
-
-        if not matches:
-            continue
-
-        best = matches[0]
-        score = float(best.get("match_score") or 0)
-        if score > 0.60:
-            item["matched_subcategory_id"] = _safe_int(best.get("id"))
-            item["match_confidence"] = min(1.0, score)
-            item["match_reason"] = "PostgreSQL pg_trgm high-confidence match."
-        elif score >= 0.30:
-            item["catalog_candidates"] = [
-                {
-                    "id": _safe_int(row.get("id")),
-                    "name_am": _norm(row.get("name_am")),
-                    "name_ru": _norm(row.get("name_ru")),
-                    "name_en": _norm(row.get("name_en")),
-                    "match_score": float(row.get("match_score") or 0),
+        best = None
+        for category_id, master_id, labels in candidates:
+            score = max(
+                _dynamic_catalog_match_score(service_name, label)
+                for label in labels
+            )
+            if best is None or score > best["score"]:
+                best = {
+                    "category_id": category_id,
+                    "master_id": master_id,
+                    "score": score,
                 }
-                for row in matches
-            ]
-            item["match_confidence"] = score
-            item["match_reason"] = "Several catalogue candidates are close; partner/admin can choose."
+
+        if best and best["score"] >= threshold:
+            item["matched_subcategory_id"] = best["category_id"]
+            item["direction_id"] = best["master_id"]
+            item["match_confidence"] = round(best["score"], 3)
+            item["match_reason"] = "Dynamic live-database fuzzy catalogue match."
         else:
-            item["match_confidence"] = score
-            item["match_reason"] = "No sufficiently similar active catalogue subcategory was found."
+            item["matched_subcategory_id"] = None
+            item["direction_id"] = None
+            item["match_confidence"] = round(best["score"], 3) if best else 0.0
+            item["match_reason"] = "No live catalogue match reached the 70% threshold."
 
     return out
-
 
 def _build_categories_tree(categories_list: list[dict], source_text: str = "") -> list[dict]:
     """Build the smallest useful DB-backed semantic classification tree.
@@ -919,16 +841,15 @@ def _build_categories_tree(categories_list: list[dict], source_text: str = "") -
 
 async def extract_partner_registration_json(
     raw_text: str,
-    categories_list: list[dict],
+    categories_list: list[dict] | None = None,
     *,
     model: str = "openai/gpt-oss-20b",
-    max_tokens: int = 1100,
+    max_tokens: int = 900,
 ) -> dict:
-    """Extract partner facts and semantically map each service to a real DB subcategory.
+    """Extract partner facts only.
 
-    The classification tree is generated dynamically from the active database
-    catalogue immediately before the Groq request. No service/category keywords
-    are hard-coded into the prompt.
+    Groq never sees catalogue IDs and never performs category classification.
+    Classification is performed afterwards by Python against the live DB.
     """
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key:
@@ -938,60 +859,13 @@ async def extract_partner_registration_json(
     if len(source) > 9000:
         source = source[-9000:]
 
-    categories_tree = _build_categories_tree(categories_list, source)
-    categories_json = json.dumps(categories_tree, ensure_ascii=False, separators=(",", ":"))
-
-    instruction = """You are the Armenia AI Guide partner-registration AI.
+    instruction = """You are the Armenia AI Guide partner-registration extraction AI.
 Understand Armenian, Russian and English.
 
-Return ONLY one JSON object with:
-company_or_name, marz, city, address, phone, working_hours, document_type,
-extracted_services.
+Your ONLY job is to extract factual information from the partner's text.
+Do NOT classify services and do NOT return category IDs.
 
-FACT EXTRACTION:
-- Extract only facts explicitly present in the partner text.
-- Never invent a business name, location, phone, address, schedule, service or price.
-- company_or_name: exact business/company/organization name if explicitly stated.
-- city: canonical city/locality name. Normalize inflected forms.
-- marz: infer only from a reliable city-to-marz relationship or explicit text.
-- address: only the actual address portion.
-- phone: preserve the stated phone number.
-- working_hours: preserve an explicit schedule.
-- document_type: only when explicitly mentioned; otherwise null.
-
-SERVICE EXTRACTION:
-- Extract real, atomic services. A complete service phrase is one service.
-- Keep independent services in an enumeration as separate objects.
-- Preserve meaningful modifiers that distinguish services.
-- Do not turn a whole sentence, business name, address, phone number or price
-  explanation into a service name.
-- Never invent a price. Every explicit service price must stay attached to its
-  correct service.
-- A shared price after a clearly enumerated list may apply to every listed
-  service when the grammar/context makes that relationship explicit.
-- price is numeric only.
-- «3000 դրամից», «от 3000», «from 3000» => price_type="from".
-- Exact stated price => price_type="fixed".
-
-SEMANTIC CLASSIFICATION:
-You MUST perform semantic meaning-based analysis of EVERY extracted service.
-Compare the actual meaning, scope and purpose of the service with the supplied
-categories_tree. Select the closest matching database subcategory by meaning,
-not by literal keyword overlap.
-
-Use the category's real database ID in matched_subcategory_id.
-matched_subcategory_id MUST be exactly one id from categories_tree, or null.
-Never invent an ID, transform an ID, or copy an ID from outside categories_tree.
-
-Choose null ONLY when there is genuinely no reasonable semantic match in the
-provided tree. Do not use null merely because the service wording differs from
-the category wording, language or grammatical form.
-
-Do not classify the partner by guessing from its business name alone. Classify
-each service independently. The same partner may have services mapped to
-different subcategories.
-
-Return:
+Return ONLY this JSON object:
 {
   "company_or_name": string|null,
   "marz": string|null,
@@ -1002,22 +876,49 @@ Return:
   "document_type": string|null,
   "extracted_services": [
     {
-      "user_service_name": string,
+      "name": string,
       "price": number|null,
-      "price_type": "fixed"|"from",
-      "matched_subcategory_id": number|null
+      "price_type": "fixed"|"from"
     }
   ]
 }
 
-Never return markdown or explanatory text."""
+FACT EXTRACTION:
+- Extract only facts explicitly present in the partner text.
+- Never invent a business name, location, phone, address, schedule, service or price.
+- company_or_name: exact business/company/organization name if explicitly stated.
+- city: normalize an explicitly stated city/locality, including ordinary inflected forms.
+- marz: use an explicit marz/region or a reliable city-to-marz relationship only.
+- address: return only the actual address.
+- phone: preserve the stated phone number.
+- working_hours: preserve an explicit schedule.
+- document_type: only when explicitly mentioned; otherwise null.
 
-    user = (
-        "categories_tree:\n" + categories_json
-        + "\n\nPARTNER TEXT:\n" + source
-        + "\n\nIMPORTANT: extract the facts and classify every extracted service "
-          "only against the supplied categories_tree. Return only valid JSON."
-    )
+SERVICE EXTRACTION:
+- Extract only actual services offered by the partner.
+- Return every independent service as a separate object.
+- Keep the user's wording or only lightly normalize grammar/spacing.
+- Preserve meaningful modifiers that distinguish one service from another.
+- Do not replace a service with a catalogue/category name.
+- Do not invent, merge, split, classify, translate or reinterpret services beyond
+  what is needed to make each service name readable.
+- Never put a business name, address, phone number, schedule or explanation into
+  a service name.
+- Never invent a price.
+- Keep every explicit price attached to the correct service.
+- A shared price may be attached to multiple enumerated services only when the
+  source grammar clearly applies that price to all of them.
+- price is numeric only.
+- "3000 դրամից", "от 3000", "from 3000" => price_type="from".
+- Exact stated price => price_type="fixed".
+
+Do not output markdown or explanatory text.
+Do not output category_id.
+Do not output subcategory_id.
+Do not output direction_id.
+Do not output matched_subcategory_id."""
+
+    user = "PARTNER TEXT:\n" + source
 
     client = AsyncGroq(api_key=key)
     response = await client.chat.completions.create(
@@ -1031,22 +932,18 @@ Never return markdown or explanatory text."""
         temperature=0,
         max_tokens=max_tokens,
     )
+
     parsed = _parse_json(response.choices[0].message.content or "{}")
     if not isinstance(parsed, dict):
         raise RuntimeError("Invalid partner registration JSON")
-
-    valid_ids = {
-        _safe_int(row.get("id"))
-        for row in categories_tree
-        if _safe_int(row.get("id")) is not None
-    }
 
     services = []
     seen = set()
     for item in parsed.get("extracted_services") or []:
         if not isinstance(item, dict):
             continue
-        name = _norm(item.get("user_service_name") or item.get("name"))
+
+        name = _norm(item.get("name") or item.get("user_service_name"))
         if not name:
             continue
 
@@ -1062,11 +959,7 @@ Never return markdown or explanatory text."""
         if price_type not in {"fixed", "from"}:
             price_type = "fixed"
 
-        matched_id = _safe_int(item.get("matched_subcategory_id"))
-        if matched_id not in valid_ids:
-            matched_id = None
-
-        key_tuple = (name.lower(), price, price_type, matched_id)
+        key_tuple = (name.lower(), price, price_type)
         if key_tuple in seen:
             continue
         seen.add(key_tuple)
@@ -1076,7 +969,7 @@ Never return markdown or explanatory text."""
             "raw_sub_direction": name,
             "price": price,
             "price_type": price_type,
-            "matched_subcategory_id": matched_id,
+            "matched_subcategory_id": None,
         })
 
     parsed["company_or_name"] = _norm(parsed.get("company_or_name")) or None
@@ -1092,8 +985,8 @@ Never return markdown or explanatory text."""
 
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
     previous_profile = previous_profile or {}
-    # Partner Intake AI extracts facts and performs dynamic semantic service
-    # classification against the active DB catalogue supplied to Groq.
+    # Partner Intake AI extracts facts only. Classification happens afterwards
+    # in Python against the live database catalogue.
     master_catalog = []
     key = os.getenv("GROQ_API_KEY", "").strip()
 
@@ -1218,7 +1111,6 @@ Return only the supplied JSON schema."""
             combined_text if 'combined_text' in locals() else (
                 " ".join([str(x.get("content") or "") for x in history] + [text])
             ),
-            catalog_rows,
             model=model,
             max_tokens=900,
         )
@@ -1265,17 +1157,9 @@ Return only the supplied JSON schema."""
                         item_name = _norm(raw_item).strip(" .;:՝")
                         if not item_name:
                             continue
-                        if re.search(r"սառնարան", item_name, re.I):
-                            item_name = "Սառնարանների վերանորոգում"
-                        elif re.search(r"լվացքի\s+մեքեն", item_name, re.I):
-                            item_name = "Լվացքի մեքենաների վերանորոգում"
-                        elif re.search(r"աման\s+լվ", item_name, re.I):
-                            item_name = "Աման լվացման սարքերի վերանորոգում"
-                        elif re.search(r"փոշեկուլ", item_name, re.I):
-                            item_name = "Փոշեկուլների վերանորոգում"
-                        else:
-                            item_name = item_name + " վերանորոգում"
-                        recovered.append({
+                        # Preserve the user's service wording.
+                        # Category IDs are assigned only by the live DB matcher.
+                                                recovered.append({
                             "name": item_name,
                             "raw_sub_direction": item_name,
                             "price": None,
@@ -1349,80 +1233,29 @@ Return only the supplied JSON schema."""
                     } for x in raw_items]
                     data["services"] = normalized_services
 
-        # Classification is internal. Groq may return a real DB id. For
-        # unresolved services, use the already-known top-level direction and
-        # ask the semantic matcher to choose ONLY among that direction's live
-        # database subcategories. Never invent IDs and never use a keyword table.
-        candidate_catalog = catalog_rows
-        resolved_master_id = _safe_int(data.get("master_category_id"))
-        if resolved_master_id is None:
-            # The extractor may return the correct direction label but omit its
-            # numeric ID. Resolve that label against the same live catalogue
-            # already loaded above. This keeps the next AI call scoped to one
-            # direction instead of sending all 320 subcategories.
-            direction_text = _norm(data.get("direction"))
-            if direction_text:
-                direction_low = direction_text.lower()
-                for row in catalog_rows:
-                    labels = [
-                        _norm(row.get("master_am")),
-                        _norm(row.get("master_ru")),
-                        _norm(row.get("master_en")),
-                    ]
-                    if any(
-                        direction_low == label.lower()
-                        or direction_low in label.lower()
-                        or label.lower() in direction_low
-                        for label in labels if label
-                    ):
-                        resolved_master_id = _safe_int(row.get("master_id"))
-                        if resolved_master_id is not None:
-                            break
-        if resolved_master_id is None:
-            try:
-                recovered_master = _recover_master_category(db, combined_text, data)
-                resolved_master_id = _safe_int(recovered_master.get("master_category_id"))
-            except Exception:
-                resolved_master_id = None
-
-        if resolved_master_id is not None:
-            scoped_catalog = [
-                row for row in catalog_rows
-                if _safe_int(row.get("master_id")) == resolved_master_id
-            ]
-            if scoped_catalog:
-                candidate_catalog = scoped_catalog
+        # Classification is deterministic and database-driven.
+        # Groq has already extracted only service names/prices. Python now
+        # compares those names against every active DB subcategory and assigns
+        # only real IDs returned by the database.
+        catalog_rows = get_catalog(db)
+        normalized_services = _dynamic_catalog_match(
+            normalized_services,
+            catalog_rows,
+            threshold=0.70,
+        )
 
         import logging
         _log = logging.getLogger(__name__)
         _log.info(
-            "PARTNER_CLASSIFICATION: services=%s catalog_rows=%s master_id=%s candidates=%s",
-            len(normalized_services), len(catalog_rows), resolved_master_id, len(candidate_catalog)
+            "PARTNER_CLASSIFICATION: dynamic_fuzzy services=%s catalog_rows=%s matched=%s unresolved=%s",
+            len(normalized_services),
+            len(catalog_rows),
+            sum(_safe_int(s.get("matched_subcategory_id")) is not None for s in normalized_services),
+            sum(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services),
         )
 
-        normalized_services = _fallback_catalog_match(normalized_services, candidate_catalog)
-        if any(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services):
-            try:
-                normalized_services = await _ai_match_services(
-                    None,
-                    model,
-                    normalized_services,
-                    candidate_catalog,
-                )
-            except Exception as exc:
-                _log.exception("PARTNER_CLASSIFICATION: semantic Groq matcher failed: %s", exc)
-
-        if any(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services) and resolved_master_id is not None:
-            try:
-                normalized_services = _match_services_universal(db, normalized_services, resolved_master_id)
-                _log.info(
-                    "PARTNER_CLASSIFICATION: pg_similarity unresolved=%s",
-                    sum(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services),
-                )
-            except Exception as exc:
-                _log.exception("PARTNER_CLASSIFICATION: pg similarity failed: %s", exc)
-
         data["services"] = normalized_services
+
 
         matched_ids = [
             _safe_int(s.get("matched_subcategory_id"))
