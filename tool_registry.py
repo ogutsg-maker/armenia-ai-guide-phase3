@@ -154,6 +154,20 @@ class ToolRegistry:
         if self.context_type == ContextType.ADMIN and self._admin_allowed():
             return [
                 self._fn(
+                    "admin_query",
+                    "Read real administrative data. Entity can be applications, partners, services or companies. Use filters from the user's question. Never mutate data.",
+                    {
+                        "entity": {"type": "string", "enum": ["applications", "partners", "services", "companies"]},
+                        "query": {"type": "string"},
+                        "status": _nullable("string"),
+                        "marz": _nullable("string"),
+                        "city": _nullable("string"),
+                        "max_price": _nullable("number"),
+                        "limit": {"type": "integer"},
+                    },
+                    ["entity"],
+                ),
+                self._fn(
                     "search_applications",
                     "Search real partner applications by status, marz or city.",
                     {"status": _nullable("string"), "marz": _nullable("string"), "city": _nullable("string"), "limit": {"type": "integer"}},
@@ -340,6 +354,41 @@ class ToolRegistry:
                 )
 
         if self.context_type == ContextType.ADMIN and self._admin_allowed():
+            if name == "admin_query":
+                entity = str(args.get("entity") or "").strip().lower()
+                query = str(args.get("query") or "").strip()
+                limit = max(1, min(int(args.get("limit") or 30), 100))
+                if entity == "applications":
+                    items = data_core.search_applications(
+                        status=args.get("status"), marz=args.get("marz"),
+                        city=args.get("city"), limit=limit,
+                    )
+                    if query:
+                        q = query.casefold()
+                        items = [
+                            x for x in items
+                            if q in str(x.get("business_name") or "").casefold()
+                            or q in str(x.get("service_name") or "").casefold()
+                            or q in str(x.get("description") or "").casefold()
+                        ]
+                    return {"ok": True, "entity": entity, "items": items}
+                if entity == "partners":
+                    return {"ok": True, "entity": entity, "items": data_core.search_partners(
+                        query=query, city=str(args.get("city") or ""), limit=limit,
+                    )}
+                if entity == "services":
+                    return {"ok": True, "entity": entity, "items": data_core.search_services(
+                        city=str(args.get("city") or ""), max_price=args.get("max_price"), limit=limit,
+                    )}
+                if entity == "companies":
+                    rows = []
+                    partner_rows = data_core.search_partners(query=query, city=str(args.get("city") or ""), limit=limit)
+                    partner_ids = {int(x["id"]) for x in partner_rows if x.get("id") is not None}
+                    for pid in partner_ids:
+                        rows.extend(data_core.list_companies(pid, include_archived=False))
+                    return {"ok": True, "entity": entity, "items": rows[:limit]}
+                raise ValueError("unsupported_admin_entity")
+
             if name == "search_applications":
                 return {"ok": True, "items": data_core.search_applications(
                     status=args.get("status"), marz=args.get("marz"), city=args.get("city"),
