@@ -1076,21 +1076,40 @@ Return only the supplied JSON schema."""
     )
 
     try:
-        ai_data = await _groq_json(client, model, system, user_content,
-                                   "partner_onboarding_extract", schema, 1100)
+        # FINAL partner-registration extractor:
+        # one USER message, GPT-OSS-20B, JSON mode, low reasoning.
+        # The active catalogue is supplied directly from the database.
+        catalog_rows = get_catalog(db)
+        strict_data = await extract_partner_registration_json(
+            combined_text if 'combined_text' in locals() else (
+                " ".join([str(x.get("content") or "") for x in history] + [text])
+            ),
+            catalog_rows,
+            model=model,
+            max_tokens=1800,
+        )
         data = dict(previous_profile)
 
-        for field in ("business_name", "marz", "address", "phone", "working_hours", "business_action", "proposed_business_name", "city", "district", "direction",
-                      "master_category_id", "description", "confidence", "ambiguities", "needs_review"):
-            value = ai_data.get(field)
+        mapping = {
+            "company_or_name": "business_name",
+            "marz": "marz",
+            "city": "city",
+            "address": "address",
+            "phone": "phone",
+            "working_hours": "working_hours",
+        }
+        for source, target in mapping.items():
+            value = strict_data.get(source)
             if value not in (None, ""):
-                data[field] = value
+                data[target] = value
 
-        ai_services = ai_data.get("services")
-        if isinstance(ai_services, list) and ai_services:
-            data["services"] = ai_services
-        elif "services" not in data:
-            data["services"] = []
+        data["document_type"] = strict_data.get("document_type")
+        data["description"] = _norm(text) or data.get("description") or ""
+
+        ai_services = strict_data.get("extracted_services") or []
+        data["services"] = ai_services if isinstance(ai_services, list) else []
+
+        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
 
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
 
