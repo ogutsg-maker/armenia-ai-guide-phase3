@@ -154,6 +154,17 @@ class ToolRegistry:
         if self.context_type == ContextType.ADMIN and self._admin_allowed():
             return [
                 self._fn(
+                    "count_records",
+                    "Return an exact backend count for applications, partners, services or companies.",
+                    {
+                        "entity": {"type": "string", "enum": ["applications", "partners", "services", "companies"]},
+                        "status": _nullable("string"),
+                        "marz": _nullable("string"),
+                        "city": _nullable("string"),
+                    },
+                    ["entity"],
+                ),
+                self._fn(
                     "admin_query",
                     "Read real administrative data. Entity can be applications, partners, services or companies. Use filters from the user's question. Never mutate data.",
                     {
@@ -354,6 +365,11 @@ class ToolRegistry:
                 )
 
         if self.context_type == ContextType.ADMIN and self._admin_allowed():
+            if name == "count_records":
+                return {"ok": True, "entity": str(args.get("entity") or ""), "count": data_core.count_entities(
+                    entity=str(args.get("entity") or ""),
+                    status=args.get("status"), marz=args.get("marz"), city=args.get("city"),
+                )}
             if name == "admin_query":
                 entity = str(args.get("entity") or "").strip().lower()
                 query = str(args.get("query") or "").strip()
