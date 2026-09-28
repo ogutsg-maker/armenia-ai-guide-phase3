@@ -91,7 +91,10 @@ class AIManager:
         key = os.getenv("GROQ_API_KEY", "").strip()
         if not key:
             raise RuntimeError("GROQ_API_KEY is not configured")
-        self.client = AsyncGroq(api_key=key)
+        # Do not let the SDK silently replay expensive Groq requests.
+        # The application owns retry/backoff policy; this prevents a single
+        # 429 from turning into a long chain of hidden requests.
+        self.client = AsyncGroq(api_key=key, max_retries=0)
         self.db = db_pool
         self.model = (
             model
@@ -440,11 +443,15 @@ class AIManager:
 
     @staticmethod
     def _is_confirmation(message: str) -> bool:
-        return " ".join(str(message or "").strip().casefold().split()) in _CONFIRMATIONS
+        normalized = " ".join(str(message or "").strip().casefold().split())
+        normalized = normalized.strip(" .,!?:;՝։\"'«»")
+        return normalized in _CONFIRMATIONS
 
     @staticmethod
     def _is_cancel(message: str) -> bool:
-        return " ".join(str(message or "").strip().casefold().split()) in _CANCELS
+        normalized = " ".join(str(message or "").strip().casefold().split())
+        normalized = normalized.strip(" .,!?:;՝։\"'«»")
+        return normalized in _CANCELS
 
     async def _pending(self, telegram_id: int, context: ContextType):
         ctx = await self._session_context(telegram_id, context)
@@ -453,8 +460,17 @@ class AIManager:
     async def _set_pending(
         self, telegram_id: int, context: ContextType, action: dict[str, Any]
     ):
+        # Backend-owned state machine. The model never controls this state.
+        pending = dict(action or {})
+        pending["state"] = "awaiting_confirmation"
+        pending.setdefault("created_at", int(time.time()))
         return await self._update_session_context(
-            telegram_id, context, {"pending_action": action}
+            telegram_id,
+            context,
+            {
+                "conversation_state": "awaiting_confirmation",
+                "pending_action": pending,
+            },
         )
 
     async def _clear_pending(self, telegram_id: int, context: ContextType):
@@ -464,6 +480,7 @@ class AIManager:
         state = SessionState.from_dict(ctx)
         state.pending_action = None
         ctx.update(state.to_dict())
+        ctx["conversation_state"] = "idle"
         return await self._update_session_context(
             telegram_id, context, ctx, replace=True
         )
@@ -569,6 +586,7 @@ class AIManager:
                 "current_company_id", "current_service_id",
                 "current_order_id", "last_displayed_entity_id",
                 "current_pagination_index", "current_list", "current_position",
+                "conversation_state",
             }
         }
         prompt = PromptFactory.build(
@@ -595,8 +613,14 @@ class AIManager:
                 return {"reply": reply, "cancelled": True}
             if self._is_confirmation(message):
                 try:
+                    pending_name = str(pending.get("name") or "").strip()
+                    pending_args = dict(pending.get("args") or {})
+                    # Deterministic confirmation fast path: "yes" is never
+                    # sent to Groq and cannot alter the pending action.
+                    if str(pending.get("state") or "awaiting_confirmation") != "awaiting_confirmation":
+                        raise PermissionError("invalid_pending_state")
                     result = await tools.execute_confirmed(
-                        str(pending.get("name") or ""), dict(pending.get("args") or {})
+                        pending_name, pending_args
                     )
                     await self._clear_pending(telegram_id, role)
                     reply = self._done_text(language)
@@ -739,6 +763,8 @@ class AIManager:
                         "name": str(action.get("name") or name),
                         "args": dict(action.get("args") or {}),
                         "summary": str(result.get("summary") or ""),
+                        "state": "awaiting_confirmation",
+                        "created_at": int(time.time()),
                     }
                     await self._set_pending(
                         telegram_id, role, pending_action
