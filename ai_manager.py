@@ -86,7 +86,7 @@ class AIManager:
         history_provider: HistoryProvider | None = None,
         model: str | None = None,
         max_history: int = 12,
-        max_tool_rounds: int = 4,
+        max_tool_rounds: int = 3,
     ):
         key = os.getenv("GROQ_API_KEY", "").strip()
         if not key:
@@ -558,6 +558,44 @@ class AIManager:
         role = self._context(context_type)
         language = language or self._lang(message)
         trusted = self._trusted(role, telegram_id, extra_context)
+
+        # Admin application requests are often explicit ("հայտ #39").
+        # Resolve that stable backend reference before Groq. This removes an
+        # unnecessary get_application tool round and, more importantly, keeps
+        # the model focused on the requested edit instead of rediscovering the
+        # same application through several expensive calls.
+        if role == ContextType.ADMIN:
+            import re
+            match = re.search(r"(?:#|№)\s*(\d+)", str(message or ""))
+            if match and any(word in str(message or "").casefold() for word in (
+                "հայտ", "заяв", "application", "ուղղ", "исправ", "փոխ", "измен",
+                "fix", "edit", "գին", "цена", "price",
+            )):
+                try:
+                    import data_core
+                    app_id = int(match.group(1))
+                    app = data_core.get_application_full(app_id)
+                    if app:
+                        services = data_core.application_service_items(app_id)
+                        trusted["active_application"] = {
+                            "application_id": app_id,
+                            "business_name": app.get("business_name"),
+                            "status": app.get("status"),
+                            "services": [
+                                {
+                                    "service_index": x.get("service_index"),
+                                    "name": x.get("name"),
+                                    "price": x.get("price"),
+                                    "price_type": x.get("price_type"),
+                                    "category_name_am": x.get("category_name_am"),
+                                    "category_name_ru": x.get("category_name_ru"),
+                                }
+                                for x in services
+                            ],
+                        }
+                except Exception:
+                    logger.exception("Failed to prefetch admin application context")
+
         history = await self._supabase_history(telegram_id, role)
         # Never send raw historical tool payloads back to Groq. Admin requests
         # can otherwise accumulate catalogue/application JSON and exceed the
