@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 import json
+import secrets
 import os
 
 import platform_db
@@ -196,6 +197,241 @@ def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -
             })
         resolved.append(item)
     return resolved
+
+
+def _application_payload_services(application: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = application.get("payload_json") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("services") or []
+    return [dict(x) for x in raw if isinstance(x, dict)]
+
+
+def application_service_items(application_id: int) -> list[dict[str, Any]]:
+    """Return backend-indexed application services with current live catalog labels."""
+    app = get_application_full(int(application_id))
+    if not app:
+        return []
+    result = []
+    for index, service in enumerate(_application_payload_services(app)):
+        category_id = service.get("category_id")
+        category = get_catalog_category(int(category_id)) if category_id not in (None, "") else None
+        result.append({
+            "service_index": index,
+            "name": str(service.get("name") or service.get("service_name") or "").strip(),
+            "price": service.get("price"),
+            "price_type": service.get("price_type"),
+            "category_id": category_id,
+            "master_category_id": service.get("master_category_id"),
+            "category_name_am": (category or {}).get("name_am") or service.get("category_name_am"),
+            "category_name_ru": (category or {}).get("name_ru") or service.get("category_name_ru"),
+            "category_name_en": (category or {}).get("name_en") or service.get("category_name_en"),
+        })
+    return result
+
+
+def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] | None = None,
+                              limit_per_service: int = 10, actor_user_id: int) -> dict[str, Any]:
+    """Return candidate catalogue labels without making any classification write."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+
+    services = application_service_items(int(application_id))
+    wanted = {int(x) for x in service_indexes} if isinstance(service_indexes, list) and service_indexes else None
+    catalog = search_catalog(limit=500)
+    per_service = max(3, min(int(limit_per_service or 10), 15))
+    result = []
+    for service in services:
+        idx = int(service["service_index"])
+        if wanted is not None and idx not in wanted:
+            continue
+        query = service["name"]
+        ranked = []
+        for cat in catalog:
+            names = [cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug")]
+            score = max((_catalog_match_score(query, name) for name in names if name), default=0.0)
+            ranked.append((score, cat))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        result.append({
+            "service_index": idx,
+            "service_name": query,
+            "current_category": service.get("category_name_am"),
+            "candidates": [{
+                "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
+                "name_am": cat.get("name_am"),
+                "name_ru": cat.get("name_ru"),
+                "name_en": cat.get("name_en"),
+                "master_name_am": cat.get("master_name_am"),
+                "master_name_ru": cat.get("master_name_ru"),
+                "master_name_en": cat.get("master_name_en"),
+                "category_id": cat.get("id"),
+                "score": round(float(score), 4),
+            } for score, cat in ranked[:per_service]],
+        })
+    return {"application_id": int(application_id), "items": result}
+
+
+def prepare_catalog_resolution(*, application_id: int, mappings: list[dict[str, Any]],
+                               actor_user_id: int) -> dict[str, Any]:
+    """Validate proposed mappings and prepare an explicit confirmation action."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+
+    services = {int(x["service_index"]): x for x in application_service_items(int(application_id))}
+    catalog = search_catalog(limit=500)
+    normalized_catalog = {}
+    for cat in catalog:
+        for key in ("name_am", "name_ru", "name_en", "slug"):
+            value = cat.get(key)
+            if value:
+                normalized_catalog[_catalog_text(value)] = cat
+
+    validated = []
+    seen = set()
+    for raw in mappings:
+        if not isinstance(raw, dict):
+            raise ValueError("invalid_catalog_mapping")
+        try:
+            index = int(raw.get("service_index"))
+        except (TypeError, ValueError):
+            raise ValueError("invalid_catalog_mapping")
+        catalog_name = str(raw.get("catalog_name") or "").strip()
+        if index in seen or index not in services or not catalog_name:
+            raise ValueError("invalid_catalog_mapping")
+        seen.add(index)
+        cat = normalized_catalog.get(_catalog_text(catalog_name))
+        if not cat or not cat.get("id") or not cat.get("master_category_id"):
+            raise ValueError("catalog_name_not_in_live_catalog")
+        validated.append({
+            "service_index": index,
+            "service_name": services[index]["name"],
+            "category_id": int(cat["id"]),
+            "master_category_id": int(cat["master_category_id"]),
+            "category_name_am": cat.get("name_am"),
+            "category_name_ru": cat.get("name_ru"),
+            "category_name_en": cat.get("name_en"),
+        })
+
+    if not validated:
+        raise ValueError("catalog_mapping_required")
+
+    token = secrets.token_urlsafe(24)
+    summary_lines = [f"Изменить каталог заявки #{int(application_id)} ({app.get('business_name') or '—'}):"]
+    for row in validated:
+        summary_lines.append(
+            f"• {row['service_name']} → {row.get('category_name_am') or row.get('category_name_ru')} (ID {row['category_id']})"
+        )
+    return {
+        "ok": True,
+        "status": "awaiting_user_confirmation",
+        "requires_confirmation": True,
+        "confirmation_token": token,
+        "action": {
+            "name": "admin_apply_catalog_resolution",
+            "args": {
+                "application_id": int(application_id),
+                "confirmation_token": token,
+                "mappings": [{
+                    "service_index": row["service_index"],
+                    "category_id": row["category_id"],
+                    "master_category_id": row["master_category_id"],
+                } for row in validated],
+            },
+        },
+        "summary": "
+".join(summary_lines),
+        "changes": validated,
+    }
+
+
+def apply_catalog_resolution(*, application_id: int, mappings: list[dict[str, Any]],
+                             confirmation_token: str, actor_user_id: int) -> dict[str, Any]:
+    """Apply a previously previewed mapping in one atomic application update."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    if not confirmation_token or len(confirmation_token) < 20:
+        raise PermissionError("invalid_confirmation_token")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    current_services = _application_payload_services(app)
+    if not current_services:
+        raise ValueError("application_services_missing")
+
+    updated = [dict(x) for x in current_services]
+    applied = []
+    for raw in mappings:
+        index = int(raw.get("service_index"))
+        if index < 0 or index >= len(updated):
+            raise ValueError("invalid_catalog_mapping")
+        category_id = int(raw.get("category_id"))
+        master_id = int(raw.get("master_category_id"))
+        cat = get_catalog_category(category_id)
+        if not cat or not cat.get("is_active") or int(cat.get("master_category_id") or 0) != master_id:
+            raise ValueError("catalog_category_invalid")
+        updated[index].update({
+            "category_id": category_id,
+            "master_category_id": master_id,
+            "catalog_match_status": "admin_confirmed",
+            "category_name_am": cat.get("name_am"),
+            "category_name_ru": cat.get("name_ru"),
+            "category_name_en": cat.get("name_en"),
+            "master_name_am": cat.get("master_name_am"),
+            "master_name_ru": cat.get("master_name_ru"),
+            "master_name_en": cat.get("master_name_en"),
+        })
+        applied.append({
+            "service_index": index,
+            "service_name": str(updated[index].get("name") or updated[index].get("service_name") or ""),
+            "category_id": category_id,
+            "master_category_id": master_id,
+            "category_name_am": cat.get("name_am"),
+            "category_name_ru": cat.get("name_ru"),
+        })
+
+    payload = app.get("payload_json") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload = dict(payload)
+    payload["services"] = updated
+
+    first = updated[0]
+    first_cat = get_catalog_category(int(first["category_id"])) if first.get("category_id") else None
+    fields = ["payload_json=%s", "updated_at=NOW()"]
+    params: list[Any] = [json_dump(payload)]
+    if first_cat:
+        fields.extend(["direction_name=%s", "master_category_id=%s", "subcategory_name=%s", "category_id=%s"])
+        params.extend([
+            first_cat.get("master_name_am") or first_cat.get("master_name_ru"),
+            int(first_cat["master_category_id"]),
+            first_cat.get("name_am") or first_cat.get("name_ru"),
+            int(first_cat["id"]),
+        ])
+    params.append(int(application_id))
+    row = execute(
+        "UPDATE partner_applications SET " + ",".join(fields) + " WHERE id=%s RETURNING *",
+        tuple(params), returning=True,
+    )
+    if not row:
+        raise RuntimeError("catalog_resolution_update_failed")
+    return {"ok": True, "application_id": int(application_id), "changes": applied,
+            "status": row.get("status"), "message": "catalog_resolution_saved"}
 
 
 def active_directions():
