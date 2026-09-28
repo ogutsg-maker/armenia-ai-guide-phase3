@@ -21,6 +21,7 @@ from config import BOT_TOKEN, ADMIN_ID, WEBAPP_BASE_URL
 from database import DatabaseManager
 import data_core
 from ai_service import AIService
+from ai_manager import AIManager, AIContext
 from states import PartnerAIStates
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
 from stage3_partner_verification import register_stage3_routes
@@ -44,6 +45,7 @@ router = Router()
 dp.include_router(router)
 db = DatabaseManager()
 ai = AIService()
+ai_manager = AIManager()
 BASE_DIR = Path(__file__).resolve().parent
 WEB_APPS_DIR = BASE_DIR / "web_apps"
 
@@ -523,8 +525,12 @@ async def telegram_admin_ai_secretary(message: types.Message):
     if not text or text.startswith("/"):
         return
     try:
-        reply = await admin_ai_message(message.from_user.id, text)
-        await message.answer(reply)
+        result = await ai_manager.handle_message(
+            message.from_user.id,
+            text,
+            AIContext.ADMIN,
+        )
+        await message.answer(result.get("reply") or "⚠️ No response.")
     except Exception:
         logger.exception("Telegram admin AI secretary failed")
         await message.answer("⚠️ AI-секретарь временно недоступен. Попробуйте ещё раз.")
@@ -644,6 +650,7 @@ async def main():
     logger.info("🚀 Запуск Armenia AI Guide — AI-first runtime")
     log_webapp_files()
     app = web.Application(middlewares=[telegram_partner_auth_middleware, _webapp_cache_middleware])
+    app["ai_manager"] = ai_manager
     app.router.add_get("/health", health)
     app.router.add_post("/telegram/webhook", telegram_webhook)
     app.router.add_get("/", serve_index)
