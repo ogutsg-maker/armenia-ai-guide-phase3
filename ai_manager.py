@@ -429,7 +429,8 @@ Confirm?"
             if k in {
                 "current_entity_type", "current_entity_id",
                 "current_company_id", "current_service_id",
-                "current_order_id", "current_list", "current_position",
+                "current_order_id", "last_displayed_entity_id",
+                "current_pagination_index", "current_list", "current_position",
             }
         }
         prompt = PromptFactory.build(
