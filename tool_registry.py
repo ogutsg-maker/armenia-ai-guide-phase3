@@ -94,6 +94,32 @@ class ToolRegistry:
                     {"limit": {"type": "integer"}},
                 ),
                 self._fn(
+                    "add_address",
+                    "Prepare adding an address/object to an owned company. Confirmation required.",
+                    {
+                        "company_id": _nullable("integer"),
+                        "address": {"type": "string"},
+                        "city": _nullable("string"),
+                        "marz": _nullable("string"),
+                        "phone": _nullable("string"),
+                        "object_name": _nullable("string"),
+                    },
+                    ["address"],
+                ),
+                self._fn(
+                    "update_address",
+                    "Prepare changing an owned partner address/object. Confirmation required.",
+                    {
+                        "address_id": {"type": "integer"},
+                        "address": _nullable("string"),
+                        "city": _nullable("string"),
+                        "marz": _nullable("string"),
+                        "phone": _nullable("string"),
+                        "object_name": _nullable("string"),
+                    },
+                    ["address_id"],
+                ),
+                self._fn(
                     "get_my_orders",
                     "List the authenticated partner's orders. Use for conversational order browsing.",
                     {"limit": {"type": "integer"}},
@@ -257,6 +283,49 @@ class ToolRegistry:
                     limit=max(1, min(int(args.get("limit") or 100), 200)),
                 )}
 
+            if name == "add_address":
+                company_id = args.get("company_id")
+                if company_id is not None:
+                    company = data_core.get_company(int(company_id))
+                    if not company or int(company.get("partner_id") or 0) != pid:
+                        raise PermissionError("company_not_owned")
+                address = str(args.get("address") or "").strip()
+                if not address:
+                    raise ValueError("address_required")
+                return self._confirmation(
+                    name,
+                    {
+                        "company_id": int(company_id) if company_id is not None else None,
+                        "address": address,
+                        "city": args.get("city"),
+                        "marz": args.get("marz"),
+                        "phone": args.get("phone"),
+                        "object_name": args.get("object_name"),
+                    },
+                    f"Добавить адрес «{address}»"
+                )
+
+            if name == "update_address":
+                address_id = int(args["address_id"])
+                addresses = data_core.get_partner_addresses(pid, actor_user_id=self.telegram_id, limit=200)
+                obj = next((x for x in addresses if int(x.get("id") or 0) == address_id), None)
+                if not obj:
+                    raise PermissionError("address_not_owned")
+                if all(args.get(k) in (None, "") for k in ("address", "city", "marz", "phone", "object_name")):
+                    raise ValueError("no_changes")
+                return self._confirmation(
+                    name,
+                    {
+                        "address_id": address_id,
+                        "address": args.get("address"),
+                        "city": args.get("city"),
+                        "marz": args.get("marz"),
+                        "phone": args.get("phone"),
+                        "object_name": args.get("object_name"),
+                    },
+                    f"Изменить адрес #{address_id}"
+                )
+
             if name == "get_my_orders":
                 # Orders are intentionally resolved through the existing
                 # domain gateway when available. Do not expose SQL here.
@@ -327,7 +396,23 @@ class ToolRegistry:
                     f"Изменить услугу #{int(service['id'])} «{service.get('name') or ''}»"
                 )
 
-            if name == "add_company":
+            if name == "add_address":
+            return {"ok": True, "item": data_core.create_partner_address(
+                partner_id=pid, actor_user_id=self.telegram_id,
+                company_id=args.get("company_id"), address=args["address"],
+                city=args.get("city"), marz=args.get("marz"),
+                phone=args.get("phone"), object_name=args.get("object_name"),
+            )}
+
+        if name == "update_address":
+            return {"ok": True, "item": data_core.update_partner_address(
+                address_id=int(args["address_id"]), actor_user_id=self.telegram_id,
+                address=args.get("address"), city=args.get("city"),
+                marz=args.get("marz"), phone=args.get("phone"),
+                object_name=args.get("object_name"),
+            )}
+
+        if name == "add_company":
                 name_value = str(args.get("name") or "").strip()
                 if not name_value:
                     raise ValueError("company_name_required")
