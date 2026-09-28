@@ -133,8 +133,15 @@ class AIManager:
                 ctx["partner_id"] = partner.get("id")
         return ctx
 
+    @staticmethod
+    def _storage_role(context: ContextType) -> str:
+        # REGISTRATION is an AI conversation context, not a persisted DB role.
+        # Store onboarding history in the partner session because the database
+        # role constraint accepts client/partner/admin.
+        return "partner" if context == ContextType.REGISTRATION else context.value.lower()
+
     def _session(self, telegram_id: int, context: ContextType):
-        role = context.value.lower()
+        role = self._storage_role(context)
 
         def read():
             return (
@@ -185,7 +192,7 @@ class AIManager:
         self, telegram_id: int, context: ContextType, limit: int | None = None
     ):
         """Compatibility name; HistoryProvider is the canonical history layer."""
-        role = context.value.lower()
+        role = self._storage_role(context)
         size = max(2, min(int(limit or self.max_history), 50))
 
         def read():
@@ -215,7 +222,7 @@ class AIManager:
         return await asyncio.to_thread(
             self.history.append,
             int(telegram_id),
-            context.value.lower(),
+            self._storage_role(context),
             sender,
             str(content or "")[:12000],
             metadata or {},
