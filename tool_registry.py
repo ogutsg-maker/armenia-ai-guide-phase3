@@ -7,10 +7,9 @@ user confirms and backend ownership/state validation runs again.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 import data_core
 from prompt_factory import ContextType, as_context_type
@@ -636,30 +635,6 @@ class ToolRegistry:
         if self.context_type not in (ContextType.CLIENT, ContextType.PARTNER):
             raise PermissionError("action_not_allowed")
 
-        if self.context_type == ContextType.ADMIN:
-            if not self._admin_allowed():
-                raise PermissionError("admin_required")
-            if name == "admin_approve_application":
-                return {"ok": True, "item": data_core.admin_approve_application(
-                    int(args["application_id"]), self.telegram_id
-                )}
-            if name == "admin_reject_application":
-                reason = str(args.get("reason") or "").strip()
-                if not reason:
-                    return {"ok": False, "needs_clarification": True,
-                            "question": "Укажите причину отклонения заявки."}
-                return {"ok": True, "item": data_core.admin_reject_application(
-                    int(args["application_id"]), reason, self.telegram_id
-                )}
-            if name == "admin_suspend_partner":
-                reason = str(args.get("reason") or "").strip()
-                if not reason:
-                    return {"ok": False, "needs_clarification": True,
-                            "question": "Укажите причину блокировки партнёра."}
-                return {"ok": True, "item": data_core.admin_suspend_partner(
-                    int(args["partner_id"]), reason, self.telegram_id
-                )}
-
         if name == "cancel_order":
             order_id = int(args["order_id"])
             order = data_core.get_order(
@@ -826,6 +801,31 @@ class ToolRegistry:
             if not result:
                 raise PermissionError("order_not_cancellable_or_not_owned")
             return {"ok": True, "item": result}
+
+        if self.context_type == ContextType.ADMIN:
+            if not self._admin_allowed():
+                raise PermissionError("admin_required")
+            if name == "admin_approve_application":
+                return {"ok": True, "item": data_core.admin_approve_application(
+                    int(args["application_id"]), self.telegram_id
+                )}
+            if name == "admin_reject_application":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    return {"ok": False, "needs_clarification": True,
+                            "question": "Укажите причину отклонения заявки."}
+                return {"ok": True, "item": data_core.admin_reject_application(
+                    int(args["application_id"]), reason, self.telegram_id
+                )}
+            if name == "admin_suspend_partner":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    return {"ok": False, "needs_clarification": True,
+                            "question": "Укажите причину блокировки партнёра."}
+                return {"ok": True, "item": data_core.admin_suspend_partner(
+                    int(args["partner_id"]), reason, self.telegram_id
+                )}
+            raise PermissionError("confirmed_admin_action_not_implemented")
 
         if self.context_type != ContextType.PARTNER:
             raise PermissionError("confirmed_action_not_allowed")
