@@ -549,9 +549,13 @@ def search_applications(status: str | None = None, marz: str | None = None,
 
 
 def admin_get_pending_applications(limit: int = 50):
-    return search_applications(
-        status=None,
-        limit=max(1, min(int(limit or 50), 200)),
+    return rows(
+        """SELECT a.*,p.business_name AS partner_business_name
+           FROM partner_applications a
+           LEFT JOIN partners p ON p.id=a.partner_id
+           WHERE a.status NOT IN ('approved','rejected','pending_partner','deleted')
+           ORDER BY a.id DESC LIMIT %s""",
+        (max(1, min(int(limit or 50), 200)),),
     )
 
 
