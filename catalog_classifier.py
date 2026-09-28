@@ -500,27 +500,64 @@ Return ONLY JSON:
         data = await AIService().chat_json(
             prompt,
             user_text,
-            max_tokens=max(350, min(700, 100 + len(services) * 90)),
+            max_tokens=max(350, min(900, 140 + len(services) * 120)),
             chain="partner_catalogue",
             stage="semantic_resolution",
             operation="resolve_unclassified_services",
             purpose="Resolve unresolved partner services against live catalogue names",
         )
 
+        logger.info(
+            "Catalogue semantic raw result: services=%s result=%s",
+            services,
+            data,
+        )
+
         result = {}
         allowed = {_normalize_text(x): x for x in candidates}
-        for item in data.get("matches") or []:
+
+        # Accept the documented shape first.  Also tolerate the two common
+        # structured-output variants used by Groq models, but never accept a
+        # category that is not present in the live catalogue.
+        raw_matches = data.get("matches")
+        if not isinstance(raw_matches, list):
+            raw_matches = data.get("results")
+        if not isinstance(raw_matches, list):
+            raw_matches = []
+
+        for item in raw_matches:
             if not isinstance(item, dict):
                 continue
-            service = str(item.get("service") or "").strip()
-            category = str(item.get("category") or "").strip()
+
+            service = str(
+                item.get("service")
+                or item.get("service_name")
+                or item.get("input")
+                or ""
+            ).strip()
+            category = str(
+                item.get("category")
+                or item.get("category_name")
+                or item.get("match")
+                or ""
+            ).strip()
+
             if not service or not category:
                 continue
+
             canonical = allowed.get(_normalize_text(category))
             if not canonical:
+                # Try the supplied catalogue names by exact normalized
+                # multilingual label only.  Never invent or fuzzy-select a
+                # category here.
                 continue
+
             result[_normalize_text(service)] = {"category_name": canonical}
 
+        logger.info(
+            "Catalogue semantic accepted proposals: %s",
+            result,
+        )
         return result
     except Exception:
         logger.exception("Semantic catalogue resolution failed.")
