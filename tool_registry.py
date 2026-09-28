@@ -108,6 +108,18 @@ class ToolRegistry:
         a = (ContextType.ADMIN,)
         return [
             self._spec(
+                "resolve_current_entity",
+                "Resolve a pronoun/reference such as 'it' only from backend session state. If there is no unique current entity, return a clarification question. Never guess.",
+                {
+                    "entity_type": {
+                        "type": "string",
+                        "enum": ["order", "service", "company", "address", "application"],
+                    },
+                },
+                required=("entity_type",),
+                contexts=(ContextType.CLIENT, ContextType.PARTNER, ContextType.ADMIN),
+            ),
+            self._spec(
                 "search_services",
                 "Search real approved marketplace services. Never invent results.",
                 {
@@ -388,6 +400,9 @@ class ToolRegistry:
 
         if spec.tool_type == ToolType.ACTION_CONFIRM:
             return self._prepare_action_checked(name, args)
+
+        if name == "resolve_current_entity":
+            return self.resolve_reference(str(args["entity_type"]).strip().lower())
 
         if name == "search_services":
             return {"ok": True, "items": data_core.search_services(
