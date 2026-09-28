@@ -634,6 +634,13 @@ Confirm?"
                             if isinstance(row, dict) and str(row.get("id")) == str(item_id):
                                 patch["current_pagination_index"] = idx
                                 break
+                    pagination = result.get("pagination")
+                    if isinstance(pagination, dict) and pagination.get("index") is not None:
+                        try:
+                            patch["current_pagination_index"] = int(pagination["index"])
+                        except (TypeError, ValueError):
+                            pass
+
                     if isinstance(items, list):
                         safe_items = [
                             {"id": x.get("id")}
