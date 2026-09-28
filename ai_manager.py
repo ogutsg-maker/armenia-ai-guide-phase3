@@ -235,6 +235,8 @@ class AIManager:
         sender: str,
         content: str,
         metadata: dict[str, Any] | None = None,
+        *,
+        tool_call_id: str | None = None,
     ):
         """Compatibility name; HistoryProvider is the canonical write layer."""
         return await asyncio.to_thread(
@@ -244,6 +246,7 @@ class AIManager:
             sender,
             str(content or "")[:12000],
             metadata or {},
+            tool_call_id,
         )
 
     async def _cost_log(
@@ -579,15 +582,20 @@ class AIManager:
                     "arguments": args,
                     "result": result,
                 })
-                # ai_messages.sender_role is constrained by the existing DB schema.
-                # Keep tool execution trace in metadata, but store the row as assistant
-                # so a tool-specific sender_role can never break the conversation.
+                # Persist the actual tool message. platform_db ensures the
+                # legacy database constraint is upgraded before this first write.
                 await self._save_history(
                     telegram_id,
                     role,
-                    "assistant",
-                    name,
-                    {"kind": "tool", "tool_name": name, "arguments": args, "result": result},
+                    "tool",
+                    json.dumps(result, ensure_ascii=False, default=str),
+                    {
+                        "kind": "tool",
+                        "tool_name": name,
+                        "arguments": args,
+                        "result": result,
+                    },
+                    tool_call_id=call.id,
                 )
 
                 if result.get("requires_confirmation"):
