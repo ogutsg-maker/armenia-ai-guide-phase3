@@ -718,7 +718,7 @@ async def run_groq_extraction_layer(raw_text: str, client, model: str) -> dict:
 - address: (строка, улица/центр)
 - phone: (строка, телефон)
 - working_hours: (строка, часы работы)
-- services: (массив ОБЪЕКТОВ, где каждый объект содержит name, price и price_type. Пример: [{"name":"մազերի կտրում","price":3000,"price_type":"from"},{"name":"մազերի ներկում","price":4000,"price_type":"fixed"},{"name":"հարդարում","price":2500,"price_type":"fixed"}])
+- services: (массив ОБЪЕКТОВ, где каждый объект содержит name, price и price_type. Пример: [{{"name":"մազերի կտրում","price":3000,"price_type":"from"}},{{"name":"մազերի ներկում","price":4000,"price_type":"fixed"}},{{"name":"հարդարում","price":2500,"price_type":"fixed"}}])
 - name: точное название услуги без цены
 - price: число или null
 - price_type: "fixed" для фиксированной цены, "from" для цены "от"
