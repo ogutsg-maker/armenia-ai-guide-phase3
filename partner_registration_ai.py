@@ -888,28 +888,28 @@ def _match_services_universal(db, services, master_id):
 
 
 def _build_categories_tree(categories_list: list[dict]) -> list[dict]:
-    """Build a compact, database-backed semantic classification tree for Groq.
+    """Build a very compact DB-backed classification tree.
 
-    One row represents one active DB subcategory. The model receives real IDs
-    and multilingual labels only; no hard-coded service keywords are used.
+    Groq has an 8K TPM limit on the current tier, so do not send redundant
+    slugs, English labels or duplicated master labels. Armenian/Russian names
+    plus the real subcategory id and parent master id are sufficient for
+    semantic matching.
     """
     tree = []
     seen = set()
     for row in categories_list or []:
-        category_id = _safe_int(row.get("category_id") if isinstance(row, dict) else None)
-        if category_id is None:
-            category_id = _safe_int(row.get("id") if isinstance(row, dict) else None)
+        if not isinstance(row, dict):
+            continue
+        category_id = _safe_int(row.get("category_id") or row.get("id"))
         if category_id is None or category_id in seen:
             continue
         seen.add(category_id)
-
-        master_id = _safe_int(row.get("master_id") if isinstance(row, dict) else None)
+        master_id = _safe_int(row.get("master_id"))
         tree.append({
             "id": category_id,
             "parent_id": master_id,
-            "name_ru": _norm(row.get("category_ru") or row.get("name_ru")) if isinstance(row, dict) else "",
-            "name_am": _norm(row.get("category_am") or row.get("name_am")) if isinstance(row, dict) else "",
-            "name_en": _norm(row.get("category_en") or row.get("name_en")) if isinstance(row, dict) else "",
+            "name_ru": _norm(row.get("category_ru") or row.get("name_ru")),
+            "name_am": _norm(row.get("category_am") or row.get("name_am")),
         })
     return tree
 
@@ -919,7 +919,7 @@ async def extract_partner_registration_json(
     categories_list: list[dict],
     *,
     model: str = "openai/gpt-oss-20b",
-    max_tokens: int = 1800,
+    max_tokens: int = 1100,
 ) -> dict:
     """Extract partner facts and semantically map each service to a real DB subcategory.
 
