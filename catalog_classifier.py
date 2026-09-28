@@ -428,6 +428,104 @@ async def _notify_unclassified_services(
         logger.exception("Failed to create admin catalogue alert.")
 
 
+async def _semantic_resolve_unresolved(
+    *,
+    services: list[str],
+    candidate_rows: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Use Groq only as a semantic candidate selector.
+
+    The model sees live catalogue names, never database IDs. It may propose
+    only one of the supplied category names; the backend resolves that name
+    back to the actual live DB row. This is a fallback for phrases such as
+    Armenian "մազերի կտրում" -> "Կանացի սանրվածք", where string similarity
+    alone cannot establish the semantic relation.
+    """
+    if not services or not candidate_rows:
+        return {}
+
+    candidates = []
+    seen = set()
+    for row in candidate_rows:
+        category_id = _safe_int(row.get("category_id"))
+        name = (
+            row.get("category_am")
+            or row.get("category_ru")
+            or row.get("category_en")
+            or ""
+        )
+        name = str(name).strip()
+        if category_id is None or not name:
+            continue
+        key = _normalize_text(name)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(name)
+
+    if not candidates:
+        return {}
+
+    try:
+        from ai_service import AIService
+
+        prompt = """You are the semantic catalogue resolver for Armenia AI Guide.
+Your task is ONLY to choose the best catalogue category for each service phrase.
+
+Rules:
+- Use only the catalogue category names supplied by the user.
+- Return the category name exactly as written in the catalogue.
+- Do not invent a category.
+- Do not return IDs.
+- Match meaning, not merely shared words.
+- Armenian, Russian and English phrases may be used.
+- If none is a defensible semantic match, return null.
+- Keep every service separate.
+
+Return ONLY JSON:
+{
+  "matches": [
+    {"service": "original service", "category": "exact catalogue name or null"}
+  ]
+}"""
+
+        user_text = (
+            "SERVICES TO RESOLVE:\n"
+            + json.dumps(services, ensure_ascii=False)
+            + "\n\nLIVE CATALOGUE CATEGORIES:\n"
+            + json.dumps(candidates, ensure_ascii=False)
+        )
+
+        data = await AIService().chat_json(
+            prompt,
+            user_text,
+            max_tokens=max(350, min(700, 100 + len(services) * 90)),
+            chain="partner_catalogue",
+            stage="semantic_resolution",
+            operation="resolve_unclassified_services",
+            purpose="Resolve unresolved partner services against live catalogue names",
+        )
+
+        result = {}
+        allowed = {_normalize_text(x): x for x in candidates}
+        for item in data.get("matches") or []:
+            if not isinstance(item, dict):
+                continue
+            service = str(item.get("service") or "").strip()
+            category = str(item.get("category") or "").strip()
+            if not service or not category:
+                continue
+            canonical = allowed.get(_normalize_text(category))
+            if not canonical:
+                continue
+            result[_normalize_text(service)] = {"category_name": canonical}
+
+        return result
+    except Exception:
+        logger.exception("Semantic catalogue resolution failed.")
+        return {}
+
+
 async def classify_services_batch(
     db,
     extracted_services: list[str],
@@ -687,6 +785,86 @@ async def classify_services_batch(
                     margin_ok,
                     batch_master_context,
                 )
+
+        # ==============================================================
+        # SEMANTIC FALLBACK — unresolved services only
+        # ==============================================================
+        # Deterministic matching remains the first gate. For phrases that
+        # require actual semantic understanding, ask Groq to choose ONLY from
+        # the live catalogue names. The backend then maps the chosen name to
+        # the real DB row; Groq never receives or creates IDs.
+        if unresolved:
+            unresolved_names = [name for name, _score in unresolved]
+            semantic = await _semantic_resolve_unresolved(
+                services=unresolved_names,
+                candidate_rows=filtered_rows,
+            )
+
+            if semantic:
+                by_category_name = {
+                    _normalize_text(
+                        str(
+                            row.get("category_am")
+                            or row.get("category_ru")
+                            or row.get("category_en")
+                            or ""
+                        )
+                    ): row
+                    for row in filtered_rows
+                    if row.get("category_id") is not None
+                }
+
+                still_unresolved = []
+                for item in final_classified:
+                    if item.get("subcategory_id") is not None:
+                        continue
+                    service_key = _normalize_text(item.get("service_name"))
+                    proposal = semantic.get(service_key)
+                    if not proposal:
+                        still_unresolved.append(
+                            next(
+                                (
+                                    pair
+                                    for pair in unresolved
+                                    if _normalize_text(pair[0]) == service_key
+                                ),
+                                (item.get("service_name"), 0.0),
+                            )
+                        )
+                        continue
+
+                    row = by_category_name.get(
+                        _normalize_text(proposal.get("category_name"))
+                    )
+                    if not row:
+                        still_unresolved.append(
+                            next(
+                                (
+                                    pair
+                                    for pair in unresolved
+                                    if _normalize_text(pair[0]) == service_key
+                                ),
+                                (item.get("service_name"), 0.0),
+                            )
+                        )
+                        continue
+
+                    item["subcategory_id"] = row["category_id"]
+                    item["direction_id"] = row["master_id"]
+                    item["subcategory_name_am"] = row.get("category_am")
+                    item["subcategory_name_ru"] = row.get("category_ru")
+                    item["subcategory_name_en"] = row.get("category_en")
+
+                    logger.info(
+                        "Catalogue semantic accepted: '%s' -> '%s' "
+                        "(category=%s direction=%s)",
+                        item.get("service_name"),
+                        row.get("category_am"),
+                        row.get("category_id"),
+                        row.get("master_id"),
+                    )
+
+                unresolved = still_unresolved
 
         await _notify_unclassified_services(
             services=unresolved,
