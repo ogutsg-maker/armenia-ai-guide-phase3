@@ -1024,17 +1024,48 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                 or payload.get("ai_master_category_id")
             )
 
-            if not a.get("document_id"):
-                return web.json_response({"ok":False,"error":"document_required"}, status=409)
+            # Initial partner registration requires verification. A normal
+            # service addition under an already approved direction does NOT.
+            source_payload = payload.get("source") if isinstance(payload, dict) else None
+            is_service_proposal = source_payload == "partner_service"
+            document_required = True
 
-            doc = _one(
-                "SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",
-                (a["document_id"], p["id"])
-            )
-            if not doc:
-                return web.json_response({"ok":False,"error":"document_not_found"}, status=404)
-            if doc["status"] not in ("pending","approved"):
-                return web.json_response({"ok":False,"error":"document_not_ready"}, status=409)
+            if is_service_proposal:
+                business_id = _safe_int(a.get("business_id") or payload.get("business_id"))
+                master_id = _safe_int(
+                    a.get("master_category_id")
+                    or payload.get("master_category_id")
+                    or payload.get("ai_master_category_id")
+                )
+                if business_id and master_id:
+                    approved_direction = _one(
+                        """SELECT id FROM partner_directions
+                           WHERE partner_id=%s AND business_id=%s
+                             AND master_category_id=%s AND status='approved'
+                           LIMIT 1""",
+                        (a["partner_id"], business_id, master_id),
+                    )
+                    if approved_direction:
+                        document_required = False
+
+                # A genuinely new company/direction still goes through
+                # verification. This rule is intentionally narrow so an
+                # existing approved direction never asks for a document.
+                if payload.get("new_business") is True or not business_id or not master_id:
+                    document_required = True
+
+            if document_required:
+                if not a.get("document_id"):
+                    return web.json_response({"ok":False,"error":"document_required"}, status=409)
+
+                doc = _one(
+                    "SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",
+                    (a["document_id"], p["id"])
+                )
+                if not doc:
+                    return web.json_response({"ok":False,"error":"document_not_found"}, status=404)
+                if doc["status"] not in ("pending","approved"):
+                    return web.json_response({"ok":False,"error":"document_not_ready"}, status=409)
 
             # Keep legacy first-service columns synchronized while payload_json
             # remains the authoritative multi-service record.
