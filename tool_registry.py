@@ -65,17 +65,7 @@ class ToolRegistry:
         self.session_state = dict(session_state or {})
 
     def _admin_allowed(self) -> bool:
-        user = data_core.get_user(self.telegram_id) or {}
-        configured = int(os.getenv("ADMIN_TELEGRAM_ID", "0") or 0)
-        try:
-            user_telegram_id = int(user.get("telegram_id") or 0)
-        except (TypeError, ValueError):
-            user_telegram_id = 0
-        return (
-            str(user.get("role") or "").lower() == "admin"
-            or self.telegram_id == configured
-            or user_telegram_id == configured
-        )
+        return data_core.is_admin(self.telegram_id)
 
     def _partner_id(self) -> int:
         partner = data_core.get_partner_by_user(self.telegram_id)
