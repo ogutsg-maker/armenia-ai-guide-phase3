@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
-from data_core import create_session, active_session, add_ai_message, update_session, search_catalog, create_service_request, update_service_request, search_services, replace_request_candidates
+import data_core
+from data_core import create_session, active_session, add_ai_message, update_session, create_service_request, update_service_request, search_services, replace_request_candidates
 
 class ClientAI:
     def __init__(self, ai): self.ai = ai
