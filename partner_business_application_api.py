@@ -802,14 +802,19 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                 if needs_reclass:
                     try:
                         from partner_registration_ai import classify_profile_catalog
-                        classification=await classify_profile_catalog(_CatalogDB(), {
-                            "business_name": merged.get("business_name") or row.get("business_name") or "",
-                            "description": merged.get("description") or row.get("description") or "",
-                            "marz": merged.get("marz") or row.get("location_marz") or "",
-                            "city": merged.get("city") or row.get("location_city") or "",
-                            "address": merged.get("address") or row.get("address") or "",
-                            "services": merged.get("services") or [],
-                        })
+                        classification=await classify_profile_catalog(
+                            _CatalogDB(),
+                            {
+                                "business_name": merged.get("business_name") or row.get("business_name") or "",
+                                "description": merged.get("description") or row.get("description") or "",
+                                "marz": merged.get("marz") or row.get("location_marz") or "",
+                                "city": merged.get("city") or row.get("location_city") or "",
+                                "address": merged.get("address") or row.get("address") or "",
+                                "services": merged.get("services") or [],
+                            },
+                            telegram_id=uid,
+                            application_id=aid,
+                        )
                         classified=classification.get("services") or []
                         if classified:
                             merged["services"]=classified
