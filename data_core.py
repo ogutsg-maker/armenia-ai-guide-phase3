@@ -155,6 +155,7 @@ def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -
     for service in services:
         item = dict(service)
         name = str(item.get("name") or "").strip()
+        catalog_name = str(item.get("catalog_name") or "").strip()
         if not name:
             resolved.append(item)
             continue
@@ -164,6 +165,13 @@ def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -
             score = max((_catalog_match_score(name, x) for x in names if x), default=0.0)
             candidates.append((score, cat))
         candidates.sort(key=lambda x: x[0], reverse=True)
+        if catalog_name:
+            exact = next((cat for _, cat in candidates if any(
+                _catalog_text(catalog_name) == _catalog_text(cat.get(k))
+                for k in ("name_am", "name_ru", "name_en", "slug") if cat.get(k)
+            )), None)
+            if exact:
+                candidates.insert(0, (1.0, exact))
         best_score, best = candidates[0] if candidates else (0.0, None)
         second_score = candidates[1][0] if len(candidates) > 1 else 0.0
         if best and best_score >= 0.52 and (best_score - second_score) >= 0.06:
