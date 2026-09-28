@@ -117,8 +117,12 @@ class ToolRegistry:
                 "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never call it before all required fields are known.",
                 {
                     "company_name": {"type": "string"},
+                    "marz": _nullable("string"),
                     "city": {"type": "string"},
+                    "address": _nullable("string"),
                     "phone": {"type": "string"},
+                    "working_hours": _nullable("string"),
+                    "description": _nullable("string"),
                     "services": {
                         "type": "array",
                         "minItems": 1,
@@ -435,8 +439,12 @@ class ToolRegistry:
             raise PermissionError("registration_tool_only")
 
         company_name = str(args.get("company_name") or "").strip()
+        marz = str(args.get("marz") or "").strip()
         city = str(args.get("city") or "").strip()
+        address = str(args.get("address") or "").strip()
         phone = str(args.get("phone") or "").strip()
+        working_hours = str(args.get("working_hours") or "").strip()
+        description = str(args.get("description") or "").strip()
         raw_services = args.get("services")
         if not company_name or not city or not phone or not isinstance(raw_services, list):
             raise ValueError("registration_required_fields_missing")
@@ -470,8 +478,12 @@ class ToolRegistry:
         services = data_core.resolve_catalog_services(services)
         profile = {
             "business_name": company_name,
+            "marz": marz or None,
             "city": city,
+            "address": address or None,
             "phone": phone,
+            "working_hours": working_hours or None,
+            "description": description or None,
             "services": services,
         }
         draft = data_core.save_partner_application_draft(
