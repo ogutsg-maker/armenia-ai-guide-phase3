@@ -4,43 +4,16 @@ from __future__ import annotations
 import json
 import os
 import re
-from difflib import SequenceMatcher
 from typing import Any
 
 
 import data_core
 
-try:
-    from groq import AsyncGroq
-except Exception:
-    AsyncGroq = None
+from groq import AsyncGroq
 
 
 def _norm(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
-
-
-def _dynamic_catalog_match_score(source: str, candidate: str) -> float:
-    """Generic multilingual retrieval score; never contains category-specific rules."""
-    a = _norm(source).lower()
-    b = _norm(candidate).lower()
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
-
-    a_tokens = set(re.findall(r"[\\w\\u0531-\\u058F]+", a, flags=re.UNICODE))
-    b_tokens = set(re.findall(r"[\\w\\u0531-\\u058F]+", b, flags=re.UNICODE))
-    overlap = len(a_tokens & b_tokens) / max(1, len(a_tokens | b_tokens))
-
-    # Character similarity handles Armenian/Russian inflections such as
-    # «սառնարաններ» ↔ «սառնարանների» without maintaining alias dictionaries.
-    sequence = SequenceMatcher(None, a, b).ratio()
-    compact_a = re.sub(r"[^\\w\\u0531-\\u058F]", "", a, flags=re.UNICODE)
-    compact_b = re.sub(r"[^\\w\\u0531-\\u058F]", "", b, flags=re.UNICODE)
-    compact = SequenceMatcher(None, compact_a, compact_b).ratio()
-
-    return max(sequence, compact * 0.95, overlap * 0.90)
 
 
 def _safe_int(value: Any) -> int | None:
@@ -599,79 +572,60 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
             seen.add(key); result.append(item)
     return result
 
+
 async def classify_profile_catalog(db, profile: dict) -> dict:
-    """Reclassify the services of an already extracted partner profile.
+    """Compatibility entry point using the new live-catalogue batch classifier."""
+    from catalog_classifier import classify_services_batch, get_catalog
 
-    This is intentionally a compatibility entry point for the partner
-    application editor.  Catalogue IDs always come from the active DB
-    catalogue; the model is never allowed to invent them.
-    """
     profile = dict(profile or {})
-    services = profile.get("services") if isinstance(profile.get("services"), list) else []
-    services = [dict(x) for x in services if isinstance(x, dict) and str(x.get("name") or x.get("service_name") or "").strip()]
+    services = [
+        dict(x) for x in (profile.get("services") or [])
+        if isinstance(x, dict) and _norm(x.get("name") or x.get("service_name"))
+    ]
     if not services:
-        return {"services": [], "master_category_id": _safe_int(profile.get("master_category_id")), "confidence": 0.0, "needs_review": False, "ambiguities": []}
+        return {"services": [], "master_category_id": None, "confidence": 0.0, "needs_review": False, "ambiguities": []}
 
-    master_id = _safe_int(
-        profile.get("master_category_id")
-        or profile.get("ai_master_category_id")
-    )
-    if master_id is None:
-        # Use the same deterministic master-category recovery already used
-        # by onboarding when a profile was edited without an internal ID.
-        recovered = _recover_master_category(
-            db,
-            " ".join([
-                str(profile.get("business_name") or ""),
-                str(profile.get("description") or ""),
-                str(profile.get("direction") or ""),
-                str(profile.get("master_category_name") or ""),
-                " ".join(str(s.get("name") or "") for s in services),
-            ]),
-            profile,
+    names = [_norm(x.get("name") or x.get("service_name")) for x in services]
+    classified = await classify_services_batch(db, names)
+    by_name = {_norm(x.get("service_name")): x for x in classified}
+    catalog_rows = await get_catalog(db)
+    catalog_map = {
+        _safe_int(x.get("category_id")): x
+        for x in catalog_rows
+        if _safe_int(x.get("category_id")) is not None
+    }
+
+    merged, unresolved = [], []
+    for service in services:
+        name = _norm(service.get("name") or service.get("service_name"))
+        match = by_name.get(name) or {}
+        sub_id = _safe_int(match.get("subcategory_id"))
+        direction_id = _safe_int(match.get("direction_id"))
+        row = catalog_map.get(sub_id)
+        item = dict(service)
+        item["name"] = name
+        item["matched_subcategory_id"] = sub_id
+        item["direction_id"] = direction_id
+        item["subcategory_name"] = (
+            (_norm(row.get("category_am")) or _norm(row.get("category_ru")) or _norm(row.get("category_en")))
+            if row else None
         )
-        master_id = _safe_int(recovered.get("master_category_id") or recovered.get("master_category_id"))
-    if master_id is None:
-        return {"services": services, "master_category_id": None, "confidence": 0.0, "needs_review": True, "ambiguities": ["master_category_missing"]}
+        item["direction_name"] = (
+            (_norm(row.get("master_am")) or _norm(row.get("master_ru")) or _norm(row.get("master_en")))
+            if row else None
+        )
+        if sub_id is None or direction_id is None:
+            unresolved.append(name)
+        merged.append(item)
 
-    catalog = []
-    try:
-        catalog = get_catalog_for_master(db, master_id)
-    except Exception:
-        catalog = []
-    # get_catalog_for_master may be empty on legacy adapters; use the
-    # adapter's explicit method as a compatibility fallback.
-    if not catalog and hasattr(db, "get_subcategories_by_master"):
-        for row in db.get_subcategories_by_master(master_id) or []:
-            catalog.append({
-                "category_id": row.get("id"),
-                "master_category_id": row.get("master_category_id"),
-                "category_am": row.get("name_am"),
-                "category_ru": row.get("name_ru"),
-                "category_en": row.get("name_en"),
-            })
-
-    matched = _dynamic_catalog_match(
-        services,
-        catalog,
-        threshold=0.70,
+    master_id = next(
+        (_safe_int(x.get("direction_id")) for x in merged if _safe_int(x.get("direction_id")) is not None),
+        None,
     )
-
-
-    unresolved = [
-        str(x.get("name") or x.get("service_name") or "").strip()
-        for x in matched
-        if _safe_int(x.get("matched_subcategory_id")) is None
-    ]
-    confidence_values = [
-        float(x.get("match_confidence") or 0)
-        for x in matched
-        if _safe_int(x.get("matched_subcategory_id")) is not None
-    ]
     return {
-        "services": matched,
+        "services": merged,
         "master_category_id": master_id,
-        "confidence": min(confidence_values) if confidence_values else 0.0,
+        "confidence": 1.0 if merged and not unresolved else 0.0,
         "needs_review": bool(unresolved),
         "ambiguities": unresolved,
     }
@@ -708,294 +662,6 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         operation=schema_name,
         purpose="structured partner extraction/classification",
     )
-
-async def _groq_catalog_rerank(
-    services: list[dict],
-    catalog_rows: list[dict],
-) -> list[dict]:
-    """Semantic catalogue reranking without exposing database IDs to Groq.
-
-    Candidates are selected only from the live DB. Groq returns a candidate
-    position; Python maps that position back to the real DB category ID.
-    """
-    if not services or not catalog_rows or AsyncGroq is None:
-        return [dict(x) for x in services]
-
-    key = os.getenv("GROQ_API_KEY", "").strip()
-    if not key:
-        return [dict(x) for x in services]
-
-    # Build a small candidate set per service from the live catalogue using
-    # generic string similarity. This is retrieval only, never classification.
-    retrieved = []
-    for item in services:
-        name = _norm(item.get("name") or item.get("service_name"))
-        if not name:
-            retrieved.append([])
-            continue
-
-        scored = []
-        for row in catalog_rows:
-            labels = [
-                _norm(row.get("category_am")),
-                _norm(row.get("category_ru")),
-                _norm(row.get("category_en")),
-            ]
-            labels = [x for x in labels if x]
-            if not labels:
-                continue
-            score = max(_dynamic_catalog_match_score(name, label) for label in labels)
-            scored.append((score, row))
-        scored.sort(key=lambda x: x[0], reverse=True)
-
-        candidates = []
-        seen = set()
-        for score, row in scored[:12]:
-            cid = _safe_int(row.get("category_id"))
-            if cid is None or cid in seen:
-                continue
-            seen.add(cid)
-            candidates.append({
-                "candidate_index": len(candidates),
-                "name_am": _norm(row.get("category_am")),
-                "name_ru": _norm(row.get("category_ru")),
-                "name_en": _norm(row.get("category_en")),
-                "retrieval_score": round(float(score), 3),
-            })
-        retrieved.append(candidates)
-
-    payload = [
-        {
-            "service_index": i,
-            "service": _norm(item.get("name") or item.get("service_name")),
-            "candidates": candidates,
-        }
-        for i, (item, candidates) in enumerate(zip(services, retrieved))
-        if candidates
-    ]
-    if not payload:
-        return [dict(x) for x in services]
-
-    system = """You are the semantic matching layer for Armenia AI Guide.
-For each extracted service, choose the candidate subcategory that means the
-same service. Understand Armenian, Russian and English, including inflected
-forms, synonyms and natural wording.
-
-Return ONLY JSON:
-{"matches":[{"service_index":0,"candidate_index":0,"confidence":0.0}]}
-
-Rules:
-- Choose only from the supplied candidates.
-- candidate_index is the position inside that service's candidates array.
-- Never invent candidates or IDs.
-- If none is a reliable semantic match, omit that service from matches.
-- confidence must be between 0 and 1.
-"""
-    user = json.dumps(payload, ensure_ascii=False)
-
-    try:
-        client = AsyncGroq(api_key=key)
-        response = await client.chat.completions.create(
-            model=os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")),
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            response_format={"type": "json_object"},
-            temperature=0,
-            max_tokens=500,
-        )
-        parsed = _parse_json(response.choices[0].message.content or "{}")
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("Groq semantic catalogue rerank failed: %s", exc)
-        return [dict(x) for x in services]
-
-    out = [dict(x) for x in services]
-    for match in parsed.get("matches") or []:
-        if not isinstance(match, dict):
-            continue
-        si = _safe_int(match.get("service_index"))
-        ci = _safe_int(match.get("candidate_index"))
-        if si is None or ci is None or si < 0 or si >= len(out):
-            continue
-        candidates = retrieved[si] if si < len(retrieved) else []
-        if ci < 0 or ci >= len(candidates):
-            continue
-        try:
-            confidence = float(match.get("confidence") or 0)
-        except Exception:
-            confidence = 0
-        if confidence < 0.60:
-            continue
-
-        candidate = candidates[ci]
-        service = out[si]
-        row = next(
-            (
-                r for r in catalog_rows
-                if _safe_int(r.get("category_id")) is not None
-                and _safe_int(r.get("category_id")) == next(
-                    (
-                        _safe_int(x.get("category_id"))
-                        for x in catalog_rows
-                        if _safe_int(x.get("category_id")) is not None
-                        and _norm(x.get("category_am")) == candidate["name_am"]
-                        and _norm(x.get("category_ru")) == candidate["name_ru"]
-                        and _norm(x.get("category_en")) == candidate["name_en"]
-                    ),
-                    None,
-                )
-            ),
-            None,
-        )
-        if not row:
-            continue
-
-        service["matched_subcategory_id"] = _safe_int(row.get("category_id"))
-        service["direction_id"] = _safe_int(row.get("master_id"))
-        service["match_confidence"] = confidence
-        service["match_method"] = "groq_semantic_rerank"
-        service["subcategory_name"] = (
-            _norm(row.get("category_am"))
-            or _norm(row.get("category_ru"))
-            or _norm(row.get("category_en"))
-            or None
-        )
-        service["direction_name"] = (
-            _norm(row.get("master_am"))
-            or _norm(row.get("master_ru"))
-            or _norm(row.get("master_en"))
-            or None
-        )
-
-    return out
-
-
-async def _semantic_catalog_match(
-    services: list[dict],
-    catalog_rows: list[dict],
-    threshold: float = 0.72,
-) -> list[dict]:
-    """Prefer vector matching; fall back to semantic Groq reranking.
-
-    Vector matching is used when OpenAI embeddings and indexed catalogue
-    vectors are available. If they are unavailable (including exhausted
-    OpenAI quota), registration still performs semantic matching using live
-    DB candidates and Groq. No category mapping is hardcoded.
-    """
-    out = [dict(x) for x in services]
-    try:
-        from embeddings_matcher import match_service_to_catalog
-        for item in out:
-            if _safe_int(item.get("matched_subcategory_id")) is not None:
-                continue
-            name = _norm(item.get("name") or item.get("service_name"))
-            if not name:
-                continue
-            match = await match_service_to_catalog(name, threshold=threshold)
-            if not match:
-                continue
-            item["matched_subcategory_id"] = _safe_int(match["category_id"])
-            item["direction_id"] = _safe_int(match["master_id"])
-            item["match_confidence"] = float(match["similarity"])
-            item["match_method"] = "embedding_cosine"
-            item["subcategory_name"] = (
-                _norm(match.get("category_am"))
-                or _norm(match.get("category_ru"))
-                or _norm(match.get("category_en"))
-                or None
-            )
-            item["direction_name"] = (
-                _norm(match.get("master_am"))
-                or _norm(match.get("master_ru"))
-                or _norm(match.get("master_en"))
-                or None
-            )
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).info(
-            "Embedding catalogue matching unavailable; using Groq semantic rerank: %s",
-            exc,
-        )
-
-    unresolved = [
-        x for x in out
-        if _safe_int(x.get("matched_subcategory_id")) is None
-    ]
-    if unresolved:
-        reranked = await _groq_catalog_rerank(unresolved, catalog_rows)
-        by_name = {
-            _norm(x.get("name") or x.get("service_name")).lower(): x
-            for x in reranked
-        }
-        for item in out:
-            key = _norm(item.get("name") or item.get("service_name")).lower()
-            if key in by_name:
-                item.update(by_name[key])
-
-    return out
-
-
-def _dynamic_catalog_match(
-    services: list[dict],
-    catalog_rows: list[dict],
-    threshold: float = 0.70,
-) -> list[dict]:
-    """Assign real DB subcategory IDs using only the live catalogue.
-
-    No AI-generated IDs, keyword dictionaries, category aliases or hardcoded
-    service/category mappings are used.  Every assigned ID and parent direction
-    comes directly from the current database rows.
-    """
-    out = [dict(x) for x in services]
-
-    candidates = []
-    for row in catalog_rows or []:
-        category_id = _safe_int(row.get("category_id") or row.get("id"))
-        master_id = _safe_int(row.get("master_id") or row.get("master_category_id"))
-        if category_id is None:
-            continue
-
-        labels = [
-            _norm(row.get("category_am") or row.get("name_am")),
-            _norm(row.get("category_ru") or row.get("name_ru")),
-            _norm(row.get("category_en") or row.get("name_en")),
-        ]
-        labels = [x for x in labels if x]
-        if labels:
-            candidates.append((category_id, master_id, labels))
-
-    for item in out:
-        if _safe_int(item.get("matched_subcategory_id")) is not None:
-            continue
-
-        service_name = _norm(item.get("name") or item.get("service_name"))
-        if not service_name:
-            continue
-
-        best = None
-        for category_id, master_id, labels in candidates:
-            score = max(
-                _dynamic_catalog_match_score(service_name, label)
-                for label in labels
-            )
-            if best is None or score > best["score"]:
-                best = {
-                    "category_id": category_id,
-                    "master_id": master_id,
-                    "score": score,
-                }
-
-        if best and best["score"] >= threshold:
-            item["matched_subcategory_id"] = best["category_id"]
-            item["direction_id"] = best["master_id"]
-            item["match_confidence"] = round(best["score"], 3)
-            item["match_reason"] = "Dynamic live-database fuzzy catalogue match."
-        else:
-            item["matched_subcategory_id"] = None
-            item["direction_id"] = None
-            item["match_confidence"] = round(best["score"], 3) if best else 0.0
-            item["match_reason"] = "No live catalogue match reached the 70% threshold."
-
-    return out
 
 def _build_categories_tree(categories_list: list[dict], source_text: str = "") -> list[dict]:
     """Build the smallest useful DB-backed semantic classification tree.
@@ -1299,68 +965,74 @@ async def extract(
         data["classification_needs_review"] = True
 
         try:
-            catalog_rows = get_catalog(db)
-            classified_services = await _semantic_catalog_match(
-                services,
-                catalog_rows,
-                threshold=float(os.getenv("CATALOG_EMBEDDING_THRESHOLD", "0.72")),
-            )
-            data["services"] = classified_services
+            from catalog_classifier import classify_services_batch, get_catalog
 
+            service_names = [
+                _norm(x.get("name") or x.get("service_name"))
+                for x in services
+                if _norm(x.get("name") or x.get("service_name"))
+            ]
+            classified_services = await classify_services_batch(db, service_names)
+            classified_map = {_norm(x.get("service_name")): x for x in classified_services}
+
+            catalog_rows = await get_catalog(db)
+            catalog_map = {
+                _safe_int(x.get("category_id")): x
+                for x in catalog_rows
+                if _safe_int(x.get("category_id")) is not None
+            }
+
+            merged_services = []
+            for service in services:
+                name = _norm(service.get("name") or service.get("service_name"))
+                match = classified_map.get(name) or {}
+                sub_id = _safe_int(match.get("subcategory_id"))
+                direction_id = _safe_int(match.get("direction_id"))
+                row = catalog_map.get(sub_id)
+
+                item = dict(service)
+                item["matched_subcategory_id"] = sub_id
+                item["direction_id"] = direction_id
+                item["subcategory_name"] = (
+                    (_norm(row.get("category_am")) or _norm(row.get("category_ru")) or _norm(row.get("category_en")))
+                    if row else None
+                )
+                item["direction_name"] = (
+                    (_norm(row.get("master_am")) or _norm(row.get("master_ru")) or _norm(row.get("master_en")))
+                    if row else None
+                )
+                merged_services.append(item)
+
+            data["services"] = merged_services
             matched = [
-                s for s in classified_services
-                if _safe_int(s.get("matched_subcategory_id")) is not None
+                x for x in merged_services
+                if _safe_int(x.get("matched_subcategory_id")) is not None
+                and _safe_int(x.get("direction_id")) is not None
             ]
 
             if matched:
-                catalog_map = {
-                    _safe_int(row.get("category_id")): row
-                    for row in catalog_rows
-                    if _safe_int(row.get("category_id")) is not None
-                }
-                first_row = catalog_map.get(
-                    _safe_int(matched[0].get("matched_subcategory_id"))
+                first_direction_id = _safe_int(matched[0].get("direction_id"))
+                first_row = next(
+                    (x for x in catalog_rows if _safe_int(x.get("master_id")) == first_direction_id),
+                    None,
+                )
+                data["master_category_id"] = first_direction_id
+                data["direction"] = (
+                    (_norm(first_row.get("master_am")) or _norm(first_row.get("master_ru")) or _norm(first_row.get("master_en")))
+                    if first_row else None
                 )
 
-                if first_row:
-                    data["master_category_id"] = _safe_int(first_row.get("master_id"))
-                    data["direction"] = (
-                        _norm(first_row.get("master_am"))
-                        or _norm(first_row.get("master_ru"))
-                        or _norm(first_row.get("master_en"))
-                        or None
-                    )
-
-                    for service in classified_services:
-                        row = catalog_map.get(
-                            _safe_int(service.get("matched_subcategory_id"))
-                        )
-                        if not row:
-                            continue
-                        service["direction_id"] = _safe_int(row.get("master_id"))
-                        service["direction_name"] = (
-                            _norm(row.get("master_am"))
-                            or _norm(row.get("master_ru"))
-                            or _norm(row.get("master_en"))
-                            or None
-                        )
-                        service["subcategory_name"] = (
-                            _norm(row.get("category_am"))
-                            or _norm(row.get("category_ru"))
-                            or _norm(row.get("category_en"))
-                            or None
-                        )
-
-                    data["classification_confidence"] = max(
-                        float(s.get("match_confidence") or 0)
-                        for s in matched
-                    )
-                    data["classification_ambiguities"] = []
-                    data["classification_needs_review"] = False
-                else:
-                    data["classification_ambiguities"] = ["subcategory_not_in_catalog"]
-            else:
-                data["classification_ambiguities"] = ["subcategory_not_matched"]
+            unresolved = [
+                x for x in merged_services
+                if _safe_int(x.get("matched_subcategory_id")) is None
+                or _safe_int(x.get("direction_id")) is None
+            ]
+            data["classification_confidence"] = 1.0 if merged_services and not unresolved else 0.0
+            data["classification_ambiguities"] = [
+                _norm(x.get("name") or x.get("service_name"))
+                for x in unresolved
+            ]
+            data["classification_needs_review"] = bool(unresolved)
         except Exception as classification_exc:
             import logging
             logging.getLogger(__name__).warning(
