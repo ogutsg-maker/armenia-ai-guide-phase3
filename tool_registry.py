@@ -271,6 +271,49 @@ class ToolRegistry:
                 contexts=p,
             ),
             self._spec(
+                "admin_get_pending_applications",
+                "List partner applications currently awaiting administrative moderation.",
+                {"limit": {"type": "integer"}},
+                contexts=a,
+            ),
+            self._spec(
+                "admin_get_partner_profile",
+                "Read a partner profile by partner ID.",
+                {"partner_id": {"type": "integer"}},
+                required=("partner_id",),
+                contexts=a,
+            ),
+            self._spec(
+                "admin_view_audit_logs",
+                "Read system audit logs from the canonical backend audit provider.",
+                {"limit": {"type": "integer"}},
+                contexts=a,
+            ),
+            self._spec(
+                "admin_approve_application",
+                "Prepare approval of a partner application. Explicit confirmation required.",
+                {"application_id": {"type": "integer"}},
+                required=("application_id",),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
+                "admin_reject_application",
+                "Prepare rejection of a partner application. Non-empty reason required.",
+                {"application_id": {"type": "integer"}, "reason": {"type": "string"}},
+                required=("application_id", "reason"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
+                "admin_suspend_partner",
+                "Prepare freezing a partner account. Non-empty reason required.",
+                {"partner_id": {"type": "integer"}, "reason": {"type": "string"}},
+                required=("partner_id", "reason"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
                 "count_records",
                 "Return an exact backend count for administrative entities.",
                 {
@@ -480,6 +523,20 @@ class ToolRegistry:
                 )}
 
         if self.context_type == ContextType.ADMIN:
+            if name == "admin_get_pending_applications":
+                return {"ok": True, "items": data_core.admin_get_pending_applications(
+                    limit=max(1, min(int(args.get("limit") or 50), 200))
+                )}
+            if name == "admin_get_partner_profile":
+                item = data_core.admin_get_partner_profile(int(args["partner_id"]))
+                return {"ok": bool(item), "item": item}
+            if name == "admin_view_audit_logs":
+                try:
+                    return {"ok": True, "items": data_core.admin_view_audit_logs(
+                        limit=max(1, min(int(args.get("limit") or 50), 200))
+                    )}
+                except NotImplementedError as exc:
+                    return {"ok": False, "error": str(exc), "backend_capability_missing": True}
             if name == "count_records":
                 return {"ok": True, "entity": str(args["entity"]),
                         "count": data_core.count_entities(
@@ -550,8 +607,68 @@ class ToolRegistry:
         raise PermissionError("tool_not_implemented")
 
     def _prepare_action_checked(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if self.context_type == ContextType.ADMIN:
+            if not self._admin_allowed():
+                raise PermissionError("admin_required")
+            if name == "admin_approve_application":
+                application_id = int(args["application_id"])
+                app = data_core.get_application_full(application_id)
+                if not app:
+                    raise ValueError("application_not_found")
+                if str(app.get("status") or "").lower() in {"approved", "rejected"}:
+                    raise ValueError("application_already_final")
+                return self._prepare_action(name, {"application_id": application_id},
+                                            f"Утвердить заявку #{application_id}?")
+            if name == "admin_reject_application":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    return {"ok": False, "needs_clarification": True,
+                            "question": "Укажите причину отклонения заявки."}
+                application_id = int(args["application_id"])
+                if not data_core.get_application_full(application_id):
+                    raise ValueError("application_not_found")
+                return self._prepare_action(
+                    name, {"application_id": application_id, "reason": reason[:3000]},
+                    f"Отклонить заявку #{application_id} с причиной «{reason[:300]}»?")
+            if name == "admin_suspend_partner":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    return {"ok": False, "needs_clarification": True,
+                            "question": "Укажите причину блокировки партнёра."}
+                partner_id = int(args["partner_id"])
+                if not data_core.admin_get_partner_profile(partner_id):
+                    raise ValueError("partner_not_found")
+                return self._prepare_action(
+                    name, {"partner_id": partner_id, "reason": reason[:3000]},
+                    f"Заморозить партнёра #{partner_id} с причиной «{reason[:300]}»?")
+            raise PermissionError("admin_action_not_implemented")
+
         if self.context_type not in (ContextType.CLIENT, ContextType.PARTNER):
             raise PermissionError("action_not_allowed")
+
+        if self.context_type == ContextType.ADMIN:
+            if not self._admin_allowed():
+                raise PermissionError("admin_required")
+            if name == "admin_approve_application":
+                return {"ok": True, "item": data_core.admin_approve_application(
+                    int(args["application_id"]), self.telegram_id
+                )}
+            if name == "admin_reject_application":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    return {"ok": False, "needs_clarification": True,
+                            "question": "Укажите причину отклонения заявки."}
+                return {"ok": True, "item": data_core.admin_reject_application(
+                    int(args["application_id"]), reason, self.telegram_id
+                )}
+            if name == "admin_suspend_partner":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    return {"ok": False, "needs_clarification": True,
+                            "question": "Укажите причину блокировки партнёра."}
+                return {"ok": True, "item": data_core.admin_suspend_partner(
+                    int(args["partner_id"]), reason, self.telegram_id
+                )}
 
         if name == "cancel_order":
             order_id = int(args["order_id"])
