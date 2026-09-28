@@ -942,215 +942,269 @@ Do not output matched_subcategory_id."""
     return parsed
 
 
-async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
-    previous_profile = previous_profile or {}
-    # Partner Intake AI extracts facts only. Classification happens afterwards
-    # in Python against the live database catalogue.
-    master_catalog = []
-    key = os.getenv("GROQ_API_KEY", "").strip()
+async def extract(
+    text: str,
+    history: list[dict],
+    db,
+    previous_profile: dict | None = None,
+    pending_field: str | None = None,
+) -> dict:
+    """Extract partner facts, then classify services against the live DB catalogue.
+
+    Groq is used only for factual extraction. Category/subcategory IDs are
+    always selected by Python from current database rows.
+    """
+    previous_profile = dict(previous_profile or {})
+    combined_text = _norm(
+        " ".join(
+            [str(x.get("content") or "") for x in history if isinstance(x, dict)]
+            + [text]
+        )
+    )
 
     try:
-        if not key or AsyncGroq is None:
-        data = _heuristic(text)
-        if pending_field in {"business_name", "marz", "city", "address", "phone", "district"}:
-            data[pending_field] = _norm(text)
-        elif pending_field == "services":
-            data["services"] = [{"name": _norm(text), "price": None, "price_type": "unknown", "matched_subcategory_id": None}]
-        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
-        data = _recover_obvious_facts(combined_text, data)
-        # Keep Groq extraction authoritative for service names.
-        # Do not maintain category/service keyword recovery dictionaries here.
-        data = _recover_obvious_facts(combined_text, data)
-        # Groq has already returned validated DB subcategory IDs. The block
-        # below resolves those IDs back to their master/category labels for
-        # the application/admin representation.
+        extracted = await extract_partner_registration_json(
+            combined_text,
+            model=os.getenv(
+                "PARTNER_ONBOARDING_MODEL",
+                os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+            ).strip() or "openai/gpt-oss-20b",
+            max_tokens=900,
+        )
 
-        # Normalize service objects so the form always receives a stable shape,
-        # even when Groq uses legacy service_name instead of name.
-        normalized_services = []
-        for item in (data.get("services") or []):
+        data = dict(previous_profile)
+        data.update({
+            "business_name": _norm(
+                extracted.get("company_or_name")
+                or previous_profile.get("business_name")
+            ) or None,
+            "marz": _norm(
+                extracted.get("marz")
+                or previous_profile.get("marz")
+            ) or None,
+            "city": _norm(
+                extracted.get("city")
+                or previous_profile.get("city")
+            ) or None,
+            "address": _norm(
+                extracted.get("address")
+                or previous_profile.get("address")
+            ) or None,
+            "phone": _norm(
+                extracted.get("phone")
+                or previous_profile.get("phone")
+            ) or None,
+            "working_hours": _norm(
+                extracted.get("working_hours")
+                or previous_profile.get("working_hours")
+            ) or None,
+            "document_type": _norm(
+                extracted.get("document_type")
+                or previous_profile.get("document_type")
+            ) or None,
+            "description": _norm(
+                extracted.get("description")
+                or previous_profile.get("description")
+                or combined_text
+            ),
+        })
+
+        services = []
+        for item in extracted.get("extracted_services") or []:
             if not isinstance(item, dict):
                 continue
-            item = dict(item)
-            item["name"] = _norm(item.get("name") or item.get("service_name"))
-            if not item["name"]:
+
+            name = _norm(item.get("name"))
+            if not name:
                 continue
-            item["raw_sub_direction"] = _norm(item.get("raw_sub_direction") or item["name"])
-            if item.get("price") not in (None, ""):
-                try:
-                    item["price"] = float(item["price"])
-                except (TypeError, ValueError):
-                    item["price"] = None
-            item["price_type"] = _norm(item.get("price_type") or "fixed") or "fixed"
-            item["matched_subcategory_id"] = _safe_int(item.get("matched_subcategory_id"))
-            normalized_services.append(item)
-        data["services"] = normalized_services
 
-        # Preserve explicit enumerated repair services from the source.
-        # This extracts entities only; catalogue IDs are still assigned below
-        # from the live database and semantic matcher.
-        if re.search(r"վերանորոգ|ремонт|repair", combined_text, flags=re.I):
-            enum_match = re.search(
-                r"(?:մասնավորապես|մասնավորապես՝|specifically|а именно)\s+(.+?)(?=\s*,\s*(?:ք|քաղաք)\b|\s+(?:ք|քաղաք)\s+|\s+ժամը\b|\s+հեռ\.?\b|$)",
-                combined_text, flags=re.I
-            )
-            if enum_match:
-                raw_items = [_norm(x).strip(" .;:՝") for x in re.split(r"\s*,\s*|\s+և\s+|\s+ու\s+", enum_match.group(1))]
-                raw_items = [x for x in raw_items if x]
-                if len(raw_items) >= 2:
-                    normalized_services = [{
-                        "name": x if re.search(r"վերանորոգ", x, re.I) else x + " վերանորոգում",
-                        "raw_sub_direction": x,
-                        "price": None,
-                        "price_type": "fixed",
-                        "matched_subcategory_id": None,
-                    } for x in raw_items]
-                    data["services"] = normalized_services
+            raw_price = item.get("price")
+            try:
+                price = float(raw_price) if raw_price not in (None, "") else None
+            except (TypeError, ValueError):
+                price = None
 
-        # Classification is deterministic and database-driven.
-        # Groq has already extracted only service names/prices. Python now
-        # compares those names against every active DB subcategory and assigns
-        # only real IDs returned by the database.
+            if price is not None and price.is_integer():
+                price = int(price)
+
+            price_type = _norm(item.get("price_type") or "fixed").lower()
+            if price_type not in {"fixed", "from"}:
+                price_type = "fixed"
+
+            services.append({
+                "name": name,
+                "raw_sub_direction": name,
+                "price": price,
+                "price_type": price_type,
+                "matched_subcategory_id": None,
+            })
+
+        # If this turn is explicitly answering the services question, preserve
+        # the user's service text even when Groq temporarily returns no items.
+        if pending_field == "services" and not services and _norm(text):
+            services = [{
+                "name": _norm(text),
+                "raw_sub_direction": _norm(text),
+                "price": None,
+                "price_type": "unknown",
+                "matched_subcategory_id": None,
+            }]
+
+        data["services"] = services
+
+        # Recover only generic factual fields that Groq may omit.
+        data = _recover_obvious_facts(combined_text, data)
+
+        # Classification is completely independent from Groq.
+        # Every candidate and every assigned ID comes from the live DB.
         catalog_rows = get_catalog(db)
-        normalized_services = _dynamic_catalog_match(
-            normalized_services,
+        classified_services = _dynamic_catalog_match(
+            services,
             catalog_rows,
             threshold=0.70,
         )
 
-        import logging
-        _log = logging.getLogger(__name__)
-        _log.info(
-            "PARTNER_CLASSIFICATION: dynamic_fuzzy services=%s catalog_rows=%s matched=%s unresolved=%s",
-            len(normalized_services),
-            len(catalog_rows),
-            sum(_safe_int(s.get("matched_subcategory_id")) is not None for s in normalized_services),
-            sum(_safe_int(s.get("matched_subcategory_id")) is None for s in normalized_services),
-        )
+        data["services"] = classified_services
 
-        data["services"] = normalized_services
-
-
-        matched_ids = [
-            _safe_int(s.get("matched_subcategory_id"))
-            for s in normalized_services
+        matched = [
+            s for s in classified_services
             if _safe_int(s.get("matched_subcategory_id")) is not None
         ]
-        if matched_ids:
+
+        if matched:
             catalog_map = {
                 _safe_int(row.get("category_id")): row
                 for row in catalog_rows
                 if _safe_int(row.get("category_id")) is not None
             }
-            first_cat = catalog_map.get(matched_ids[0])
-            if first_cat:
-                data["master_category_id"] = _safe_int(first_cat.get("master_id"))
-                data["direction"] = _norm(first_cat.get("master_am")) or _norm(first_cat.get("master_ru"))
-                for svc in normalized_services:
-                    cat = catalog_map.get(_safe_int(svc.get("matched_subcategory_id")))
-                    if cat:
-                        svc["direction_id"] = _safe_int(cat.get("master_id"))
-                        svc["direction_name"] = _norm(cat.get("master_am")) or _norm(cat.get("master_ru"))
-                        svc["subcategory_name"] = _norm(cat.get("category_am")) or _norm(cat.get("category_ru"))
-                data["classification_confidence"] = 0.95
+
+            first_row = catalog_map.get(
+                _safe_int(matched[0].get("matched_subcategory_id"))
+            )
+
+            if first_row:
+                data["master_category_id"] = _safe_int(first_row.get("master_id"))
+                data["direction"] = (
+                    _norm(first_row.get("master_am"))
+                    or _norm(first_row.get("master_ru"))
+                    or _norm(first_row.get("master_en"))
+                    or None
+                )
+
+                for service in classified_services:
+                    row = catalog_map.get(
+                        _safe_int(service.get("matched_subcategory_id"))
+                    )
+                    if not row:
+                        continue
+
+                    service["direction_id"] = _safe_int(row.get("master_id"))
+                    service["direction_name"] = (
+                        _norm(row.get("master_am"))
+                        or _norm(row.get("master_ru"))
+                        or _norm(row.get("master_en"))
+                        or None
+                    )
+                    service["subcategory_name"] = (
+                        _norm(row.get("category_am"))
+                        or _norm(row.get("category_ru"))
+                        or _norm(row.get("category_en"))
+                        or None
+                    )
+
+                data["classification_confidence"] = max(
+                    float(s.get("match_confidence") or 0)
+                    for s in matched
+                )
                 data["classification_ambiguities"] = []
                 data["classification_needs_review"] = False
             else:
                 data["master_category_id"] = None
                 data["classification_confidence"] = 0
-                data["classification_ambiguities"] = ["subcategory_not_in_catalog"]
+                data["classification_ambiguities"] = [
+                    "subcategory_not_in_catalog"
+                ]
                 data["classification_needs_review"] = True
         else:
             data["master_category_id"] = None
+            data["direction"] = None
             data["classification_confidence"] = 0
-            data["classification_ambiguities"] = ["subcategory_not_matched"]
-            data["classification_needs_review"] = True
+            data["classification_ambiguities"] = [
+                "subcategory_not_matched"
+            ]
+            data["classification_needs_review"] = bool(classified_services)
 
-
-        if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
-            data[pending_field] = _norm(text)
-        if pending_field == "services" and not data.get("services"):
-            data["services"] = [{
-                "name": _norm(text), "raw_sub_direction": _norm(text), "price": None, "price_type": "unknown",
-                "matched_subcategory_id": None
-            }]
-
-        data["ready"] = bool(
-            str(data.get("business_name") or "").strip()
-            and str(data.get("marz") or "").strip()
-            and str(data.get("city") or "").strip()
-            and str(data.get("address") or "").strip()
-            and str(data.get("phone") or "").strip()
-            and data.get("services")
+        import logging
+        logging.getLogger(__name__).info(
+            "PARTNER_CLASSIFICATION: dynamic_fuzzy services=%s catalog_rows=%s matched=%s unresolved=%s",
+            len(classified_services),
+            len(catalog_rows),
+            len(matched),
+            len(classified_services) - len(matched),
         )
-        data["missing"] = [] if data["ready"] else [
-            key for key in ("business_name", "marz", "city", "address", "phone", "services") if not data.get(key)
-        ]
-        return data
 
     except Exception as exc:
-        try:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Groq partner extraction failed: %s", exc
-            )
-        except Exception:
-            pass
-        # Groq can fail because of transient 429s or structured-output validation
-        # errors. The partner form must still receive a complete deterministic
-        # extraction from the text already supplied by the partner.
-        data = _heuristic(text)
-        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
-        data = _recover_obvious_facts(combined_text, data)
-        recovered = _recover_services_from_history(
-            history + [{"role": "user", "content": text}]
+        import logging
+        logging.getLogger(__name__).warning(
+            "Partner registration extraction/classification failed: %s",
+            exc,
         )
-        if recovered:
-            data["services"] = recovered
-        if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
-            data[pending_field] = _norm(text)
 
-        # Return the same canonical shape as the successful Groq path. This is
-        # critical for the WebApp: it prevents a Groq failure from producing
-        # an application object with empty service rows while the real facts
-        # are already present in the partner's message.
-        data["marz"] = _norm(data.get("marz") or data.get("region"))
-        data["city"] = _norm(data.get("city") or data.get("location_city") or data.get("settlement"))
-        data["phone"] = _norm(data.get("phone") or data.get("phone_number"))
-        normalized = []
+        # Safe fallback: recover facts already present in the conversation,
+        # but never invent category IDs.
+        data = dict(previous_profile)
+        data.setdefault("business_name", None)
+        data.setdefault("marz", None)
+        data.setdefault("city", None)
+        data.setdefault("address", None)
+        data.setdefault("phone", None)
+        data.setdefault("working_hours", None)
+        data.setdefault("document_type", None)
+        data.setdefault("description", combined_text)
+
+        data = _recover_obvious_facts(combined_text, data)
+
+        fallback_services = []
         for item in data.get("services") or []:
             if not isinstance(item, dict):
                 continue
-            name = _norm(item.get("name") or item.get("service_name") or item.get("service"))
+            name = _norm(
+                item.get("name")
+                or item.get("service_name")
+                or item.get("service")
+            )
             if not name:
                 continue
-            price = item.get("price")
-            try:
-                price = float(price) if price not in (None, "") else None
-            except (TypeError, ValueError):
-                price = None
-            price_type = _norm(item.get("price_type") or "fixed").lower()
-            if price_type in {"starting", "starting_from", "from_price"}:
-                price_type = "from"
-            normalized.append({
+            fallback_services.append({
                 **item,
                 "name": name,
-                "raw_sub_direction": _norm(item.get("raw_sub_direction") or name),
-                "price": price,
-                "price_type": price_type,
+                "raw_sub_direction": _norm(
+                    item.get("raw_sub_direction") or name
+                ),
                 "matched_subcategory_id": None,
             })
-        data["services"] = normalized
+
+        if pending_field == "services" and not fallback_services and _norm(text):
+            fallback_services = [{
+                "name": _norm(text),
+                "raw_sub_direction": _norm(text),
+                "price": None,
+                "price_type": "unknown",
+                "matched_subcategory_id": None,
+            }]
+
+        data["services"] = fallback_services
         data["master_category_id"] = None
-        data["classification_needs_review"] = True
-        # Business name is mandatory for a valid partner application.
-        # Never silently treat an unnamed business as ready.
-        data["missing"] = [
-            key for key in ("business_name", "marz", "city", "phone", "services")
-            if not data.get(key)
-        ]
-        data["ready"] = not data["missing"]
-        return data
+        data["direction"] = None
+        data["classification_needs_review"] = bool(fallback_services)
+
+    data["missing"] = [
+        field
+        for field in ("business_name", "marz", "city", "address", "phone", "services")
+        if not data.get(field)
+    ]
+    data["ready"] = not data["missing"]
+    return data
 
 def missing_question(data: dict, lang: str) -> str:
     """Ask only for information that is actually missing.
