@@ -99,6 +99,20 @@ class ToolRegistry:
         r = (ContextType.REGISTRATION,)
         return [
             self._spec(
+                "catalog_candidates",
+                "Return real live catalog candidates for the supplied service meanings. Use this before registration save when mapping services. The backend returns existing catalog names and IDs; the model must choose only from returned names and must never invent IDs.",
+                {
+                    "services": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                    },
+                    "limit_per_service": {"type": "integer"},
+                },
+                required=("services",),
+                contexts=(ContextType.REGISTRATION, ContextType.PARTNER, ContextType.ADMIN),
+            ),
+            self._spec(
                 "save_completed_application",
                 "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never call it before all required fields are known.",
                 {
@@ -112,6 +126,7 @@ class ToolRegistry:
                             "type": "object",
                             "properties": {
                                 "name": {"type": "string"},
+                                "catalog_name": _nullable("string"),
                                 "price": _nullable("number"),
                                 "price_type": {"type": "string", "enum": ["from", "fixed"]},
                             },
@@ -444,7 +459,8 @@ class ToolRegistry:
             price_type = str(raw.get("price_type") or "").strip().lower()
             if price_type not in {"from", "fixed"}:
                 raise ValueError("invalid_price_type")
-            services.append({"name": name, "price": price, "price_type": price_type})
+            catalog_name = str(raw.get("catalog_name") or "").strip() or None
+            services.append({"name": name, "catalog_name": catalog_name, "price": price, "price_type": price_type})
 
         if not services:
             raise ValueError("service_required")
@@ -563,6 +579,35 @@ class ToolRegistry:
                     "type": self.session_state.get("current_entity_type") or "entity",
                 },
             }
+
+        if name == "catalog_candidates":
+            services = [str(x or "").strip() for x in (args.get("services") or []) if str(x or "").strip()]
+            per_service = max(1, min(int(args.get("limit_per_service") or 5), 8))
+            catalog = data_core.search_catalog(limit=500)
+            def score(q, candidate):
+                return data_core._catalog_match_score(q, candidate)
+            result = []
+            for service in services[:30]:
+                ranked = []
+                for cat in catalog:
+                    names = [cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug")]
+                    ranked.append((max((score(service, n) for n in names if n), default=0.0), cat))
+                ranked.sort(key=lambda x: x[0], reverse=True)
+                result.append({
+                    "service": service,
+                    "candidates": [{
+                        "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
+                        "name_am": cat.get("name_am"),
+                        "name_ru": cat.get("name_ru"),
+                        "name_en": cat.get("name_en"),
+                        "master_name_am": cat.get("master_name_am"),
+                        "master_name_ru": cat.get("master_name_ru"),
+                        "master_name_en": cat.get("master_name_en"),
+                        "category_id": cat.get("id"),
+                        "score": round(float(sc), 4),
+                    } for sc, cat in ranked[:per_service]]
+                })
+            return {"ok": True, "items": result}
 
         if name == "search_services":
             return {"ok": True, "items": data_core.search_services(
