@@ -123,6 +123,16 @@ When the admin asks to fix, classify, remap or distribute application services:
 7) Catalogue correction does NOT approve or activate the partner. It only fixes
    catalogue mappings. Partner approval remains a separate explicit action.
 
+PRICE EDIT WORKFLOW:
+When the admin asks to change a service price inside an application:
+1) Identify the real application_id and backend service_index from get_application.
+2) Call admin_preview_application_service_price with the new numeric price.
+3) Do not merely write a natural-language confirmation yourself. The backend
+   preview MUST create the pending confirmation state.
+4) After the backend preview returns requires_confirmation, show its summary.
+5) Never call the final price-write tool directly. When the admin answers yes,
+   AIManager's deterministic confirmation fast path executes it.
+   
 Read operations may execute immediately. Ban/delete/reject/approve/edit and
 other mutations must go through a confirmation tool flow.
 """,
