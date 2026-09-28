@@ -113,17 +113,17 @@ class AIManager:
         role=as_context_type(context_type)
         language=language or self._lang(message)
         tools=ToolRegistry(telegram_id=telegram_id,context_type=role,trusted_context=extra_context)
-        history=self.history.get(telegram_id,role.value.lower())
+        history=await self._supabase_history(telegram_id,role,self.max_history)
         prompt=PromptFactory.build(role,message=message,history=history,trusted_context=self._trusted(role,telegram_id,extra_context),language=language)
         messages=[{"role":"user","content":prompt}]
         started=time.monotonic()
-        self.history.append(telegram_id,role.value.lower(),"user",message,{"context_type":role.value})
+        await self._save_supabase_history(telegram_id,role,"user",message,{"context_type":role.value})
         pending=self.history.get_pending(telegram_id,role.value.lower())
         if pending and message.strip().casefold() in {"yes","да","այո","հա","հաստատել","հաստատում եմ","confirm","ok"}:
             result=await tools.execute_confirmed(pending["name"],pending["args"])
-            self.history.set_pending(telegram_id,role.value.lower(),None)
+            await self._clear_pending(telegram_id,role)
             reply="Կատարված է։" if language=="hy" else ("Готово." if language=="ru" else "Done.")
-            self.history.append(telegram_id,role.value.lower(),"ai",reply,{"confirmed_action":result})
+            await self._save_supabase_history(telegram_id,role,"ai",reply,{"confirmed_action":result})
             return {"reply":reply,"tool_result":result,"confirmed":True}
 
         tool_calls_log=[]
@@ -144,7 +144,7 @@ class AIManager:
             calls=getattr(msg,"tool_calls",None) or []
             if not calls:
                 reply=(msg.content or "").strip()
-                self.history.append(telegram_id,role.value.lower(),"ai",reply,{"tool_calls":tool_calls_log,"latency_ms":round((time.monotonic()-started)*1000)})
+                await self._save_supabase_history(telegram_id,role,"ai",reply,{"tool_calls":tool_calls_log,"latency_ms":round((time.monotonic()-started)*1000)})
                 return {"reply":reply,"tool_calls":tool_calls_log}
             messages.append({"role":"assistant","content":msg.content or "", "tool_calls":[
                 {"id":c.id,"type":"function","function":{"name":c.function.name,"arguments":c.function.arguments}} for c in calls]})
@@ -155,11 +155,48 @@ class AIManager:
                 except Exception as exc:
                     result={"ok":False,"error":str(exc)}
                 tool_calls_log.append({"name":call.function.name,"arguments":args if 'args' in locals() else {}, "result":result})
-                self.history.append(telegram_id,role.value.lower(),"tool",call.function.name,{"arguments":args if 'args' in locals() else {}, "result":result})
+                await self._save_supabase_history(telegram_id,role,"tool",call.function.name,{"arguments":args if 'args' in locals() else {}, "result":result})
                 if result.get("requires_confirmation"):
-                    self.history.set_pending(telegram_id,role.value.lower(),{"name":call.function.name,"args":result["action"]["args"]})
+                    await self._set_pending(telegram_id,role,{"name":call.function.name,"args":result["action"]["args"]})
                     reply=result["summary"]+"\n\nПодтвердить? / Confirm?"
-                    self.history.append(telegram_id,role.value.lower(),"ai",reply,{"confirmation_required":True})
+                    await self._save_supabase_history(telegram_id,role,"ai",reply,{"confirmation_required":True})
                     return {"reply":reply,"confirmation_required":True,"tool_calls":tool_calls_log}
                 messages.append({"role":"tool","tool_call_id":call.id,"content":json.dumps(result,ensure_ascii=False,default=str)[:12000]})
-        raise RuntimeError("AI tool loop limit reached")
+        raise RuntimeError("AI tool loop limit reached
+
+    async def _set_pending(self, telegram_id:int, context:ContextType, pending:dict):
+        def _write():
+            session=platform_db.active_session(int(telegram_id),context.value.lower(),"ai_manager")
+            if not session:
+                session=platform_db.create_session(int(telegram_id),context.value.lower(),"ai_manager",{"history_version":1})
+            value=session.get("context_json") or {}
+            if isinstance(value,str): value=json.loads(value)
+            value["ai_manager_pending_action"]=pending
+            return platform_db.update_session(int(session["id"]),value)
+        return await asyncio.to_thread(_write)
+
+    async def _clear_pending(self, telegram_id:int, context:ContextType):
+        return await self._set_pending(telegram_id,context,{}) if False else await asyncio.to_thread(self._clear_pending_sync,telegram_id,context)
+
+    def _clear_pending_sync(self, telegram_id:int, context:ContextType):
+        session=platform_db.active_session(int(telegram_id),context.value.lower(),"ai_manager")
+        if not session: return None
+        value=session.get("context_json") or {}
+        if isinstance(value,str): value=json.loads(value)
+        value.pop("ai_manager_pending_action",None)
+        return platform_db.update_session(int(session["id"]),value)
+
+    async def _get_pending(self, telegram_id:int, context:ContextType):
+        def _read():
+            session=platform_db.active_session(int(telegram_id),context.value.lower(),"ai_manager")
+            if not session: return None
+            value=session.get("context_json") or {}
+            if isinstance(value,str): value=json.loads(value)
+            return value.get("ai_manager_pending_action")
+        return await asyncio.to_thread(_read)
+
+    @staticmethod
+    def _is_confirmation(message:str)->bool:
+        return " ".join((message or "").strip().casefold().split()) in {"yes","да","подтверждаю","подтвердить","confirm","ok","այո","հա","հաստատում եմ","հաստատել"}
+
+")
