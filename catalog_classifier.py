@@ -2,7 +2,7 @@
 
 Groq is intentionally NOT used here. The AI extraction layer supplies only
 plain service names; this module resolves them against the live database
-catalogue using deterministic multilingual string matching.
+catalogue using deterministic, conservative matching.
 """
 from __future__ import annotations
 
@@ -17,7 +17,156 @@ import platform_db
 
 logger = logging.getLogger(__name__)
 
-MATCH_THRESHOLD = 0.45
+# A fuzzy candidate is accepted only when it is genuinely strong.
+FUZZY_CONFIDENCE_GATE = 0.70
+TOKEN_OVERLAP_GATE = 0.80
+
+# These are grammatical/function words only. Catalogue/domain words are never
+# removed here, so the matcher remains independent of business categories.
+STOP_WORDS = {
+    # Armenian
+    "և", "ու", "կամ", "համար", "մեջ", "վրա", "հետ", "առանց", "ըստ",
+    "է", "են", "էին", "լինելու",
+    # Russian
+    "и", "или", "для", "по", "на", "в", "во", "с", "со", "без", "из",
+    # English
+    "and", "or", "for", "on", "in", "with", "without", "of", "the",
+}
+
+# Armenian inflection/plural endings. Longest forms must be removed first.
+# This is intentionally a small, conservative normalizer, not a full
+# Armenian morphological stemmer.
+ARMENIAN_SUFFIXES = (
+    "ներով",
+    "ներից",
+    "ներին",
+    "ների",
+    "երով",
+    "երից",
+    "երին",
+    "երի",
+    "ներ",
+    "եր",
+    "ի",
+)
+
+
+def _normalize_text(value: Any) -> str:
+    """Lowercase, clean punctuation/whitespace, and keep Unicode letters."""
+    if value is None:
+        return ""
+
+    text = str(value).lower().strip()
+    text = re.sub(r"[^\w\s]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _stem_token(token: str) -> str:
+    """Apply conservative Armenian inflection stripping to one token."""
+    token = _normalize_text(token)
+    if not token:
+        return ""
+
+    # Never reduce very short words; stripping one or two characters from
+    # them creates more false positives than useful matches.
+    if len(token) <= 4:
+        return token
+
+    for suffix in ARMENIAN_SUFFIXES:
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            return token[: -len(suffix)]
+
+    return token
+
+
+def _tokens(value: Any) -> set[str]:
+    """Return normalized, stop-word-free token stems."""
+    text = _normalize_text(value)
+    if not text:
+        return set()
+
+    result = set()
+    for token in text.split():
+        if token in STOP_WORDS:
+            continue
+        stem = _stem_token(token)
+        if stem and stem not in STOP_WORDS:
+            result.add(stem)
+    return result
+
+
+def _root_token_match(service_tokens: set[str], category_tokens: set[str]) -> bool:
+    """True when a meaningful service root is contained in a category token."""
+    if not service_tokens or not category_tokens:
+        return False
+
+    for service_token in service_tokens:
+        if len(service_token) < 4:
+            continue
+
+        for category_token in category_tokens:
+            if service_token == category_token:
+                return True
+
+            # Root containment is checked only after both sides have been
+            # normalized/stemmed, avoiding raw substring false positives.
+            if len(service_token) >= 5 and service_token in category_token:
+                return True
+            if len(category_token) >= 5 and category_token in service_token:
+                return True
+
+    return False
+
+
+def _token_overlap_ratio(service_tokens: set[str], category_tokens: set[str]) -> float:
+    """Coverage of the service's meaningful tokens by category tokens."""
+    if not service_tokens or not category_tokens:
+        return 0.0
+
+    intersection = service_tokens & category_tokens
+    return len(intersection) / len(service_tokens)
+
+
+def _direct_match_score(service: Any, category: Any) -> float:
+    """Return 1.0 for a high-confidence exact/root/token match, else 0."""
+    service_tokens = _tokens(service)
+    category_tokens = _tokens(category)
+
+    if not service_tokens or not category_tokens:
+        return 0.0
+
+    # Direct root match is high confidence.
+    if _root_token_match(service_tokens, category_tokens):
+        return 1.0
+
+    # More than 80% of the meaningful service tokens must occur in the
+    # category. With a one-token service this requires an exact token match.
+    if _token_overlap_ratio(service_tokens, category_tokens) > TOKEN_OVERLAP_GATE:
+        return 1.0
+
+    return 0.0
+
+
+def _fuzzy_score(service: Any, category: Any) -> float:
+    """SequenceMatcher score over normalized/stemmed token text."""
+    service_tokens = _tokens(service)
+    category_tokens = _tokens(category)
+
+    if not service_tokens or not category_tokens:
+        return 0.0
+
+    left = " ".join(sorted(service_tokens))
+    right = " ".join(sorted(category_tokens))
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        if value in (None, ""):
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 async def get_catalog(db=None) -> list[dict]:
@@ -42,38 +191,12 @@ async def get_catalog(db=None) -> list[dict]:
     return rows
 
 
-def _normalize_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return re.sub(r"\s+", " ", str(value).lower().strip())
-
-
 def get_match_ratio(str1: Any, str2: Any) -> float:
-    """Multilingual deterministic string similarity."""
-    s1 = _normalize_text(str1)
-    s2 = _normalize_text(str2)
-
-    if not s1 or not s2:
-        return 0.0
-
-    if s1 in s2 or s2 in s1:
-        return 0.95
-
-    tokens1 = set(s1.split())
-    tokens2 = set(s2.split())
-    if tokens1.intersection(tokens2):
-        return 0.85
-
-    return SequenceMatcher(None, s1, s2).ratio()
-
-
-def _safe_int(value: Any) -> int | None:
-    try:
-        if value in (None, ""):
-            return None
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    """Backward-compatible public similarity helper."""
+    direct = _direct_match_score(str1, str2)
+    if direct:
+        return direct
+    return _fuzzy_score(str1, str2)
 
 
 def _admin_telegram_id() -> int | None:
@@ -231,7 +354,14 @@ async def classify_services_batch(
     application_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Classify AI-extracted service names against the live catalogue.
+    Conservative two-stage classification against the live catalogue.
+
+    Stage 1:
+        Exact/root/token match. A direct match is accepted immediately.
+
+    Stage 2:
+        SequenceMatcher. A candidate is accepted only when its score is
+        >= FUZZY_CONFIDENCE_GATE. Otherwise the service remains unclassified.
 
     Groq is never called here.
     """
@@ -259,23 +389,64 @@ async def classify_services_batch(
         unresolved = []
 
         for service in services:
+            direct_match = None
+            direct_score = 0.0
+
+            # -----------------------------
+            # Stage 1: exact/root/token
+            # -----------------------------
+            for row in catalog_rows:
+                for category_name in (
+                    row.get("category_am"),
+                    row.get("category_ru"),
+                    row.get("category_en"),
+                ):
+                    score = _direct_match_score(service, category_name)
+                    if score > direct_score:
+                        direct_score = score
+                        direct_match = row
+
+            if (
+                direct_match is not None
+                and direct_match.get("category_id") is not None
+                and direct_match.get("master_id") is not None
+            ):
+                final_classified.append(
+                    {
+                        "service_name": service,
+                        "subcategory_id": direct_match["category_id"],
+                        "direction_id": direct_match["master_id"],
+                    }
+                )
+                logger.info(
+                    "Catalogue direct-match: '%s' -> category=%s direction=%s confidence=1.00",
+                    service,
+                    direct_match["category_id"],
+                    direct_match["master_id"],
+                )
+                continue
+
+            # -----------------------------
+            # Stage 2: strict fuzzy search
+            # -----------------------------
             best_match = None
             max_score = 0.0
 
             for row in catalog_rows:
                 current_max = max(
-                    get_match_ratio(service, row.get("category_am", "")),
-                    get_match_ratio(service, row.get("category_ru", "")),
-                    get_match_ratio(service, row.get("category_en", "")),
+                    _fuzzy_score(service, row.get("category_am", "")),
+                    _fuzzy_score(service, row.get("category_ru", "")),
+                    _fuzzy_score(service, row.get("category_en", "")),
                 )
 
                 if current_max > max_score:
                     max_score = current_max
                     best_match = row
 
+            # IMPORTANT: never select "the best of the bad candidates".
             if (
                 best_match is not None
-                and max_score >= MATCH_THRESHOLD
+                and max_score >= FUZZY_CONFIDENCE_GATE
                 and best_match.get("category_id") is not None
                 and best_match.get("master_id") is not None
             ):
@@ -287,7 +458,7 @@ async def classify_services_batch(
                     }
                 )
                 logger.info(
-                    "Catalogue auto-match: '%s' -> category=%s direction=%s score=%.2f",
+                    "Catalogue fuzzy-match: '%s' -> category=%s direction=%s score=%.2f",
                     service,
                     best_match["category_id"],
                     best_match["master_id"],
@@ -303,9 +474,10 @@ async def classify_services_batch(
                 )
                 unresolved.append((service, max_score))
                 logger.warning(
-                    "Service '%s' is unclassified (best score %.2f).",
+                    "Service '%s' remains unclassified: best fuzzy score %.2f < gate %.2f.",
                     service,
                     max_score,
+                    FUZZY_CONFIDENCE_GATE,
                 )
 
         await _notify_unclassified_services(
