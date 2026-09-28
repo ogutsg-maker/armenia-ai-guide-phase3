@@ -12,13 +12,60 @@ class ClientAI:
             try: ctx = json.loads(ctx)
             except Exception: ctx = {}
         add_ai_message(session['id'], 'user', text)
-        # Query the live catalog first; send only small verified candidates to Groq.
-        # The full catalog is never copied into the AI context.
+        # Unified AIManager extracts only the customer's natural-language
+        # request. It does not receive catalog IDs. Category resolution is
+        # performed afterwards by the backend live-catalog classifier.
+        from ai_manager import AIManager
+        from prompt_factory import ContextType
+        from ai_service import RequestAnalysis
+        from catalog_classifier import classify_services_batch
+
+        manager = AIManager()
+        task = """Return ONLY JSON with these keys:
+language,intent,service,location,marz,city,village,budget_min,budget_max,date,time,
+requirements,missing_fields,checklist,summary,confidence.
+Do not invent partners, prices, availability or catalog IDs.
+Extract the requested service phrase exactly enough for backend catalog matching.
+Prices are AMD. checklist maximum 3 short useful questions."""
         try:
-            cats = search_catalog(query=str(text or "")[:120], limit=20)
+            data = await manager.chat_json(
+                int(user_id), ContextType.CLIENT, text,
+                task_instructions=task,
+                extra_context={"request_id": ctx.get("request_id")},
+                language=lang, max_tokens=700,
+            )
         except Exception:
-            cats = []
-        analysis = await self.ai.analyze_request(text, cats)
+            data = {}
+
+        def _int(v):
+            try: return int(v) if v is not None else None
+            except Exception: return None
+        def _float(v):
+            try: return float(v) if v is not None else None
+            except Exception: return None
+
+        service_phrase = str(data.get("service") or "").strip()
+        classified = await classify_services_batch(
+            data_core, [service_phrase], telegram_id=int(user_id)
+        ) if service_phrase else []
+        mapped = classified[0] if classified else {}
+        analysis = RequestAnalysis(
+            language=data.get("language") if data.get("language") in {"hy","ru","en"} else lang,
+            intent=str(data.get("intent") or "service_search"),
+            master_category_id=_int(mapped.get("direction_id")),
+            category_id=_int(mapped.get("subcategory_id")),
+            category_name=mapped.get("subcategory_name_am") or mapped.get("subcategory_name_ru"),
+            service=service_phrase or None,
+            location=data.get("location"), marz=data.get("marz"), city=data.get("city"),
+            village=data.get("village"), budget_min=_float(data.get("budget_min")),
+            budget_max=_float(data.get("budget_max")), date=data.get("date"),
+            time=data.get("time"),
+            requirements=[str(x) for x in (data.get("requirements") or []) if x],
+            missing_fields=[str(x) for x in (data.get("missing_fields") or []) if x],
+            checklist=[str(x) for x in (data.get("checklist") or []) if x][:3],
+            summary=str(data.get("summary") or text[:500]),
+            confidence=max(0.0,min(1.0,_float(data.get("confidence")) or 0.0)),
+        )
         location = analysis.city or analysis.village or analysis.marz or analysis.location
         if not ctx.get('request_id'):
             req = create_service_request(user_id, analysis.category_id, 'searching', analysis.language, location, analysis.summary, analysis.model_dump())
