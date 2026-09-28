@@ -22,3 +22,6 @@ Pillow>=10.0
 
 # Audio processing
 pypdf>=5.0
+
+# Dynamic service catalogue matching
+thefuzz>=0.22,<1.0
