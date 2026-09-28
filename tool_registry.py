@@ -122,7 +122,13 @@ class ToolRegistry:
                 self._fn(
                     "get_my_orders",
                     "List the authenticated partner's orders. Use for conversational order browsing.",
-                    {"limit": {"type": "integer"}},
+                    {"status": _nullable("string"), "limit": {"type": "integer"}},
+                ),
+                self._fn(
+                    "get_my_order",
+                    "Get one authenticated partner order by ID. Ownership is checked by backend.",
+                    {"order_id": {"type": "integer"}},
+                    ["order_id"],
                 ),
                 self._fn(
                     "add_service",
@@ -329,14 +335,22 @@ class ToolRegistry:
             if name == "get_my_orders":
                 # Orders are intentionally resolved through the existing
                 # domain gateway when available. Do not expose SQL here.
-                getter = getattr(data_core, "list_partner_orders", None)
-                if not getter:
-                    return {"ok": True, "items": [], "unsupported": True}
-                return {"ok": True, "items": getter(
-                    partner_id=pid,
-                    actor_user_id=self.telegram_id,
+                return {"ok": True, "items": data_core.search_orders(
+                    actor_role="partner",
+                    actor_id=self.telegram_id,
+                    status=args.get("status"),
                     limit=max(1, min(int(args.get("limit") or 20), 50)),
                 )}
+            
+            if name == "get_my_order":
+                item = data_core.get_order(
+                    int(args["order_id"]),
+                    actor_role="partner",
+                    actor_id=self.telegram_id,
+                )
+                if not item:
+                    raise PermissionError("order_not_owned_or_not_found")
+                return {"ok": True, "item": item}
 
             if name == "add_service":
                 company_id = int(args["company_id"])
