@@ -561,7 +561,7 @@ def save_partner_application_draft(*, user_id: int, profile: dict[str, Any]) -> 
     address = str(profile.get("address") or "").strip() or None
     phone = str(profile.get("phone") or "").strip() or None
     description = str(profile.get("business_description") or profile.get("description") or "").strip() or None
-    service_name = str(services[0].get("name") or services[0].get("service_name") or "").strip() or None
+    service_name = str(services[0].get("name") or services[0].get("service_name") or "").strip() or None if services else None
     price = services[0].get("price") if services else None
     try:
         price = float(price) if price not in (None, "") else None
