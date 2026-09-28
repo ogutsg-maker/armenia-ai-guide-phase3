@@ -2499,21 +2499,37 @@ async def admin_ai_message(admin_id,message):
 
 async def api_admin_assistant(request):
     _admin(request)
-    data=await request.json(); message=str(data.get("message") or "").strip()
-    if not message: return web.json_response({"ok":False,"error":"message_required"},status=400)
+    data = await request.json()
+    message = str(data.get("message") or "").strip()
+    if not message:
+        return web.json_response({"ok": False, "error": "message_required"}, status=400)
     try:
-        return web.json_response({"ok":True,"reply":await admin_ai_message(int(request.app.get("stage3_admin_id") or 0),message)})
+        from ai_manager import AIContext
+        manager = request.app.get("ai_manager")
+        if manager is not None:
+            result = await manager.handle_message(
+                int(request.app.get("stage3_admin_id") or 0),
+                message,
+                AIContext.ADMIN,
+            )
+            return web.json_response({"ok": True, "reply": result.get("reply") or "", **{
+                k: result[k] for k in ("confirmation_required", "confirmed", "tool_result")
+                if k in result
+            }})
+        # Compatibility fallback while older app bootstrap paths are still in use.
+        return web.json_response({
+            "ok": True,
+            "reply": await admin_ai_message(
+                int(request.app.get("stage3_admin_id") or 0), message
+            ),
+        })
     except Exception as exc:
-        try:
-            state=_admin_session(int(request.app.get("stage3_admin_id") or 0))
-            state["pending_action"]=None; state["waiting_for_input"]=None
-            state["last_action_failed"]=True; state["last_error"]=str(exc)[:1000]
-            state["last_error_context"]=message[:1000]; state["retry_count"]=int(state.get("retry_count",0) or 0)+1
-        except Exception: pass
         import logging
         logging.getLogger(__name__).exception("admin_ai_turn_failed")
-        return web.json_response({"ok":True,"reply":_admin_localized(_admin_detect_language(message),"safe_error")})
-
+        return web.json_response({
+            "ok": True,
+            "reply": "⚠️ AI-секретарь временно недоступен. Попробуйте ещё раз.",
+        })
 
 
 async def api_admin_ai_costs(request):
