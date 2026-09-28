@@ -411,6 +411,8 @@ Confirm?"
         role = self._context(context_type)
         language = language or self._lang(message)
         trusted = self._trusted(role, telegram_id, extra_context)
+        history = await self._supabase_history(telegram_id, role)
+        session_context = await self._session_context(telegram_id, role)
         state = SessionState.from_dict(session_context)
         tools = ToolRegistry(
             telegram_id=int(telegram_id),
@@ -419,8 +421,6 @@ Confirm?"
             session_state=state.to_dict(),
         )
         definitions = tools.definitions()
-        history = await self._supabase_history(telegram_id, role)
-        session_context = await self._session_context(telegram_id, role)
 
         # The session state is backend state, not model-authored identity.
         trusted_for_prompt = dict(trusted)
