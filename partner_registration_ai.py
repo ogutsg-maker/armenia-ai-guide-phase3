@@ -685,43 +685,227 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         purpose="structured partner extraction/classification",
     )
 
+async def _groq_catalog_rerank(
+    services: list[dict],
+    catalog_rows: list[dict],
+) -> list[dict]:
+    """Semantic catalogue reranking without exposing database IDs to Groq.
+
+    Candidates are selected only from the live DB. Groq returns a candidate
+    position; Python maps that position back to the real DB category ID.
+    """
+    if not services or not catalog_rows or AsyncGroq is None:
+        return [dict(x) for x in services]
+
+    key = os.getenv("GROQ_API_KEY", "").strip()
+    if not key:
+        return [dict(x) for x in services]
+
+    # Build a small candidate set per service from the live catalogue using
+    # generic string similarity. This is retrieval only, never classification.
+    retrieved = []
+    for item in services:
+        name = _norm(item.get("name") or item.get("service_name"))
+        if not name:
+            retrieved.append([])
+            continue
+
+        scored = []
+        for row in catalog_rows:
+            labels = [
+                _norm(row.get("category_am")),
+                _norm(row.get("category_ru")),
+                _norm(row.get("category_en")),
+            ]
+            labels = [x for x in labels if x]
+            if not labels:
+                continue
+            score = max(_dynamic_catalog_match_score(name, label) for label in labels)
+            scored.append((score, row))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        candidates = []
+        seen = set()
+        for score, row in scored[:12]:
+            cid = _safe_int(row.get("category_id"))
+            if cid is None or cid in seen:
+                continue
+            seen.add(cid)
+            candidates.append({
+                "candidate_index": len(candidates),
+                "name_am": _norm(row.get("category_am")),
+                "name_ru": _norm(row.get("category_ru")),
+                "name_en": _norm(row.get("category_en")),
+                "retrieval_score": round(float(score), 3),
+            })
+        retrieved.append(candidates)
+
+    payload = [
+        {
+            "service_index": i,
+            "service": _norm(item.get("name") or item.get("service_name")),
+            "candidates": candidates,
+        }
+        for i, (item, candidates) in enumerate(zip(services, retrieved))
+        if candidates
+    ]
+    if not payload:
+        return [dict(x) for x in services]
+
+    system = """You are the semantic matching layer for Armenia AI Guide.
+For each extracted service, choose the candidate subcategory that means the
+same service. Understand Armenian, Russian and English, including inflected
+forms, synonyms and natural wording.
+
+Return ONLY JSON:
+{"matches":[{"service_index":0,"candidate_index":0,"confidence":0.0}]}
+
+Rules:
+- Choose only from the supplied candidates.
+- candidate_index is the position inside that service's candidates array.
+- Never invent candidates or IDs.
+- If none is a reliable semantic match, omit that service from matches.
+- confidence must be between 0 and 1.
+"""
+    user = json.dumps(payload, ensure_ascii=False)
+
+    try:
+        client = AsyncGroq(api_key=key)
+        response = await client.chat.completions.create(
+            model=os.getenv("PARTNER_ONBOARDING_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")),
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=500,
+        )
+        parsed = _parse_json(response.choices[0].message.content or "{}")
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Groq semantic catalogue rerank failed: %s", exc)
+        return [dict(x) for x in services]
+
+    out = [dict(x) for x in services]
+    for match in parsed.get("matches") or []:
+        if not isinstance(match, dict):
+            continue
+        si = _safe_int(match.get("service_index"))
+        ci = _safe_int(match.get("candidate_index"))
+        if si is None or ci is None or si < 0 or si >= len(out):
+            continue
+        candidates = retrieved[si] if si < len(retrieved) else []
+        if ci < 0 or ci >= len(candidates):
+            continue
+        try:
+            confidence = float(match.get("confidence") or 0)
+        except Exception:
+            confidence = 0
+        if confidence < 0.60:
+            continue
+
+        candidate = candidates[ci]
+        service = out[si]
+        row = next(
+            (
+                r for r in catalog_rows
+                if _safe_int(r.get("category_id")) is not None
+                and _safe_int(r.get("category_id")) == next(
+                    (
+                        _safe_int(x.get("category_id"))
+                        for x in catalog_rows
+                        if _safe_int(x.get("category_id")) is not None
+                        and _norm(x.get("category_am")) == candidate["name_am"]
+                        and _norm(x.get("category_ru")) == candidate["name_ru"]
+                        and _norm(x.get("category_en")) == candidate["name_en"]
+                    ),
+                    None,
+                )
+            ),
+            None,
+        )
+        if not row:
+            continue
+
+        service["matched_subcategory_id"] = _safe_int(row.get("category_id"))
+        service["direction_id"] = _safe_int(row.get("master_id"))
+        service["match_confidence"] = confidence
+        service["match_method"] = "groq_semantic_rerank"
+        service["subcategory_name"] = (
+            _norm(row.get("category_am"))
+            or _norm(row.get("category_ru"))
+            or _norm(row.get("category_en"))
+            or None
+        )
+        service["direction_name"] = (
+            _norm(row.get("master_am"))
+            or _norm(row.get("master_ru"))
+            or _norm(row.get("master_en"))
+            or None
+        )
+
+    return out
+
+
 async def _semantic_catalog_match(
     services: list[dict],
     catalog_rows: list[dict],
     threshold: float = 0.72,
 ) -> list[dict]:
-    """Match extracted services against live DB category embeddings."""
-    from embeddings_matcher import match_service_to_catalog
+    """Prefer vector matching; fall back to semantic Groq reranking.
 
+    Vector matching is used when OpenAI embeddings and indexed catalogue
+    vectors are available. If they are unavailable (including exhausted
+    OpenAI quota), registration still performs semantic matching using live
+    DB candidates and Groq. No category mapping is hardcoded.
+    """
     out = [dict(x) for x in services]
-    for item in out:
-        if _safe_int(item.get("matched_subcategory_id")) is not None:
-            continue
-
-        name = _norm(item.get("name") or item.get("service_name"))
-        if not name:
-            continue
-
-        match = await match_service_to_catalog(name, threshold=threshold)
-        if not match:
-            continue
-
-        item["matched_subcategory_id"] = _safe_int(match["category_id"])
-        item["direction_id"] = _safe_int(match["master_id"])
-        item["match_confidence"] = float(match["similarity"])
-        item["match_method"] = "embedding_cosine"
-        item["subcategory_name"] = (
-            _norm(match.get("category_am"))
-            or _norm(match.get("category_ru"))
-            or _norm(match.get("category_en"))
-            or None
+    try:
+        from embeddings_matcher import match_service_to_catalog
+        for item in out:
+            if _safe_int(item.get("matched_subcategory_id")) is not None:
+                continue
+            name = _norm(item.get("name") or item.get("service_name"))
+            if not name:
+                continue
+            match = await match_service_to_catalog(name, threshold=threshold)
+            if not match:
+                continue
+            item["matched_subcategory_id"] = _safe_int(match["category_id"])
+            item["direction_id"] = _safe_int(match["master_id"])
+            item["match_confidence"] = float(match["similarity"])
+            item["match_method"] = "embedding_cosine"
+            item["subcategory_name"] = (
+                _norm(match.get("category_am"))
+                or _norm(match.get("category_ru"))
+                or _norm(match.get("category_en"))
+                or None
+            )
+            item["direction_name"] = (
+                _norm(match.get("master_am"))
+                or _norm(match.get("master_ru"))
+                or _norm(match.get("master_en"))
+                or None
+            )
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).info(
+            "Embedding catalogue matching unavailable; using Groq semantic rerank: %s",
+            exc,
         )
-        item["direction_name"] = (
-            _norm(match.get("master_am"))
-            or _norm(match.get("master_ru"))
-            or _norm(match.get("master_en"))
-            or None
-        )
+
+    unresolved = [
+        x for x in out
+        if _safe_int(x.get("matched_subcategory_id")) is None
+    ]
+    if unresolved:
+        reranked = await _groq_catalog_rerank(unresolved, catalog_rows)
+        by_name = {
+            _norm(x.get("name") or x.get("service_name")).lower(): x
+            for x in reranked
+        }
+        for item in out:
+            key = _norm(item.get("name") or item.get("service_name")).lower()
+            if key in by_name:
+                item.update(by_name[key])
 
     return out
 
@@ -1161,11 +1345,11 @@ async def extract(
 
         import logging
         logging.getLogger(__name__).info(
-            "PARTNER_CLASSIFICATION: dynamic_fuzzy services=%s catalog_rows=%s matched=%s unresolved=%s",
-            len(classified_services),
+            "PARTNER_CLASSIFICATION: services=%s catalog_rows=%s matched=%s unresolved=%s",
+            len(data.get("services") or []),
             len(catalog_rows),
             len(matched),
-            len(classified_services) - len(matched),
+            len(data.get("services") or []) - len(matched),
         )
 
     except Exception as exc:
