@@ -362,7 +362,7 @@ async def _recover_missing_services(
     # Give the model compact source snippets around every monetary amount.
     snippets = []
     for m in re.finditer(
-        r"(?<!\d)(\d{3,6})(?:[.,]\d{1,2})?\s*(?:դրամ(?:ից|ով|ի)?|դր\.?|֏|amd|dram|драм(?:ов|а)?|амд)\b",
+        r"(?<!\d)(\d{3,6})(?:[.,]\d{1,2})?\s*(?:դրամ(?:ից|ով|ի)?|դր\.?|֏|amd|dram|драм(?:ов|а)?|амд)(?!\w)",
         partner_text,
         flags=re.I,
     ):
@@ -979,11 +979,24 @@ ${JSON.stringify(categoriesList)}
         cid = _safe_int(item.get("matched_subcategory_id"))
         if cid not in valid_ids:
             cid = None
+
+        # Infer price type from the original partner text.
+        price_type = "fixed"
+        if price is not None:
+            token = str(int(price)) if isinstance(price, float) and price.is_integer() else str(price)
+            m = re.search(
+                rf"(?<!\d){re.escape(token)}(?!\d)\s*(?:դրամ(?:ից|ով|ի)?|դր\.?|֏|amd|dram|дրամ(?:ов|а)?|амд)?",
+                _norm(raw_text), flags=re.I
+            )
+            nearby = _norm(raw_text[max(0, m.start()-90):min(len(raw_text), m.end()+30)]) if m else ""
+            if re.search(r"(?:դրամ)?ից\b|(?:\bот\b|\bfrom\b|\bstarting\b|սկս(?:վում\s+է|վում\s+են|ած))", nearby, flags=re.I):
+                price_type = "from"
+
         services.append({
             "name": name,
             "raw_sub_direction": name,
             "price": price,
-            "price_type": "fixed",
+            "price_type": price_type,
             "matched_subcategory_id": cid,
         })
 
@@ -1154,8 +1167,6 @@ Return only the supplied JSON schema."""
 
         combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
 
-        combined_text = " ".join([str(x.get("content") or "") for x in history] + [text])
-
         # Deterministic validation: count explicit monetary mentions, but NEVER
         # replace a valid GPT extraction merely because the language differs.
         price_mentions = _extract_price_mentions(combined_text)
@@ -1208,10 +1219,43 @@ Return only the supplied JSON schema."""
 
         # Registration is intentionally classification-free. Direction, subcategory
         # and catalogue IDs are assigned/reviewed after submission by Admin.
-        data["master_category_id"] = None
-        data["classification_confidence"] = 0
-        data["classification_ambiguities"] = []
-        data["classification_needs_review"] = True
+        # Keep catalogue classification internal: the partner never chooses
+        # a direction, but a validated matched subcategory can populate the
+        # internal direction/subcategory shown to Admin.
+        matched_ids = [
+            _safe_int(s.get("matched_subcategory_id"))
+            for s in normalized_services
+            if _safe_int(s.get("matched_subcategory_id")) is not None
+        ]
+        if matched_ids:
+            catalog_map = {
+                _safe_int(row.get("category_id")): row
+                for row in catalog_rows
+                if _safe_int(row.get("category_id")) is not None
+            }
+            first_cat = catalog_map.get(matched_ids[0])
+            if first_cat:
+                data["master_category_id"] = _safe_int(first_cat.get("master_id"))
+                data["direction"] = _norm(first_cat.get("master_am")) or _norm(first_cat.get("master_ru"))
+                for svc in normalized_services:
+                    cat = catalog_map.get(_safe_int(svc.get("matched_subcategory_id")))
+                    if cat:
+                        svc["direction_id"] = _safe_int(cat.get("master_id"))
+                        svc["direction_name"] = _norm(cat.get("master_am")) or _norm(cat.get("master_ru"))
+                        svc["subcategory_name"] = _norm(cat.get("category_am")) or _norm(cat.get("category_ru"))
+                data["classification_confidence"] = 0.95
+                data["classification_ambiguities"] = []
+                data["classification_needs_review"] = False
+            else:
+                data["master_category_id"] = None
+                data["classification_confidence"] = 0
+                data["classification_ambiguities"] = ["subcategory_not_in_catalog"]
+                data["classification_needs_review"] = True
+        else:
+            data["master_category_id"] = None
+            data["classification_confidence"] = 0
+            data["classification_ambiguities"] = ["subcategory_not_matched"]
+            data["classification_needs_review"] = True
 
         if pending_field in {"business_name", "city", "district"} and not data.get(pending_field):
             data[pending_field] = _norm(text)
