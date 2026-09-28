@@ -45,6 +45,36 @@ def json_dump(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Users / AI session identity
+# ---------------------------------------------------------------------------
+
+def get_user_by_telegram_id(telegram_id: int):
+    return one(
+        """
+        SELECT *
+        FROM users
+        WHERE telegram_id=%s
+        LIMIT 1
+        """,
+        (int(telegram_id),),
+    )
+
+
+def ensure_user_by_telegram_id(telegram_id: int):
+    user = get_user_by_telegram_id(int(telegram_id))
+    if user:
+        return user
+    return one(
+        """
+        INSERT INTO users (telegram_id)
+        VALUES (%s)
+        RETURNING *
+        """,
+        (int(telegram_id),),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Catalog
 # ---------------------------------------------------------------------------
 
