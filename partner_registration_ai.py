@@ -578,64 +578,39 @@ def _recover_services_from_history(history: list[dict]) -> list[dict]:
     return result
 
 def _fallback_catalog_match(services: list[dict], catalog: list[dict]) -> list[dict]:
-    """Deterministic safety net when Groq catalog matching rejects a request.
-    It only returns IDs whose Armenian/Russian/English names are actually in the
-    supplied active catalogue; it never invents an ID.
+    """Apply only a generic exact catalogue-label match before semantic AI.
+
+    This function deliberately contains NO service/category keyword table.
+    The database is the only source of valid subcategory IDs. If wording is
+    different (synonyms, Armenian morphology, transliteration, etc.), the
+    unresolved service is passed to _ai_match_services for semantic matching.
     """
     out = [dict(x) for x in services]
-    rules = [
-        # Armenian women-haircut phrases are semantically the catalogue
-        # subcategory "Կանացի սանրվածք", even when the catalogue wording
-        # does not contain the literal word "կտրում".
-        (("կանացի մազերի կտրում", "կանանց մազերի կտրում", "կանացի մազերի կտրել",
-          "կանացի սանրվածքի կտրում", "կանացի կտրում"),
-         ("կանացի սանրվածք",)),
-        (("սանրվածք", "սանրվածքները", "ստриж", "стриж", "haircut"), ("սանրված", "парикмах", "haircut")),
-        (("գունավորում", "գունավորումը", "ներկում", "ներկ", "окраш", "волос", "coloring"), ("ներկ", "окраш", "color")),
-        (("ոճավորում", "ոճավորումը", "դասավորում", "уклад", "styling"), ("դասավորում", "уклад", "styling")),
-        (("մատնահարդարում", "маникюр", "manicure"), ("մատնահարդարում", "маникюр", "manicure")),
-        (("պեդիկյուր", "педикюр", "pedicure"), ("ոտնահարդարում", "педикюр", "pedicure")),
-        (("դիմահարդարում", "դիմահարդարումը", "макияж", "makeup"), ("դիմահարդարում", "макияж", "makeup")),
-        # Car wash / автомойка: support Armenian, Russian, English and common
-        # Latin transliterations used by partners in free-form messages.
-        (("ավտոլվացում", "մեքենայի լվացում", "մեքենաների լվացում", "մեքենա լվացում",
-          "ավտոմեքենայի լվացում", "ավտոլվաց", "автомойка", "мойка машин", "мойка авто",
-          "мойка автомобиля", "мойка автомобилей", "автомойки", "car wash", "carwash",
-          "car washing", "moyka mashin", "moyka maşin", "moyka masin", "moyka avto",
-          "moyka avtomobilya", "moyka avtomobily", "mashini moyka", "mashin moyka"),
-         ("ավտոլվացում", "автомойка", "car wash")),
-        (("հարսանեկան ֆոտոսեսիա", "հարսանեկան լուսանկար", "wedding photo", "wedding photography"), ("հարսանեկան լուսանկարիչ", "wedding photographer", "свадебный фотограф")),
-        (("միջոցառումների լուսանկարահանում", "միջոցառման լուսանկար", "event photo", "event photography"), ("լուսանկարիչ", "photographer", "фотограф")),
-        (("անհատական ֆոտոսեսիա", "անձնական ֆոտոսեսիա", "portrait", "individual photo"), ("լուսանկարիչ", "photographer", "фотограф")),
-        (("տեսանկարահանում", "տեսանյութ", "video shooting", "videography"), ("տեսագրահանող", "videographer", "видеограф")),
-    ]
+    label_map: dict[str, int] = {}
+
+    for row in catalog or []:
+        cid = _safe_int(row.get("category_id"))
+        if cid is None:
+            continue
+        for key in ("category_am", "category_ru", "category_en"):
+            label = _norm(row.get(key)).lower()
+            if label:
+                label_map.setdefault(label, cid)
+
     for item in out:
         if _safe_int(item.get("matched_subcategory_id")) is not None:
             continue
-        name = _norm(item.get("name")).lower()
-        # Normalize common Armenian orthographic/typing variants before
-        # deterministic catalogue fallback.
-        name = name.replace("օ", "ո").replace("ւ", "ու").replace("և", "եւ")
+
+        name = _norm(item.get("name") or item.get("service_name")).lower()
         if not name:
             continue
-        needles = None
-        targets = None
-        for src, dst in rules:
-            if any(x in name for x in src):
-                needles, targets = src, dst
-                break
-        if not targets:
-            continue
-        for row in catalog:
-            labels = [_norm(row.get("category_am")), _norm(row.get("category_ru")), _norm(row.get("category_en"))]
-            low = [x.lower() for x in labels if x]
-            if any(any(t in label for t in targets) for label in low):
-                cid = _safe_int(row.get("category_id"))
-                if cid is not None:
-                    item["matched_subcategory_id"] = cid
-                    item["match_confidence"] = 0.85
-                    item["match_reason"] = "Deterministic multilingual fallback matched an explicit service term to the active catalogue."
-                    break
+
+        cid = label_map.get(name)
+        if cid is not None:
+            item["matched_subcategory_id"] = cid
+            item["match_confidence"] = 1.0
+            item["match_reason"] = "Exact active database catalogue-label match."
+
     return out
 
 
