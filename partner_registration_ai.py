@@ -728,7 +728,7 @@ async def _groq_json(client, model, system_prompt, user_content, schema_name, sc
         purpose="structured partner extraction/classification",
     )
 
-async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
+async async def _ai_match_services(client, model, services: list[dict], catalog: list[dict]) -> list[dict]:
     """Use Groq for semantic service -> real catalogue matching inside one direction.
     The model receives only the active subcategories of the already selected
     direction and may return only IDs supplied in that catalogue.
@@ -1355,6 +1355,29 @@ Return only the supplied JSON schema."""
         # database subcategories. Never invent IDs and never use a keyword table.
         candidate_catalog = catalog_rows
         resolved_master_id = _safe_int(data.get("master_category_id"))
+        if resolved_master_id is None:
+            # The extractor may return the correct direction label but omit its
+            # numeric ID. Resolve that label against the same live catalogue
+            # already loaded above. This keeps the next AI call scoped to one
+            # direction instead of sending all 320 subcategories.
+            direction_text = _norm(data.get("direction"))
+            if direction_text:
+                direction_low = direction_text.lower()
+                for row in catalog_rows:
+                    labels = [
+                        _norm(row.get("master_am")),
+                        _norm(row.get("master_ru")),
+                        _norm(row.get("master_en")),
+                    ]
+                    if any(
+                        direction_low == label.lower()
+                        or direction_low in label.lower()
+                        or label.lower() in direction_low
+                        for label in labels if label
+                    ):
+                        resolved_master_id = _safe_int(row.get("master_id"))
+                        if resolved_master_id is not None:
+                            break
         if resolved_master_id is None:
             try:
                 recovered_master = _recover_master_category(db, combined_text, data)
