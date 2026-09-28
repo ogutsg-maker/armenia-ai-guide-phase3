@@ -741,32 +741,16 @@ async def extract_partner_registration_json(
     # internal user first and create a minimal test partner user when this is
     # the dedicated browser fallback account.
     try:
-        user_row = data_core.one(
-            "SELECT id FROM users WHERE telegram_id=%s LIMIT 1",
-            (telegram_id,),
-        )
+        user_row = data_core.ensure_user_by_telegram_id(int(telegram_id))
         if not user_row:
-            if telegram_id != 1831076171:
-                raise RuntimeError(
-                    f"Unable to resolve internal users.id for telegram_id={telegram_id}"
-                )
-            logger.info(
-                "Тестовый пользователь %s не найден. Создаем временную запись в users.",
-                telegram_id,
-            )
-            user_row = data_core.one(
-                """INSERT INTO users (telegram_id, role, username)
-                   VALUES (%s, 'partner', 'test_partner_browser')
-                   ON CONFLICT (telegram_id) DO UPDATE
-                   SET telegram_id=EXCLUDED.telegram_id
-                   RETURNING id""",
-                (telegram_id,),
-            )
-        internal_user_id = int((user_row or {}).get("id") or 0)
-        if internal_user_id <= 0:
             raise RuntimeError(
-                f"Unable to resolve internal users.id for telegram_id={telegram_id}"
+                f"Unable to ensure users row for telegram_id={telegram_id}"
             )
+
+        # The canonical users identity is telegram_id. There is no users.id
+        # column in the current schema; ai_sessions.user_id uses this same
+        # Telegram identity through the existing Data Core/session layer.
+        internal_user_id = int(user_row.get("telegram_id") or telegram_id)
         logger.info(
             "Registration AI session identity resolved: telegram_id=%s users.id=%s",
             telegram_id,
