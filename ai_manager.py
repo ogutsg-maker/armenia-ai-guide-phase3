@@ -119,7 +119,8 @@ class AIManager:
     async def chat(self, telegram_id:int, context_type:ContextType|str, message:str, *, extra_context:dict[str,Any]|None=None, language:str|None=None)->dict[str,Any]:
         role=self._context(context_type)
         language=language or self._lang(message)
-        tools=ToolRegistry(telegram_id=telegram_id,context_type=role,trusted_context=extra_context)
+        tools=ToolRegistry(telegram_id=telegram_id,context_type=role,trusted_context=self._trusted(role,telegram_id,extra_context))
+        tool_definitions=tools.definitions()
         history=await self._supabase_history(telegram_id,role,self.max_history)
         prompt=PromptFactory.build(role,message=message,history=history,trusted_context=self._trusted(role,telegram_id,extra_context),language=language)
         messages=[{"role":"user","content":prompt}]
@@ -136,8 +137,8 @@ class AIManager:
         tool_calls_log=[]
         for _ in range(self.max_tool_rounds):
             response=await self.client.chat.completions.create(
-                model=self.model,messages=messages,tools=tools.definitions() or None,
-                tool_choice="auto" if tools.definitions() else None,
+                model=self.model,messages=messages,tools=tool_definitions or None,
+                tool_choice="auto" if tool_definitions else None,
                 temperature=0.1,max_tokens=1600,
             )
             usage=getattr(response,"usage",None)
@@ -151,6 +152,7 @@ class AIManager:
             messages.append({"role":"assistant","content":msg.content or "", "tool_calls":[
                 {"id":c.id,"type":"function","function":{"name":c.function.name,"arguments":c.function.arguments}} for c in calls]})
             for call in calls:
+                args={}
                 try:
                     args=json.loads(call.function.arguments or "{}")
                     result=await tools.execute(call.function.name,args)
@@ -164,7 +166,8 @@ class AIManager:
                     await self._save_supabase_history(telegram_id,role,"ai",reply,{"confirmation_required":True})
                     return {"reply":reply,"confirmation_required":True,"tool_calls":tool_calls_log}
                 messages.append({"role":"tool","tool_call_id":call.id,"content":json.dumps(result,ensure_ascii=False,default=str)[:12000]})
-        raise RuntimeError("AI tool loop limit reached")
+        await self._cost_log(telegram_id,role,None,time.monotonic()-started,status="error",error="tool_loop_limit",extra_context=extra_context)
+        return {"reply":self._error_text(language),"error":"tool_loop_limit"}
 
     async def _set_pending(self, telegram_id:int, context:ContextType, pending:dict):
         def _write():
@@ -196,6 +199,14 @@ class AIManager:
             if isinstance(value,str): value=json.loads(value)
             return value.get("ai_manager_pending_action")
         return await asyncio.to_thread(_read)
+
+    @staticmethod
+    def _error_text(language: str) -> str:
+        if language == "hy":
+            return "Ներողություն, տեխնիկական սխալ է տեղի ունեցել։ Փորձեք մի փոքր ուշ։"
+        if language == "ru":
+            return "Извините, произошла техническая ошибка. Попробуйте позже."
+        return "Sorry, a technical error occurred. Please try again later."
 
     @staticmethod
     def _is_confirmation(message:str)->bool:
