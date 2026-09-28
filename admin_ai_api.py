@@ -1127,14 +1127,26 @@ TOOL_SCHEMAS:
         "context":planner_ctx,
         "previous_tool_results":ctx.get("compact_tool_results",[]) if isinstance(ctx,dict) else [],
     },ensure_ascii=False,default=str)
-    raw,provider,model=await _admin_ai_completion(
-        [{"role":"system","content":system},{"role":"user","content":payload}],
+    # Unified AIManager transport: no system role. The planner contract is
+    # supplied as task instructions and the current admin identity is trusted
+    # backend context.
+    from ai_manager import AIManager
+    from prompt_factory import ContextType
+    manager=AIManager()
+    data=await manager.chat_json(
+        int(ctx.get("admin_id") or 0),
+        ContextType.ADMIN,
+        payload,
+        task_instructions=system,
+        extra_context={"admin_id":int(ctx.get("admin_id") or 0),"planner_context":planner_ctx},
+        language=_admin_detect_language(message),
         max_tokens=350 if is_replanning else 500,
-        json_mode=True,
     )
-    raw=(raw or "").strip()
-    try:
-        data=json.loads(raw)
+    provider="groq"
+    model=manager.model
+    if not isinstance(data,dict):
+        raise RuntimeError("groq returned non-object planner output")
+
     except json.JSONDecodeError:
         start=raw.find("{")
         if start<0:
