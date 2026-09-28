@@ -1078,84 +1078,86 @@ async def extract(
         # Recover only generic factual fields that Groq may omit.
         data = _recover_obvious_facts(combined_text, data)
 
-        # Classification is completely independent from Groq.
-        # Every candidate and every assigned ID comes from the live DB.
-        catalog_rows = get_catalog(db)
-        classified_services = await _semantic_catalog_match(
-            services,
-            catalog_rows,
-            threshold=float(os.getenv("CATALOG_EMBEDDING_THRESHOLD", "0.72")),
-        )
+        # Classification is deliberately isolated from extraction.
+        # A vector/DB/provider problem must NEVER erase a successful Groq
+        # extraction. The registration form must still receive the facts and
+        # services even when semantic classification is temporarily unavailable.
+        data["services"] = services
+        data["master_category_id"] = None
+        data["direction"] = None
+        data["classification_confidence"] = 0
+        data["classification_ambiguities"] = []
+        data["classification_needs_review"] = True
 
-        data["services"] = classified_services
-
-        matched = [
-            s for s in classified_services
-            if _safe_int(s.get("matched_subcategory_id")) is not None
-        ]
-
-        if matched:
-            catalog_map = {
-                _safe_int(row.get("category_id")): row
-                for row in catalog_rows
-                if _safe_int(row.get("category_id")) is not None
-            }
-
-            first_row = catalog_map.get(
-                _safe_int(matched[0].get("matched_subcategory_id"))
+        try:
+            catalog_rows = get_catalog(db)
+            classified_services = await _semantic_catalog_match(
+                services,
+                catalog_rows,
+                threshold=float(os.getenv("CATALOG_EMBEDDING_THRESHOLD", "0.72")),
             )
+            data["services"] = classified_services
 
-            if first_row:
-                data["master_category_id"] = _safe_int(first_row.get("master_id"))
-                data["direction"] = (
-                    _norm(first_row.get("master_am"))
-                    or _norm(first_row.get("master_ru"))
-                    or _norm(first_row.get("master_en"))
-                    or None
-                )
-
-                for service in classified_services:
-                    row = catalog_map.get(
-                        _safe_int(service.get("matched_subcategory_id"))
-                    )
-                    if not row:
-                        continue
-
-                    service["direction_id"] = _safe_int(row.get("master_id"))
-                    service["direction_name"] = (
-                        _norm(row.get("master_am"))
-                        or _norm(row.get("master_ru"))
-                        or _norm(row.get("master_en"))
-                        or None
-                    )
-                    service["subcategory_name"] = (
-                        _norm(row.get("category_am"))
-                        or _norm(row.get("category_ru"))
-                        or _norm(row.get("category_en"))
-                        or None
-                    )
-
-                data["classification_confidence"] = max(
-                    float(s.get("match_confidence") or 0)
-                    for s in matched
-                )
-                data["classification_ambiguities"] = []
-                data["classification_needs_review"] = False
-            else:
-                data["master_category_id"] = None
-                data["classification_confidence"] = 0
-                data["classification_ambiguities"] = [
-                    "subcategory_not_in_catalog"
-                ]
-                data["classification_needs_review"] = True
-        else:
-            data["master_category_id"] = None
-            data["direction"] = None
-            data["classification_confidence"] = 0
-            data["classification_ambiguities"] = [
-                "subcategory_not_matched"
+            matched = [
+                s for s in classified_services
+                if _safe_int(s.get("matched_subcategory_id")) is not None
             ]
-            data["classification_needs_review"] = bool(classified_services)
+
+            if matched:
+                catalog_map = {
+                    _safe_int(row.get("category_id")): row
+                    for row in catalog_rows
+                    if _safe_int(row.get("category_id")) is not None
+                }
+                first_row = catalog_map.get(
+                    _safe_int(matched[0].get("matched_subcategory_id"))
+                )
+
+                if first_row:
+                    data["master_category_id"] = _safe_int(first_row.get("master_id"))
+                    data["direction"] = (
+                        _norm(first_row.get("master_am"))
+                        or _norm(first_row.get("master_ru"))
+                        or _norm(first_row.get("master_en"))
+                        or None
+                    )
+
+                    for service in classified_services:
+                        row = catalog_map.get(
+                            _safe_int(service.get("matched_subcategory_id"))
+                        )
+                        if not row:
+                            continue
+                        service["direction_id"] = _safe_int(row.get("master_id"))
+                        service["direction_name"] = (
+                            _norm(row.get("master_am"))
+                            or _norm(row.get("master_ru"))
+                            or _norm(row.get("master_en"))
+                            or None
+                        )
+                        service["subcategory_name"] = (
+                            _norm(row.get("category_am"))
+                            or _norm(row.get("category_ru"))
+                            or _norm(row.get("category_en"))
+                            or None
+                        )
+
+                    data["classification_confidence"] = max(
+                        float(s.get("match_confidence") or 0)
+                        for s in matched
+                    )
+                    data["classification_ambiguities"] = []
+                    data["classification_needs_review"] = False
+                else:
+                    data["classification_ambiguities"] = ["subcategory_not_in_catalog"]
+            else:
+                data["classification_ambiguities"] = ["subcategory_not_matched"]
+        except Exception as classification_exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Partner registration semantic classification skipped; extraction preserved: %s",
+                classification_exc,
+            )
 
         import logging
         logging.getLogger(__name__).info(
