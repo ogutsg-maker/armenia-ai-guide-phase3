@@ -263,16 +263,10 @@ class AIManager:
     @staticmethod
     def _confirmation_text(language: str, summary: str) -> str:
         if language == "hy":
-            return f"{summary}
-
-Հաստատո՞ւմ եք։"
+            return f"{summary}\n\nՀաստատո՞ւմ եք։"
         if language == "ru":
-            return f"{summary}
-
-Подтверждаете?"
-        return f"{summary}
-
-Confirm?"
+            return f"{summary}\n\nПодтверждаете?"
+        return f"{summary}\n\nConfirm?"
 
     @staticmethod
     def _cancel_text(language: str) -> str:
