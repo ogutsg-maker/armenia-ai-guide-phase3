@@ -1008,10 +1008,20 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             missing = []
             if not business_name:
                 missing.append("business_name")
-            if not location_marz:
-                missing.append("location_marz")
-            if not location_city:
-                missing.append("location_city")
+            # The visible registration form does not mark marz/city as
+            # individually mandatory. A usable location can be supplied by
+            # marz, city, village, or full address. Do not reject a valid
+            # application merely because the partner used a different location
+            # field (for example "Hrazdan" in city and no marz).
+            location_village = _profile_value("location_village", "location_village", "village", "community")
+            address = _profile_value("address", "address", "full_address")
+            has_location = any(
+                str(v).strip()
+                for v in (location_marz, location_city, location_village, address)
+                if v not in (None, "")
+            )
+            if not has_location:
+                missing.append("location")
             # Phone is optional at initial partner registration. It can be
             # added later from the firm settings; do not block a complete
             # application when the partner did not mention a phone number.
