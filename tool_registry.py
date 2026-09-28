@@ -307,6 +307,62 @@ class ToolRegistry:
                 contexts=p,
             ),
             self._spec(
+                "admin_catalog_candidates",
+                "Return live catalogue candidates for each service in a real application. This is a READ-only candidate list: choose only an exact canonical catalogue name returned here. Never invent category names or IDs.",
+                {
+                    "application_id": {"type": "integer"},
+                    "service_indexes": {"type": "array", "items": {"type": "integer"}},
+                    "limit_per_service": {"type": "integer"},
+                },
+                required=("application_id",),
+                contexts=a,
+            ),
+            self._spec(
+                "admin_preview_catalog_resolution",
+                "Validate proposed catalogue mappings for an application and prepare a confirmation-only action. The model supplies service_index plus an exact catalog_name previously returned by admin_catalog_candidates. The backend resolves the real category IDs.",
+                {
+                    "application_id": {"type": "integer"},
+                    "mappings": {
+                        "type": "array", "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "service_index": {"type": "integer"},
+                                "catalog_name": {"type": "string"},
+                            },
+                            "required": ["service_index", "catalog_name"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                required=("application_id", "mappings"),
+                contexts=a,
+            ),
+            self._spec(
+                "admin_apply_catalog_resolution",
+                "Final catalogue mapping write for an application. This tool is executable only through the existing explicit confirmation flow.",
+                {
+                    "application_id": {"type": "integer"},
+                    "confirmation_token": {"type": "string"},
+                    "mappings": {
+                        "type": "array", "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "service_index": {"type": "integer"},
+                                "category_id": {"type": "integer"},
+                                "master_category_id": {"type": "integer"},
+                            },
+                            "required": ["service_index", "category_id", "master_category_id"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                required=("application_id", "confirmation_token", "mappings"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
                 "admin_get_pending_applications",
                 "List partner applications currently awaiting administrative moderation.",
                 {"limit": {"type": "integer"}},
@@ -674,6 +730,26 @@ class ToolRegistry:
                 )}
 
         if self.context_type == ContextType.ADMIN:
+            if name == "admin_catalog_candidates":
+                application_id = int(args["application_id"])
+                service_indexes = args.get("service_indexes")
+                limit_per_service = max(3, min(int(args.get("limit_per_service") or 10), 15))
+                return {"ok": True, **data_core.admin_catalog_candidates(
+                    application_id=application_id,
+                    service_indexes=service_indexes,
+                    limit_per_service=limit_per_service,
+                    actor_user_id=self.telegram_id,
+                )}
+
+            if name == "admin_preview_catalog_resolution":
+                application_id = int(args["application_id"])
+                mappings = args.get("mappings") or []
+                return data_core.prepare_catalog_resolution(
+                    application_id=application_id,
+                    mappings=mappings,
+                    actor_user_id=self.telegram_id,
+                )
+
             if name == "admin_get_pending_applications":
                 return {"ok": True, "items": data_core.admin_get_pending_applications(
                     limit=max(1, min(int(args.get("limit") or 50), 200))
@@ -745,7 +821,11 @@ class ToolRegistry:
                 )}
             if name == "get_application":
                 item = data_core.get_application_full(int(args["application_id"]))
-                return {"ok": True, "item": item} if item else {"ok": False, "error": "application_not_found"}
+                if not item:
+                    return {"ok": False, "error": "application_not_found"}
+                item = dict(item)
+                item["service_items"] = data_core.application_service_items(int(args["application_id"]))
+                return {"ok": True, "item": item}
             if name == "check_application":
                 return {"ok": True, "item": data_core.check_application(int(args["application_id"]))}
             if name == "search_partners":
@@ -967,6 +1047,14 @@ class ToolRegistry:
         if self.context_type == ContextType.ADMIN:
             if not self._admin_allowed():
                 raise PermissionError("admin_required")
+            if name == "admin_apply_catalog_resolution":
+                return data_core.apply_catalog_resolution(
+                    application_id=int(args["application_id"]),
+                    mappings=args.get("mappings") or [],
+                    confirmation_token=str(args.get("confirmation_token") or ""),
+                    actor_user_id=self.telegram_id,
+                )
+
             if name == "admin_approve_application":
                 return {"ok": True, "item": data_core.admin_approve_application(
                     int(args["application_id"]), self.telegram_id
