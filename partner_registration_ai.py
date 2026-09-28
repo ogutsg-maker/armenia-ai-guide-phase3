@@ -1032,7 +1032,7 @@ async def extract(text: str, history: list[dict], db, previous_profile: dict | N
                             continue
                         # Preserve the user's service wording.
                         # Category IDs are assigned only by the live DB matcher.
-                                                recovered.append({
+                        recovered.append({
                             "name": item_name,
                             "raw_sub_direction": item_name,
                             "price": None,
