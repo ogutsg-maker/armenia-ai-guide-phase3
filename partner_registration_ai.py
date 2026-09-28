@@ -888,41 +888,116 @@ def _match_services_universal(db, services, master_id):
 
 
 async def extract_partner_registration_json(
-    raw_text: str, categories_list: list[dict], *, model: str = "openai/gpt-oss-20b", max_tokens: int = 1800
+    raw_text: str,
+    categories_list: list[dict],
+    *,
+    model: str = "openai/gpt-oss-20b",
+    max_tokens: int = 1800,
 ) -> dict:
-    """Strict one-user-message partner registration extraction for Groq."""
+    """Strict partner registration extraction: one USER message only."""
     key = os.getenv("GROQ_API_KEY", "").strip()
-    if not key: raise RuntimeError("GROQ_API_KEY is not configured")
-    instruction = "Ты — эксперт-аналитик данных и главный модератор платформы услуг. Твоя задача — проанализировать входящий текст от партнера, очистить его от мусора, дубликатов, исправить опечатки, перевести ключевые текстовые значения на русский язык и разложить всё строго по полочкам в формате JSON.\\n\\n**ВХОДЯЩИЙ ТЕКСТ ПАРТНЕРА:**\\n${rawText}\\n\\n**СПИСОК НАШИХ ДОСТУПНЫХ КАТЕГОРИЙ И ПОДКАТЕГОРИЙ (Используй ТОЛЬКО эти ID):**\\n${JSON.stringify(categoriesList)}\\n\\n**ПРАВИЛА ИЗВЛЕЧЕНИЯ ДАННЫХ:**\\n\\n1. **company_or_name**: Если указано название компании — пиши его. Если только имя мастера — пиши имя. Если ничего нет — оставь `null`.\\n2. **marz**: Область (Марз) в Армении. Если в тексте только город (например, Раздан), ИИ должен проявить логику и автоматически определить Марз (для Раздана это Котайк). Пиши на русском.\\n3. **city**: Город или населенный пункт на русском (например, \"Раздан\").\\n4. **address**: Улица, номер дома/офиса. Очисти от названия города.\\n5. **phone**: Номер телефона. Приведи строго к международному формату (например, `+374XXXXXXXX`).\\n6. **working_hours**: График работы (например, \"09:00 - 20:00\"). Если не указан — `null`.\\n7. **document_type**: Постарайся понять из контекста, упоминает ли пользователь документ (паспорт, лицензия, сертификат). Если нет — `null`.\\n8. **extracted_services**: Это массив объектов. Для каждой обнаруженной услуги в тексте создай объект:\\n   - `user_service_name`: Оригинальное название услуги, как его задумал мастер (переведи на русский, например: \"Ремонт стиральных машин\").\\n   - `price`: Число (минимальная цена). Извлеки только цифру (например, из \"5000 դրամից սկսած\" вытащи `5000`). Если цены нет — `null`.\\n   - `matched_subcategory_id`: Сравни услугу мастера с нашим Списком Доступных Категорий. Найди наиболее подходящую подкатегорию и вставь её `ID`. Если точного совпадения нет, выбери максимально близкую по смыслу.\\n\\n**ТРЕБОВАНИЕ К ОТВЕТУ:**\\nВыведи строго JSON-объект без какого-либо лишнего текста, вступлений или разметки markdown (без ```json). Только чистый JSON.\\n\\n**КРИТИЧЕСКИЕ ОГРАНИЧЕНИЯ ПЛАТФОРМЫ:**\\n- Никогда не создавай ID, которого нет в переданном списке.\\n- Денежные значения `5 000 ֏`, `5000֏`, `5000 դրամ`, `5000 AMD`, `5000 драм` должны быть распознаны как цена 5000.\\n- Телефон и номер дома не считать ценой.\\n- Не дублируй одну услугу.\\n- Если поле невозможно надежно определить, используй `null`.\\n- Для каждого явно указанного денежного ценника должна существовать соответствующая услуга.""""
-    content = instruction.replace("__RAW_TEXT__", _norm(raw_text)[:12000]).replace("__CATEGORIES__", json.dumps(categories_list, ensure_ascii=False))
+    if not key:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+
+    instruction = r"""Ты — эксперт-аналитик данных и главный модератор платформы услуг. Твоя задача — проанализировать входящий текст от партнера, очистить его от мусора, дубликатов, исправить опечатки, перевести ключевые текстовые значения на русский язык и разложить всё строго по полочкам в формате JSON.
+
+**ВХОДЯЩИЙ ТЕКСТ ПАРТНЕРА:**
+${rawText}
+
+**СПИСОК НАШИХ ДОСТУПНЫХ КАТЕГОРИЙ И ПОДКАТЕГОРИЙ (Используй ТОЛЬКО эти ID):**
+${JSON.stringify(categoriesList)}
+
+**ПРАВИЛА ИЗВЛЕЧЕНИЯ ДАННЫХ:**
+
+1. **company_or_name**: Если указано название компании — пиши его. Если только имя мастера — пиши имя. Если ничего нет — оставь `null`.
+2. **marz**: Область (Марз) в Армении. Если в тексте только город (например, Раздан), ИИ должен проявить логику и автоматически определить Марз (для Раздана это Котайк). Пиши на русском.
+3. **city**: Город или населенный пункт на русском (например, "Раздан").
+4. **address**: Улица, номер дома/офиса. Очисти от названия города.
+5. **phone**: Номер телефона. Приведи строго к международному формату (например, `+374XXXXXXXX`).
+6. **working_hours**: График работы (например, "09:00 - 20:00"). Если не указан — `null`.
+7. **document_type**: Постарайся понять из контекста, упоминает ли пользователь документ (паспорт, лицензия, сертификат). Если нет — `null`.
+8. **extracted_services**: Это массив объектов. Для каждой обнаруженной услуги в тексте создай объект:
+   - `user_service_name`: Оригинальное название услуги, как его задумал мастер (переведи на русский, например: "Ремонт стиральных машин").
+   - `price`: Число (минимальная цена). Извлеки только цифру (например, из "5000 դրամից սկսած" вытащи `5000`). Если цены нет — `null`.
+   - `matched_subcategory_id`: Сравни услугу мастера с нашим Списком Доступных Категорий. Найди наиболее подходящую подкатегорию и вставь её `ID`. Если точного совпадения нет, выбери максимально близкую по смыслу.
+
+**ТРЕБОВАНИЕ К ОТВЕТУ:**
+Выведи строго JSON-объект без какого-либо лишнего текста, вступлений или разметки markdown (без ```json). Только чистый JSON.
+
+**КРИТИЧЕСКИЕ ОГРАНИЧЕНИЯ:**
+- Никогда не придумывай отсутствующие данные.
+- Каждый явно указанный денежный ценник должен соответствовать ровно одной услуге. Не теряй ни один ценник.
+- "5 000 ֏", "5000֏", "5000 դրամ", "5 000 AMD", "5000 драм" — это цена 5000.
+- Телефон, номер дома и другие числа не считать ценой без денежного контекста.
+- Исправляй только очевидные опечатки.
+- Не создавай дубликаты одной и той же услуги.
+- matched_subcategory_id может быть ТОЛЬКО одним из ID, присутствующих в переданном списке. Если подходящего варианта нет — null.
+- Если поле невозможно надежно определить, используй null.
+- Для каждого явно указанного денежного ценника должна существовать соответствующая услуга.
+"""
+
+    content = (
+        instruction
+        .replace("${rawText}", _norm(raw_text)[:12000])
+        .replace("${JSON.stringify(categoriesList)}", json.dumps(categories_list, ensure_ascii=False))
+    )
+
     client = AsyncGroq(api_key=key)
     response = await client.chat.completions.create(
-        model=model, messages=[{"role":"user","content":content}],
-        response_format={"type":"json_object"}, reasoning_effort="low", temperature=0, max_tokens=max_tokens
+        model=model,
+        messages=[{"role": "user", "content": content}],
+        response_format={"type": "json_object"},
+        reasoning_effort="low",
+        temperature=0,
+        max_tokens=max_tokens,
     )
     parsed = _parse_json(response.choices[0].message.content or "{}")
-    if not isinstance(parsed, dict): raise RuntimeError("Invalid partner registration JSON")
-    valid_ids = {_safe_int(x.get("category_id") if "category_id" in x else x.get("id")) for x in categories_list if isinstance(x, dict)}
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Invalid partner registration JSON")
+
+    valid_ids = {
+        _safe_int(x.get("category_id") if "category_id" in x else x.get("id"))
+        for x in categories_list
+        if isinstance(x, dict)
+    }
     valid_ids.discard(None)
-    services=[]
+
+    services = []
     for item in parsed.get("extracted_services") or []:
-        if not isinstance(item, dict): continue
-        name=_norm(item.get("user_service_name"))
-        if not name: continue
-        try: price=float(item.get("price")) if item.get("price") is not None else None
-        except (TypeError,ValueError): price=None
-        if price is not None and price.is_integer(): price=int(price)
-        cid=_safe_int(item.get("matched_subcategory_id")); cid=cid if cid in valid_ids else None
-        services.append({"name":name,"raw_sub_direction":name,"price":price,"price_type":"fixed","matched_subcategory_id":cid})
-    parsed["company_or_name"]=_norm(parsed.get("company_or_name")) or None
-    parsed["marz"]=_norm(parsed.get("marz")) or None
-    parsed["city"]=_norm(parsed.get("city")) or None
-    parsed["address"]=_norm(parsed.get("address")) or None
-    parsed["phone"]=_norm(parsed.get("phone")) or None
-    parsed["working_hours"]=_norm(parsed.get("working_hours")) or None
-    parsed["document_type"]=_norm(parsed.get("document_type")) or None
-    parsed["extracted_services"]=services
+        if not isinstance(item, dict):
+            continue
+        name = _norm(item.get("user_service_name"))
+        if not name:
+            continue
+        raw_price = item.get("price")
+        try:
+            price = float(raw_price) if raw_price is not None else None
+        except (TypeError, ValueError):
+            price = None
+        if price is not None and price.is_integer():
+            price = int(price)
+        cid = _safe_int(item.get("matched_subcategory_id"))
+        if cid not in valid_ids:
+            cid = None
+        services.append({
+            "name": name,
+            "raw_sub_direction": name,
+            "price": price,
+            "price_type": "fixed",
+            "matched_subcategory_id": cid,
+        })
+
+    parsed["company_or_name"] = _norm(parsed.get("company_or_name")) or None
+    parsed["marz"] = _norm(parsed.get("marz")) or None
+    parsed["city"] = _norm(parsed.get("city")) or None
+    parsed["address"] = _norm(parsed.get("address")) or None
+    parsed["phone"] = _norm(parsed.get("phone")) or None
+    parsed["working_hours"] = _norm(parsed.get("working_hours")) or None
+    parsed["document_type"] = _norm(parsed.get("document_type")) or None
+    parsed["extracted_services"] = services
     return parsed
+
+
 async def extract(text: str, history: list[dict], db, previous_profile: dict | None = None, pending_field: str | None = None) -> dict:
     previous_profile = previous_profile or {}
     # Partner Intake AI deliberately does NOT classify the business into the
