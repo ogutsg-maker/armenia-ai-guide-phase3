@@ -31,6 +31,12 @@ class AIManager:
         self.max_tool_rounds=max(1,min(int(max_tool_rounds),8))
 
     @staticmethod
+    def _context(value:AIContext|ContextType|str)->ContextType:
+        if isinstance(value,AIContext):
+            return ContextType(value.value.upper())
+        return as_context_type(value)
+
+    @staticmethod
     def _lang(text: str) -> str:
         import re
         if re.search(r"[Ա-Ֆա-ֆևօՕ]",text): return "hy"
@@ -76,7 +82,7 @@ class AIManager:
 
     async def chat_json(self, telegram_id:int, context_type:ContextType|str, message:str, *, task_instructions:str, extra_context:dict[str,Any]|None=None, language:str|None=None, max_tokens:int=1800)->dict[str,Any]:
         """Structured JSON completion through the same unified manager."""
-        role=as_context_type(context_type)
+        role=self._context(context_type)
         language=language or self._lang(message)
         history=await self._supabase_history(telegram_id,role,self.max_history)
         prompt=PromptFactory.build(role,message=message,history=history,
