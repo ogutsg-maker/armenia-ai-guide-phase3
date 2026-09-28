@@ -428,7 +428,7 @@ async def _notify_unclassified_services(
         logger.exception("Failed to create admin catalogue alert.")
 
 
-async def classify_services_batch(
+async async def classify_services_batch(
     db,
     extracted_services: list[str],
     telegram_id: int | None = None,
