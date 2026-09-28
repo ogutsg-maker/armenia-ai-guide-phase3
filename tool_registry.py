@@ -449,6 +449,9 @@ class ToolRegistry:
         if not services:
             raise ValueError("service_required")
 
+        # Resolve each service against the live catalog before persistence.
+        # The model never supplies category IDs; backend owns the real catalog IDs.
+        services = data_core.resolve_catalog_services(services)
         profile = {
             "business_name": company_name,
             "city": city,
