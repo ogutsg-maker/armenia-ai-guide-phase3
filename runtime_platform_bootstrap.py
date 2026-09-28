@@ -137,31 +137,6 @@ def _legacy_document_open(request):
     if not _db_fetchone("SELECT id FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(doc_id,pid)):return web.json_response({"ok":False,"error":"document_not_found"},status=404)
     token=_make_document_access_token(pid,doc_id); viewer=f"/api/admin/partner-applications/{pid}/documents/{doc_id}/viewer?access={token}"; return web.json_response({"ok":True,"admin_id":admin_id,"url":viewer,"viewer_url":viewer,"source":"database"})
 
-def _install_ai_first_partner_flow(main,db):
-    async def _new_process(uid,text,state):
-        user=db.get_user(uid) or {}
-        lang=user.get("lang","hy")
-        data=await state.get_data()
-        history=list(data.get("partner_onboarding_history") or [])
-        previous=data.get("partner_profile") or {}
-        history.append({"role":"user","content":text})
-        from partner_registration_ai import extract
-        import data_core
-        profile=await extract(text,history,db,previous_profile=previous,pending_field=None)
-        merged=dict(previous)
-        for k,v in (profile or {}).items():
-            if k not in ("missing","ready") and v not in (None,"",[],{}):
-                merged[k]=v
-        result=data_core.save_partner_application_draft(user_id=int(uid), profile=merged)
-        await state.clear()
-        messages={
-            "hy":"🤖 Ձեր տեղեկությունները հավաքեցի։ Բացել եմ ամբողջական հայտը․ լրացրեք բաց դաշտերը, ստուգեք ուղղությունն ու ենթաուղղությունները, կցեք փաստաթուղթը և սեղմեք «Համաձայն եմ / Ուղարկել հայտը»։",
-            "ru":"🤖 Я собрал информацию из вашего сообщения. Открыл полную анкету: заполните пустые поля, проверьте направление и подкатегории, прикрепите документ и нажмите «Согласен / Отправить заявку».",
-            "en":"🤖 I collected the information from your message. The full application is open: fill in missing fields, check the direction and subcategories, attach the document, and press “Agree / Submit application”."
-        }
-        return {"message":messages.get(lang,messages["ru"]),"completed":False,"open_form":True,**result}
-    main._process_partner_onboarding_text=_new_process
-    main._armenia_ai_first_partner_flow=True
 
 async def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
@@ -170,7 +145,6 @@ async def _bootstrap(app):
     from partner_directions_api import ensure_partner_direction_schema,register_partner_direction_routes
     ensure_partner_direction_schema()
     from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()
-    if not getattr(main,"_armenia_ai_first_partner_flow",False):_install_ai_first_partner_flow(main,db)
     main.api_admin_partner_document_open=_legacy_document_open; main.api_admin_partner_document_open_file=_admin_document_proxy
     if not getattr(app,"_armenia_docproxy_registered",False):
         # Route the document proxy so the /open-file URL handed out by
