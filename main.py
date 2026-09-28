@@ -196,279 +196,63 @@ async def api_webapp_partner_message(request: web.Request):
 
 
 async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContext) -> dict:
+    """Unified registration conversation.
+
+    Registration now goes through the same AIManager/Groq pipeline as client,
+    partner and admin conversations. The model owns semantic understanding;
+    ToolRegistry owns the authenticated save operation.
+    """
     user = db.get_user(uid) or {}
     lang = user.get("lang") or "hy"
-    data = await state.get_data()
-    history = list(data.get("partner_onboarding_history") or [])
-    pending = data.get("partner_onboarding_pending_field")
-    previous = data.get("partner_profile") or {}
-    # Give the onboarding classifier the current organization context so it can
-    # distinguish "new direction in this business" from "another business".
     try:
-        from partner_business_application_api import default_business
-        partner_row=db.get_partner_by_user(uid) or {}
-        current_business=default_business(int(partner_row["id"])) if partner_row.get("id") else None
-        if current_business:
-            previous=dict(previous)
-            previous["current_business_name"]=current_business.get("name")
-            previous["current_business_description"]=current_business.get("description") or ""
+        result = await ai_manager.handle_message(
+            int(uid),
+            text,
+            AIContext.REGISTRATION,
+            language=lang,
+            extra_context={"registration": True},
+        )
     except Exception:
-        pass
-    history.append({"role": "user", "content": text})
-    from partner_registration_ai import extract, missing_question
-    profile = await extract(
-        text,
-        history,
-        db,
-        previous_profile=previous,
-        pending_field=pending,
-        telegram_id=uid,
-        application_id=data.get("partner_application_id"),
-    )
+        logger.exception("Unified registration AI turn failed")
+        return {
+            "message": t(
+                lang,
+                "⚠️ Ներողություն, AI ծառայությունը ժամանակավորապես անհասանելի է։ Փորձեք կրկին։",
+                "⚠️ Извините, AI временно недоступен. Попробуйте ещё раз.",
+                "⚠️ Sorry, the AI service is temporarily unavailable. Please try again.",
+            ),
+            "completed": False,
+        }
 
-    # Final deterministic safety net for the WebApp. The partner's original
-    # message is authoritative for obvious facts and explicitly priced
-    # services. This runs even when Groq returns 400/429 or malformed JSON.
-    try:
-        from partner_registration_ai import _recover_obvious_facts, _recover_services_from_history
-        source_history = history if (history and str(history[-1].get("content") or "").strip() == text.strip()) else history + [{"role": "user", "content": text}]
-        profile = _recover_obvious_facts(
-            " ".join(str(x.get("content") or "") for x in source_history),
-            dict(profile or {}),
+    tool_result = result.get("tool_result") or {}
+    profile = tool_result.get("profile") if isinstance(tool_result, dict) else None
+    application_id = tool_result.get("application_id") if isinstance(tool_result, dict) else None
+    completed = bool(tool_result.get("ok") and application_id)
+
+    # Keep the legacy FSM state only as a compatibility bridge for the existing
+    # WebApp UI. Conversation history/state is now owned by AIManager.
+    if completed:
+        await state.update_data(
+            partner_profile=profile or {},
+            partner_application_id=application_id,
+            partner_onboarding_pending_field=None,
         )
-        recovered_services = _recover_services_from_history(source_history)
-        if recovered_services:
-            # Recovery supplements the AI result; it must never replace
-            # services that Groq extracted but which happen to have no explicit
-            # price in the message.
-            existing_services = [
-                dict(x) for x in (profile.get("services") or [])
-                if isinstance(x, dict) and str(x.get("name") or "").strip()
-            ]
-            by_name = {
-                str(x.get("name") or "").strip().lower(): x
-                for x in existing_services
-            }
-            for recovered in recovered_services:
-                name = str(recovered.get("name") or "").strip()
-                if not name:
-                    continue
-                key = name.lower()
-                if key in by_name:
-                    current = by_name[key]
-                    if current.get("price") in (None, "") and recovered.get("price") not in (None, ""):
-                        current["price"] = recovered.get("price")
-                    if current.get("price_type") in (None, "", "unknown") and recovered.get("price_type"):
-                        current["price_type"] = recovered.get("price_type")
-                else:
-                    existing_services.append(dict(recovered))
-                    by_name[key] = existing_services[-1]
-            if existing_services:
-                profile["services"] = existing_services
-    except Exception:
-        logger.exception("Partner deterministic extraction fallback failed")
-
-    merged = dict(previous)
-
-    for key, value in (profile or {}).items():
-        if key in ("services", "missing", "ready"):
-            continue
-        if value not in (None, "", [], {}):
-            merged[key] = value
-
-    previous_services = [dict(x) for x in (previous.get("services") or []) if isinstance(x, dict)]
-    new_services = [dict(x) for x in (profile.get("services") or []) if isinstance(x, dict)] if isinstance(profile, dict) else []
-    numeric_answer = pending == "services" and bool(re.fullmatch(r"[0-9][0-9\\s.,]*", text.strip()))
-
-    if numeric_answer and previous_services:
-        digits = re.sub(r"[^0-9]", "", text)
-        if digits:
-            previous_services[-1]["price"] = float(digits)
-        merged["services"] = previous_services
+        await state.set_state(PartnerAIStates.onboarding)
     else:
-        combined = [dict(x) for x in previous_services]
-        by_name = {str(x.get("name") or "").strip().lower(): x for x in combined}
-        for item in new_services:
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            key_name = name.lower()
-            if key_name in by_name:
-                old_item = by_name[key_name]
-                if item.get("price") not in (None, ""):
-                    old_item["price"] = item.get("price")
-                if item.get("price_type") not in (None, "", "unknown"):
-                    old_item["price_type"] = item.get("price_type")
-            else:
-                combined.append(item)
-                by_name[key_name] = item
-        if combined:
-            merged["services"] = combined
+        await state.update_data(partner_profile=profile or {})
 
-    # Final normalization before the profile reaches the WebApp.
-    # Keep one canonical shape regardless of which AI/recovery path produced
-    # the values. The partner form consumes this exact shape.
-    if not merged.get("city"):
-        merged["city"] = merged.get("location_city") or merged.get("settlement") or ""
-    if not merged.get("marz"):
-        merged["marz"] = merged.get("location_marz") or merged.get("region") or ""
-    if not merged.get("phone"):
-        merged["phone"] = merged.get("phone_number") or ""
-    normalized_services=[]
-    for svc in (merged.get("services") or []):
-        if not isinstance(svc,dict):
-            continue
-        name=str(svc.get("name") or svc.get("service_name") or svc.get("service") or "").strip()
-        if not name:
-            continue
-        item=dict(svc)
-        item["name"]=name
-        if item.get("price") in ("",None):
-            item["price"]=None
-        try:
-            if item.get("price") is not None:
-                item["price"]=float(item["price"])
-        except (TypeError,ValueError):
-            item["price"]=None
-        item["price_type"]=str(item.get("price_type") or "fixed").strip().lower()
-        if item["price_type"] in {"starting","starting_from","from_price"}:
-            item["price_type"]="from"
-        normalized_services.append(item)
-    if normalized_services:
-        merged["services"]=normalized_services
-
-    # The partner never needs to provide an internal catalogue direction.
-    # AI matching/proposal handles that automatically.
-    # Business name is a required partner-facing registration field.
-    # Direction/subcategory remain admin-side classification fields.
-    missing = [key for key in ("business_name", "marz", "city", "phone", "services") if not merged.get(key)]
-    merged["missing"] = missing
-    merged["ready"] = not missing
-
-    # Classification is internal and invisible as a choice to the partner,
-    # but it IS calculated during registration so the preview already contains
-    # the direction/subcategory determined by the current live catalogue.
-    matched_services = [
-        svc for svc in normalized_services
-        if str(svc.get("matched_subcategory_id") or "").strip().isdigit()
-    ]
-    if matched_services:
-        merged["master_category_id"] = matched_services[0].get("direction_id")
-        merged["direction"] = (
-            matched_services[0].get("direction_name")
-            or merged.get("direction")
-            or None
-        )
-        merged["classification_confidence"] = max(
-            float(svc.get("match_confidence") or 0)
-            for svc in matched_services
-        )
-        merged["classification_ambiguities"] = []
-        merged["classification_needs_review"] = False
-    else:
-        merged["master_category_id"] = None
-        merged["classification_confidence"] = 0
-        merged["classification_ambiguities"] = ["subcategory_not_matched"] if normalized_services else []
-        merged["classification_needs_review"] = bool(normalized_services)
-
-    await state.update_data(partner_onboarding_history=history, partner_profile=merged)
-    if missing:
-        # IMPORTANT: the AI result is shown immediately in the universal form.
-        # Missing fields remain editable/empty; the partner does not have to
-        # answer a questionnaire before seeing what AI understood.
-        draft = data_core.save_partner_application_draft(user_id=uid, profile=merged)
-        question = missing_question(merged, lang)
-        history.append({"role": "assistant", "content": question})
-        await state.update_data(
-            partner_onboarding_pending_field=missing[0],
-            partner_onboarding_history=history,
-            partner_profile=merged,
-            partner_application_id=draft.get("application_id"),
-        )
-        return {
-            "message": t(
-                lang,
-                "🤖 Ես կազմեցի հայտի նախնական տարբերակը։ Ստուգեք լրացված տվյալները և լրացրեք միայն բաց դաշտերը։ " + question,
-                "🤖 Я собрал предварительную заявку. Проверьте заполненные данные и заполните только пустые поля. " + question,
-                "🤖 I prepared the application draft. Check the extracted data and fill only the missing fields. " + question,
-            ),
-            "completed": False,
-            "open_form": True,
-            "application_id": draft.get("application_id"),
-            "profile": merged,
-        }
-    try:
-        result = data_core.persist_ready_partner_application(user_id=uid, profile=merged)
-    except ValueError as exc:
-        # The persistence layer may reject an incomplete profile. This is a
-        # normal conversational state, not an error for the partner.
-        if str(exc) == "partner_profile_not_ready":
-            required = ("marz", "city", "phone", "services")
-            missing = [key for key in required if not merged.get(key)]
-            merged["missing"] = missing
-            merged["ready"] = not missing
-            if missing:
-                question = missing_question(merged, lang)
-                history.append({"role": "assistant", "content": question})
-                await state.update_data(
-                    partner_onboarding_pending_field=missing[0],
-                    partner_onboarding_history=history,
-                    partner_profile=merged,
-                )
-                return {
-                    "message": t(
-                        lang,
-                        "🤖 " + question,
-                        "🤖 " + question,
-                        "🤖 " + question,
-                    ),
-                    "completed": False,
-                    "profile": merged,
-                }
-        raise
-    if result.get("error") or result.get("ok") is False:
-        # Never expose an internal persistence error as a generic profile error.
-        await state.update_data(
-            partner_onboarding_pending_field="services",
-            partner_onboarding_history=history,
-            partner_profile=merged,
-        )
-        return {
-            "message": t(
-                lang,
-                "⚠️ Չհաջողվեց պահպանել հայտը։ Խնդրում եմ նշեք ծառայության անունը և գինը։",
-                "⚠️ Не удалось сохранить заявку. Укажите услугу и цену.",
-                "⚠️ I could not save the application. Please provide the service and price.",
-            ),
-            "completed": False,
-            "profile": merged,
-        }
-    if not result.get("proposal_created") and int(result.get("service_count") or 0) < 1:
-        # A malformed AI response must never produce a "completed" application
-        # with zero persisted services.
-        await state.update_data(
-            partner_onboarding_pending_field="services",
-            partner_onboarding_history=history,
-            partner_profile=merged,
-        )
-        return {
-            "message": t(
-                lang,
-                "🤖 Ծառայությունը չկարողացա պահպանել։ Գրեք ծառայության անունը և գինը։",
-                "🤖 Я не смог сохранить услугу. Напишите название услуги и цену.",
-                "🤖 I could not save the service. Please provide the service name and price.",
-            ),
-            "completed": False,
-            "profile": merged,
-        }
-    await state.clear()
-    message = t(lang,
-        "✅ Հայտը կազմված է և ուղարկված է ադմինիստրատորին։ Նա կստուգի բիզնեսը, ուղղությունը, ենթաուղղությունը, ծառայությունը և կուղարկի ձեզ լրացման/փաստաթղթի պահանջը։",
-        "✅ Заявка полностью сформирована. Следующий шаг — загрузите подтверждающий документ. После загрузки вся анкета вместе с документом будет отправлена администратору одним заявлением.",
-        "✅ The application is fully prepared. Next, upload the verification document. After upload, the complete application and document will be sent to the administrator together.")
-    if result.get("proposal_created"):
-        message = t(lang, "✅ Ամբողջական հայտը կազմված է։ Բեռնեք փաստաթուղթը, և ամբողջ հայտը միասին կուղարկվի ադմինիստրատորին։", "✅ Полная заявка сформирована. Загрузите документ — после этого вся заявка будет отправлена администратору вместе.", "✅ The full application is prepared. Upload the document and the complete application will be sent to the administrator together.")
-    return {"message": message, "completed": True, "profile": merged, **result}
+    response = {
+        "message": result.get("reply") or "",
+        "completed": completed,
+        "profile": profile or {},
+    }
+    if application_id:
+        response["application_id"] = application_id
+    if result.get("confirmation_required"):
+        response["confirmation_required"] = True
+    if result.get("error"):
+        response["error"] = result.get("error")
+    return response
 
 
 async def api_partner_registration_status(request: web.Request):
