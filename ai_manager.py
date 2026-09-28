@@ -184,27 +184,22 @@ class AIManager:
     async def _supabase_history(
         self, telegram_id: int, context: ContextType, limit: int | None = None
     ):
+        """Compatibility name; HistoryProvider is the canonical history layer."""
         role = context.value.lower()
         size = max(2, min(int(limit or self.max_history), 50))
 
         def read():
-            session = (
-                platform_db.active_session(int(telegram_id), role, "ai_manager")
-                or platform_db.create_session(
-                    int(telegram_id), role, "ai_manager", {"history_version": 1}
-                )
-            )
-            rows = platform_db.recent_ai_messages(int(session["id"]), size)
-            result = []
-            for row in rows:
-                sender = str(row.get("sender_role") or "").lower()
-                if sender == "tool":
-                    continue
-                result.append({
-                    "role": "assistant" if sender in {"ai", "assistant"} else "user",
-                    "content": str(row.get("message_text") or row.get("text") or ""),
-                })
-            return result
+            provider = self.history
+            if getattr(provider, "limit", size) != size:
+                # Preserve the caller's requested window without mutating the
+                # shared provider configuration.
+                old_limit = getattr(provider, "limit", size)
+                try:
+                    provider.limit = size
+                    return provider.get(int(telegram_id), role)
+                finally:
+                    provider.limit = old_limit
+            return provider.get(int(telegram_id), role)
 
         return await asyncio.to_thread(read)
 
@@ -216,20 +211,15 @@ class AIManager:
         content: str,
         metadata: dict[str, Any] | None = None,
     ):
-        role = context.value.lower()
-
-        def write():
-            session = (
-                platform_db.active_session(int(telegram_id), role, "ai_manager")
-                or platform_db.create_session(
-                    int(telegram_id), role, "ai_manager", {"history_version": 1}
-                )
-            )
-            return platform_db.add_ai_message(
-                int(session["id"]), sender, str(content or "")[:12000], metadata or {}
-            )
-
-        return await asyncio.to_thread(write)
+        """Compatibility name; HistoryProvider is the canonical write layer."""
+        return await asyncio.to_thread(
+            self.history.append,
+            int(telegram_id),
+            context.value.lower(),
+            sender,
+            str(content or "")[:12000],
+            metadata or {},
+        )
 
     async def _cost_log(
         self,
