@@ -65,7 +65,7 @@ def ensure_ai_messages_tool_schema():
             cur.execute("""
                 ALTER TABLE ai_messages
                 ADD CONSTRAINT ai_messages_sender_role_check
-                CHECK (sender_role IN ('client','partner','admin','system','assistant','ai','tool'))
+                CHECK (sender_role IN ('client','partner','admin','system','assistant','ai','user','tool'))
             """)
             cur.execute("""
                 ALTER TABLE ai_messages
@@ -124,7 +124,7 @@ def add_ai_message(session_id, sender_role, text, data=None, tool_call_id=None):
         True,
     )
 def recent_ai_messages(session_id, limit=16):
-    return rows('SELECT sender_role,message_text,created_at FROM ai_messages WHERE session_id=%s ORDER BY id DESC LIMIT %s',(session_id,limit))[::-1]
+    return rows('SELECT sender_role,message_text,data_json,tool_call_id,created_at FROM ai_messages WHERE session_id=%s ORDER BY id DESC LIMIT %s',(session_id,limit))[::-1]
 
 # Catalog / directions
 
