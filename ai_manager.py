@@ -5,7 +5,7 @@ from typing import Any
 from groq import AsyncGroq
 import ai_cost_center
 from history_provider import HistoryProvider
-from prompt_factory import ContextType, PromptFactory
+from prompt_factory import ContextType, as_context_type, PromptFactory
 from tool_registry import ToolRegistry
 
 logger=logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class AIManager:
         return ctx
 
     async def chat(self, telegram_id:int, context_type:ContextType|str, message:str, *, extra_context:dict[str,Any]|None=None, language:str|None=None)->dict[str,Any]:
-        role=ContextType(str(context_type))
+        role=as_context_type(context_type)
         language=language or self._lang(message)
         tools=ToolRegistry(telegram_id=telegram_id,context_type=role,trusted_context=extra_context)
         history=self.history.get(telegram_id,role.value.lower())
