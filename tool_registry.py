@@ -401,8 +401,6 @@ class ToolRegistry:
         ]
 
     def _visible_specs(self) -> list[ToolSpec]:
-        if self.context_type == ContextType.REGISTRATION:
-            return []
         if self.context_type == ContextType.ADMIN and not self._admin_allowed():
             return []
         return [
