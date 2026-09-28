@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 
@@ -17,6 +18,29 @@ except Exception:
 
 def _norm(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _dynamic_catalog_match_score(source: str, candidate: str) -> float:
+    """Generic multilingual retrieval score; never contains category-specific rules."""
+    a = _norm(source).lower()
+    b = _norm(candidate).lower()
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+
+    a_tokens = set(re.findall(r"[\\w\\u0531-\\u058F]+", a, flags=re.UNICODE))
+    b_tokens = set(re.findall(r"[\\w\\u0531-\\u058F]+", b, flags=re.UNICODE))
+    overlap = len(a_tokens & b_tokens) / max(1, len(a_tokens | b_tokens))
+
+    # Character similarity handles Armenian/Russian inflections such as
+    # «սառնարաններ» ↔ «սառնարանների» without maintaining alias dictionaries.
+    sequence = SequenceMatcher(None, a, b).ratio()
+    compact_a = re.sub(r"[^\\w\\u0531-\\u058F]", "", a, flags=re.UNICODE)
+    compact_b = re.sub(r"[^\\w\\u0531-\\u058F]", "", b, flags=re.UNICODE)
+    compact = SequenceMatcher(None, compact_a, compact_b).ratio()
+
+    return max(sequence, compact * 0.95, overlap * 0.90)
 
 
 def _safe_int(value: Any) -> int | None:
@@ -1162,12 +1186,13 @@ async def extract(
     always selected by Python from current database rows.
     """
     previous_profile = dict(previous_profile or {})
-    combined_text = _norm(
-        " ".join(
-            [str(x.get("content") or "") for x in history if isinstance(x, dict)]
-            + [text]
-        )
-    )
+    history_texts = [str(x.get("content") or "") for x in history if isinstance(x, dict)]
+    current_text = str(text or "").strip()
+    if history_texts and current_text and history_texts[-1].strip() == current_text:
+        combined_parts = history_texts
+    else:
+        combined_parts = history_texts + [current_text]
+    combined_text = _norm(" ".join(combined_parts))
 
     try:
         extracted = await extract_partner_registration_json(
