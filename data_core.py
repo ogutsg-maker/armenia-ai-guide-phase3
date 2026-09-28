@@ -1867,8 +1867,16 @@ def update_session(session_id: int, context: dict[str, Any]):
     return platform_db.update_session(int(session_id),context)
 
 
-def add_ai_message(session_id: int, sender_role: str, text: str, data: dict[str, Any] | None = None):
-    return platform_db.add_ai_message(int(session_id),sender_role,text,data or {})
+def add_ai_message(
+    session_id: int,
+    sender_role: str,
+    text: str,
+    data: dict[str, Any] | None = None,
+    tool_call_id: str | None = None,
+):
+    return platform_db.add_ai_message(
+        int(session_id), sender_role, text, data or {}, tool_call_id
+    )
 
 
 def recent_ai_messages(session_id: int, limit: int = 16):
