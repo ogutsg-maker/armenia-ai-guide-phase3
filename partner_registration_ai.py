@@ -9,8 +9,6 @@ from typing import Any
 
 import data_core
 
-from groq import AsyncGroq
-
 
 def _norm(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
