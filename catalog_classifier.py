@@ -87,27 +87,57 @@ def _already_alerted(
     application_id: int | None,
 ) -> bool:
     """Avoid duplicate alerts for the same unresolved service/application."""
+    if application_id is None:
+        return False
+
     try:
+        import json
+
+        service_filter = json.dumps(
+            [{"service_name": str(service_name)}],
+            ensure_ascii=False,
+        )
         row = platform_db.one(
             """SELECT n.id
                FROM notifications n
                JOIN users u ON u.id=n.user_id
                WHERE (u.id=%s OR u.telegram_id=%s)
                  AND n.kind='catalog_unclassified_service'
-                 AND n.data_json->>'service_name'=%s
                  AND COALESCE(n.data_json->>'application_id','')=%s
+                 AND n.data_json->'services' @> %s::jsonb
                LIMIT 1""",
             (
                 admin_telegram_id,
                 admin_telegram_id,
-                str(service_name),
-                str(application_id or ""),
+                str(application_id),
+                service_filter,
             ),
         )
         return bool(row)
     except Exception:
         logger.exception("Could not check duplicate catalogue alert.")
         return False
+
+
+def _resolve_application_id(telegram_id: int | None) -> int | None:
+    """Resolve the latest application when the caller has not supplied its ID."""
+    if telegram_id is None:
+        return None
+
+    try:
+        row = platform_db.one(
+            """SELECT a.id
+               FROM partner_applications a
+               JOIN partners p ON p.id=a.partner_id
+               WHERE p.user_id=%s
+               ORDER BY a.id DESC
+               LIMIT 1""",
+            (int(telegram_id),),
+        )
+        return _safe_int(row.get("id")) if row else None
+    except Exception:
+        logger.exception("Could not resolve application ID for Telegram user %s.", telegram_id)
+        return None
 
 
 async def _notify_unclassified_services(
@@ -121,6 +151,8 @@ async def _notify_unclassified_services(
         return
 
     admin_id = _admin_telegram_id()
+    if application_id is None:
+        application_id = _resolve_application_id(telegram_id)
     if not admin_id:
         logger.warning("Catalog alert skipped: ADMIN_TELEGRAM_ID is not configured.")
         return
