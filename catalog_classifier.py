@@ -148,6 +148,13 @@ def _direct_match_score(service: Any, category: Any) -> float:
     if not service_tokens or not category_tokens:
         return 0.0
 
+    # A one-word service must not be accepted merely because its root
+    # appears inside a longer catalogue word. This is critical for Armenian:
+    # "հարդարում" must not become "Դիմահարդարում".
+    if len(service_tokens) == 1:
+        token = next(iter(service_tokens))
+        return 1.0 if token in category_tokens else 0.0
+
     # A direct match requires coverage of the service's meaningful tokens.
     # A single shared generic/root token must never be enough for a
     # multi-token service.
@@ -208,11 +215,16 @@ def _fuzzy_score(service: Any, category: Any) -> float:
         token = next(iter(service_tokens))
         if token in category_tokens:
             return 1.0
-        # A single-word query may use fuzzy matching, but only when the words
-        # are genuinely close in form. This remains category-agnostic.
-        token_scores = [SequenceMatcher(None, token, candidate).ratio()
-                        for candidate in category_tokens]
-        return max(token_scores, default=0.0) if raw >= 0.80 else 0.0
+
+        # Never turn a morphological substring into a high-confidence
+        # semantic match. A phrase such as "հարդարում" must remain unresolved
+        # and go to the semantic bridge instead of matching "Դիմահարդարում".
+        token_scores = [
+            SequenceMatcher(None, token, candidate).ratio()
+            for candidate in category_tokens
+        ]
+        best_token_score = max(token_scores, default=0.0)
+        return best_token_score if best_token_score >= 0.80 else 0.0
 
     # For a multi-word service, calculate how many meaningful service roots
     # are actually represented in the candidate.
@@ -434,13 +446,11 @@ async def _semantic_resolve_unresolved(
     services: list[str],
     candidate_rows: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    """Use Groq only as a semantic candidate selector.
+    """Resolve disputed service phrases through one text-only Groq bridge.
 
-    The model sees live catalogue names, never database IDs. It may propose
-    only one of the supplied category names; the backend resolves that name
-    back to the actual live DB row. This is a fallback for phrases such as
-    Armenian "մազերի կտրում" -> "Կանացի սանրվածք", where string similarity
-    alone cannot establish the semantic relation.
+    Groq sees only the disputed service names and live catalogue labels.
+    Database IDs never enter the prompt and are resolved back to DB rows by
+    Python after exact normalized text validation.
     """
     if not services or not candidate_rows:
         return {}
@@ -448,15 +458,13 @@ async def _semantic_resolve_unresolved(
     candidates = []
     seen = set()
     for row in candidate_rows:
-        category_id = _safe_int(row.get("category_id"))
-        name = (
+        name = str(
             row.get("category_am")
             or row.get("category_ru")
             or row.get("category_en")
             or ""
-        )
-        name = str(name).strip()
-        if category_id is None or not name:
+        ).strip()
+        if not name:
             continue
         key = _normalize_text(name)
         if key in seen:
@@ -468,44 +476,45 @@ async def _semantic_resolve_unresolved(
         return {}
 
     try:
-        from ai_service import AIService
+        from groq import AsyncGroq
 
-        prompt = """You are the semantic catalogue resolver for Armenia AI Guide.
-Your task is ONLY to choose the best catalogue category for each service phrase.
+        api_key = os.getenv("GROQ_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY is not configured")
 
-Rules:
-- Use only the catalogue category names supplied by the user.
-- Return the category name exactly as written in the catalogue.
-- Do not invent a category.
-- Do not return IDs.
-- Match meaning, not merely shared words.
-- Armenian, Russian and English phrases may be used.
-- If none is a defensible semantic match, return null.
-- Keep every service separate.
+        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
+        prompt = f"""Перед тобой спорные услуги мастера: {json.dumps(services, ensure_ascii=False)}.
+А вот текстовый список доступных подкатегорий нашего живого каталога из БД для вычисленного направления: {json.dumps(candidates, ensure_ascii=False)}.
 
-Return ONLY JSON:
-{
-  "matches": [
-    {"service": "original service", "category": "exact catalogue name or null"}
-  ]
-}"""
+Проведи семантический анализ. Верни JSON, где для каждой услуги мастера сопоставлено СТРОГО ТЕКСТОВОЕ название категории из нашего списка, которая на 100% подходит по смыслу.
 
-        user_text = (
-            "SERVICES TO RESOLVE:\n"
-            + json.dumps(services, ensure_ascii=False)
-            + "\n\nLIVE CATALOGUE CATEGORIES:\n"
-            + json.dumps(candidates, ensure_ascii=False)
+Примеры:
+- "հարդարում" → "Դասավորում"
+- "երեկոյան դիմահարդարում" → "Դիմահարդարում"
+
+Правила:
+- Используй только категории из предоставленного списка.
+- Возвращай название категории ровно так, как оно написано в списке.
+- Не генерируй ID.
+- Не придумывай новые категории.
+- Не выбирай категорию только из-за общего корня или одного общего слова.
+- Если точного смыслового соответствия нет, верни null.
+
+Верни только JSON:
+{{"matches":[{{"service":"исходное название услуги","category":"точное название категории или null"}}]}}"""
+
+        client = AsyncGroq(api_key=api_key)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            reasoning_effort="low",
+            max_tokens=max(350, min(900, 180 + len(services) * 120)),
         )
-
-        data = await AIService().chat_json(
-            prompt,
-            user_text,
-            max_tokens=max(350, min(900, 140 + len(services) * 120)),
-            chain="partner_catalogue",
-            stage="semantic_resolution",
-            operation="resolve_unclassified_services",
-            purpose="Resolve unresolved partner services against live catalogue names",
-        )
+        raw = (response.choices[0].message.content or "{}").strip()
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}
 
         logger.info(
             "Catalogue semantic raw result: services=%s result=%s",
@@ -513,51 +522,27 @@ Return ONLY JSON:
             data,
         )
 
-        result = {}
         allowed = {_normalize_text(x): x for x in candidates}
-
-        # Accept the documented shape first.  Also tolerate the two common
-        # structured-output variants used by Groq models, but never accept a
-        # category that is not present in the live catalogue.
+        result = {}
         raw_matches = data.get("matches")
-        if not isinstance(raw_matches, list):
-            raw_matches = data.get("results")
         if not isinstance(raw_matches, list):
             raw_matches = []
 
         for item in raw_matches:
             if not isinstance(item, dict):
                 continue
-
-            service = str(
-                item.get("service")
-                or item.get("service_name")
-                or item.get("input")
-                or ""
-            ).strip()
-            category = str(
-                item.get("category")
-                or item.get("category_name")
-                or item.get("match")
-                or ""
-            ).strip()
-
+            service = str(item.get("service") or "").strip()
+            category = str(item.get("category") or "").strip()
             if not service or not category:
                 continue
 
             canonical = allowed.get(_normalize_text(category))
             if not canonical:
-                # Try the supplied catalogue names by exact normalized
-                # multilingual label only.  Never invent or fuzzy-select a
-                # category here.
                 continue
 
             result[_normalize_text(service)] = {"category_name": canonical}
 
-        logger.info(
-            "Catalogue semantic accepted proposals: %s",
-            result,
-        )
+        logger.info("Catalogue semantic accepted proposals: %s", result)
         return result
     except Exception:
         logger.exception("Semantic catalogue resolution failed.")
@@ -898,24 +883,3 @@ async def classify_services_batch(
                         "(category=%s direction=%s)",
                         item.get("service_name"),
                         row.get("category_am"),
-                        row.get("category_id"),
-                        row.get("master_id"),
-                    )
-
-                unresolved = still_unresolved
-
-        await _notify_unclassified_services(
-            services=unresolved,
-            telegram_id=telegram_id,
-            application_id=application_id,
-        )
-
-        return final_classified
-
-    except Exception as exc:
-        logger.error(
-            "classify_services_batch failed: %s",
-            exc,
-            exc_info=True,
-        )
-        return safe
