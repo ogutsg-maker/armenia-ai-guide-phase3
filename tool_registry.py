@@ -333,7 +333,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "bulk_resolve_catalog_categories",
-                "Resolve ALL services of the active application against the current live catalog. This tool is state-scoped during bulk_fixing_categories. The backend independently matches every service and never accepts model-generated category IDs. Ambiguous services are returned for review; otherwise an explicit confirmation action is prepared.",
+                "Resolve ALL services of an application against the current live catalog. The backend independently matches every service and returns a single pending_action draft; it never accepts model-generated category IDs or uses bulk state.",
                 {
                     "application_id": {"type": "integer"},
                     "resolve_all": {"type": "boolean"},
