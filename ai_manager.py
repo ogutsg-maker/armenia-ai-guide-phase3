@@ -552,7 +552,7 @@ class AIManager:
         # Approval is a distinct intent and must never fall through to
         # the generic "open application" branch.
         approval_intent = re.search(
-            r"(?:հայտ|заяв|application)\\s*(?:#|№)?\\s*\\d*.*?"
+            r"(?:հայտ|заяв|application)\s*(?:#|№)?\s*\d*.*?"
             r"(?:հաստատիր|հաստատել|հաստատի|approve|одобр|утверд|ակտիվացրու|активир)",
             str(message or "").casefold(),
         )
