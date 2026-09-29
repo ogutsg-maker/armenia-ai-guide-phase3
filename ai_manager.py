@@ -943,7 +943,11 @@ class AIManager:
                     tools=definitions or None,
                     tool_choice="auto" if definitions else None,
                     temperature=0.1,
-                    max_tokens=900 if role == ContextType.REGISTRATION else 1600,
+                    # gpt-oss tool calls can spend completion budget on reasoning before
+                    # emitting the JSON arguments. Registration saves may contain many
+                    # services, so 900 was too small and produced truncated JSON such as
+                    # {"address". Keep registration isolated at a safe 1600-token ceiling.
+                    max_tokens=1600 if role == ContextType.REGISTRATION else 1600,
                 )
                 await self._cost_log(
                     telegram_id, role, getattr(response, "usage", None),
