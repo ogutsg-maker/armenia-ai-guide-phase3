@@ -1171,7 +1171,8 @@ class ToolRegistry:
                 # Notify the partner immediately after the confirmed correction request.
                 try:
                     app = result.get("application") or {}
-                    user_id = int(app.get("user_id") or 0)
+                    partner = data_core.get_partner(int(app.get("partner_id") or 0)) if app.get("partner_id") else None
+                    user_id = int(app.get("user_id") or (partner or {}).get("user_id") or (partner or {}).get("telegram_id") or 0)
                     if user_id:
                         from notify import notify
                         await notify(
