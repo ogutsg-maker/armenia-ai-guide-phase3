@@ -191,8 +191,8 @@ async def api_webapp_partner_register(request: web.Request):
         )
         db.update_user_field(uid, "role", "partner")
 
-        partner_row = db.ensure_partner(user_id=uid, name=business_name)
-        partner_id = int(partner_row["id"])
+        partner_id = int(db.create_partner(user_id=uid))
+        db.update_partner(partner_id, business_name=business_name)
 
         existing_companies = data_core.list_companies(partner_id=partner_id)
         if existing_companies:
