@@ -366,7 +366,13 @@ def apply_pending_category_resolution(*, pending_action: dict[str, Any],
         })
 
     if not mappings:
-        raise ValueError("catalog_mapping_required")
+        return {
+            "ok": True,
+            "application_id": int(pending_action["application_id"]),
+            "changes": [],
+            "status": "no_catalog_changes",
+            "message": "no_classified_services_to_apply",
+        }
 
     return apply_catalog_resolution(
         application_id=int(pending_action["application_id"]),
