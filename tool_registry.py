@@ -581,23 +581,18 @@ class ToolRegistry:
         application_id = int(draft.get("application_id") or draft.get("id") or 0)
         if not application_id:
             raise RuntimeError("application_save_failed")
-        partner = data_core.get_partner_by_user(self.telegram_id) or {}
-        partner_id = int(partner.get("id") or 0)
-        if not partner_id:
-            raise RuntimeError("partner_not_found_after_save")
-        submitted = data_core.submit_partner_application(
-            application_id,
-            partner_id=partner_id,
-            actor_user_id=self.telegram_id,
-        )
-        if not submitted:
-            raise RuntimeError("application_submit_failed")
+        # Registration AI only creates the editable draft. It must NOT submit
+        # the application to Admin because the verification document is uploaded
+        # separately by the partner. Final submission is performed by the
+        # partner WebApp after the document has been attached and validated.
+        draft_status = str(draft.get("status") or "pending_partner")
         return {
             "ok": True,
             "application_id": application_id,
-            "status": submitted.get("status") or "pending_admin",
+            "status": draft_status,
             "profile": profile,
-            "message": "application_saved",
+            "message": "application_draft_saved",
+            "requires_document": True,
         }
 
     def _state_entity_id(self, entity_type: str) -> int | None:
