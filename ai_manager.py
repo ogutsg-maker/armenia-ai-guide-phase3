@@ -48,9 +48,6 @@ class SessionState:
     current_pagination_index: int = 0
     pending_action: dict[str, Any] | None = None
     current_list: list[dict[str, Any]] = field(default_factory=list)
-    conversation_state: str = "idle"
-    active_application_id: int | None = None
-    bulk_operation: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any] | None) -> "SessionState":
@@ -70,9 +67,6 @@ class SessionState:
             current_pagination_index=index,
             pending_action=value.get("pending_action") or value.get("ai_manager_pending_action"),
             current_list=items[:50],
-            conversation_state=str(value.get("conversation_state") or "idle"),
-            active_application_id=(int(value.get("active_application_id")) if str(value.get("active_application_id") or "").isdigit() else None),
-            bulk_operation=(str(value.get("bulk_operation")) if value.get("bulk_operation") else None),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,9 +75,6 @@ class SessionState:
             "current_pagination_index": self.current_pagination_index,
             "pending_action": self.pending_action,
             "current_list": self.current_list[:50],
-            "conversation_state": self.conversation_state,
-            "active_application_id": self.active_application_id,
-            "bulk_operation": self.bulk_operation,
         }
 
 
@@ -469,105 +460,6 @@ class AIManager:
         text = re.sub(r"[^0-9a-zа-яёա-ֆևօ]+", " ", text)
         return " ".join(text.split()).strip()
 
-    async def _admin_bulk_state_path(
-        self,
-        telegram_id: int,
-        message: str,
-        session_context: dict[str, Any],
-        language: str,
-    ) -> dict[str, Any] | None:
-        """Backend-owned continuation for bulk catalogue classification."""
-        state = str(session_context.get("conversation_state") or "")
-        if state not in {"bulk_category_resolution", "bulk_category_review", "bulk_category_confirmation"}:
-            return None
-        import re
-        import data_core
-        app_id = session_context.get("active_application_id")
-        try:
-            app_id = int(app_id) if app_id is not None else None
-        except (TypeError, ValueError):
-            app_id = None
-        if not app_id:
-            return None
-        text = str(message or "").strip()
-        bare_all = bool(re.fullmatch(r"(?:բոլորը|բոլոր|all|все)[.!?]*", text, flags=re.I))
-        if self._is_cancel(text):
-            await self._clear_pending(telegram_id, ContextType.ADMIN)
-            return {"reply": self._cancel_text(language), "cancelled": True, "fast_path": True}
-        if state == "bulk_category_review":
-            if self._is_confirmation(text) or bare_all:
-                reply = (
-                    "Հաստատման գործողություն դեռ չկա։ Նախ ընտրեք չդասակարգված ծառայությունների ենթաուղղությունները."
-                    if language == "hy" else
-                    "Подтверждать пока нечего. Сначала выберите подкатегории для не классифицированных услуг."
-                    if language == "ru" else
-                    "There is nothing to confirm yet. First choose subcategories for the unresolved services."
-                )
-                return {"reply": reply, "fast_path": True, "review": True}
-            raw_candidates = session_context.get("bulk_candidates") or []
-            if not isinstance(raw_candidates, list) or not raw_candidates:
-                return None
-            numbers = [int(x) for x in re.findall(r"(?<!\d)([1-9]\d?)(?!\d)", text)]
-            unresolved = [x for x in raw_candidates if isinstance(x, dict)]
-            if len(numbers) != len(unresolved):
-                reply = (
-                    "Ընտրեք մեկ համար յուրաքանչյուր չդասակարգված ծառայության համար՝ նույն հերթականությամբ, օրինակ՝ «2, 1, 3»։"
-                    if language == "hy" else
-                    "Выберите по одному номеру для каждой не классифицированной услуги в том же порядке, например: «2, 1, 3»."
-                    if language == "ru" else
-                    "Choose one number for each unresolved service in the same order, for example: “2, 1, 3”."
-                )
-                return {"reply": reply, "fast_path": True, "review": True}
-            mappings = []
-            for item, choice in zip(unresolved, numbers):
-                options = item.get("candidates") or []
-                if choice < 1 or choice > len(options):
-                    reply = (
-                        "Ընտրության համարը սխալ է։ Օգտագործեք ցուցադրված 1–3 համարները։"
-                        if language == "hy" else
-                        "Номер выбора неверный. Используйте показанные номера 1–3."
-                        if language == "ru" else
-                        "Invalid choice number. Use the displayed 1–3 options."
-                    )
-                    return {"reply": reply, "fast_path": True, "review": True}
-                mappings.append({"service_index": int(item["service_index"]), "catalog_name": str(options[choice - 1]["catalog_name"])})
-            try:
-                resolved = data_core.prepare_bulk_catalog_resolution(
-                    application_id=app_id, resolve_all=True, actor_user_id=telegram_id,
-                )
-                all_mappings = list(resolved.get("resolved") or [])
-                all_mappings.extend(mappings)
-                preview = data_core.prepare_catalog_resolution(
-                    application_id=app_id, mappings=all_mappings, actor_user_id=telegram_id,
-                )
-                action = dict(preview.get("action") or {})
-                action["conversation_state"] = "bulk_category_confirmation"
-                await self._set_pending(telegram_id, ContextType.ADMIN, action)
-                await self._update_session_context(
-                    telegram_id, ContextType.ADMIN,
-                    {"active_application_id": app_id, "conversation_state": "bulk_category_confirmation", "bulk_operation": "resolve_all_categories"},
-                )
-                summary = str(preview.get("summary") or "")
-                confirm = "Հաստատո՞ւմ եք։" if language == "hy" else "Подтверждаете?" if language == "ru" else "Confirm?"
-                return {"reply": summary + "\n\n" + confirm, "confirmation_pending": True, "fast_path": True, "application_id": app_id, "tool_result": preview}
-            except Exception as exc:
-                logger.exception("Bulk category review selection failed")
-                return {"reply": self._error_text(language), "error": str(exc)}
-        if state == "bulk_category_confirmation":
-            if self._is_confirmation(text):
-                return None
-            if bare_all:
-                reply = (
-                    "Նախադիտումը պատրաստ է։ Հաստատելու համար գրեք «այո», չեղարկելու համար՝ «ոչ»։"
-                    if language == "hy" else
-                    "Предпросмотр готов. Напишите «да» для подтверждения или «нет» для отмены."
-                    if language == "ru" else
-                    "The preview is ready. Reply “yes” to confirm or “no” to cancel."
-                )
-                return {"reply": reply, "fast_path": True, "confirmation_pending": True}
-            return None
-        return None
-
     @classmethod
     def _extract_admin_price_edit(
         cls,
@@ -635,12 +527,13 @@ class AIManager:
         m = re.search(r"(?:#|№)\s*(\d+)", str(message))
         if m:
             app_id = int(m.group(1))
-        stored_id = session_context.get("active_application_id")
-        if app_id is None and stored_id:
-            try:
-                app_id = int(stored_id)
-            except (TypeError, ValueError):
-                app_id = None
+        if app_id is None:
+            last_entity = session_context.get("last_displayed_entity_id")
+            if isinstance(last_entity, dict) and str(last_entity.get("type") or "") == "application":
+                try:
+                    app_id = int(last_entity.get("id"))
+                except (TypeError, ValueError):
+                    app_id = None
         if not app_id:
             return None
 
@@ -650,33 +543,18 @@ class AIManager:
             return None
         services = data_core.application_service_items(app_id)
 
-        # Remember only the stable ID, not the full application JSON.
-        await self._update_session_context(
-            telegram_id,
-            ContextType.ADMIN,
-            {"active_application_id": app_id},
-        )
-
         text = str(message or "").casefold()
         bulk_action_intent = re.search(
             r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц).{0,80}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)", text,
         ) or re.search(
             r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,80}(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղ|fix|classif|categor|resolve|assign|присво|исправ|классифиц)", text,
         )
-        bulk_state = str(session_context.get("conversation_state") or "") in {
-            "bulk_category_resolution", "bulk_category_review", "bulk_category_confirmation"
-        }
-        bare_all = bool(re.fullmatch(r"\s*(?:բոլորը|բոլոր|all|все)\s*[.!?]*\s*", str(message or ""), flags=re.I))
-        if bulk_action_intent or (bulk_state and bare_all):
+        if bulk_action_intent:
             try:
                 preview = data_core.prepare_bulk_catalog_resolution(
                     application_id=app_id, resolve_all=True, actor_user_id=telegram_id,
                 )
                 if preview.get("status") == "needs_admin_review":
-                    await self._update_session_context(
-                        telegram_id, ContextType.ADMIN,
-                        {"active_application_id": app_id, "conversation_state": "bulk_category_confirmation", "bulk_operation": "resolve_all_categories"},
-                    )
                     ambiguous = preview.get("ambiguous") or []
                     indexes = [int(x.get("service_index")) for x in ambiguous if x.get("service_index") is not None]
                     candidates_result = data_core.admin_catalog_candidates(
@@ -693,16 +571,6 @@ class AIManager:
                                 for x in (item.get("candidates") or [])[:5]
                             ],
                         })
-                    await self._update_session_context(
-                        telegram_id, ContextType.ADMIN,
-                        {
-                            "active_application_id": app_id,
-                            "conversation_state": "bulk_category_review",
-                            "bulk_operation": "resolve_all_categories",
-                            "bulk_ambiguous_service_indexes": indexes,
-                            "bulk_candidates": compact_candidates,
-                        },
-                    )
                     blocks = []
                     for item in compact_candidates:
                         options = "\n".join(
@@ -719,10 +587,6 @@ class AIManager:
                     )
                     return {"reply": header + "\n\n" + "\n\n".join(blocks), "fast_path": True, "application_id": app_id, "needs_review": True, "tool_result": preview}
                 action = dict(preview.get("action") or {})
-                await self._update_session_context(
-                    telegram_id, ContextType.ADMIN,
-                    {"active_application_id": app_id, "conversation_state": "bulk_category_review", "bulk_operation": "resolve_all_categories"},
-                )
                 await self._set_pending(telegram_id, ContextType.ADMIN, action)
                 summary = str(preview.get("summary") or "")
                 await self._save_history(telegram_id, ContextType.ADMIN, "ai", summary, {"fast_path": True, "bulk_resolution": True, "pending_action": action})
@@ -746,7 +610,7 @@ class AIManager:
         if (catalog_read_intent and (all_services_intent or re.search(r"(?:ծառայ|услуг|service)", str(message or "").casefold()))) or (all_services_intent and session_context.get("last_admin_read_intent") == "application_catalog"):
             await self._update_session_context(
                 telegram_id, ContextType.ADMIN,
-                {"active_application_id": app_id, "last_admin_read_intent": "application_catalog"},
+                {"last_admin_read_intent": "application_catalog"},
             )
             rows = data_core.application_service_items(app_id)
             lines = []
@@ -905,33 +769,18 @@ class AIManager:
         ctx = await self._session_context(telegram_id, context)
         return SessionState.from_dict(ctx).pending_action
 
-    async def _set_pending(
-        self, telegram_id: int, context: ContextType, action: dict[str, Any]
-    ):
-        # Backend-owned state machine. The model never controls this state.
+    async def _set_pending(self, telegram_id: int, context: ContextType, action: dict[str, Any]):
         pending = dict(action or {})
         pending["state"] = "awaiting_confirmation"
         pending.setdefault("created_at", int(time.time()))
-        conversation_state = str(action.get("conversation_state") or "").strip()
-        if conversation_state not in {"bulk_category_confirmation"}:
-            conversation_state = "awaiting_confirmation"
         return await self._update_session_context(
-            telegram_id,
-            context,
-            {
-                "conversation_state": conversation_state,
-                "pending_action": pending,
-            },
+            telegram_id, context, {"pending_action": pending}
         )
 
     async def _clear_pending(self, telegram_id: int, context: ContextType):
         ctx = await self._session_context(telegram_id, context)
         ctx.pop("pending_action", None)
         ctx.pop("ai_manager_pending_action", None)
-        state = SessionState.from_dict(ctx)
-        state.pending_action = None
-        ctx.update(state.to_dict())
-        ctx["conversation_state"] = "idle"
         return await self._update_session_context(
             telegram_id, context, ctx, replace=True
         )
@@ -1098,14 +947,7 @@ class AIManager:
         )
         session_context = await self._session_context(telegram_id, role)
 
-        # Admin stateful continuation is backend-owned. Groq must never
-        # interpret yes/no/all while a bulk operation is active.
         if role == ContextType.ADMIN:
-            state_fast = await self._admin_bulk_state_path(
-                telegram_id, message, session_context, language
-            )
-            if state_fast is not None:
-                return state_fast
             fast = await self._admin_fast_path(
                 telegram_id, message, session_context, language
             )
@@ -1117,22 +959,12 @@ class AIManager:
             telegram_id=int(telegram_id),
             context_type=role,
             trusted_context=trusted,
-            session_state={**state.to_dict(), "conversation_state": session_context.get("conversation_state")},
+            session_state=state.to_dict(),
         )
         definitions = tools.definitions()
 
         # The session state is backend state, not model-authored identity.
         trusted_for_prompt = dict(trusted)
-        trusted_for_prompt["conversation_state"] = {
-            k: v for k, v in session_context.items()
-            if k in {
-                "current_entity_type", "current_entity_id",
-                "current_company_id", "current_service_id",
-                "current_order_id", "last_displayed_entity_id",
-                "current_pagination_index", "current_list", "current_position",
-                "conversation_state",
-            }
-        }
         prompt = PromptFactory.build(
             role,
             message=message,
