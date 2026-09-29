@@ -736,12 +736,19 @@ class AIManager:
         if m:
             app_id = int(m.group(1))
         if app_id is None:
-            last_entity = session_context.get("last_displayed_entity_id")
-            if isinstance(last_entity, dict) and str(last_entity.get("type") or "") == "application":
-                try:
-                    app_id = int(last_entity.get("id"))
-                except (TypeError, ValueError):
-                    app_id = None
+            pending = await self._pending(telegram_id, ContextType.ADMIN)
+            pending_text = str(message or "").casefold()
+            pending_bulk_request = (
+                pending
+                and pending.get("type") == "bulk_resolve_categories"
+                and re.search(
+                    r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц)",
+                    pending_text,
+                )
+                and re.search(r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services|ենթաուղղ)", pending_text)
+            )
+            if pending_bulk_request:
+                app_id = int(pending.get("application_id") or 0)
         if not app_id:
             return None
 
