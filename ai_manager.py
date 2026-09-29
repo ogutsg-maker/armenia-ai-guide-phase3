@@ -868,30 +868,10 @@ class AIManager:
             return {"reply": summary, "confirmation_pending": True, "fast_path": True,
                     "application_id": app_id}
 
-        price_edit = self._extract_admin_price_edit(message, services)
-        if not price_edit:
-            # A bare "fix application #39" is deterministic too: load it and
-            # ask what should be changed without spending a Groq call.
-            if re.search(r"(?:հայտ|заяв|application)", str(message).casefold()):
-                names = [str(x.get("name") or "") for x in services if x.get("name")]
-                if language == "hy":
-                    reply = (
-                        f"Հայտ #{app_id}-ը բացված է։ "
-                        f"Ծառայություններ՝ {', '.join(names)}։ "
-                        "Ո՞ր ծառայությունը կամ հատկությունն եք ցանկանում փոխել։"
-                    )
-                elif language == "ru":
-                    reply = (
-                        f"Заявка #{app_id} открыта. Услуги: {', '.join(names)}. "
-                        "Что именно изменить?"
-                    )
-                else:
-                    reply = (
-                        f"Application #{app_id} is open. Services: {', '.join(names)}. "
-                        "What would you like to change?"
-                    )
-                return {"reply": reply, "fast_path": True, "application_id": app_id}
-            return None
+        # All ordinary admin edits, including price changes, go through Groq
+        # -> ToolRegistry -> pending_action. Fast Path handles only deterministic
+        # button selections and confirmation/cancellation.
+        return None
 
         service_index, service_name = price_edit
         try:
