@@ -1008,37 +1008,6 @@ class AdminAIProviderError(RuntimeError):
         self.errors = errors or []
 
 
-async def _admin_ai_completion(messages, *, max_tokens=700, json_mode=False):
-    """Admin AI planner transport. Groq only; no provider fallback."""
-    key=os.getenv("GROQ_API_KEY","").strip()
-    if not key:
-        raise AdminAIProviderError("GROQ_API_KEY is not configured.")
-    model=os.getenv("GROQ_MODEL","").strip() or "openai/gpt-oss-20b"
-    try:
-        from groq import AsyncGroq
-        client=AsyncGroq(api_key=key,max_retries=0)
-        kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens}
-        # gpt-oss on Groq uses prompt-constrained JSON extraction instead of
-        # response_format=json_object to avoid an unnecessary 400/retry cycle.
-        if json_mode and "gpt-oss" not in model.lower():
-            kwargs["response_format"]={"type":"json_object"}
-        resp=await client.chat.completions.create(**kwargs)
-        usage=getattr(resp,"usage",None)
-        ai_cost_center.record_usage(
-            provider="groq",model=model,chain="admin_secretary",stage="planner",
-            operation="admin_ai_message",purpose="Admin natural-language assistant",
-            input_tokens=int(getattr(usage,"prompt_tokens",0) or 0),
-            output_tokens=int(getattr(usage,"completion_tokens",0) or 0),
-            cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),
-            reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0),
-        )
-        content=(resp.choices[0].message.content or "").strip()
-        if not content:
-            raise RuntimeError("empty Groq response")
-        return content,"groq",model
-    except Exception as exc:
-        raise AdminAIProviderError("Groq AI request failed.",[{"provider":"groq","model":model,"error":str(exc)[:500]}]) from exc
-
 def _admin_planner_context(ctx):
     """Build compact semantic context from business entities, not DB internals."""
     ctx=ctx if isinstance(ctx,dict) else {}
