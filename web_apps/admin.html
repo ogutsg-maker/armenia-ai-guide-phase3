@@ -199,9 +199,7 @@ function companyHtml(pid,b){
    </div>`;
  }).join(''):'<div class="empty">Ուղղություններ չկան</div>';
 
- const docHtml=docs.length?docs.map(d=>`
-   <div class="doc"><span>📄 ${esc(d.original_filename||d.document_type||'document')} · ${esc(d.status||'')}</span>
-   <button class="btn soft" onclick="openDoc(${pid},${d.id})">Բացել</button></div>`).join(''):'<div class="empty">Փաստաթղթեր չկան</div>';
+ const docHtml=docs.length?docs.map(d=>`\n   <div class="doc"><span>📄 ${esc(d.original_filename||d.document_type||'document')} · ${esc(d.status||'')}${d.rejection_reason?' · '+esc(d.rejection_reason):''}</span>\n   <div class="actions" style="margin:0"><button class="btn soft" onclick="openDoc(${pid},${d.id})">Բացել</button>${d.status!=='approved'&&d.status!=='replaced'?`<button class="btn warn" onclick="sendDocumentCorrection(${pid},${Number(d.application_id||0)},${Number(d.id)})">↩ Ուղարկել ճշտման</button>`:''}</div></div>`).join(''):'<div class="empty">Փաստաթղթեր չկան</div>';
 
  return `
    <div class="detail"><b>📝 Նկարագրություն</b><div class="muted">${esc(b.description||'—')}</div></div>
@@ -264,6 +262,12 @@ async function deleteCompany(pid,bid,name){
    await loadStats();
    alert(d.archived?'Компания архивирована — история сохранена.':'Компания удалена.');
  }catch(e){alert(e.message||'Не удалось удалить компанию')}
+}
+async function sendDocumentCorrection(pid,aid,did){
+ const reason=prompt('Պատճառ / Причина','Փաստաթուղթը չի համապատասխանում պահանջներին։ Խնդրում ենք կցել ճիշտ փաստաթուղթ։');
+ if(reason===null)return;
+ if(!aid){alert('Հայտի ID-ն չի գտնվել այս փաստաթղթի համար');return}
+ try{await post('/api/admin/partner-applications/'+aid+'/action',{action:'send_document_correction',reason:reason.trim()});await loadPartners();await loadApplications();}catch(e){alert(e.message||'Չհաջողվեց ուղարկել ճշտման')}
 }
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
 async function decision(id,a){
