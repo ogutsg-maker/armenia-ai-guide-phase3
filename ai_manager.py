@@ -742,7 +742,7 @@ class AIManager:
                 pending
                 and pending.get("type") == "bulk_resolve_categories"
                 and re.search(
-                    r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц)",
+                    r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц)",
                     pending_text,
                 )
                 and re.search(r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services|ենթաուղղ)", pending_text)
@@ -760,7 +760,7 @@ class AIManager:
 
         text = str(message or "").casefold()
         bulk_action_intent = re.search(
-            r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц).{0,100}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)",
+            r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц).{0,100}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)",
             text,
         ) or re.search(
             r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,100}(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղ|fix|classif|categor|resolve|assign|присво|исправ|классифиц)",
