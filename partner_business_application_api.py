@@ -94,7 +94,7 @@ def ensure_business_application_schema():
     ALTER TABLE partner_directions ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE services ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
-    ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS application_id BIGINT REFERENCES partner_applications(id) ON DELETE SET NULL;
+    ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS application_id BIGINT;
     ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS is_current BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS replaced_by BIGINT;
     CREATE INDEX IF NOT EXISTS idx_partner_documents_application ON partner_verification_documents(application_id,created_at DESC);
