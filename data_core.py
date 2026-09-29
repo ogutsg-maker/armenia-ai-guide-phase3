@@ -1124,6 +1124,42 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     }
 
 
+def request_application_document_correction(*, application_id: int, reason: str, actor_user_id: int) -> dict[str, Any]:
+    """Request a replacement document without rejecting the application."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("reason_required")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    if str(app.get("status") or "").lower() in {"approved", "rejected"}:
+        raise ValueError("application_already_final")
+    document_id = app.get("document_id")
+    if document_id:
+        execute(
+            """UPDATE partner_verification_documents
+               SET status='replaced', is_current=FALSE, rejection_reason=%s,
+                   reviewed_by=%s, reviewed_at=NOW()
+               WHERE id=%s AND partner_id=%s AND is_current=TRUE""",
+            (reason[:3000], int(actor_user_id), int(document_id), int(app["partner_id"])),
+        )
+    row = execute(
+        """UPDATE partner_applications
+           SET status='document_correction_requested',
+               admin_note=%s, reviewed_by=%s, reviewed_at=NOW(), updated_at=NOW()
+           WHERE id=%s AND status NOT IN ('approved','rejected')
+           RETURNING *""",
+        (reason[:3000], int(actor_user_id), int(application_id)),
+        returning=True,
+    )
+    if not row:
+        raise ValueError("application_correction_request_failed")
+    return {"ok": True, "application": row, "application_id": int(application_id),
+            "reason": reason[:3000], "correction_required": True}
+
+
 def admin_approve_application(application_id: int, admin_telegram_id: int):
     """Approve a partner application only after backend-owned verification gates.
 
