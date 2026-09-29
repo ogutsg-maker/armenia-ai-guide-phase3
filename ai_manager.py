@@ -469,6 +469,105 @@ class AIManager:
         text = re.sub(r"[^0-9a-zа-яёա-ֆևօ]+", " ", text)
         return " ".join(text.split()).strip()
 
+    async def _admin_bulk_state_path(
+        self,
+        telegram_id: int,
+        message: str,
+        session_context: dict[str, Any],
+        language: str,
+    ) -> dict[str, Any] | None:
+        """Backend-owned continuation for bulk catalogue classification."""
+        state = str(session_context.get("conversation_state") or "")
+        if state not in {"bulk_category_resolution", "bulk_category_review", "bulk_category_confirmation"}:
+            return None
+        import re
+        import data_core
+        app_id = session_context.get("active_application_id")
+        try:
+            app_id = int(app_id) if app_id is not None else None
+        except (TypeError, ValueError):
+            app_id = None
+        if not app_id:
+            return None
+        text = str(message or "").strip()
+        bare_all = bool(re.fullmatch(r"(?:բոլորը|բոլոր|all|все)[.!?]*", text, flags=re.I))
+        if self._is_cancel(text):
+            await self._clear_pending(telegram_id, ContextType.ADMIN)
+            return {"reply": self._cancel_text(language), "cancelled": True, "fast_path": True}
+        if state == "bulk_category_review":
+            if self._is_confirmation(text) or bare_all:
+                reply = (
+                    "Հաստատման գործողություն դեռ չկա։ Նախ ընտրեք չդասակարգված ծառայությունների ենթաուղղությունները."
+                    if language == "hy" else
+                    "Подтверждать пока нечего. Сначала выберите подкатегории для не классифицированных услуг."
+                    if language == "ru" else
+                    "There is nothing to confirm yet. First choose subcategories for the unresolved services."
+                )
+                return {"reply": reply, "fast_path": True, "review": True}
+            raw_candidates = session_context.get("bulk_candidates") or []
+            if not isinstance(raw_candidates, list) or not raw_candidates:
+                return None
+            numbers = [int(x) for x in re.findall(r"(?<!\d)([1-9]\d?)(?!\d)", text)]
+            unresolved = [x for x in raw_candidates if isinstance(x, dict)]
+            if len(numbers) != len(unresolved):
+                reply = (
+                    "Ընտրեք մեկ համար յուրաքանչյուր չդասակարգված ծառայության համար՝ նույն հերթականությամբ, օրինակ՝ «2, 1, 3»։"
+                    if language == "hy" else
+                    "Выберите по одному номеру для каждой не классифицированной услуги в том же порядке, например: «2, 1, 3»."
+                    if language == "ru" else
+                    "Choose one number for each unresolved service in the same order, for example: “2, 1, 3”."
+                )
+                return {"reply": reply, "fast_path": True, "review": True}
+            mappings = []
+            for item, choice in zip(unresolved, numbers):
+                options = item.get("candidates") or []
+                if choice < 1 or choice > len(options):
+                    reply = (
+                        "Ընտրության համարը սխալ է։ Օգտագործեք ցուցադրված 1–3 համարները։"
+                        if language == "hy" else
+                        "Номер выбора неверный. Используйте показанные номера 1–3."
+                        if language == "ru" else
+                        "Invalid choice number. Use the displayed 1–3 options."
+                    )
+                    return {"reply": reply, "fast_path": True, "review": True}
+                mappings.append({"service_index": int(item["service_index"]), "catalog_name": str(options[choice - 1]["catalog_name"])})
+            try:
+                resolved = data_core.prepare_bulk_catalog_resolution(
+                    application_id=app_id, resolve_all=True, actor_user_id=telegram_id,
+                )
+                all_mappings = list(resolved.get("resolved") or [])
+                all_mappings.extend(mappings)
+                preview = data_core.prepare_catalog_resolution(
+                    application_id=app_id, mappings=all_mappings, actor_user_id=telegram_id,
+                )
+                action = dict(preview.get("action") or {})
+                action["conversation_state"] = "bulk_category_confirmation"
+                await self._set_pending(telegram_id, ContextType.ADMIN, action)
+                await self._update_session_context(
+                    telegram_id, ContextType.ADMIN,
+                    {"active_application_id": app_id, "conversation_state": "bulk_category_confirmation", "bulk_operation": "resolve_all_categories"},
+                )
+                summary = str(preview.get("summary") or "")
+                confirm = "Հաստատո՞ւմ եք։" if language == "hy" else "Подтверждаете?" if language == "ru" else "Confirm?"
+                return {"reply": summary + "\n\n" + confirm, "confirmation_pending": True, "fast_path": True, "application_id": app_id, "tool_result": preview}
+            except Exception as exc:
+                logger.exception("Bulk category review selection failed")
+                return {"reply": self._error_text(language), "error": str(exc)}
+        if state == "bulk_category_confirmation":
+            if self._is_confirmation(text):
+                return None
+            if bare_all:
+                reply = (
+                    "Նախադիտումը պատրաստ է։ Հաստատելու համար գրեք «այո», չեղարկելու համար՝ «ոչ»։"
+                    if language == "hy" else
+                    "Предпросмотр готов. Напишите «да» для подтверждения или «нет» для отмены."
+                    if language == "ru" else
+                    "The preview is ready. Reply “yes” to confirm or “no” to cancel."
+                )
+                return {"reply": reply, "fast_path": True, "confirmation_pending": True}
+            return None
+        return None
+
     @classmethod
     def _extract_admin_price_edit(
         cls,
@@ -564,7 +663,9 @@ class AIManager:
         ) or re.search(
             r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,80}(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղ|fix|classif|categor|resolve|assign|присво|исправ|классифиц)", text,
         )
-        bulk_state = str(session_context.get("conversation_state") or "") == "bulk_fixing_categories"
+        bulk_state = str(session_context.get("conversation_state") or "") in {
+            "bulk_category_resolution", "bulk_category_review", "bulk_category_confirmation"
+        }
         bare_all = bool(re.fullmatch(r"\s*(?:բոլորը|բոլոր|all|все)\s*[.!?]*\s*", str(message or ""), flags=re.I))
         if bulk_action_intent or (bulk_state and bare_all):
             try:
@@ -574,22 +675,53 @@ class AIManager:
                 if preview.get("status") == "needs_admin_review":
                     await self._update_session_context(
                         telegram_id, ContextType.ADMIN,
-                        {"active_application_id": app_id, "conversation_state": "bulk_fixing_categories", "bulk_operation": "resolve_all_categories"},
+                        {"active_application_id": app_id, "conversation_state": "bulk_category_confirmation", "bulk_operation": "resolve_all_categories"},
                     )
                     ambiguous = preview.get("ambiguous") or []
-                    names = ", ".join(str(x.get("service_name") or "—") for x in ambiguous)
-                    reply = (
-                        f"Հայտ #{app_id}-ում {len(ambiguous)} ծառայություն հստակ չի դասակարգվել՝ {names}. Չեմ գուշակում. Դրանք պետք է ճշտել։"
-                        if language == "hy" else
-                        f"В заявке #{app_id} {len(ambiguous)} услуг не удалось уверенно классифицировать: {names}. Я не угадываю — их нужно уточнить."
-                        if language == "ru" else
-                        f"Application #{app_id}: {len(ambiguous)} services could not be classified confidently: {names}. I will not guess; they need review."
+                    indexes = [int(x.get("service_index")) for x in ambiguous if x.get("service_index") is not None]
+                    candidates_result = data_core.admin_catalog_candidates(
+                        application_id=app_id, service_indexes=indexes, limit_per_service=3,
+                        actor_user_id=telegram_id,
                     )
-                    return {"reply": reply, "fast_path": True, "application_id": app_id, "needs_review": True, "tool_result": preview}
+                    compact_candidates = []
+                    for item in candidates_result.get("items") or []:
+                        compact_candidates.append({
+                            "service_index": int(item.get("service_index")),
+                            "service_name": str(item.get("service_name") or "—"),
+                            "candidates": [
+                                {"catalog_name": str(x.get("catalog_name") or "—")}
+                                for x in (item.get("candidates") or [])[:3]
+                            ],
+                        })
+                    await self._update_session_context(
+                        telegram_id, ContextType.ADMIN,
+                        {
+                            "active_application_id": app_id,
+                            "conversation_state": "bulk_category_review",
+                            "bulk_operation": "resolve_all_categories",
+                            "bulk_ambiguous_service_indexes": indexes,
+                            "bulk_candidates": compact_candidates,
+                        },
+                    )
+                    blocks = []
+                    for item in compact_candidates:
+                        options = "\n".join(
+                            f"   {n}. {opt['catalog_name']}"
+                            for n, opt in enumerate(item["candidates"], 1)
+                        )
+                        blocks.append(f"• {item['service_name']}\n{options}")
+                    header = (
+                        f"Հայտ #{app_id}-ում {len(ambiguous)} ծառայություն չի դասակարգվել։ Ընտրեք յուրաքանչյուրի համար 1–3 տարբերակ։"
+                        if language == "hy" else
+                        f"В заявке #{app_id} {len(ambiguous)} услуг не классифицировано. Выберите для каждой вариант 1–3."
+                        if language == "ru" else
+                        f"Application #{app_id}: {len(ambiguous)} services need review. Choose option 1–3 for each."
+                    )
+                    return {"reply": header + "\n\n" + "\n\n".join(blocks), "fast_path": True, "application_id": app_id, "needs_review": True, "tool_result": preview}
                 action = dict(preview.get("action") or {})
                 await self._update_session_context(
                     telegram_id, ContextType.ADMIN,
-                    {"active_application_id": app_id, "conversation_state": "bulk_fixing_categories", "bulk_operation": "resolve_all_categories"},
+                    {"active_application_id": app_id, "conversation_state": "bulk_category_review", "bulk_operation": "resolve_all_categories"},
                 )
                 await self._set_pending(telegram_id, ContextType.ADMIN, action)
                 summary = str(preview.get("summary") or "")
@@ -816,6 +948,46 @@ class AIManager:
         language = language or self._lang(message)
         history = await self._supabase_history(telegram_id, role)
         trusted = self._trusted(role, telegram_id, extra_context)
+        # Deterministic pending handling is intentionally before PromptFactory/Groq.
+        pending = await self._pending(telegram_id, role)
+        if pending:
+            if self._is_cancel(message):
+                await self._clear_pending(telegram_id, role)
+                reply = self._cancel_text(language)
+                await self._save_history(telegram_id, role, "ai", reply, {"cancelled": True})
+                return {"reply": reply, "cancelled": True}
+            if self._is_confirmation(message):
+                try:
+                    pending_name = str(pending.get("name") or "").strip()
+                    pending_args = dict(pending.get("args") or {})
+                    if str(pending.get("state") or "awaiting_confirmation") != "awaiting_confirmation":
+                        raise PermissionError("invalid_pending_state")
+                    result = await tools.execute_confirmed(pending_name, pending_args)
+                    await self._clear_pending(telegram_id, role)
+                    reply = self._done_text(language)
+                    await self._save_history(
+                        telegram_id, role, "ai", reply,
+                        {"confirmed_action": pending, "tool_result": result},
+                    )
+                    return {"reply": reply, "tool_result": result, "confirmed": True}
+                except Exception as exc:
+                    await self._clear_pending(telegram_id, role)
+                    logger.exception("AIManager confirmed action failed")
+                    reply = self._error_text(language)
+                    await self._save_history(
+                        telegram_id, role, "ai", reply,
+                        {"confirmed_action": pending, "error": str(exc)[:1000]},
+                    )
+                    return {"reply": reply, "confirmed": False, "error": str(exc)}
+            reply = (
+                "Նախ հաստատեք կամ չեղարկեք սպասվող փոփոխությունը։"
+                if language == "hy" else
+                "Сначала подтвердите или отмените ожидающее изменение."
+                if language == "ru" else
+                "Please confirm or cancel the pending change first."
+            )
+            return {"reply": reply, "confirmation_pending": True}
+
         prompt = PromptFactory.build(
             role,
             message=message,
@@ -923,9 +1095,14 @@ class AIManager:
         )
         session_context = await self._session_context(telegram_id, role)
 
-        # Admin explicit application edits have a backend-owned fast path.
-        # This is intentionally before tool definitions/Groq construction.
+        # Admin stateful continuation is backend-owned. Groq must never
+        # interpret yes/no/all while a bulk operation is active.
         if role == ContextType.ADMIN:
+            state_fast = await self._admin_bulk_state_path(
+                telegram_id, message, session_context, language
+            )
+            if state_fast is not None:
+                return state_fast
             fast = await self._admin_fast_path(
                 telegram_id, message, session_context, language
             )
@@ -967,55 +1144,6 @@ class AIManager:
             telegram_id, role, "user", message,
             {"context_type": role.value},
         )
-
-        pending = await self._pending(telegram_id, role)
-        if pending:
-            if self._is_cancel(message):
-                await self._clear_pending(telegram_id, role)
-                reply = self._cancel_text(language)
-                await self._save_history(telegram_id, role, "ai", reply, {"cancelled": True})
-                return {"reply": reply, "cancelled": True}
-            if self._is_confirmation(message):
-                try:
-                    pending_name = str(pending.get("name") or "").strip()
-                    pending_args = dict(pending.get("args") or {})
-                    # Deterministic confirmation fast path: "yes" is never
-                    # sent to Groq and cannot alter the pending action.
-                    if str(pending.get("state") or "awaiting_confirmation") != "awaiting_confirmation":
-                        raise PermissionError("invalid_pending_state")
-                    result = await tools.execute_confirmed(
-                        pending_name, pending_args
-                    )
-                    await self._clear_pending(telegram_id, role)
-                    reply = self._done_text(language)
-                    await self._save_history(
-                        telegram_id, role, "ai", reply,
-                        {"confirmed_action": pending, "tool_result": result},
-                    )
-                    return {
-                        "reply": reply,
-                        "tool_result": result,
-                        "confirmed": True,
-                    }
-                except Exception as exc:
-                    await self._clear_pending(telegram_id, role)
-                    logger.exception("AIManager confirmed action failed")
-                    reply = self._error_text(language)
-                    await self._save_history(
-                        telegram_id, role, "ai", reply,
-                        {"confirmed_action": pending, "error": str(exc)[:1000]},
-                    )
-                    return {"reply": reply, "confirmed": False, "error": str(exc)}
-
-            # A pending mutation must not be silently overwritten by another
-            # request. Ask the user to confirm or cancel first.
-            if language == "hy":
-                reply = "Նախ հաստատեք կամ չեղարկեք սպասվող փոփոխությունը։"
-            elif language == "ru":
-                reply = "Сначала подтвердите или отмените ожидающее изменение."
-            else:
-                reply = "Please confirm or cancel the pending change first."
-            return {"reply": reply, "confirmation_pending": True}
 
         tool_log: list[dict[str, Any]] = []
         last_tool_result: dict[str, Any] | None = None
