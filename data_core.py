@@ -1554,6 +1554,15 @@ def submit_partner_application(application_id: int, *, partner_id: int, actor_us
         raise ValueError("business_name_required")
     if not str(app.get("service_name") or "").strip() and not services:
         raise ValueError("service_required")
+
+    # Initial partner registration is a verification workflow. Never allow a
+    # partner application without a document to become visible to Admin as
+    # pending_admin. The document upload endpoint attaches document_id first;
+    # only then may the application enter document_under_review.
+    partner = get_partner_by_user(int(actor_user_id)) or {}
+    if str(partner.get("status") or "").lower() != "approved" and not app.get("document_id"):
+        raise ValueError("document_required")
+
     new_status = "document_under_review" if app.get("document_id") else "pending_admin"
     return execute(
         "UPDATE partner_applications SET status=%s,updated_at=NOW() WHERE id=%s AND partner_id=%s RETURNING *",
