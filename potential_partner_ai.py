@@ -36,13 +36,21 @@ class PotentialPartnerAI:
         )
 
         try:
-            ai_response = self.ai_service.process_text_request(
+            data = self.ai_service.structured_request(
                 user_text=raw_internet_text,
                 role="admin",
                 system_prompt=system_prompt,
+                schema={
+                    "name": "string|null",
+                    "services": ["string"],
+                    "city": "string|null",
+                    "district": "string|null",
+                    "min_price": "number|null",
+                    "working_hours": "string|null",
+                },
+                operation="potential_partner_extract",
+                purpose="Extract a structured potential partner lead",
             )
-            clean_json = str(ai_response).replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean_json)
             if isinstance(data, dict):
                 return data
         except Exception:
@@ -109,11 +117,17 @@ class PotentialPartnerAI:
         )
 
         try:
-            invite_text = self.ai_service.process_text_request(
+            invite_data = self.ai_service.structured_request(
                 user_text=user_context,
                 role="admin",
                 system_prompt=system_prompt,
+                schema={"invite_text": "string"},
+                operation="potential_partner_invite",
+                purpose="Generate a partner invitation message",
             )
+            invite_text = str(invite_data.get("invite_text") or "").strip()
+            if not invite_text:
+                raise RuntimeError("empty structured invitation")
         except Exception:
             invite_text = (
                 "Здравствуйте! Мы развиваем Armenia AI Guide — маркетплейс услуг в Армении. "
