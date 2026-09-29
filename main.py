@@ -248,6 +248,10 @@ async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContex
     }
     if application_id:
         response["application_id"] = application_id
+        # Once the AI has prepared the draft, the WebApp must immediately open
+        # the editable application form. The verification document is uploaded
+        # there; the AI chat itself is not the document-upload surface.
+        response["open_form"] = bool(completed)
     if result.get("confirmation_required"):
         response["confirmation_required"] = True
     if result.get("error"):
