@@ -679,8 +679,8 @@ class AIManager:
                     )
                     ambiguous = preview.get("ambiguous") or []
                     indexes = [int(x.get("service_index")) for x in ambiguous if x.get("service_index") is not None]
-                    candidates_result = data_core.admin_catalog_candidates(
-                        application_id=app_id, service_indexes=indexes, limit_per_service=3,
+                            candidates_result = data_core.admin_catalog_candidates(
+                        application_id=app_id, service_indexes=indexes, limit_per_service=5,
                         actor_user_id=telegram_id,
                     )
                     compact_candidates = []
@@ -690,7 +690,7 @@ class AIManager:
                             "service_name": str(item.get("service_name") or "—"),
                             "candidates": [
                                 {"catalog_name": str(x.get("catalog_name") or "—")}
-                                for x in (item.get("candidates") or [])[:3]
+                                for x in (item.get("candidates") or [])[:5]
                             ],
                         })
                     await self._update_session_context(
