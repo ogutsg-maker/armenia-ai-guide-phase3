@@ -679,7 +679,7 @@ class AIManager:
                     )
                     ambiguous = preview.get("ambiguous") or []
                     indexes = [int(x.get("service_index")) for x in ambiguous if x.get("service_index") is not None]
-                            candidates_result = data_core.admin_catalog_candidates(
+                    candidates_result = data_core.admin_catalog_candidates(
                         application_id=app_id, service_indexes=indexes, limit_per_service=5,
                         actor_user_id=telegram_id,
                     )
