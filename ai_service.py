@@ -229,11 +229,38 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
             confidence=max(0.0, min(1.0, _float(data.get("confidence")) or 0.0)),
         )
 
-    def process_text_request(self,user_text: str,role: str,system_prompt: str) -> str:
-        clean=self.clean_sensitive_data(user_text); role_model=self._get_setting(f"{role}_ai_model","").strip() or self.groq_model
-        if role_model=="groq-llama3": role_model=self.groq_model
-        response=self._groq_completion([{"role":"system","content":system_prompt+"\nUnderstand Armenian, Russian and English. Never invent marketplace facts."},{"role":"user","content":clean}],role_model)
-        return self._text(response)
+    def structured_request(self, user_text: str, role: str, system_prompt: str, schema: dict, *, operation: str = "structured_request", purpose: str = "") -> dict:
+        """Synchronous structured AI entry point. Free-form text responses are forbidden."""
+        clean = self.clean_sensitive_data(user_text)
+        role_model = self._get_setting(f"{role}_ai_model", "").strip() or self.groq_model
+        if role_model == "groq-llama3":
+            role_model = self.groq_model
+        contract = json.dumps(schema, ensure_ascii=False)
+        prompt = (
+            system_prompt
+            + "\nReturn ONLY one JSON object matching this exact contract. "
+            + "Do not add markdown, explanations or extra keys.\n"
+            + "JSON_CONTRACT=" + contract
+        )
+        response, model = self._groq_completion_json(
+            [{"role": "system", "content": prompt + "\nUnderstand Armenian, Russian and English."},
+             {"role": "user", "content": clean}],
+            role_model,
+            900,
+        )
+        usage = getattr(response, "usage", None)
+        ai_cost_center.record_usage(
+            provider="groq", model=model, chain=role, stage="structured",
+            operation=operation, purpose=purpose,
+            input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            cached_tokens=int(getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0),
+            reasoning_tokens=int(getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", 0) or 0),
+        )
+        data = self._json(self._text(response))
+        if not data:
+            raise RuntimeError("Groq returned invalid structured JSON")
+        return data
 
     def process_voice(self,audio_file_path: str) -> str:
         if self._get_setting("allow_voice_input","true").lower()=="false": return "🔒 Ձայնային մուտքը ժամանակավորապես անջատված է։"
