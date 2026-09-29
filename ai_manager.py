@@ -374,6 +374,23 @@ class AIManager:
                 compact["items"].append(row)
             return json.dumps(compact, ensure_ascii=False, default=str)[:max_chars]
 
+        if name == "catalog_choices":
+            items = result.get("items") or []
+            compact = {
+                "ok": bool(result.get("ok", True)),
+                "items": [
+                    {
+                        "catalog_name": x.get("catalog_name"),
+                        "name_am": x.get("name_am"),
+                        "name_ru": x.get("name_ru"),
+                        "name_en": x.get("name_en"),
+                    }
+                    for x in items
+                    if isinstance(x, dict)
+                ],
+            }
+            return json.dumps(compact, ensure_ascii=False, default=str)[:12000]
+
         if name == "get_application":
             compact = {
                 key: result.get(key)
