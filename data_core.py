@@ -128,52 +128,61 @@ def _catalog_tokens(value: Any) -> set[str]:
 
 
 def _catalog_match_score(query: str, candidate: str) -> float:
-    """Dynamic multilingual string/semantic-proxy score; no catalog IDs are hardcoded."""
+    """Conservative morphology-aware score for live catalog matching."""
     q = _catalog_text(query)
     c = _catalog_text(candidate)
     if not q or not c:
         return 0.0
     if q == c:
         return 1.0
+
+    def stem(token: str) -> str:
+        # Armenian/Russian service names frequently differ only by inflection.
+        suffixes = (
+            "ներով", "ներին", "ներից", "ների", "երով", "երով", "ություն", "ությունների",
+            "ության", "ություններ", "ական", "ային", "ը", "ի", "ին", "ից", "ով", "ներ",
+            "ами", "ями", "ого", "ему", "ом", "ов", "ы", "и", "а", "я", "у", "ю", "е",
+        )
+        value = token
+        for suffix in sorted(suffixes, key=len, reverse=True):
+            if len(value) > len(suffix) + 2 and value.endswith(suffix):
+                return value[:-len(suffix)]
+        return value
+
     qt = _catalog_tokens(q)
     ct = _catalog_tokens(c)
-    if not qt or not ct:
-        return 0.0
-    overlap = len(qt & ct) / max(1, len(qt | ct))
+    qs = {stem(t) for t in qt}
+    cs = {stem(t) for t in ct}
+    if qs == cs:
+        return 0.96
+
+    overlap = len(qs & cs) / max(1, len(qs | cs))
     containment = 1.0 if q in c or c in q else 0.0
-    def grams(s: str) -> set[str]:
-        compact = s.replace(" ", "")
+
+    def grams(value: str) -> set[str]:
+        compact = value.replace(" ", "")
         return {compact[i:i+2] for i in range(max(0, len(compact)-1))}
+
     qg, cg = grams(q), grams(c)
     bigram = len(qg & cg) / max(1, len(qg | cg)) if qg and cg else 0.0
-    return min(1.0, 0.60 * overlap + 0.25 * bigram + 0.15 * containment)
+
+    # Token-root agreement is the strongest signal; raw character similarity
+    # alone must never manufacture a plausible category.
+    return min(1.0, 0.68 * overlap + 0.20 * bigram + 0.12 * containment)
 
 
 def _catalog_rankings(query: str, catalog: list[dict[str, Any]]) -> list[tuple[float, dict[str, Any]]]:
-    """Rank live catalogue entries for one service name without hardcoded IDs."""
+    """Rank live catalog entries conservatively; irrelevant entries stay low."""
     ranked: list[tuple[float, dict[str, Any]]] = []
-    q_tokens = _catalog_tokens(query)
     for cat in catalog:
         names = (cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug"))
-        score = max((_catalog_match_score(query, name) for name in names if name), default=0.0)
-        for name in names:
-            if not name:
-                continue
-            nt = _catalog_tokens(name)
-            overlap = len(q_tokens & nt)
-            prefix_hits = sum(
-                1 for qt in q_tokens if len(qt) >= 4 and any(
-                    qt[:4] in token or token[:4] in qt for token in nt if len(token) >= 4
-                )
-            )
-            if overlap:
-                score = max(score, min(0.99, 0.62 + 0.08 * overlap))
-            if prefix_hits:
-                score = max(score, min(0.96, 0.60 + 0.05 * prefix_hits))
+        score = max(
+            (_catalog_match_score(query, name) for name in names if name),
+            default=0.0,
+        )
         ranked.append((float(score), cat))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked
-
 
 def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -> list[dict[str, Any]]:
     """Resolve services using the final confidence/margin contract."""
