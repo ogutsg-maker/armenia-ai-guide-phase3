@@ -420,7 +420,7 @@ def application_service_items(application_id: int) -> list[dict[str, Any]]:
 
 def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] | None = None,
                               limit_per_service: int = 10, actor_user_id: int) -> dict[str, Any]:
-    """Return candidate catalogue labels without making any classification write."""
+    """Return only meaningful live-catalog candidates for human review."""
     if not is_admin(int(actor_user_id)):
         raise PermissionError("admin_required")
     app = get_application_full(int(application_id))
@@ -430,40 +430,24 @@ def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] 
     services = application_service_items(int(application_id))
     wanted = {int(x) for x in service_indexes} if isinstance(service_indexes, list) and service_indexes else None
     catalog = search_catalog(limit=500)
-    per_service = max(3, min(int(limit_per_service or 10), 15))
+    per_service = max(1, min(int(limit_per_service or 10), 5))
     result = []
+
     for service in services:
         idx = int(service["service_index"])
         if wanted is not None and idx not in wanted:
             continue
-        query = str(service.get("name") or service.get("service_name") or "").strip()
-        ranked = []
-        # Candidate generation is deliberately broader than the final resolver:
-        # morphology/word-family variants are useful for human review, but they
-        # never become an automatic DB classification.
-        q = _catalog_text(query)
-        q_tokens = set(q.split())
-        for cat in catalog:
-            names = [cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug")]
-            score = max((_catalog_match_score(query, name) for name in names if name), default=0.0)
-            for name in names:
-                if not name:
-                    continue
-                n = _catalog_text(name)
-                nt = set(n.split())
-                overlap = len(q_tokens & nt)
-                # Armenian/Russian inflection-friendly prefix/substring signal.
-                prefix_hits = sum(
-                    1 for qt in q_tokens if len(qt) >= 4 and any(
-                        qt[:4] in token or token[:4] in qt for token in nt if len(token) >= 4
-                    )
-                )
-                if overlap or prefix_hits:
-                    score = max(score, min(0.98, 0.52 + 0.08 * overlap + 0.05 * prefix_hits))
-            ranked.append((score, cat))
-        ranked.sort(key=lambda item: item[0], reverse=True)
+        query = str(service.get("name") or "").strip()
+        ranked = _catalog_rankings(query, catalog)
+        best_score = ranked[0][0] if ranked else 0.0
+        meaningful = [
+            (score, cat)
+            for score, cat in ranked
+            if score >= 0.60 and (best_score - score) <= 0.15
+        ]
         result.append({
             "service_index": idx,
+            "service_id": int(service["service_id"]),
             "service_name": query,
             "current_category": service.get("category_name_am"),
             "candidates": [{
@@ -474,9 +458,9 @@ def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] 
                 "master_name_am": cat.get("master_name_am"),
                 "master_name_ru": cat.get("master_name_ru"),
                 "master_name_en": cat.get("master_name_en"),
-                "category_id": cat.get("id"),
+                "category_id": int(cat.get("id")),
                 "score": round(float(score), 4),
-            } for score, cat in ranked[:per_service]],
+            } for score, cat in meaningful[:per_service]],
         })
     return {"application_id": int(application_id), "items": result}
 
