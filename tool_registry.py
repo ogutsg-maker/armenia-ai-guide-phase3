@@ -522,15 +522,13 @@ class ToolRegistry:
     def _visible_specs(self) -> list[ToolSpec]:
         if self.context_type == ContextType.ADMIN and not self._admin_allowed():
             return []
-        visible = [s for s in self._all_specs() if self.context_type in s.contexts]
-        value = self._state_entity_id(entity_type)
-        if value is None:
-            return {
-                "ok": False,
-                "needs_clarification": True,
-                "question": "Какой именно объект выбрать?",
-            }
-        return {"ok": True, "id": value}
+        return [s for s in self._all_specs() if self.context_type in s.contexts]
+
+    def definitions(self) -> list[dict[str, Any]]:
+        return [s.schema() for s in self._visible_specs()]
+
+    def spec(self, name: str) -> ToolSpec | None:
+        return next((s for s in self._visible_specs() if s.name == name), None)
 
     def _prepare_action(self, name: str, args: dict[str, Any], summary: str) -> dict[str, Any]:
         return {
