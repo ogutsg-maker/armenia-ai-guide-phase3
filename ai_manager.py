@@ -308,10 +308,7 @@ class AIManager:
             return fallback
         company = str(args.get("company_name") or "").strip()
         items = []
-        if name == "add_service":
-            raw_items = [args]
-        else:
-            raw_items = list(args.get("services") or [])
+        raw_items = [args] if name == "add_service" else list(args.get("services") or [])
         for item in raw_items:
             service_name = str(item.get("name") or "").strip()
             if not service_name:
@@ -326,26 +323,21 @@ class AIManager:
                     shown = str(price)
                 line += f" — {shown} ֏"
             items.append(line)
+        joined = "\n".join(items) or "• —"
         if language == "hy":
-            title = f"Ավելացնել «{company or 'ընկերություն'}» ընկերությունում հետևյալ ծառայությունները"
-            return title + ":
-" + ("
-".join(items) or "• —") + "
-
-Հաստատո՞ւմ եք։"
+            return (
+                f"Ավելացնել «{company or 'ընկերություն'}» ընկերությունում հետևյալ ծառայությունները:"
+                f"\n{joined}\n\nՀաստատո՞ւմ եք։"
+            )
         if language == "ru":
-            title = f"Добавить в компанию «{company or 'компанию'}» следующие услуги"
-            return title + ":
-" + ("
-".join(items) or "• —") + "
-
-Подтверждаете?"
-        title = f"Add the following services to “{company or 'the company'}”"
-        return title + ":
-" + ("
-".join(items) or "• —") + "
-
-Confirm?"
+            return (
+                f"Добавить в компанию «{company or 'компанию'}» следующие услуги:"
+                f"\n{joined}\n\nПодтверждаете?"
+            )
+        return (
+            f"Add the following services to “{company or 'the company'}”:"
+            f"\n{joined}\n\nConfirm?"
+        )
 
     @staticmethod
     def _confirmation_text(language: str, summary: str) -> str:
