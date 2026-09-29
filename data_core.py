@@ -365,6 +365,66 @@ def apply_application_service_price(*, application_id: int, service_index: int,
     }
 
 
+def prepare_bulk_catalog_resolution(*, application_id: int, resolve_all: bool = True,
+                                      actor_user_id: int) -> dict[str, Any]:
+    """Resolve all application services against the live catalog and prepare confirmation."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    if not resolve_all:
+        raise ValueError("bulk_resolution_requires_resolve_all")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    services = _application_payload_services(app)
+    if not services:
+        raise ValueError("application_services_missing")
+
+    resolved = resolve_catalog_services(services, limit=500)
+    mappings: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
+    for index, item in enumerate(resolved):
+        status = str(item.get("catalog_match_status") or "")
+        category_id = item.get("category_id")
+        master_id = item.get("master_category_id")
+        service_name = str(item.get("name") or item.get("service_name") or "").strip()
+        score = float(item.get("catalog_match_score") or 0.0)
+        if status == "matched" and category_id and master_id:
+            cat = get_catalog_category(int(category_id))
+            if cat and cat.get("is_active"):
+                mappings.append({
+                    "service_index": index,
+                    "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
+                    "score": round(score, 4),
+                })
+                continue
+        ambiguous.append({
+            "service_index": index,
+            "service_name": service_name,
+            "score": round(score, 4),
+            "status": "needs_admin_review",
+        })
+
+    if ambiguous:
+        return {
+            "ok": True,
+            "status": "needs_admin_review",
+            "requires_confirmation": False,
+            "application_id": int(application_id),
+            "resolved": mappings,
+            "ambiguous": ambiguous,
+            "message": "bulk_catalog_resolution_needs_review",
+        }
+
+    preview = prepare_catalog_resolution(
+        application_id=int(application_id),
+        mappings=mappings,
+        actor_user_id=int(actor_user_id),
+    )
+    preview["resolution_mode"] = "bulk"
+    preview["application_id"] = int(application_id)
+    return preview
+
+
 def prepare_catalog_resolution(*, application_id: int, mappings: list[dict[str, Any]],
                                actor_user_id: int) -> dict[str, Any]:
     """Validate proposed mappings and prepare an explicit confirmation action."""
