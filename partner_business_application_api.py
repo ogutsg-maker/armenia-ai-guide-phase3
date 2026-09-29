@@ -640,7 +640,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
 
     async def admin_applications(request):
         _admin(request)
-        rows=_all("""SELECT a.*,p.business_name AS partner_legacy_name,p.user_id,
+        rows=_all("""SELECT a.*,p.business_name AS partner_legacy_name,p.user_id,p.status AS partner_status,
                             b.name AS business_name_db,b.phone AS business_phone,
                             po.object_name AS object_name_db,po.address AS object_address,
                             po.city AS object_city,po.marz AS object_marz,po.phone AS object_phone,
