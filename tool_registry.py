@@ -101,7 +101,7 @@ class ToolRegistry:
         return [
             self._spec(
                 "catalog_candidates",
-                "Return real live catalog candidates for the supplied service meanings. Use this before registration save when mapping services. The backend returns existing catalog names and IDs; the model must choose only from returned names and must never invent IDs.",
+                "Return real live catalog candidates for the supplied service meanings. Use this before registration save when mapping services. The backend returns existing catalog slugs and names; the model must choose only from returned slugs and must never invent slugs or IDs.",
                 {
                     "services": {
                         "type": "array",
@@ -114,17 +114,8 @@ class ToolRegistry:
                 contexts=(ContextType.REGISTRATION, ContextType.PARTNER, ContextType.ADMIN),
             ),
             self._spec(
-                "catalog_choices",
-                "Return the complete active live catalogue of canonical subcategory names grouped by their parent direction. Use this during partner registration so the model can choose the exact canonical subcategory by meaning. The backend owns IDs and parent links; the model must return only a canonical name from this list and must never invent IDs.",
-                {
-                    "limit": {"type": "integer"},
-                },
-                required=(),
-                contexts=(ContextType.REGISTRATION,),
-            ),
-            self._spec(
                 "save_completed_application",
-                "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. The model may supply only canonical catalogue names returned by catalog_choices; the backend resolves those names to live category IDs and their parent master category. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never invent category IDs.",
+                "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. The model may supply only catalog_slug values returned by catalog_candidates; the backend resolves those slugs to live category IDs and their parent master category. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never invent category IDs.",
                 {
                     "company_name": {"type": "string"},
                     "marz": _nullable("string"),
@@ -140,7 +131,7 @@ class ToolRegistry:
                             "type": "object",
                             "properties": {
                                 "name": {"type": "string"},
-                                "catalog_name": _nullable("string"),
+                                "catalog_slug": _nullable("string"),
                                 "price": _nullable("number"),
                                 "price_type": {"type": "string", "enum": ["from", "fixed"]},
                             },
