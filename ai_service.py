@@ -95,16 +95,45 @@ class AIService:
             except Exception:
                 return {}
 
-    def _groq_completion_json(self, messages, model: str, max_tokens: int):
+    def _normalize_to_strict_json_schema(self, project_schema: Any) -> dict:
+        """Translate project DSL schemas into strict JSON Schema without mutating ready JSON Schema."""
+        TYPE_WHITELIST = {"string", "integer", "number", "boolean", "null"}
+        if isinstance(project_schema, dict):
+            if "type" in project_schema and "properties" in project_schema:
+                return project_schema
+            properties = {}
+            required = []
+            for key, val in project_schema.items():
+                required.append(key)
+                properties[key] = self._normalize_to_strict_json_schema(val)
+            return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+        if isinstance(project_schema, list):
+            if not project_schema:
+                raise ValueError("DSL Schema Error: empty array is not allowed")
+            return {"type": "array", "items": self._normalize_to_strict_json_schema(project_schema[0])}
+        if isinstance(project_schema, str):
+            types = [t.strip() for t in project_schema.split("|")]
+            for item in types:
+                if item not in TYPE_WHITELIST:
+                    raise ValueError(f"DSL Schema Error: unknown type '{item}'")
+            return {"type": types if len(types) > 1 else types[0]}
+        raise ValueError(f"DSL Schema Error: unsupported schema structure: {type(project_schema)}")
+
+    def _groq_completion_json(self, messages, model: str, max_tokens: int, schema: dict = None):
         if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
-        kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens,"response_format":{"type":"json_object"}}
+        kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens}
+        if schema:
+            strict_schema = self._normalize_to_strict_json_schema(schema)
+            kwargs["response_format"]={"type":"json_schema","json_schema":{"name":"structured_nlu_response","schema":strict_schema,"strict":True}}
+        else:
+            kwargs["response_format"]={"type":"json_object"}
         return self.groq_client.chat.completions.create(**kwargs), model
 
-    async def chat_json(self, system_prompt: str, user_text: str, *, max_tokens: int = 900, chain: str = "unknown", stage: str = "unknown", operation: str = "chat_json", purpose: str = "", user_id: int | None = None, partner_id: int | None = None, company_id: int | None = None, order_id: int | None = None, negotiation_id: int | None = None) -> dict:
+    async def chat_json(self, system_prompt: str, user_text: str, *, max_tokens: int = 900, chain: str = "unknown", stage: str = "unknown", operation: str = "chat_json", purpose: str = "", user_id: int | None = None, partner_id: int | None = None, company_id: int | None = None, order_id: int | None = None, negotiation_id: int | None = None, schema: dict | None = None) -> dict:
         """Structured JSON through Groq only."""
         clean=self.clean_sensitive_data(user_text)
         if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
-        response,model=await asyncio.to_thread(self._groq_completion_json,[{"role":"system","content":system_prompt},{"role":"user","content":clean}],self.groq_model,max_tokens)
+        response,model=await asyncio.to_thread(self._groq_completion_json,[{"role":"system","content":system_prompt},{"role":"user","content":clean}],self.groq_model,max_tokens,schema)
         usage=getattr(response,"usage",None)
         ai_cost_center.record_usage(provider="groq",model=model,chain=chain,stage=stage,operation=operation,purpose=purpose,user_id=user_id,partner_id=partner_id,company_id=company_id,order_id=order_id,negotiation_id=negotiation_id,input_tokens=int(getattr(usage,"prompt_tokens",getattr(usage,"input_tokens",0)) or 0),output_tokens=int(getattr(usage,"completion_tokens",getattr(usage,"output_tokens",0)) or 0),cached_tokens=int(getattr(getattr(usage,"prompt_tokens_details",None),"cached_tokens",0) or 0),reasoning_tokens=int(getattr(getattr(usage,"completion_tokens_details",None),"reasoning_tokens",0) or 0))
         data=self._json(self._text(response))
@@ -113,7 +142,7 @@ class AIService:
 
     async def structured_json(self, system_prompt: str, user_text: str, *, schema_name: str = "response", schema: dict | None = None, max_tokens: int = 900, chain: str = "unknown", stage: str = "unknown", operation: str = "structured_json", purpose: str = "", partner_id: int | None = None, user_id: int | None = None, company_id: int | None = None, order_id: int | None = None, negotiation_id: int | None = None) -> dict:
         """Strict JSON through Groq only."""
-        return await self.chat_json(system_prompt,user_text,max_tokens=max_tokens,chain=chain,stage=stage,operation=operation,purpose=purpose,partner_id=partner_id,user_id=user_id,company_id=company_id,order_id=order_id,negotiation_id=negotiation_id)
+        return await self.chat_json(system_prompt,user_text,max_tokens=max_tokens,chain=chain,stage=stage,operation=operation,purpose=purpose,partner_id=partner_id,user_id=user_id,company_id=company_id,order_id=order_id,negotiation_id=negotiation_id,schema=schema)
 
     async def route_message(self, text: str, role: str, context: dict | None = None) -> dict:
         context = context or {}
@@ -229,6 +258,7 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
              {"role": "user", "content": clean}],
             role_model,
             900,
+            schema=schema,
         )
         usage = getattr(response, "usage", None)
         ai_cost_center.record_usage(
