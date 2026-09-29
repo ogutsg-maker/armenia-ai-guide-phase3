@@ -182,7 +182,7 @@ def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -
     for index, service in enumerate(services):
         item = dict(service)
         name = str(item.get("name") or item.get("service_name") or "").strip()
-        item["service_id"] = int(item.get("service_id") or index + 1)
+        item["service_id"] = index + 1
         if not name:
             item.update({
                 "category_id": None,
@@ -399,7 +399,7 @@ def application_service_items(application_id: int) -> list[dict[str, Any]]:
         category = get_catalog_category(int(category_id)) if category_id not in (None, "") else None
         result.append({
             "service_index": index,
-            "service_id": int(service.get("service_id") or service.get("id") or index + 1),
+            "service_id": index + 1,
             "name": str(service.get("name") or service.get("service_name") or "").strip(),
             "price": service.get("price"),
             "price_type": service.get("price_type"),
