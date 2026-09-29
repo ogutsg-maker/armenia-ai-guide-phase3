@@ -1341,6 +1341,57 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
             )
             bid = int(business["id"])
 
+    # Materialize the approved application into the partner's canonical
+    # company/address structure. The application remains the audit source;
+    # partner cabinet reads the normalized entities.
+    execute(
+        """UPDATE partner_businesses
+           SET name=%s,description=%s,phone=%s,status='active',updated_at=NOW()
+           WHERE id=%s AND partner_id=%s""",
+        (
+            str(row.get("business_name") or "").strip() or (business.get("name") or "Իմ բիզնեսը"),
+            str(row.get("description") or "").strip() or None,
+            str(row.get("phone") or "").strip() or None,
+            int(bid), partner_id,
+        ),
+    )
+
+    app_address = str(row.get("address") or "").strip()
+    app_city = str(row.get("location_city") or "").strip() or None
+    app_marz = str(row.get("location_marz") or "").strip() or None
+    app_phone = str(row.get("phone") or "").strip() or None
+    if app_address:
+        existing_object = one(
+            """SELECT id FROM partner_objects
+               WHERE partner_id=%s AND business_id=%s AND address=%s
+                 AND COALESCE(city,'')=COALESCE(%s,'')
+               ORDER BY id LIMIT 1""",
+            (partner_id, int(bid), app_address, app_city),
+        )
+        if existing_object:
+            execute(
+                """UPDATE partner_objects
+                   SET city=%s,marz=%s,phone=%s,
+                       object_name=%s
+                   WHERE id=%s AND partner_id=%s""",
+                (
+                    app_city, app_marz, app_phone,
+                    str(row.get("business_name") or "").strip() or None,
+                    int(existing_object["id"]), partner_id,
+                ),
+            )
+        else:
+            execute(
+                """INSERT INTO partner_objects
+                   (partner_id,business_id,object_name,address,city,marz,phone)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s)""",
+                (
+                    partner_id, int(bid),
+                    str(row.get("business_name") or "").strip() or None,
+                    app_address, app_city, app_marz, app_phone,
+                ),
+            )
+
     if not approved_direction:
         approved_direction = one(
             """SELECT id FROM partner_directions
@@ -1402,7 +1453,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         if existing:
             execute(
                 """UPDATE services
-                   SET category_id=%s,name=%s,price=%s,status='active',
+                   SET category_id=%s,name=%s,price=%s,status='approved',
                        data_json=%s,updated_at=NOW()
                    WHERE id=%s""",
                 (cid, name, price, data_json, int(existing["id"])),
@@ -1411,7 +1462,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
             execute(
                 """INSERT INTO services
                    (partner_id,business_id,category_id,subcategory_id,name,price,status,data_json)
-                   VALUES(%s,%s,%s,NULL,%s,%s,'active',%s)""",
+                   VALUES(%s,%s,%s,NULL,%s,%s,'approved',%s)""",
                 (partner_id, bid, cid, name, price, data_json),
             )
 
@@ -1425,6 +1476,12 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         """UPDATE partners
            SET status='approved',verification_status='approved',rejection_reason=NULL
            WHERE id=%s""",
+        (partner_id,),
+    )
+    execute(
+        """UPDATE users
+           SET is_verified=TRUE
+           WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
         (partner_id,),
     )
     return one(
