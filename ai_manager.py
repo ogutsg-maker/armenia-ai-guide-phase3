@@ -873,32 +873,6 @@ class AIManager:
         # button selections and confirmation/cancellation.
         return None
 
-        service_index, service_name = price_edit
-        try:
-            import data_core
-            preview = data_core.prepare_application_service_price_update(
-                application_id=app_id,
-                service_index=service_index,
-                price=price_edit and int(re.search(r"(\d{1,3}(?:[\s.,]\d{3})+|\d{3,7})", str(message)).group(1).replace(" ", "").replace(",", "").replace(".", "")),
-                actor_user_id=telegram_id,
-            )
-            action = dict(preview.get("action") or {})
-            await self._set_pending(telegram_id, ContextType.ADMIN, action)
-            summary = str(preview.get("summary") or "")
-            await self._save_history(
-                telegram_id, ContextType.ADMIN, "ai", summary,
-                {"fast_path": True, "pending_action": action},
-            )
-            return {
-                "reply": summary,
-                "confirmation_pending": True,
-                "fast_path": True,
-                "tool_result": preview,
-            }
-        except Exception as exc:
-            logger.exception("Admin deterministic price fast path failed")
-            return {"reply": self._error_text(language), "error": str(exc)}
-
 
     async def _pending(self, telegram_id: int, context: ContextType):
         ctx = await self._session_context(telegram_id, context)
