@@ -596,7 +596,7 @@ class AIManager:
         document_correction_intent = re.search(
             r"(?:հայտ|заяв|application)\s*(?:#|№)?\s*\d*.*?"
             r"(?:փաստաթուղթ|документ|document).*?"
-            r"(?:ուղարկ|отправ|замен|нов|новый|նոր|ճշտ|исправ|replace|resubmit)",
+            r"(?:ուղարկ|ուղղարկ|отправ|попрос|замен|нов|новый|նոր|ճշտ|исправ|replace|resubmit)",
             str(message or "").casefold(),
         )
         if document_correction_intent:
