@@ -128,7 +128,7 @@ def _catalog_tokens(value: Any) -> set[str]:
 
 
 def _catalog_match_score(query: str, candidate: str) -> float:
-    """Conservative morphology-aware score for live catalog matching."""
+    """Conservative exact/phrase/token-root match for service categories."""
     q = _catalog_text(query)
     c = _catalog_text(candidate)
     if not q or not c:
@@ -137,9 +137,8 @@ def _catalog_match_score(query: str, candidate: str) -> float:
         return 1.0
 
     def stem(token: str) -> str:
-        # Armenian/Russian service names frequently differ only by inflection.
         suffixes = (
-            "ներով", "ներին", "ներից", "ների", "երով", "երով", "ություն", "ությունների",
+            "ներով", "ներին", "ներից", "ների", "երով", "ություն", "ությունների",
             "ության", "ություններ", "ական", "ային", "ը", "ի", "ին", "ից", "ով", "ներ",
             "ами", "ями", "ого", "ему", "ом", "ов", "ы", "и", "а", "я", "у", "ю", "е",
         )
@@ -153,23 +152,24 @@ def _catalog_match_score(query: str, candidate: str) -> float:
     ct = _catalog_tokens(c)
     qs = {stem(t) for t in qt}
     cs = {stem(t) for t in ct}
+
     if qs == cs:
         return 0.96
+
+    # For multi-word services, shared generic words such as «մազերի» are
+    # insufficient by themselves. Require the action/service root to agree.
+    if len(qs) >= 2 and len(cs) >= 2:
+        specific_q = {t for t in qs if len(t) >= 4}
+        specific_c = {t for t in cs if len(t) >= 4}
+        if not (specific_q & specific_c):
+            return 0.0
 
     overlap = len(qs & cs) / max(1, len(qs | cs))
     containment = 1.0 if q in c or c in q else 0.0
 
-    def grams(value: str) -> set[str]:
-        compact = value.replace(" ", "")
-        return {compact[i:i+2] for i in range(max(0, len(compact)-1))}
-
-    qg, cg = grams(q), grams(c)
-    bigram = len(qg & cg) / max(1, len(qg | cg)) if qg and cg else 0.0
-
-    # Token-root agreement is the strongest signal; raw character similarity
-    # alone must never manufacture a plausible category.
-    return min(1.0, 0.68 * overlap + 0.20 * bigram + 0.12 * containment)
-
+    # Character similarity is only a tie-breaker after meaningful token/root
+    # agreement; it cannot manufacture a category from a generic shared word.
+    return min(1.0, 0.78 * overlap + 0.22 * containment)
 
 def _catalog_rankings(query: str, catalog: list[dict[str, Any]]) -> list[tuple[float, dict[str, Any]]]:
     """Rank live catalog entries conservatively; irrelevant entries stay low."""
