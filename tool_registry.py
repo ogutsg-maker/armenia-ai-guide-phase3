@@ -538,11 +538,7 @@ class ToolRegistry:
         return next((s for s in self._visible_specs() if s.name == name), None)
 
     def _save_completed_application(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Validate registration data and resolve canonical subcategories in Python.
-
-        Groq may choose a canonical catalogue *name* from catalog_choices, but
-        it never supplies category IDs. Data Core remains the source of truth.
-        """
+        """Validate registration data and resolve live catalog slugs in Python."""
         if self.context_type != ContextType.REGISTRATION:
             raise PermissionError("registration_only")
         company_name = str(args.get("company_name") or "").strip()
@@ -553,12 +549,11 @@ class ToolRegistry:
             raise ValueError("registration_required_fields_missing")
 
         catalog = data_core.search_catalog(limit=500)
-        by_name: dict[str, dict[str, Any]] = {}
-        for cat in catalog:
-            for key in ("name_am", "name_ru", "name_en", "slug"):
-                value = cat.get(key)
-                if value:
-                    by_name[data_core._catalog_text(value)] = cat
+        by_slug = {
+            str(cat.get("slug") or "").strip(): cat
+            for cat in catalog
+            if str(cat.get("slug") or "").strip()
+        }
 
         normalized_services = []
         for raw in services:
@@ -567,10 +562,10 @@ class ToolRegistry:
             name = str(raw.get("name") or "").strip()
             if not name:
                 raise ValueError("service_name_required")
-            catalog_name = str(raw.get("catalog_name") or "").strip()
-            if not catalog_name:
+            catalog_slug = str(raw.get("catalog_slug") or "").strip()
+            if not catalog_slug:
                 raise ValueError("catalog_subcategory_required")
-            cat = by_name.get(data_core._catalog_text(catalog_name))
+            cat = by_slug.get(catalog_slug)
             if not cat or not cat.get("id") or not cat.get("master_category_id"):
                 raise ValueError("catalog_subcategory_not_in_live_catalog")
             price = raw.get("price")
@@ -588,6 +583,7 @@ class ToolRegistry:
                 "name": name,
                 "price": price,
                 "price_type": price_type,
+                "catalog_slug": str(cat.get("slug") or ""),
                 "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
                 "subcategory_name": cat.get("name_am"),
                 "matched_subcategory_id": int(cat["id"]),
@@ -614,7 +610,7 @@ class ToolRegistry:
             profile=profile,
         )
         return {"ok": True, "draft": result, "catalog_resolved": True}
-    
+
     def _prepare_action(self, name: str, args: dict[str, Any], summary: str) -> dict[str, Any]:
         return {
             "ok": True,
@@ -661,30 +657,6 @@ class ToolRegistry:
                 },
             }
 
-        if name == "catalog_choices":
-            limit = max(1, min(int(args.get("limit") or 500), 500))
-            catalog = data_core.search_catalog(limit=500)
-            items = []
-            seen = set()
-            for cat in catalog:
-                canonical = cat.get("name_am") or cat.get("name_ru") or cat.get("name_en")
-                key = data_core._catalog_text(canonical)
-                if not canonical or key in seen:
-                    continue
-                seen.add(key)
-                items.append({
-                    "catalog_name": canonical,
-                    "name_am": cat.get("name_am"),
-                    "name_ru": cat.get("name_ru"),
-                    "name_en": cat.get("name_en"),
-                    "master_name_am": cat.get("master_name_am"),
-                    "master_name_ru": cat.get("master_name_ru"),
-                    "master_name_en": cat.get("master_name_en"),
-                })
-                if len(items) >= limit:
-                    break
-            return {"ok": True, "items": items}
-
         if name == "catalog_candidates":
             services = [str(x or "").strip() for x in (args.get("services") or []) if str(x or "").strip()]
             per_service = max(1, min(int(args.get("limit_per_service") or 5), 8))
@@ -700,6 +672,7 @@ class ToolRegistry:
                 result.append({
                     "service": service,
                     "candidates": [{
+                        "catalog_slug": cat.get("slug"),
                         "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
                         "name_am": cat.get("name_am"),
                         "name_ru": cat.get("name_ru"),
@@ -707,7 +680,6 @@ class ToolRegistry:
                         "master_name_am": cat.get("master_name_am"),
                         "master_name_ru": cat.get("master_name_ru"),
                         "master_name_en": cat.get("master_name_en"),
-                        "category_id": cat.get("id"),
                         "score": round(float(sc), 4),
                     } for sc, cat in ranked[:per_service]]
                 })
