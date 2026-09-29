@@ -519,7 +519,7 @@ async def api_admin_partner_detail(request):
     partner = _db_fetchone("SELECT * FROM partners WHERE id=%s", (pid,))
     if not partner:
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
-    docs = _db_fetchall("SELECT id, partner_direction_id, document_type, original_filename, mime_type, file_size, status, rejection_reason, storage_path, created_at, reviewed_at FROM partner_verification_documents WHERE partner_id=%s ORDER BY created_at DESC", (pid,))
+    docs = _db_fetchall("SELECT id, application_id, business_id, partner_direction_id, document_type, original_filename, mime_type, file_size, status, rejection_reason, storage_path, is_current, replaced_by, created_at, reviewed_at FROM partner_verification_documents WHERE partner_id=%s ORDER BY created_at DESC", (pid,))
     # Do not silently restore an archived company. Admin deletion/archival
     # must remain visible as the final state; restoration is an explicit
     # future admin action, not a side effect of opening the partner profile.
