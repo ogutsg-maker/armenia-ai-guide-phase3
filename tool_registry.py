@@ -114,8 +114,17 @@ class ToolRegistry:
                 contexts=(ContextType.REGISTRATION, ContextType.PARTNER, ContextType.ADMIN),
             ),
             self._spec(
+                "catalog_choices",
+                "Return the complete active live catalogue of canonical subcategory names grouped by their parent direction. Use this during partner registration so the model can choose the exact canonical subcategory by meaning. The backend owns IDs and parent links; the model must return only a canonical name from this list and must never invent IDs.",
+                {
+                    "limit": {"type": "integer"},
+                },
+                required=(),
+                contexts=(ContextType.REGISTRATION,),
+            ),
+            self._spec(
                 "save_completed_application",
-                "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never call it before all required fields are known.",
+                "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. The model may supply only canonical catalogue names returned by catalog_choices; the backend resolves those names to live category IDs and their parent master category. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never invent category IDs.",
                 {
                     "company_name": {"type": "string"},
                     "marz": _nullable("string"),
@@ -177,8 +186,7 @@ class ToolRegistry:
             self._spec(
                 "get_my_orders",
                 "List orders visible to the authenticated client or partner.",
-                {"status": _nullable("string"), "limit": {"type": "integer"}},
-                contexts=(ContextType.CLIENT, ContextType.PARTNER),
+                {"status": _nullable("string"), "limit": {"type": "integer"}},                contexts=(ContextType.CLIENT, ContextType.PARTNER),
             ),
             self._spec(
                 "get_my_order",
@@ -357,8 +365,7 @@ class ToolRegistry:
                 "admin_preview_catalog_resolution",
                 "Validate proposed catalogue mappings for an application and prepare a confirmation-only action. The model supplies service_index plus an exact catalog_name previously returned by admin_catalog_candidates. The backend resolves the real category IDs.",
                 {
-                    "application_id": {"type": "integer"},
-                    "mappings": {
+                    "application_id": {"type": "integer"},                    "mappings": {
                         "type": "array", "minItems": 1,
                         "items": {
                             "type": "object",
@@ -530,6 +537,84 @@ class ToolRegistry:
     def spec(self, name: str) -> ToolSpec | None:
         return next((s for s in self._visible_specs() if s.name == name), None)
 
+    def _save_completed_application(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Validate registration data and resolve canonical subcategories in Python.
+
+        Groq may choose a canonical catalogue *name* from catalog_choices, but
+        it never supplies category IDs. Data Core remains the source of truth.
+        """
+        if self.context_type != ContextType.REGISTRATION:
+            raise PermissionError("registration_only")
+        company_name = str(args.get("company_name") or "").strip()
+        city = str(args.get("city") or "").strip()
+        phone = str(args.get("phone") or "").strip()
+        services = args.get("services") or []
+        if not company_name or not city or not phone or not isinstance(services, list) or not services:
+            raise ValueError("registration_required_fields_missing")
+
+        catalog = data_core.search_catalog(limit=500)
+        by_name: dict[str, dict[str, Any]] = {}
+        for cat in catalog:
+            for key in ("name_am", "name_ru", "name_en", "slug"):
+                value = cat.get(key)
+                if value:
+                    by_name[data_core._catalog_text(value)] = cat
+
+        normalized_services = []
+        for raw in services:
+            if not isinstance(raw, dict):
+                raise ValueError("invalid_service_payload")
+            name = str(raw.get("name") or "").strip()
+            if not name:
+                raise ValueError("service_name_required")
+            catalog_name = str(raw.get("catalog_name") or "").strip()
+            if not catalog_name:
+                raise ValueError("catalog_subcategory_required")
+            cat = by_name.get(data_core._catalog_text(catalog_name))
+            if not cat or not cat.get("id") or not cat.get("master_category_id"):
+                raise ValueError("catalog_subcategory_not_in_live_catalog")
+            price = raw.get("price")
+            if price is not None:
+                try:
+                    price = float(price)
+                except (TypeError, ValueError):
+                    raise ValueError("invalid_service_price")
+                if price < 0:
+                    raise ValueError("invalid_service_price")
+            price_type = str(raw.get("price_type") or "fixed").strip().lower()
+            if price_type not in ("from", "fixed"):
+                raise ValueError("invalid_price_type")
+            normalized_services.append({
+                "name": name,
+                "price": price,
+                "price_type": price_type,
+                "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
+                "subcategory_name": cat.get("name_am"),
+                "matched_subcategory_id": int(cat["id"]),
+                "subcategory_id": int(cat["id"]),
+                "category_id": int(cat["id"]),
+                "master_category_id": int(cat["master_category_id"]),
+                "master_name_am": cat.get("master_name_am"),
+                "master_name_ru": cat.get("master_name_ru"),
+                "master_name_en": cat.get("master_name_en"),
+            })
+
+        profile = {
+            "business_name": company_name,
+            "marz": args.get("marz"),
+            "city": city,
+            "address": args.get("address"),
+            "phone": phone,
+            "working_hours": args.get("working_hours"),
+            "description": args.get("description"),
+            "services": normalized_services,
+        }
+        result = data_core.save_partner_application_draft(
+            user_id=self.telegram_id,
+            profile=profile,
+        )
+        return {"ok": True, "draft": result, "catalog_resolved": True}
+    
     def _prepare_action(self, name: str, args: dict[str, Any], summary: str) -> dict[str, Any]:
         return {
             "ok": True,
@@ -538,7 +623,6 @@ class ToolRegistry:
             "action": {"name": name, "args": dict(args)},
             "summary": summary,
         }
-
     async def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         args = dict(args or {})
         spec = self.spec(name)
@@ -577,18 +661,41 @@ class ToolRegistry:
                 },
             }
 
+        if name == "catalog_choices":
+            limit = max(1, min(int(args.get("limit") or 500), 500))
+            catalog = data_core.search_catalog(limit=500)
+            items = []
+            seen = set()
+            for cat in catalog:
+                canonical = cat.get("name_am") or cat.get("name_ru") or cat.get("name_en")
+                key = data_core._catalog_text(canonical)
+                if not canonical or key in seen:
+                    continue
+                seen.add(key)
+                items.append({
+                    "catalog_name": canonical,
+                    "name_am": cat.get("name_am"),
+                    "name_ru": cat.get("name_ru"),
+                    "name_en": cat.get("name_en"),
+                    "master_name_am": cat.get("master_name_am"),
+                    "master_name_ru": cat.get("master_name_ru"),
+                    "master_name_en": cat.get("master_name_en"),
+                })
+                if len(items) >= limit:
+                    break
+            return {"ok": True, "items": items}
+
         if name == "catalog_candidates":
             services = [str(x or "").strip() for x in (args.get("services") or []) if str(x or "").strip()]
             per_service = max(1, min(int(args.get("limit_per_service") or 5), 8))
             catalog = data_core.search_catalog(limit=500)
-            def score(q, candidate):
-                return data_core._catalog_match_score(q, candidate)
             result = []
             for service in services[:30]:
                 ranked = []
                 for cat in catalog:
                     names = [cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug")]
-                    ranked.append((max((score(service, n) for n in names if n), default=0.0), cat))
+                    score = max((data_core._catalog_match_score(service, n) for n in names if n), default=0.0)
+                    ranked.append((score, cat))
                 ranked.sort(key=lambda x: x[0], reverse=True)
                 result.append({
                     "service": service,
@@ -717,8 +824,7 @@ class ToolRegistry:
                             marz=args.get("marz"),
                             city=args.get("city"),
                         )}
-            if name == "admin_query":
-                entity = str(args["entity"]).lower()
+            if name == "admin_query":                entity = str(args["entity"]).lower()
                 query = str(args.get("query") or "").strip()
                 limit = max(1, min(int(args.get("limit") or 30), 100))
                 if entity == "applications":
@@ -897,8 +1003,7 @@ class ToolRegistry:
                 visible = data_core.get_partner_addresses(
                     pid, actor_user_id=self.telegram_id, limit=200
                 )
-                if not any(int(x.get("id") or 0) == address_id for x in visible):
-                    raise PermissionError("address_not_owned")
+                if not any(int(x.get("id") or 0) == address_id for x in visible):                    raise PermissionError("address_not_owned")
                 changes = {k: args.get(k) for k in
                            ("address", "city", "marz", "phone", "object_name")
                            if args.get(k) is not None}
@@ -1077,8 +1182,7 @@ class ToolRegistry:
                 try:
                     app = result.get("application") or {}
                     partner = data_core.get_partner(int(app.get("partner_id") or 0)) if app.get("partner_id") else None
-                    user_id = int(app.get("user_id") or (partner or {}).get("user_id") or (partner or {}).get("telegram_id") or 0)
-                    if user_id:
+                    user_id = int(app.get("user_id") or (partner or {}).get("user_id") or (partner or {}).get("telegram_id") or 0)                    if user_id:
                         from notify import notify
                         await notify(
                             None,
