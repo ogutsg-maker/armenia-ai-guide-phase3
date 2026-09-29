@@ -48,6 +48,9 @@ class SessionState:
     current_pagination_index: int = 0
     pending_action: dict[str, Any] | None = None
     current_list: list[dict[str, Any]] = field(default_factory=list)
+    conversation_state: str = "idle"
+    active_application_id: int | None = None
+    bulk_operation: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any] | None) -> "SessionState":
@@ -67,6 +70,9 @@ class SessionState:
             current_pagination_index=index,
             pending_action=value.get("pending_action") or value.get("ai_manager_pending_action"),
             current_list=items[:50],
+            conversation_state=str(value.get("conversation_state") or "idle"),
+            active_application_id=(int(value.get("active_application_id")) if str(value.get("active_application_id") or "").isdigit() else None),
+            bulk_operation=(str(value.get("bulk_operation")) if value.get("bulk_operation") else None),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +81,9 @@ class SessionState:
             "current_pagination_index": self.current_pagination_index,
             "pending_action": self.pending_action,
             "current_list": self.current_list[:50],
+            "conversation_state": self.conversation_state,
+            "active_application_id": self.active_application_id,
+            "bulk_operation": self.bulk_operation,
         }
 
 
@@ -549,6 +558,48 @@ class AIManager:
             {"active_application_id": app_id},
         )
 
+        text = str(message or "").casefold()
+        bulk_action_intent = re.search(
+            r"(?:դասակարգ|կատեգոր|ենթաուղղ|ուղղիր|ուղղել|fix|classif|categor|resolve|подкатегор|категор|исправ).{0,80}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)", text,
+        ) or re.search(
+            r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,80}(?:դասակարգ|կատեգոր|ենթաուղղ|ուղղ|fix|classif|categor|resolve|подкатегор|категор|исправ)", text,
+        )
+        bulk_state = str(session_context.get("conversation_state") or "") == "bulk_fixing_categories"
+        bare_all = bool(re.fullmatch(r"\s*(?:բոլորը|բոլոր|all|все)\s*[.!?]*\s*", str(message or ""), flags=re.I))
+        if bulk_action_intent or (bulk_state and bare_all):
+            try:
+                preview = data_core.prepare_bulk_catalog_resolution(
+                    application_id=app_id, resolve_all=True, actor_user_id=telegram_id,
+                )
+                if preview.get("status") == "needs_admin_review":
+                    await self._update_session_context(
+                        telegram_id, ContextType.ADMIN,
+                        {"active_application_id": app_id, "conversation_state": "bulk_fixing_categories", "bulk_operation": "resolve_all_categories"},
+                    )
+                    ambiguous = preview.get("ambiguous") or []
+                    names = ", ".join(str(x.get("service_name") or "—") for x in ambiguous)
+                    reply = (
+                        f"Հայտ #{app_id}-ում {len(ambiguous)} ծառայություն հստակ չի դասակարգվել՝ {names}. Չեմ գուշակում. Դրանք պետք է ճշտել։"
+                        if language == "hy" else
+                        f"В заявке #{app_id} {len(ambiguous)} услуг не удалось уверенно классифицировать: {names}. Я не угадываю — их нужно уточнить."
+                        if language == "ru" else
+                        f"Application #{app_id}: {len(ambiguous)} services could not be classified confidently: {names}. I will not guess; they need review."
+                    )
+                    return {"reply": reply, "fast_path": True, "application_id": app_id, "needs_review": True, "tool_result": preview}
+                action = dict(preview.get("action") or {})
+                await self._update_session_context(
+                    telegram_id, ContextType.ADMIN,
+                    {"active_application_id": app_id, "conversation_state": "bulk_fixing_categories", "bulk_operation": "resolve_all_categories"},
+                )
+                await self._set_pending(telegram_id, ContextType.ADMIN, action)
+                summary = str(preview.get("summary") or "")
+                await self._save_history(telegram_id, ContextType.ADMIN, "ai", summary, {"fast_path": True, "bulk_resolution": True, "pending_action": action})
+                confirm = "Հաստատո՞ւմ եք։" if language == "hy" else "Подтверждаете?" if language == "ru" else "Confirm?"
+                return {"reply": summary + "\\n\\n" + confirm, "confirmation_pending": True, "fast_path": True, "application_id": app_id, "tool_result": preview}
+            except Exception as exc:
+                logger.exception("Admin bulk catalog resolution fast path failed")
+                return {"reply": self._error_text(language), "error": str(exc)}
+
         # Read-only application catalogue/subcategory requests are deterministic.
         # This keeps follow-ups such as "բոլորը" anchored to the active application
         # instead of sending the user back through the generic application opener.
@@ -886,7 +937,7 @@ class AIManager:
             telegram_id=int(telegram_id),
             context_type=role,
             trusted_context=trusted,
-            session_state=state.to_dict(),
+            session_state={**state.to_dict(), "conversation_state": session_context.get("conversation_state")},
         )
         definitions = tools.definitions()
 
