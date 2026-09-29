@@ -1163,11 +1163,29 @@ class ToolRegistry:
                 reason = str(args.get("reason") or "").strip()
                 if not reason:
                     raise ValueError("correction_reason_required")
-                return {"ok": True, "item": data_core.request_application_document_correction(
+                result = data_core.request_application_document_correction(
                     application_id=int(args["application_id"]),
                     reason=reason[:3000],
                     actor_user_id=self.telegram_id,
-                )}
+                )
+                # Notify the partner immediately after the confirmed correction request.
+                try:
+                    app = result.get("application") or {}
+                    user_id = int(app.get("user_id") or 0)
+                    if user_id:
+                        from notify import notify
+                        await notify(
+                            None,
+                            user_id,
+                            title="📄 Փաստաթուղթը պետք է փոխարինել",
+                            body="Ադմինիստրատորը խնդրել է նոր փաստաթուղթ ուղարկել։ Պատճառը՝ " + reason[:1000],
+                            kind="document_correction",
+                            audience="partner",
+                            data={"application_id": int(args["application_id"]), "reason": reason[:1000]},
+                        )
+                except Exception:
+                    pass
+                return {"ok": True, "item": result}
             if name == "admin_suspend_partner":
                 reason = str(args.get("reason") or "").strip()
                 if not reason:
