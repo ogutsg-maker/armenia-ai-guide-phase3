@@ -1113,6 +1113,84 @@ class AIManager:
         )
         session_context = await self._session_context(telegram_id, role)
 
+        # HARD FAST PATH: confirmation/cancellation of a pending action must
+        # never go back through Groq. The pending action is backend-owned
+        # state; routing "yes/այո/да" through the model was the source of the
+        # partner confirmation loop in /api/master/{id}/ai-command.
+        state = SessionState.from_dict(session_context)
+        pending = state.pending_action
+        if pending:
+            if self._is_cancel(message):
+                await self._clear_pending(telegram_id, role)
+                reply = self._cancel_text(language)
+                await self._save_history(
+                    telegram_id, role, "ai", reply, {"cancelled": True, "fast_path": True}
+                )
+                return {"reply": reply, "cancelled": True, "fast_path": True}
+
+            if self._is_confirmation(message):
+                pending_name = str(pending.get("name") or "").strip()
+                pending_args = dict(pending.get("args") or {})
+                if str(pending.get("state") or "awaiting_confirmation") != "awaiting_confirmation":
+                    await self._clear_pending(telegram_id, role)
+                    return {
+                        "reply": self._error_text(language),
+                        "confirmed": False,
+                        "fast_path": True,
+                        "error": "invalid_pending_state",
+                    }
+                try:
+                    confirm_tools = ToolRegistry(
+                        telegram_id=int(telegram_id),
+                        context_type=role,
+                        trusted_context=trusted,
+                        session_state=state.to_dict(),
+                    )
+                    result = await confirm_tools.execute_confirmed(
+                        pending_name, pending_args
+                    )
+                    await self._clear_pending(telegram_id, role)
+                    reply = self._done_text(language)
+                    await self._save_history(
+                        telegram_id, role, "ai", reply,
+                        {
+                            "confirmed_action": pending,
+                            "tool_result": result,
+                            "fast_path": True,
+                        },
+                    )
+                    return {
+                        "reply": reply,
+                        "tool_result": result,
+                        "confirmed": True,
+                        "fast_path": True,
+                    }
+                except Exception as exc:
+                    # Keep the pending action so the user can retry the same
+                    # explicit confirmation without asking Groq to rediscover it.
+                    logger.exception("Pending confirmation execution failed")
+                    reply = self._error_text(language)
+                    await self._save_history(
+                        telegram_id, role, "ai", reply,
+                        {"confirmed_action": pending, "error": str(exc)[:1000], "fast_path": True},
+                    )
+                    return {
+                        "reply": reply,
+                        "confirmed": False,
+                        "confirmation_required": True,
+                        "fast_path": True,
+                        "error": str(exc)[:240],
+                    }
+
+            reply = (
+                "Նախ հաստատեք կամ չեղարկեք սպասվող փոփոխությունը։"
+                if language == "hy" else
+                "Сначала подтвердите или отмените ожидающее изменение."
+                if language == "ru" else
+                "Please confirm or cancel the pending change first."
+            )
+            return {"reply": reply, "confirmation_pending": True, "fast_path": True}
+
         if role == ContextType.ADMIN:
             pending_fast = await self._admin_category_pending_fast_path(
                 telegram_id,
