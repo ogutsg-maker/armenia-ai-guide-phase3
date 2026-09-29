@@ -301,6 +301,53 @@ class AIManager:
         )
 
     @staticmethod
+    def _partner_action_summary(language: str, action: dict[str, Any], fallback: str = "") -> str:
+        name = str(action.get("name") or "")
+        args = dict(action.get("args") or {})
+        if name not in {"add_service", "add_services"}:
+            return fallback
+        company = str(args.get("company_name") or "").strip()
+        items = []
+        if name == "add_service":
+            raw_items = [args]
+        else:
+            raw_items = list(args.get("services") or [])
+        for item in raw_items:
+            service_name = str(item.get("name") or "").strip()
+            if not service_name:
+                continue
+            price = item.get("price")
+            line = f"• {service_name}"
+            if price not in (None, ""):
+                try:
+                    number = float(price)
+                    shown = str(int(number)) if number.is_integer() else str(number)
+                except (TypeError, ValueError):
+                    shown = str(price)
+                line += f" — {shown} ֏"
+            items.append(line)
+        if language == "hy":
+            title = f"Ավելացնել «{company or 'ընկերություն'}» ընկերությունում հետևյալ ծառայությունները"
+            return title + ":
+" + ("
+".join(items) or "• —") + "
+
+Հաստատո՞ւմ եք։"
+        if language == "ru":
+            title = f"Добавить в компанию «{company or 'компанию'}» следующие услуги"
+            return title + ":
+" + ("
+".join(items) or "• —") + "
+
+Подтверждаете?"
+        title = f"Add the following services to “{company or 'the company'}”"
+        return title + ":
+" + ("
+".join(items) or "• —") + "
+
+Confirm?"
+
+    @staticmethod
     def _confirmation_text(language: str, summary: str) -> str:
         if language == "hy":
             return f"{summary}\n\nՀաստատո՞ւմ եք։"
@@ -1153,7 +1200,11 @@ class AIManager:
                     model=self.model,
                     messages=messages,
                     tools=definitions or None,
-                    tool_choice="auto" if definitions else None,
+                    tool_choice=(
+                        "required"
+                        if definitions and role == ContextType.PARTNER and round_no == 0
+                        else ("auto" if definitions else None)
+                    ),
                     temperature=0.1,
                     # gpt-oss tool calls can spend completion budget on reasoning before
                     # emitting the JSON arguments. Registration saves may contain many
@@ -1273,9 +1324,11 @@ class AIManager:
                     await self._set_pending(
                         telegram_id, role, pending_action
                     )
-                    reply = self._confirmation_text(
-                        language, pending_action["summary"]
+                    summary = self._partner_action_summary(
+                        language, pending_action, pending_action["summary"]
                     )
+                    pending_action["summary"] = summary
+                    reply = summary
                     await self._save_history(
                         telegram_id, role, "ai", reply,
                         {"confirmation_required": True, "action": pending_action},
