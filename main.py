@@ -159,6 +159,85 @@ async def _start_partner_ai_state(uid: int) -> FSMContext:
     return state
 
 
+async def api_webapp_partner_register(request: web.Request):
+    """Deterministic partner onboarding: create the partner and first company without AI."""
+    try:
+        uid, tg_user = _telegram_user_from_request(request)
+    except web.HTTPException:
+        raise
+    except Exception:
+        return web.json_response({"ok": False, "error": "Unauthorized Telegram Session"}, status=401)
+
+    try:
+        raw_body = await request.json()
+        business_name = str(raw_body.get("business_name") or "").strip()
+        phone = re.sub(r"[\\s\\+\\-]", "", str(raw_body.get("phone") or ""))
+
+        if len(business_name) < 2 or len(business_name) > 100:
+            return web.json_response(
+                {"ok": False, "error": "Բիզնեսի անվանումը պետք է լինի 2-100 նիշ։"},
+                status=400,
+            )
+        if not re.fullmatch(r"374\\d{8}", phone):
+            return web.json_response(
+                {"ok": False, "error": "Հեռախոսահամարը պետք է լինի 374XXXXXXXX ձևաչափով։"},
+                status=400,
+            )
+
+        db.register_user(
+            uid,
+            tg_user.get("username") or f"user_{uid}",
+            tg_user.get("first_name") or tg_user.get("last_name") or "",
+        )
+        db.update_user_field(uid, "role", "partner")
+
+        partner_row = db.ensure_partner(user_id=uid, name=business_name)
+        partner_id = int(partner_row["id"])
+
+        existing_companies = data_core.list_companies(partner_id=partner_id)
+        if existing_companies:
+            business_id = int(existing_companies[0]["id"])
+            logger.info(
+                "Partner registration reused existing company: partner_id=%s business_id=%s",
+                partner_id,
+                business_id,
+            )
+        else:
+            business_row = data_core.create_partner_company(
+                partner_id=partner_id,
+                actor_user_id=int(uid),
+                name=business_name,
+                description=None,
+                phone=phone,
+            )
+            business_id = int(business_row["id"])
+
+        # Clear the legacy onboarding FSM only after the DB operation succeeds.
+        await _partner_state(uid).clear()
+
+        return web.json_response({
+            "ok": True,
+            "partner_id": partner_id,
+            "business_id": business_id,
+        })
+    except web.HTTPException:
+        raise
+    except AssertionError:
+        return web.json_response(
+            {"ok": False, "error": "Գործողությունը մերժված է (Ошибка доступа)"},
+            status=403,
+        )
+    except ValueError as exc:
+        logger.warning("Partner registration validation/data error: %s", exc)
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    except Exception:
+        logger.exception("Critical partner registration failure")
+        return web.json_response(
+            {"ok": False, "error": "Ներքին սխալ գրանցման ժամանակ։"},
+            status=500,
+        )
+
+
 async def api_webapp_partner_start(request: web.Request):
     try:
         uid, user = await _partner_auth(request)
@@ -448,6 +527,7 @@ async def main():
     app.router.add_get("/api/webapp/session", api_webapp_session)
     app.router.add_post("/api/webapp/role", api_webapp_role)
     app.router.add_post("/api/webapp/partner/start", api_webapp_partner_start)
+    app.router.add_post("/api/webapp/partner/register", api_webapp_partner_register)
     app.router.add_post("/api/webapp/partner/message", api_webapp_partner_message)
     app.router.add_get("/api/master/{id}/registration-status", api_partner_registration_status)
     register_stage3_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID)
