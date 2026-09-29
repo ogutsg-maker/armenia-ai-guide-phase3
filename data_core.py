@@ -1147,7 +1147,7 @@ def request_application_document_correction(*, application_id: int, reason: str,
         )
     row = execute(
         """UPDATE partner_applications
-           SET status='document_correction_requested',
+           SET status='pending_partner',
                admin_note=%s, reviewed_by=%s, reviewed_at=NOW(), updated_at=NOW()
            WHERE id=%s AND status NOT IN ('approved','rejected')
            RETURNING *""",

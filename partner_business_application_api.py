@@ -1127,7 +1127,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # must not send it backwards to a fresh admin classification cycle.
             current_status=str(a.get("status") or "")
             source_payload=payload.get("source") if isinstance(payload,dict) else None
-            if source_payload == "partner_service" and current_status in ("document_pending","document_under_review"):
+            if current_status == "document_under_review" or (source_payload == "partner_service" and current_status in ("document_pending","document_under_review")):
                 row = _exec(
                     """UPDATE partner_applications
                        SET status=%s, updated_at=NOW()
@@ -1338,7 +1338,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                      SET status='rejected',rejection_reason=%s,reviewed_by=%s,reviewed_at=NOW(),is_current=FALSE
                      WHERE id=%s""",(reason,admin_id,document_id))
             row=_exec("""UPDATE partner_applications
-                         SET document_id=NULL,status='pending_partner',admin_note=%s,
+                         SET status='pending_partner',admin_note=%s,
                              reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
                          WHERE id=%s RETURNING *""",(reason,admin_id,aid),True)
             try:
