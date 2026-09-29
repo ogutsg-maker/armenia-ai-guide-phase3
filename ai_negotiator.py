@@ -147,12 +147,17 @@ class AINegotiator:
 
         prompt = self.generate_system_prompt(state)
         try:
-            reply = self.ai_service.process_text_request(
+            data = self.ai_service.structured_request(
                 user_text=text,
                 role="client" if actor == "client" else "partner",
                 system_prompt=prompt,
+                schema={"reply_text": "string"},
+                operation="negotiation_reply",
+                purpose="Generate the next negotiation response",
             )
-            reply = str(reply).strip()
+            reply = str(data.get("reply_text") or "").strip()
+            if not reply:
+                raise RuntimeError("empty structured negotiation reply")
         except Exception:
             if actor == "client":
                 reply = "Принял ваше сообщение. Уточните, пожалуйста, желаемую цену и удобное время."
@@ -173,11 +178,15 @@ class AINegotiator:
         price = self._extract_price(user_message)
         if price is not None:
             state["agreed_price"] = price
-        response = self.ai_service.process_text_request(
+        data = self.ai_service.structured_request(
             user_text=user_message,
             role="client",
             system_prompt=self.generate_system_prompt(state),
+            schema={"reply_text": "string"},
+            operation="negotiation_client_reply",
+            purpose="Generate the client negotiation response",
         )
+        response = str(data.get("reply_text") or "").strip()
         return {
             "reply_text": str(response).strip(),
             "updated_context": state,
