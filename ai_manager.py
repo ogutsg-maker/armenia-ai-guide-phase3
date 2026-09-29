@@ -1178,6 +1178,14 @@ class AIManager:
 
         # The session state is backend state, not model-authored identity.
         trusted_for_prompt = dict(trusted)
+        if role == ContextType.ADMIN:
+            pending_for_prompt = SessionState.from_dict(session_context).pending_action
+            if isinstance(pending_for_prompt, dict) and pending_for_prompt.get("type") == "bulk_resolve_categories":
+                trusted_for_prompt["pending_action"] = {
+                    "type": "bulk_resolve_categories",
+                    "application_id": int(pending_for_prompt.get("application_id") or 0),
+                    "unresolved_count": len(pending_for_prompt.get("unresolved_ambiguities") or []),
+                }
         prompt = PromptFactory.build(
             role,
             message=message,
