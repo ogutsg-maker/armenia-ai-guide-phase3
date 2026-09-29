@@ -557,10 +557,14 @@ class AIManager:
             str(message or "").casefold(),
         )
         all_services_intent = re.search(
-            r"(?:\\bբոլորը\\b|\\bբոլոր\\b|\\ball\\b|\\bвсе\\b|բոլոր ծառայ|все услуги|all services)",
+            r"(?:\bբոլորը\b|\bբոլոր\b|\ball\b|\bвсе\b|բոլոր ծառայ|все услуги|all services)",
             str(message or "").casefold(),
         )
-        if catalog_read_intent and (all_services_intent or re.search(r"(?:ծառայ|услуг|service)", str(message or "").casefold())):
+        if (catalog_read_intent and (all_services_intent or re.search(r"(?:ծառայ|услуг|service)", str(message or "").casefold()))) or (all_services_intent and session_context.get("last_admin_read_intent") == "application_catalog"):
+            await self._update_session_context(
+                telegram_id, ContextType.ADMIN,
+                {"active_application_id": app_id, "last_admin_read_intent": "application_catalog"},
+            )
             rows = data_core.application_service_items(app_id)
             lines = []
             for item in rows:
