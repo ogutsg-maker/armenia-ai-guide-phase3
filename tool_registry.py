@@ -261,6 +261,31 @@ class ToolRegistry:
                 contexts=p,
             ),
             self._spec(
+                "add_services",
+                "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. Use one item per distinct service. Confirmation is required once for the whole batch.",
+                {
+                    "company_id": {"type": "integer"},
+                    "services": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "price": _nullable("number"),
+                                "address_id": _nullable("integer"),
+                                "phone": _nullable("string")
+                            },
+                            "required": ["name", "price", "address_id", "phone"],
+                            "additionalProperties": False
+                        }
+                    }
+                },
+                required=("company_id", "services"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=p,
+            ),
+            self._spec(
                 "update_service",
                 "Prepare changing an owned service name, price or category.",
                 {
@@ -1008,6 +1033,50 @@ class ToolRegistry:
                     f"Добавить услугу «{checked['name']}» в компанию «{company.get('name') or ''}»?",
                 )
 
+            if name == "add_services":
+                company_id = int(args["company_id"])
+                company = data_core.get_company(company_id)
+                if not company or int(company.get("partner_id") or 0) != pid:
+                    raise PermissionError("company_not_owned")
+                raw_services = args.get("services") or []
+                if not isinstance(raw_services, list) or not raw_services:
+                    raise ValueError("services_required")
+                addresses = data_core.get_partner_addresses(
+                    pid, actor_user_id=self.telegram_id, limit=200
+                )
+                prepared = []
+                for raw in raw_services[:30]:
+                    if not isinstance(raw, dict):
+                        raise ValueError("invalid_service_payload")
+                    service_name = str(raw.get("name") or "").strip()
+                    if not service_name:
+                        raise ValueError("service_name_required")
+                    checked = data_core.validate_service_payload(
+                        partner_id=pid, actor_user_id=self.telegram_id,
+                        company_id=company_id, name=service_name,
+                        price=raw.get("price"), category_id=None,
+                    )
+                    address_id = raw.get("address_id")
+                    if address_id is not None:
+                        address_id = int(address_id)
+                        obj = next((x for x in addresses if int(x.get("id") or 0) == address_id), None)
+                        if not obj or int(obj.get("business_id") or 0) != company_id:
+                            raise PermissionError("address_not_in_company")
+                    prepared.append({
+                        "name": checked["name"],
+                        "price": checked["price"],
+                        "category_id": None,
+                        "address_id": address_id,
+                        "phone": raw.get("phone"),
+                    })
+                if not prepared:
+                    raise ValueError("services_required")
+                return self._prepare_action(
+                    name,
+                    {"company_id": company_id, "company_name": company.get("name") or "", "services": prepared},
+                    "",
+                )
+
             if name == "update_service":
                 service = data_core.assert_partner_owns_service(
                     int(args["service_id"]), self.telegram_id
@@ -1199,6 +1268,21 @@ class ToolRegistry:
                 price=args.get("price"), category_id=args.get("category_id"),
                 address_id=args.get("address_id"), phone=args.get("phone"),
             )}
+
+        if name == "add_services":
+            company_id = int(args["company_id"])
+            services = args.get("services") or []
+            if not services:
+                raise ValueError("services_required")
+            created = []
+            for item in services:
+                created.append(data_core.create_partner_service(
+                    partner_id=pid, actor_user_id=self.telegram_id,
+                    company_id=company_id, name=item["name"],
+                    price=item.get("price"), category_id=item.get("category_id"),
+                    address_id=item.get("address_id"), phone=item.get("phone"),
+                ))
+            return {"ok": True, "items": created, "count": len(created)}
 
         if name == "update_service":
             return {"ok": True, "item": data_core.update_service_safe(
