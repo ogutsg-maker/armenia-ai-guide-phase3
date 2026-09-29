@@ -331,6 +331,17 @@ class ToolRegistry:
                 contexts=a,
             ),
             self._spec(
+                "bulk_resolve_catalog_categories",
+                "Resolve ALL services of the active application against the current live catalog. This tool is state-scoped during bulk_fixing_categories. The backend independently matches every service and never accepts model-generated category IDs. Ambiguous services are returned for review; otherwise an explicit confirmation action is prepared.",
+                {
+                    "application_id": {"type": "integer"},
+                    "resolve_all": {"type": "boolean"},
+                },
+                required=("application_id", "resolve_all"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
                 "admin_catalog_candidates",
                 "Return live catalogue candidates for each service in a real application. This is a READ-only candidate list: choose only an exact canonical catalogue name returned here. Never invent category names or IDs.",
                 {
@@ -510,10 +521,10 @@ class ToolRegistry:
     def _visible_specs(self) -> list[ToolSpec]:
         if self.context_type == ContextType.ADMIN and not self._admin_allowed():
             return []
-        return [
-            s for s in self._all_specs()
-            if self.context_type in s.contexts
-        ]
+        visible = [s for s in self._all_specs() if self.context_type in s.contexts]
+        if self.context_type == ContextType.ADMIN and self.session_state.get("conversation_state") == "bulk_fixing_categories":
+            return [s for s in visible if s.name == "bulk_resolve_catalog_categories"]
+        return visible
 
     def definitions(self) -> list[dict[str, Any]]:
         return [s.schema() for s in self._visible_specs()]
@@ -757,6 +768,15 @@ class ToolRegistry:
                 )}
 
         if self.context_type == ContextType.ADMIN:
+            if name == "bulk_resolve_catalog_categories":
+                application_id = int(args["application_id"])
+                if not bool(args.get("resolve_all")):
+                    raise ValueError("bulk_resolution_requires_resolve_all")
+                return data_core.prepare_bulk_catalog_resolution(
+                    application_id=application_id,
+                    resolve_all=True,
+                    actor_user_id=self.telegram_id,
+                )
             if name == "admin_preview_application_service_price":
                 return data_core.prepare_application_service_price_update(
                     application_id=int(args["application_id"]),
