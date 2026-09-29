@@ -737,10 +737,8 @@ class AIManager:
             app_id = int(m.group(1))
         if app_id is None:
             # Bulk catalogue resolution is initiated only through the AI tool contract.
-        # This fast path is intentionally limited to selection/confirmation of an
-        # already-created pending_action. Natural-language admin requests must go
-        # through Groq -> ToolRegistry -> Data Core, so regexes do not become a
-        # second intent parser.
+            # Natural-language requests must go through Groq -> ToolRegistry -> Data Core.
+            return None
 
         # Read-only application catalogue/subcategory requests are deterministic.
         # This keeps follow-ups such as "բոլորը" anchored to the active application
