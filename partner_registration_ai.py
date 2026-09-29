@@ -704,39 +704,43 @@ def _build_categories_tree(categories_list: list[dict], source_text: str = "") -
     return tree
 
 
-async def run_groq_extraction_layer(raw_text: str, client, model: str) -> dict:
-    """Minimal first-stage Groq extractor: facts only, no catalogue IDs."""
-    user_prompt = f"""Ты — эксперт-аналитик платформы услуг. Твоя задача — извлечь структурированные данные из свободного текста регистрации партнера.
-
-ВХОДЯЩИЙ ТЕКСТ ПАРТНЕРА:
-{raw_text}
-
-Ты ДОЛЖЕН вернуть СТРОГО JSON-объект со следующими ключами:
-- business_name: (строка, название компании/салона)
-- marz: (строка, область на русском)
-- city: (строка, город на русском)
-- address: (строка, улица/центр)
-- phone: (строка, телефон)
-- working_hours: (строка, часы работы)
-- services: (массив ОБЪЕКТОВ, где каждый объект содержит name, price и price_type. Пример: [{{"name":"մազերի կտրում","price":3000,"price_type":"from"}},{{"name":"մազերի ներկում","price":4000,"price_type":"fixed"}},{{"name":"հարդարում","price":2500,"price_type":"fixed"}}])
-- name: точное название услуги без цены
-- price: число или null
-- price_type: "fixed" для фиксированной цены, "from" для цены "от"
-
-Никакого другого текста, кроме чистого JSON, не выводи."""
-
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": user_prompt}],
-        response_format={"type": "json_object"},
-        reasoning_effort="low",
+async def run_groq_extraction_layer(raw_text: str, client=None, model: str | None = None) -> dict:
+    """Extract registration facts through the unified strict-JSON AI gateway."""
+    system_prompt = """Ты — эксперт-аналитик платформы услуг. Извлеки из свободного текста регистрации партнёра только факты, которые реально присутствуют во входном тексте.
+Не классифицируй услуги, не создавай ID, не выбирай категории и не придумывай отсутствующие данные.
+Верни только один JSON-объект. Если значение отсутствует — null.
+Для каждой услуги сохрани название, цену и тип цены:
+- price_type = "from" если пользователь говорит «от»
+- price_type = "fixed" если указана фиксированная цена
+Никаких пояснений или markdown."""
+    schema = {
+        "business_name": "string|null",
+        "marz": "string|null",
+        "city": "string|null",
+        "address": "string|null",
+        "phone": "string|null",
+        "working_hours": "string|null",
+        "services": [
+            {
+                "name": "string",
+                "price": "number|null",
+                "price_type": "fixed|from|null"
+            }
+        ]
+    }
+    from ai_service import AIService
+    service = AIService()
+    return await service.structured_json(
+        system_prompt,
+        raw_text,
+        schema_name="partner_registration_extraction",
+        schema=schema,
         max_tokens=900,
+        chain="partner_ai",
+        stage="extraction",
+        operation="partner_registration_extraction",
+        purpose="Extract partner registration facts from natural language",
     )
-    raw = (response.choices[0].message.content or "{}").strip()
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise RuntimeError("Groq extraction result must be a JSON object")
-    return parsed
 
 
 async def extract_partner_registration_json(
@@ -797,14 +801,7 @@ async def extract_partner_registration_json(
     if len(source) > 9000:
         source = source[-9000:]
 
-    from groq import AsyncGroq
-
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-
-    client = AsyncGroq(api_key=api_key)
-    parsed = await run_groq_extraction_layer(source, client, model)
+    parsed = await run_groq_extraction_layer(source, model=model)
     if not isinstance(parsed, dict):
         raise RuntimeError("Invalid partner registration JSON")
 
