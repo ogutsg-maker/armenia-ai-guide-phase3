@@ -149,33 +149,76 @@ def _catalog_match_score(query: str, candidate: str) -> float:
     return min(1.0, 0.60 * overlap + 0.25 * bigram + 0.15 * containment)
 
 
+def _catalog_rankings(query: str, catalog: list[dict[str, Any]]) -> list[tuple[float, dict[str, Any]]]:
+    """Rank live catalogue entries for one service name without hardcoded IDs."""
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    q_tokens = _catalog_tokens(query)
+    for cat in catalog:
+        names = (cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug"))
+        score = max((_catalog_match_score(query, name) for name in names if name), default=0.0)
+        for name in names:
+            if not name:
+                continue
+            nt = _catalog_tokens(name)
+            overlap = len(q_tokens & nt)
+            prefix_hits = sum(
+                1 for qt in q_tokens if len(qt) >= 4 and any(
+                    qt[:4] in token or token[:4] in qt for token in nt if len(token) >= 4
+                )
+            )
+            if overlap:
+                score = max(score, min(0.99, 0.62 + 0.08 * overlap))
+            if prefix_hits:
+                score = max(score, min(0.96, 0.60 + 0.05 * prefix_hits))
+        ranked.append((float(score), cat))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked
+
+
 def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -> list[dict[str, Any]]:
-    """Resolve service names against the live catalog without hardcoded IDs."""
+    """Resolve services using the final confidence/margin contract."""
     catalog = search_catalog(limit=max(100, min(int(limit or 500), 500)))
     resolved: list[dict[str, Any]] = []
-    for service in services:
+    for index, service in enumerate(services):
         item = dict(service)
-        name = str(item.get("name") or "").strip()
-        catalog_name = str(item.get("catalog_name") or "").strip()
+        name = str(item.get("name") or item.get("service_name") or "").strip()
+        item["service_id"] = index + 1
         if not name:
+            item.update({
+                "category_id": None,
+                "master_category_id": None,
+                "catalog_match_score": 0.0,
+                "catalog_second_score": 0.0,
+                "catalog_match_margin": 0.0,
+                "catalog_match_status": "unclassified",
+                "catalog_options": [],
+            })
             resolved.append(item)
             continue
-        candidates: list[tuple[float, dict[str, Any]]] = []
-        for cat in catalog:
-            names = (cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug"))
-            score = max((_catalog_match_score(name, x) for x in names if x), default=0.0)
-            candidates.append((score, cat))
-        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        candidates = _catalog_rankings(name, catalog)
+        catalog_name = str(item.get("catalog_name") or "").strip()
         if catalog_name:
-            exact = next((cat for _, cat in candidates if any(
-                _catalog_text(catalog_name) == _catalog_text(cat.get(k))
-                for k in ("name_am", "name_ru", "name_en", "slug") if cat.get(k)
-            )), None)
+            exact = next(
+                (cat for _, cat in candidates
+                 if any(_catalog_text(catalog_name) == _catalog_text(cat.get(k))
+                        for k in ("name_am", "name_ru", "name_en", "slug") if cat.get(k))),
+                None,
+            )
             if exact:
-                candidates.insert(0, (1.0, exact))
+                candidates = [(1.0, exact)] + [
+                    (score, cat) for score, cat in candidates
+                    if int(cat.get("id") or 0) != int(exact.get("id") or 0)
+                ]
+
         best_score, best = candidates[0] if candidates else (0.0, None)
         second_score = candidates[1][0] if len(candidates) > 1 else 0.0
-        if best and best_score >= 0.52 and (best_score - second_score) >= 0.06:
+        margin = float(best_score) - float(second_score)
+        item["catalog_match_score"] = round(float(best_score), 4)
+        item["catalog_second_score"] = round(float(second_score), 4)
+        item["catalog_match_margin"] = round(float(margin), 4)
+
+        if best and best_score >= 0.70 and margin >= 0.10:
             item.update({
                 "category_id": int(best["id"]),
                 "master_category_id": int(best["master_category_id"]),
@@ -185,19 +228,158 @@ def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -
                 "master_name_am": best.get("master_name_am"),
                 "master_name_ru": best.get("master_name_ru"),
                 "master_name_en": best.get("master_name_en"),
-                "catalog_match_score": round(float(best_score), 4),
                 "catalog_match_status": "matched",
+                "catalog_options": [],
             })
+        elif best and best_score >= 0.70:
+            options = []
+            for score, cat in candidates[:8]:
+                if score < 0.60 or (best_score - score) > 0.15:
+                    continue
+                options.append({
+                    "category_id": int(cat["id"]),
+                    "category_name_am": cat.get("name_am"),
+                    "category_name_ru": cat.get("name_ru"),
+                    "category_name_en": cat.get("name_en"),
+                    "score": round(float(score), 4),
+                })
+                if len(options) >= 5:
+                    break
+            if len(options) >= 2:
+                item.update({
+                    "category_id": None,
+                    "master_category_id": None,
+                    "catalog_match_status": "ambiguous",
+                    "catalog_options": options,
+                })
+            else:
+                item.update({
+                    "category_id": None,
+                    "master_category_id": None,
+                    "catalog_match_status": "unclassified",
+                    "catalog_options": [],
+                })
         else:
             item.update({
                 "category_id": None,
                 "master_category_id": None,
-                "catalog_match_score": round(float(best_score), 4),
-                "catalog_match_status": "needs_admin_review",
+                "catalog_match_status": "unclassified",
+                "catalog_options": [],
             })
         resolved.append(item)
     return resolved
 
+
+def check_live_category_exists(category_id: int) -> bool:
+    """Return whether a category currently exists and is active in the live catalogue."""
+    try:
+        cid = int(category_id)
+    except (TypeError, ValueError):
+        return False
+    if cid <= 0:
+        return False
+    category = get_catalog_category(cid)
+    return bool(category and category.get("is_active"))
+
+
+def init_bulk_catalog_resolution(*, application_id: int, actor_user_id: int) -> dict[str, Any]:
+    """Build the single pending_action contract for bulk category resolution."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    services = _application_payload_services(app)
+    if not services:
+        raise ValueError("application_services_missing")
+
+    resolved = resolve_catalog_services(services, limit=500)
+    pending = {
+        "type": "bulk_resolve_categories",
+        "application_id": int(application_id),
+        "resolved_changes": [],
+        "unresolved_ambiguities": [],
+        "unclassified_services": [],
+    }
+
+    for item in resolved:
+        service_id = int(item.get("service_id") or 0)
+        service_name = str(item.get("name") or item.get("service_name") or "").strip()
+        if item.get("catalog_match_status") == "matched" and item.get("category_id"):
+            pending["resolved_changes"].append({
+                "service_id": service_id,
+                "service_name": service_name,
+                "category_id": int(item["category_id"]),
+                "category_name_am": item.get("category_name_am"),
+            })
+        elif item.get("catalog_match_status") == "ambiguous":
+            pending["unresolved_ambiguities"].append({
+                "service_id": service_id,
+                "service_name": service_name,
+                "options": [
+                    {
+                        "category_id": int(opt["category_id"]),
+                        "category_name_am": opt.get("category_name_am"),
+                    }
+                    for opt in (item.get("catalog_options") or [])
+                ],
+            })
+        else:
+            pending["unclassified_services"].append({
+                "service_id": service_id,
+                "service_name": service_name,
+                "reason": "no_reliable_match",
+            })
+
+    return {
+        "ok": True,
+        "pending_action": pending,
+        "status": "needs_selection" if pending["unresolved_ambiguities"] else "ready_for_preview",
+    }
+
+
+def apply_pending_category_resolution(*, pending_action: dict[str, Any],
+                                      confirmation_token: str,
+                                      actor_user_id: int) -> dict[str, Any]:
+    """Apply only resolved_changes from a pending category action."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    if not confirmation_token or len(str(confirmation_token)) < 20:
+        raise PermissionError("invalid_confirmation_token")
+    if not isinstance(pending_action, dict) or pending_action.get("type") != "bulk_resolve_categories":
+        raise ValueError("invalid_pending_action")
+    if pending_action.get("unresolved_ambiguities"):
+        raise ValueError("unresolved_ambiguities_remaining")
+
+    mappings = []
+    for change in pending_action.get("resolved_changes") or []:
+        category_id = int(change.get("category_id") or 0)
+        if not check_live_category_exists(category_id):
+            raise ValueError("catalog_category_invalid")
+        service_id = int(change.get("service_id") or 0)
+        if service_id <= 0:
+            raise ValueError("invalid_service_id")
+        mappings.append({
+            "service_index": service_id - 1,
+            "category_id": category_id,
+            "master_category_id": int((get_catalog_category(category_id) or {}).get("master_category_id") or 0),
+        })
+
+    if not mappings:
+        return {
+            "ok": True,
+            "application_id": int(pending_action["application_id"]),
+            "changes": [],
+            "status": "no_catalog_changes",
+            "message": "no_classified_services_to_apply",
+        }
+
+    return apply_catalog_resolution(
+        application_id=int(pending_action["application_id"]),
+        mappings=mappings,
+        confirmation_token=str(confirmation_token),
+        actor_user_id=int(actor_user_id),
+    )
 
 def _application_payload_services(application: dict[str, Any]) -> list[dict[str, Any]]:
     payload = application.get("payload_json") or {}
@@ -223,6 +405,7 @@ def application_service_items(application_id: int) -> list[dict[str, Any]]:
         category = get_catalog_category(int(category_id)) if category_id not in (None, "") else None
         result.append({
             "service_index": index,
+            "service_id": index + 1,
             "name": str(service.get("name") or service.get("service_name") or "").strip(),
             "price": service.get("price"),
             "price_type": service.get("price_type"),
@@ -237,7 +420,7 @@ def application_service_items(application_id: int) -> list[dict[str, Any]]:
 
 def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] | None = None,
                               limit_per_service: int = 10, actor_user_id: int) -> dict[str, Any]:
-    """Return candidate catalogue labels without making any classification write."""
+    """Return only meaningful live-catalog candidates for human review."""
     if not is_admin(int(actor_user_id)):
         raise PermissionError("admin_required")
     app = get_application_full(int(application_id))
@@ -247,40 +430,24 @@ def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] 
     services = application_service_items(int(application_id))
     wanted = {int(x) for x in service_indexes} if isinstance(service_indexes, list) and service_indexes else None
     catalog = search_catalog(limit=500)
-    per_service = max(3, min(int(limit_per_service or 10), 15))
+    per_service = max(1, min(int(limit_per_service or 10), 5))
     result = []
+
     for service in services:
         idx = int(service["service_index"])
         if wanted is not None and idx not in wanted:
             continue
-        query = str(service.get("name") or service.get("service_name") or "").strip()
-        ranked = []
-        # Candidate generation is deliberately broader than the final resolver:
-        # morphology/word-family variants are useful for human review, but they
-        # never become an automatic DB classification.
-        q = _catalog_text(query)
-        q_tokens = set(q.split())
-        for cat in catalog:
-            names = [cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug")]
-            score = max((_catalog_match_score(query, name) for name in names if name), default=0.0)
-            for name in names:
-                if not name:
-                    continue
-                n = _catalog_text(name)
-                nt = set(n.split())
-                overlap = len(q_tokens & nt)
-                # Armenian/Russian inflection-friendly prefix/substring signal.
-                prefix_hits = sum(
-                    1 for qt in q_tokens if len(qt) >= 4 and any(
-                        qt[:4] in token or token[:4] in qt for token in nt if len(token) >= 4
-                    )
-                )
-                if overlap or prefix_hits:
-                    score = max(score, min(0.98, 0.52 + 0.08 * overlap + 0.05 * prefix_hits))
-            ranked.append((score, cat))
-        ranked.sort(key=lambda item: item[0], reverse=True)
+        query = str(service.get("name") or "").strip()
+        ranked = _catalog_rankings(query, catalog)
+        best_score = ranked[0][0] if ranked else 0.0
+        meaningful = [
+            (score, cat)
+            for score, cat in ranked
+            if score >= 0.60 and (best_score - score) <= 0.15
+        ]
         result.append({
             "service_index": idx,
+            "service_id": int(service["service_id"]),
             "service_name": query,
             "current_category": service.get("category_name_am"),
             "candidates": [{
@@ -291,9 +458,9 @@ def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] 
                 "master_name_am": cat.get("master_name_am"),
                 "master_name_ru": cat.get("master_name_ru"),
                 "master_name_en": cat.get("master_name_en"),
-                "category_id": cat.get("id"),
+                "category_id": int(cat.get("id")),
                 "score": round(float(score), 4),
-            } for score, cat in ranked[:per_service]],
+            } for score, cat in meaningful[:per_service]],
         })
     return {"application_id": int(application_id), "items": result}
 
@@ -386,62 +553,13 @@ def apply_application_service_price(*, application_id: int, service_index: int,
 
 def prepare_bulk_catalog_resolution(*, application_id: int, resolve_all: bool = True,
                                       actor_user_id: int) -> dict[str, Any]:
-    """Resolve all application services against the live catalog and prepare confirmation."""
-    if not is_admin(int(actor_user_id)):
-        raise PermissionError("admin_required")
+    """Compatibility entry point; canonical state is pending_action only."""
     if not resolve_all:
         raise ValueError("bulk_resolution_requires_resolve_all")
-    app = get_application_full(int(application_id))
-    if not app:
-        raise ValueError("application_not_found")
-    services = _application_payload_services(app)
-    if not services:
-        raise ValueError("application_services_missing")
-
-    resolved = resolve_catalog_services(services, limit=500)
-    mappings: list[dict[str, Any]] = []
-    ambiguous: list[dict[str, Any]] = []
-    for index, item in enumerate(resolved):
-        status = str(item.get("catalog_match_status") or "")
-        category_id = item.get("category_id")
-        master_id = item.get("master_category_id")
-        service_name = str(item.get("name") or item.get("service_name") or "").strip()
-        score = float(item.get("catalog_match_score") or 0.0)
-        if status == "matched" and category_id and master_id:
-            cat = get_catalog_category(int(category_id))
-            if cat and cat.get("is_active"):
-                mappings.append({
-                    "service_index": index,
-                    "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
-                    "score": round(score, 4),
-                })
-                continue
-        ambiguous.append({
-            "service_index": index,
-            "service_name": service_name,
-            "score": round(score, 4),
-            "status": "needs_admin_review",
-        })
-
-    if ambiguous:
-        return {
-            "ok": True,
-            "status": "needs_admin_review",
-            "requires_confirmation": False,
-            "application_id": int(application_id),
-            "resolved": mappings,
-            "ambiguous": ambiguous,
-            "message": "bulk_catalog_resolution_needs_review",
-        }
-
-    preview = prepare_catalog_resolution(
+    return init_bulk_catalog_resolution(
         application_id=int(application_id),
-        mappings=mappings,
         actor_user_id=int(actor_user_id),
     )
-    preview["resolution_mode"] = "bulk"
-    preview["application_id"] = int(application_id)
-    return preview
 
 
 def prepare_catalog_resolution(*, application_id: int, mappings: list[dict[str, Any]],

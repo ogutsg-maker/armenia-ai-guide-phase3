@@ -2506,7 +2506,18 @@ async def api_admin_assistant(request):
                 AIContext.ADMIN,
             )
             return web.json_response({"ok": True, "reply": result.get("reply") or "", **{
-                k: result[k] for k in ("confirmation_required", "confirmed", "tool_result")
+                k: result[k] for k in (
+                    "confirmation_required",
+                    "confirmation_pending",
+                    "confirmed",
+                    "fast_path",
+                    "pending_action",
+                    "tool_result",
+                    "category_selection",
+                    "confirmation_buttons",
+                    "selection_rejected",
+                    "cancelled",
+                )
                 if k in result
             }})
         # Compatibility fallback while older app bootstrap paths are still in use.

@@ -333,13 +333,13 @@ class ToolRegistry:
             ),
             self._spec(
                 "bulk_resolve_catalog_categories",
-                "Resolve ALL services of the active application against the current live catalog. This tool is state-scoped during bulk_fixing_categories. The backend independently matches every service and never accepts model-generated category IDs. Ambiguous services are returned for review; otherwise an explicit confirmation action is prepared.",
+                "Resolve ALL services of an application against the current live catalog. The backend independently matches every service and returns a single pending_action draft; it never accepts model-generated category IDs or uses bulk state.",
                 {
                     "application_id": {"type": "integer"},
                     "resolve_all": {"type": "boolean"},
                 },
                 required=("application_id", "resolve_all"),
-                tool_type=ToolType.ACTION_CONFIRM,
+                tool_type=ToolType.READ,
                 contexts=a,
             ),
             self._spec(
@@ -663,9 +663,8 @@ class ToolRegistry:
                 application_id = int(args["application_id"])
                 if not bool(args.get("resolve_all")):
                     raise ValueError("bulk_resolution_requires_resolve_all")
-                return data_core.prepare_bulk_catalog_resolution(
+                return data_core.init_bulk_catalog_resolution(
                     application_id=application_id,
-                    resolve_all=True,
                     actor_user_id=self.telegram_id,
                 )
             if name == "admin_preview_application_service_price":
