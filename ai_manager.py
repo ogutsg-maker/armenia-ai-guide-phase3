@@ -593,6 +593,36 @@ class AIManager:
                 logger.exception("Admin deterministic approval fast path failed")
                 return {"reply": self._error_text(language), "error": str(exc)}
 
+        document_correction_intent = re.search(
+            r"(?:հայտ|заяв|application)\s*(?:#|№)?\s*\d*.*?"
+            r"(?:փաստաթուղթ|документ|document).*?"
+            r"(?:ուղարկ|отправ|замен|нов|новый|նոր|ճշտ|исправ|replace|resubmit)",
+            str(message or "").casefold(),
+        )
+        if document_correction_intent:
+            reason = (
+                "Խնդրում ենք ուղարկել նոր փաստաթուղթ։ Նախորդ փաստաթուղթը չի բավարարել ստուգման պահանջներին։"
+                if language == "hy" else
+                "Пожалуйста, отправьте новый документ. Предыдущий документ не прошёл проверку."
+                if language == "ru" else
+                "Please send a new verification document. The previous document did not pass verification."
+            )
+            action = {
+                "name": "admin_request_document_correction",
+                "args": {"application_id": app_id, "reason": reason},
+                "state": "awaiting_confirmation",
+            }
+            await self._set_pending(telegram_id, ContextType.ADMIN, action)
+            summary = (
+                f"Հայտ #{app_id}-ի գործընկերոջը խնդրել նոր փաստաթուղթ ուղարկել։ Հաստատե՞լ։"
+                if language == "hy" else
+                f"Попросить партнёра по заявке #{app_id} отправить новый документ. Подтвердить?"
+                if language == "ru" else
+                f"Ask the partner for application #{app_id} to send a new document. Confirm?"
+            )
+            return {"reply": summary, "confirmation_pending": True, "fast_path": True,
+                    "application_id": app_id}
+
         price_edit = self._extract_admin_price_edit(message, services)
         if not price_edit:
             # A bare "fix application #39" is deterministic too: load it and
