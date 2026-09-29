@@ -422,6 +422,14 @@ class ToolRegistry:
                 contexts=a,
             ),
             self._spec(
+                "admin_request_document_correction",
+                "Prepare a request to the partner to replace/resubmit the verification document for an application. Explicit confirmation required.",
+                {"application_id": {"type": "integer"}, "reason": {"type": "string"}},
+                required=("application_id", "reason"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
                 "admin_suspend_partner",
                 "Prepare freezing a partner account. Non-empty reason required.",
                 {"partner_id": {"type": "integer"}, "reason": {"type": "string"}},
@@ -903,6 +911,22 @@ class ToolRegistry:
                 return self._prepare_action(
                     name, {"application_id": application_id, "reason": reason[:3000]},
                     f"Отклонить заявку #{application_id} с причиной «{reason[:300]}»?")
+            if name == "admin_request_document_correction":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    return {"ok": False, "needs_clarification": True,
+                            "question": "Նշեք փաստաթուղթը ճշտման վերադարձնելու պատճառը։"}
+                application_id = int(args["application_id"])
+                app = data_core.get_application_full(application_id)
+                if not app:
+                    raise ValueError("application_not_found")
+                if str(app.get("status") or "") in ("approved", "rejected", "cancelled"):
+                    return {"ok": False, "message": "Այս հայտը արդեն վերջնական կարգավիճակում է։"}
+                return self._prepare_action(
+                    name,
+                    {"application_id": application_id, "reason": reason[:3000]},
+                    f"Գործընկերոջը խնդրել նոր փաստաթուղթ ուղարկել հայտ #{application_id}-ի համար՝ «{reason[:300]}»?"
+                )
             if name == "admin_suspend_partner":
                 reason = str(args.get("reason") or "").strip()
                 if not reason:
@@ -1134,6 +1158,15 @@ class ToolRegistry:
                             "question": "Укажите причину отклонения заявки."}
                 return {"ok": True, "item": data_core.admin_reject_application(
                     int(args["application_id"]), reason, self.telegram_id
+                )}
+            if name == "admin_request_document_correction":
+                reason = str(args.get("reason") or "").strip()
+                if not reason:
+                    raise ValueError("correction_reason_required")
+                return {"ok": True, "item": data_core.request_application_document_correction(
+                    application_id=int(args["application_id"]),
+                    reason=reason[:3000],
+                    actor_user_id=self.telegram_id,
                 )}
             if name == "admin_suspend_partner":
                 reason = str(args.get("reason") or "").strip()
