@@ -549,6 +549,45 @@ class AIManager:
             {"active_application_id": app_id},
         )
 
+        # Read-only application catalogue/subcategory requests are deterministic.
+        # This keeps follow-ups such as "բոլորը" anchored to the active application
+        # instead of sending the user back through the generic application opener.
+        catalog_read_intent = re.search(
+            r"(?:ենթաուղղ|ենթաուղղություն|ենթակատեգ|կատեգոր|subcategory|subcategor|catalog|category|категор|подкатегор)",
+            str(message or "").casefold(),
+        )
+        all_services_intent = re.search(
+            r"(?:\\bբոլորը\\b|\\bբոլոր\\b|\\ball\\b|\\bвсе\\b|բոլոր ծառայ|все услуги|all services)",
+            str(message or "").casefold(),
+        )
+        if catalog_read_intent and (all_services_intent or re.search(r"(?:ծառայ|услуг|service)", str(message or "").casefold())):
+            rows = data_core.application_service_items(app_id)
+            lines = []
+            for item in rows:
+                name = str(item.get("name") or "—")
+                category = (
+                    item.get("category_name_am")
+                    or item.get("category_name_ru")
+                    or item.get("category_name_en")
+                )
+                master = (
+                    item.get("master_name_am")
+                    or item.get("master_name_ru")
+                    or item.get("master_name_en")
+                )
+                if category:
+                    label = f"{master} → {category}" if master else str(category)
+                else:
+                    label = "⚠️ Չդասակարգված"
+                lines.append(f"• {name} → {label}")
+            if language == "hy":
+                reply = f"Հայտ #{app_id}-ի բոլոր ծառայությունների ենթաուղղությունները՝\\n" + ("\\n".join(lines) or "• Ծառայություններ չկան")
+            elif language == "ru":
+                reply = f"Подкатегории всех услуг заявки #{app_id}:\\n" + ("\\n".join(lines) or "• Услуг нет")
+            else:
+                reply = f"Subcategories of all services in application #{app_id}:\\n" + ("\\n".join(lines) or "• No services")
+            return {"reply": reply, "fast_path": True, "application_id": app_id, "read_only": True}
+
         # Approval is a distinct intent and must never fall through to
         # the generic "open application" branch.
         approval_intent = re.search(
