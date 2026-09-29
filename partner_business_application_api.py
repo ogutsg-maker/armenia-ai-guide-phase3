@@ -712,7 +712,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # genuinely new direction or a new company.
             is_service_proposal = payload.get("source") == "partner_service"
             document_required = False
-            if is_service_proposal:
+            if is_service_proposal and str(row.get("partner_status") or "").lower() == "approved":
                 document_required = True
                 business_id = _safe_int(row.get("business_id"))
                 master_id = _safe_int(row.get("master_category_id") or payload.get("master_category_id"))
@@ -1047,9 +1047,14 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             # service addition under an already approved direction does NOT.
             source_payload = payload.get("source") if isinstance(payload, dict) else None
             is_service_proposal = source_payload == "partner_service"
+            # Only an already-approved partner may use the lightweight service
+            # proposal flow. A new partner registration must ALWAYS provide a
+            # verification document, even if an AI/client payload happens to
+            # contain source=partner_service.
+            is_approved_partner = str(p.get("status") or "").lower() == "approved"
             document_required = True
 
-            if is_service_proposal:
+            if is_service_proposal and is_approved_partner:
                 business_id = _safe_int(a.get("business_id") or payload.get("business_id"))
                 master_id = _safe_int(
                     a.get("master_category_id")
