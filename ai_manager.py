@@ -824,8 +824,8 @@ class AIManager:
         # model's 8k TPM input limit.
         history = self._compact_history(
             history,
-            max_chars=4000 if role == ContextType.ADMIN else 7000,
-            max_items=5 if role == ContextType.ADMIN else 8,
+            max_chars=4000 if role == ContextType.ADMIN else (3500 if role == ContextType.REGISTRATION else 7000),
+            max_items=5 if role in (ContextType.ADMIN, ContextType.REGISTRATION) else 8,
         )
         session_context = await self._session_context(telegram_id, role)
 
@@ -943,7 +943,7 @@ class AIManager:
                     tools=definitions or None,
                     tool_choice="auto" if definitions else None,
                     temperature=0.1,
-                    max_tokens=1600,
+                    max_tokens=900 if role == ContextType.REGISTRATION else 1600,
                 )
                 await self._cost_log(
                     telegram_id, role, getattr(response, "usage", None),
