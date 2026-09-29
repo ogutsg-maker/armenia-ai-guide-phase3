@@ -253,11 +253,30 @@ def admin_catalog_candidates(*, application_id: int, service_indexes: list[int] 
         idx = int(service["service_index"])
         if wanted is not None and idx not in wanted:
             continue
-        query = service["name"]
+        query = str(service.get("name") or service.get("service_name") or "").strip()
         ranked = []
+        # Candidate generation is deliberately broader than the final resolver:
+        # morphology/word-family variants are useful for human review, but they
+        # never become an automatic DB classification.
+        q = _catalog_text(query)
+        q_tokens = set(q.split())
         for cat in catalog:
             names = [cat.get("name_am"), cat.get("name_ru"), cat.get("name_en"), cat.get("slug")]
             score = max((_catalog_match_score(query, name) for name in names if name), default=0.0)
+            for name in names:
+                if not name:
+                    continue
+                n = _catalog_text(name)
+                nt = set(n.split())
+                overlap = len(q_tokens & nt)
+                # Armenian/Russian inflection-friendly prefix/substring signal.
+                prefix_hits = sum(
+                    1 for qt in q_tokens if len(qt) >= 4 and any(
+                        qt[:4] in token or token[:4] in qt for token in nt if len(token) >= 4
+                    )
+                )
+                if overlap or prefix_hits:
+                    score = max(score, min(0.98, 0.52 + 0.08 * overlap + 0.05 * prefix_hits))
             ranked.append((score, cat))
         ranked.sort(key=lambda item: item[0], reverse=True)
         result.append({
