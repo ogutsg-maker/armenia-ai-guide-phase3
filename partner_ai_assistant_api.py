@@ -363,15 +363,26 @@ async def _execute_read(pid,c,ctx):
 
 
 async def api_ai_command_confirm(request: web.Request):
-    uid=_auth(request); pid=_partner(uid)
-    data=await request.json()
-    token=str(data.get("confirmation_id") or "").strip()
-    if not token:
-        return web.json_response({"ok":False,"error":"confirmation_id_required"},status=400)
-    command=_get_pending(token,pid)
-    _PENDING.pop(token,None)
-    ctx=_context(pid)
-    return await _execute_mutation(pid,command,ctx,uid)
+    """Execute the single AIManager pending_action confirmation."""
+    uid = _auth(request)
+    _partner(uid)
+    from ai_manager import AIManager
+    from prompt_factory import ContextType
+    try:
+        manager = request.app.get("ai_manager") or AIManager()
+        result = await manager.handle_message(uid, "yes", ContextType.PARTNER)
+    except Exception as exc:
+        return _json_response({
+            "ok": False,
+            "error": "ai_confirmation_failed",
+            "message": str(exc)[:240],
+        }, status=503)
+    return _json_response({
+        "ok": True,
+        "reply": result.get("reply") or "",
+        "confirmed": bool(result.get("confirmed")),
+        "tool_result": result.get("tool_result"),
+    })
 
 async def _execute_mutation(pid, c, ctx, actor_user_id):
     intent = str(c.get("intent") or "")
