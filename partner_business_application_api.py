@@ -94,6 +94,10 @@ def ensure_business_application_schema():
     ALTER TABLE partner_directions ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE services ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
+    ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS application_id BIGINT REFERENCES partner_applications(id) ON DELETE SET NULL;
+    ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS is_current BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE partner_verification_documents ADD COLUMN IF NOT EXISTS replaced_by BIGINT;
+    CREATE INDEX IF NOT EXISTS idx_partner_documents_application ON partner_verification_documents(application_id,created_at DESC);
     ALTER TABLE partner_objects ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE partner_locations ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE;
     ALTER TABLE bookings ADD COLUMN IF NOT EXISTS business_id BIGINT REFERENCES partner_businesses(id) ON DELETE SET NULL;
@@ -1200,10 +1204,21 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             storage_path=path; blob=None
         except Exception:
             storage_path=None; blob=bytes(data)
+        # A replacement belongs to the SAME application. Keep the old
+        # document for audit/history, but make it non-current and replace it
+        # atomically from the application's point of view.
+        old_doc_id=_safe_int(a.get("document_id"))
+        if old_doc_id:
+            _exec("""UPDATE partner_verification_documents
+                     SET is_current=FALSE,status='replaced',replaced_by=NULL
+                     WHERE id=%s AND partner_id=%s""",(old_doc_id,p["id"]))
         doc=_exec("""INSERT INTO partner_verification_documents(
-                     partner_id,business_id,document_type,original_filename,storage_path,file_data,mime_type,file_size,status)
-                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending') RETURNING id""",
-                  (p["id"],a.get("business_id"),document_type,original,storage_path,blob,mime,len(data)),True)
+                     partner_id,business_id,application_id,document_type,original_filename,
+                     storage_path,file_data,mime_type,file_size,status,is_current)
+                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',TRUE) RETURNING id""",
+                  (p["id"],a.get("business_id"),aid,document_type,original,storage_path,blob,mime,len(data)),True)
+        if old_doc_id:
+            _exec("UPDATE partner_verification_documents SET replaced_by=%s WHERE id=%s",(doc["id"],old_doc_id))
         # Uploading the document does not submit the application. The partner
         # must explicitly press the final submit button after reviewing the form.
         # New-direction service proposals are already structurally approved by
@@ -1216,10 +1231,11 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             try: source_payload=json.loads(source_payload)
             except Exception: source_payload={}
         is_service_proposal=isinstance(source_payload,dict) and source_payload.get("source")=="partner_service"
-        next_status="document_under_review" if (is_service_proposal and a.get("status")=="document_pending") else a.get("status")
+        correction_upload = str(a.get("status") or "") == "pending_partner" and old_doc_id is not None
+        next_status = "document_under_review" if (is_service_proposal or correction_upload) else a.get("status")
         row=_exec("""UPDATE partner_applications
-                     SET document_id=%s,status=%s,updated_at=NOW()
-                     WHERE id=%s RETURNING *""",(doc["id"],next_status,aid),True)
+                     SET document_id=%s,status=%s,admin_note=CASE WHEN %s THEN NULL ELSE admin_note END,updated_at=NOW()
+                     WHERE id=%s RETURNING *""",(doc["id"],next_status,correction_upload,aid),True)
         return web.json_response({"ok":True,"application":row,"document_id":doc["id"]})
 
     async def admin_application_action(request):
@@ -1227,7 +1243,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
         action=str(data.get("action") or "").strip()
         a=_one("SELECT * FROM partner_applications WHERE id=%s",(aid,))
         if not a: return web.json_response({"ok":False,"error":"application_not_found"},status=404)
-        allowed={"edit","send_to_partner","reject","delete","approve","approve_document","approve_service_proposal","activate"}
+        allowed={"edit","send_to_partner","send_document_correction","reject","delete","approve","approve_document","approve_service_proposal","activate"}
         if action not in allowed: return web.json_response({"ok":False,"error":"invalid_action"},status=400)
         fields={}
         for k in ("business_name","location_marz","location_city","location_village","address","phone",
@@ -1306,6 +1322,40 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                          admin_note=%s, reviewed_by=%s, reviewed_at=NOW(), updated_at=NOW()
                          WHERE id=%s RETURNING *""",(note,_auth(request),aid),True)
             return web.json_response({"ok":True,"application":row})
+        if action=="send_document_correction":
+            document_id=_safe_int(a.get("document_id"))
+            if not document_id:
+                return web.json_response({"ok":False,"error":"document_required"},status=409)
+            reason=str(data.get("reason") or data.get("admin_note") or "").strip()[:3000]
+            if not reason:
+                reason="Փաստաթուղթը չի համապատասխանում պահանջներին։ Խնդրում ենք կցել ճիշտ փաստաթուղթը։"
+            doc=_one("""SELECT id,status FROM partner_verification_documents
+                        WHERE id=%s AND partner_id=%s""",(document_id,a["partner_id"]))
+            if not doc:
+                return web.json_response({"ok":False,"error":"document_not_found"},status=404)
+            admin_id=_admin(request)
+            _exec("""UPDATE partner_verification_documents
+                     SET status='rejected',rejection_reason=%s,reviewed_by=%s,reviewed_at=NOW(),is_current=FALSE
+                     WHERE id=%s""",(reason,admin_id,document_id))
+            row=_exec("""UPDATE partner_applications
+                         SET document_id=NULL,status='pending_partner',admin_note=%s,
+                             reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
+                         WHERE id=%s RETURNING *""",(reason,admin_id,aid),True)
+            try:
+                user_id=_safe_int(a.get("partner_id"))
+                partner=_one("SELECT user_id FROM partners WHERE id=%s",(a["partner_id"],))
+                if partner and partner.get("user_id"):
+                    await notify(
+                        request.app,int(partner["user_id"]),
+                        title="📄 Փաստաթուղթը վերադարձվել է ճշտման",
+                        body=reason+"\n\nԽնդրում ենք նույն հայտում կցել նոր փաստաթուղթ։",
+                        kind="warning",audience="partner",
+                        data={"application_id":aid,"document_correction":True},
+                    )
+            except Exception:
+                logger.exception("Document correction notification failed for application %s",aid)
+            return web.json_response({"ok":True,"application":row,"document_status":"rejected","correction_required":True})
+
         if action=="reject":
             row=_exec("""UPDATE partner_applications SET status='rejected',admin_note=%s,
                          reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW()
