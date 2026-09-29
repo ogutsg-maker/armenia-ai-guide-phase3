@@ -1031,6 +1031,99 @@ def admin_get_partner_profile(partner_id: int):
     )
 
 
+def prepare_application_approval(*, application_id: int, actor_user_id: int) -> dict[str, Any]:
+    """Read-only approval gate. Never changes application state."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    if str(app.get("status") or "").lower() in {"approved", "rejected"}:
+        raise ValueError("application_already_final")
+
+    payload = app.get("payload_json") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    source = str(payload.get("source") or "").strip().lower()
+    business_id = app.get("business_id")
+    master_id = app.get("master_category_id") or payload.get("master_category_id") or payload.get("ai_master_category_id")
+    try:
+        master_id = int(master_id) if master_id is not None else None
+    except (TypeError, ValueError):
+        master_id = None
+
+    document_required = source != "partner_service"
+    approved_direction = None
+    if source == "partner_service" and business_id and master_id:
+        approved_direction = one(
+            """SELECT id FROM partner_directions
+               WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
+                 AND status='approved' LIMIT 1""",
+            (int(app["partner_id"]), int(business_id), int(master_id)),
+        )
+        document_required = not bool(approved_direction)
+
+    document = None
+    if document_required:
+        if not app.get("document_id"):
+            return {
+                "ok": False, "can_approve": False,
+                "reason_code": "document_required",
+                "message": "Հայտը չի կարելի հաստատել․ պարտադիր փաստաթուղթը կցված չէ։",
+            }
+        document = one(
+            """SELECT id,original_filename,status,rejection_reason
+               FROM partner_verification_documents
+               WHERE id=%s AND partner_id=%s LIMIT 1""",
+            (int(app["document_id"]), int(app["partner_id"])),
+        )
+        if not document:
+            return {
+                "ok": False, "can_approve": False,
+                "reason_code": "document_not_found",
+                "message": "Հայտի փաստաթուղթը չի գտնվել։",
+            }
+        if str(document.get("status") or "").lower() != "approved":
+            return {
+                "ok": False, "can_approve": False,
+                "reason_code": "document_not_approved",
+                "document_status": document.get("status"),
+                "message": "Հայտը չի կարելի հաստատել․ փաստաթուղթը դեռ հաստատված չէ։",
+            }
+
+    services = application_service_items(int(application_id))
+    if not services:
+        return {"ok": False, "can_approve": False, "reason_code": "services_missing",
+                "message": "Հայտում հաստատվող ծառայություններ չկան։"}
+
+    unresolved = [str(x.get("name") or "") for x in services if not (
+        x.get("category_id") or x.get("matched_subcategory_id") or x.get("subcategory_id")
+    )]
+    if unresolved:
+        return {"ok": False, "can_approve": False, "reason_code": "services_need_classification",
+                "services": unresolved,
+                "message": "Որոշ ծառայություններ դեռ դասակարգված չեն։"}
+
+    return {
+        "ok": True,
+        "can_approve": True,
+        "document_required": document_required,
+        "document": document,
+        "approved_direction_id": int(approved_direction["id"]) if approved_direction else None,
+        "action": {
+            "name": "admin_approve_application",
+            "args": {"application_id": int(application_id)},
+        },
+        "summary": f"Հաստատել հայտ #{int(application_id)}{'՝ փաստաթուղթը ստուգված է' if document_required else '՝ գործող հաստատված ուղղության ներքո, նոր փաստաթուղթ պետք չէ'}?",
+    }
+
+
 def admin_approve_application(application_id: int, admin_telegram_id: int):
     """Approve a partner application only after backend-owned verification gates.
 
