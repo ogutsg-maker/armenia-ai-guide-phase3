@@ -55,15 +55,14 @@ Do not put prices inside service names.
 "3000 դրամից" means price=3000 and price_type="from".
 "4000 դրամ" means price=4000 and price_type="fixed".
 CATALOG MAPPING:
-Before saving, call the backend tool "catalog_choices" once when catalogue mapping is needed.
-It returns the complete active live catalogue as canonical subcategory names, with their
-parent direction names for context. Use your own language understanding to choose the
-single best canonical subcategory for each partner service. Do not use backend scores
-to decide the meaning and do not invent names or IDs.
-Put the exact chosen canonical name into "catalog_name" when calling
-save_completed_application. Python will validate that name against the live catalogue
-and derive the real subcategory ID and its parent master category ID. Never invent or
-supply category IDs yourself.
+Before saving, call the backend tool "catalog_candidates" once with all collected service
+names. It returns only a small set of real live catalogue candidates for each service,
+including a stable catalog_slug and the parent direction for context. Choose only a
+catalog_slug that was actually returned for that service. Do not invent slugs, names or IDs.
+Put the exact returned catalog_slug into each service when calling save_completed_application.
+Python validates every slug against the current live catalogue and derives the real
+subcategory ID and parent master category ID. If the candidates do not support a reliable
+choice, do not guess; ask a short clarification question instead.
 
 COMPLETION:
 Do not call save_completed_application until company name, city, phone and at
