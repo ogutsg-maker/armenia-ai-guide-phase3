@@ -787,7 +787,8 @@ class ToolRegistry:
                             marz=args.get("marz"),
                             city=args.get("city"),
                         )}
-            if name == "admin_query":                entity = str(args["entity"]).lower()
+            if name == "admin_query":
+                entity = str(args["entity"]).lower()
                 query = str(args.get("query") or "").strip()
                 limit = max(1, min(int(args.get("limit") or 30), 100))
                 if entity == "applications":
