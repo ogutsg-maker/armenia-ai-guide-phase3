@@ -912,11 +912,14 @@ class AIManager:
         pending = dict(action or {})
         pending["state"] = "awaiting_confirmation"
         pending.setdefault("created_at", int(time.time()))
+        conversation_state = str(action.get("conversation_state") or "").strip()
+        if conversation_state not in {"bulk_category_confirmation"}:
+            conversation_state = "awaiting_confirmation"
         return await self._update_session_context(
             telegram_id,
             context,
             {
-                "conversation_state": "awaiting_confirmation",
+                "conversation_state": conversation_state,
                 "pending_action": pending,
             },
         )
