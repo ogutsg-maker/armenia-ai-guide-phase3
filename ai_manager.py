@@ -736,58 +736,11 @@ class AIManager:
         if m:
             app_id = int(m.group(1))
         if app_id is None:
-            pending = await self._pending(telegram_id, ContextType.ADMIN)
-            pending_text = str(message or "").casefold()
-            pending_bulk_request = (
-                pending
-                and pending.get("type") == "bulk_resolve_categories"
-                and re.search(
-                    r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц)",
-                    pending_text,
-                )
-                and re.search(r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services|ենթաուղղ)", pending_text)
-            )
-            if pending_bulk_request:
-                app_id = int(pending.get("application_id") or 0)
-        if not app_id:
-            return None
-
-        import data_core
-        app = data_core.get_application_full(app_id)
-        if not app:
-            return None
-        services = data_core.application_service_items(app_id)
-
-        text = str(message or "").casefold()
-        bulk_action_intent = re.search(
-            r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц).{0,100}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)",
-            text,
-        ) or re.search(
-            r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,100}(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղ|fix|classif|categor|resolve|assign|присво|исправ|классифиц)",
-            text,
-        )
-        if bulk_action_intent:
-            try:
-                import secrets
-                pending_existing = await self._pending(telegram_id, ContextType.ADMIN)
-                if (
-                    pending_existing
-                    and pending_existing.get("type") == "bulk_resolve_categories"
-                    and int(pending_existing.get("application_id") or 0) == int(app_id)
-                ):
-                    return await self._render_category_pending(pending_existing, language)
-
-                init = data_core.init_bulk_catalog_resolution(
-                    application_id=app_id,
-                    actor_user_id=telegram_id,
-                )
-                pending = dict(init.get("pending_action") or {})
-                pending["confirmation_token"] = secrets.token_urlsafe(24)
-                await self._set_pending(telegram_id, ContextType.ADMIN, pending)
-                return await self._render_category_pending(pending, language)
-            except Exception as exc:
-                logger.exception("Admin bulk catalog pending_action initialization failed")
-                return {"reply": self._error_text(language), "error": str(exc), "fast_path": True}
+            # Bulk catalogue resolution is initiated only through the AI tool contract.
+        # This fast path is intentionally limited to selection/confirmation of an
+        # already-created pending_action. Natural-language admin requests must go
+        # through Groq -> ToolRegistry -> Data Core, so regexes do not become a
+        # second intent parser.
 
         # Read-only application catalogue/subcategory requests are deterministic.
         # This keeps follow-ups such as "բոլորը" anchored to the active application
