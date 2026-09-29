@@ -516,6 +516,206 @@ class AIManager:
             return None
         return candidates[0][0], candidates[0][1]
 
+    async def _render_category_pending(self, pending: dict[str, Any], language: str) -> dict[str, Any]:
+        """Render the next ambiguity or the final deterministic preview."""
+        application_id = int(pending.get("application_id") or 0)
+        ambiguities = pending.get("unresolved_ambiguities") or []
+        if ambiguities:
+            item = ambiguities[0]
+            options = item.get("options") or []
+            if language == "hy":
+                reply = (
+                    f"🔎 Հայտ #{application_id}. «{item.get('service_name') or '—'}» ծառայության համար "
+                    "ընտրեք համապատասխան ենթաուղղությունը։"
+                )
+            elif language == "ru":
+                reply = (
+                    f"🔎 Заявка #{application_id}. Выберите подкатегорию для услуги "
+                    f"«{item.get('service_name') or '—'}»."
+                )
+            else:
+                reply = (
+                    f"🔎 Application #{application_id}. Choose a subcategory for "
+                    f"“{item.get('service_name') or '—'}”."
+                )
+            return {
+                "reply": reply,
+                "fast_path": True,
+                "pending_action": pending,
+                "category_selection": {
+                    "service_id": int(item["service_id"]),
+                    "service_name": str(item.get("service_name") or "—"),
+                    "options": [
+                        {
+                            "category_id": int(opt["category_id"]),
+                            "category_name_am": str(opt.get("category_name_am") or "—"),
+                            "callback_data": f"/select_svc_{int(item['service_id'])}_cat_{int(opt['category_id'])}",
+                        }
+                        for opt in options
+                    ],
+                },
+                "confirmation_pending": False,
+            }
+
+        lines = []
+        for change in pending.get("resolved_changes") or []:
+            lines.append(
+                f"• {change.get('service_name') or '—'} → **{change.get('category_name_am') or '—'}**"
+            )
+        for item in pending.get("unclassified_services") or []:
+            lines.append(
+                f"• {item.get('service_name') or '—'} → ⚠️ **Չդասակարգված**\n"
+                "  Վստահելի համապատասխան կատեգորիա չի գտնվել։"
+            )
+
+        if language == "hy":
+            reply = (
+                f"📋 **Հայտ #{application_id} — կատեգորիաների փոփոխության նախադիտում**\n\n"
+                + ("\n".join(lines) or "• Փոփոխություններ չկան։")
+                + "\n\nՉդասակարգված ծառայությունները չեն ստանա կատեգորիա և չեն փոփոխվի կատալոգում։"
+                + "\n\n**Կիրառե՞լ այս փոփոխությունները։**"
+            )
+        elif language == "ru":
+            reply = (
+                f"📋 **Заявка #{application_id} — предпросмотр изменений категорий**\n\n"
+                + ("\n".join(lines) or "• Изменений нет.")
+                + "\n\nНеразмеченные услуги не получат категорию и не будут изменены в каталоге."
+                + "\n\n**Применить эти изменения?**"
+            )
+        else:
+            reply = (
+                f"📋 **Application #{application_id} — category changes preview**\n\n"
+                + ("\n".join(lines) or "• No changes.")
+                + "\n\nUnclassified services will not receive a category and will not be changed."
+                + "\n\n**Apply these changes?**"
+            )
+        return {
+            "reply": reply,
+            "fast_path": True,
+            "pending_action": pending,
+            "confirmation_pending": True,
+            "confirmation_buttons": [
+                {"text": "✅ Այո", "value": "yes"},
+                {"text": "❌ Ոչ", "value": "no"},
+            ],
+        }
+
+    async def _admin_category_pending_fast_path(
+        self,
+        telegram_id: int,
+        message: str,
+        pending: dict[str, Any] | None,
+        language: str,
+    ) -> dict[str, Any] | None:
+        """Handle category selections/confirmation; unrelated text goes to Groq."""
+        if not pending or pending.get("type") != "bulk_resolve_categories":
+            return None
+
+        import re
+        import data_core
+
+        text = str(message or "").strip()
+        if self._is_cancel(text):
+            await self._clear_pending(telegram_id, ContextType.ADMIN)
+            return {"reply": self._cancel_text(language), "fast_path": True, "cancelled": True}
+
+        if self._is_confirmation(text):
+            if pending.get("unresolved_ambiguities"):
+                return await self._render_category_pending(pending, language)
+            token = str(pending.get("confirmation_token") or "")
+            try:
+                result = data_core.apply_pending_category_resolution(
+                    pending_action=pending,
+                    confirmation_token=token,
+                    actor_user_id=int(telegram_id),
+                )
+                await self._clear_pending(telegram_id, ContextType.ADMIN)
+                return {
+                    "reply": self._done_text(language),
+                    "fast_path": True,
+                    "confirmed": True,
+                    "tool_result": result,
+                }
+            except Exception as exc:
+                logger.exception("Pending category confirmation failed")
+                return {
+                    "reply": self._error_text(language),
+                    "fast_path": True,
+                    "confirmed": False,
+                    "error": str(exc),
+                }
+
+        match = re.fullmatch(r"/?select_svc_(\d+)_cat_(\d+)", text, flags=re.IGNORECASE)
+        if not match:
+            return None
+
+        try:
+            selection = CategorySelectionRequest(
+                service_id=int(match.group(1)),
+                chosen_cat_id=int(match.group(2)),
+            )
+        except ValidationError:
+            return {
+                "reply": "⚠️ Անվավեր ընտրություն։ Փոփոխությունը չի կատարվել։",
+                "fast_path": True,
+                "selection_rejected": True,
+            }
+
+        ambiguity = next(
+            (
+                item for item in (pending.get("unresolved_ambiguities") or [])
+                if int(item.get("service_id") or 0) == selection.service_id
+            ),
+            None,
+        )
+        if not ambiguity:
+            return {
+                "reply": "⚠️ Այս ծառայության համար ակտիվ ընտրության փուլ չկա։",
+                "fast_path": True,
+                "selection_rejected": True,
+            }
+
+        allowed_ids = {
+            int(option.get("category_id"))
+            for option in (ambiguity.get("options") or [])
+            if option.get("category_id") is not None
+        }
+        if selection.chosen_cat_id not in allowed_ids:
+            return {
+                "reply": "🚨 Ընտրված կատեգորիան այս ծառայության թույլատրելի տարբերակների մեջ չկա։",
+                "fast_path": True,
+                "selection_rejected": True,
+            }
+
+        if not data_core.check_live_category_exists(selection.chosen_cat_id):
+            return {
+                "reply": "🚨 Ընտրված կատեգորիան այլևս գոյություն չունի կենդանի կատալոգում։",
+                "fast_path": True,
+                "selection_rejected": True,
+            }
+
+        option = next(
+            x for x in (ambiguity.get("options") or [])
+            if int(x.get("category_id")) == selection.chosen_cat_id
+        )
+        updated = dict(pending)
+        updated["resolved_changes"] = list(updated.get("resolved_changes") or [])
+        updated["unresolved_ambiguities"] = list(updated.get("unresolved_ambiguities") or [])
+        updated["resolved_changes"].append({
+            "service_id": selection.service_id,
+            "service_name": str(ambiguity.get("service_name") or ""),
+            "category_id": selection.chosen_cat_id,
+            "category_name_am": str(option.get("category_name_am") or ""),
+        })
+        updated["unresolved_ambiguities"] = [
+            x for x in updated["unresolved_ambiguities"]
+            if int(x.get("service_id") or 0) != selection.service_id
+        ]
+        await self._update_session_context(
+            telegram_id, ContextType.ADMIN, {"pending_action": updated}
+        )
+        return await self._render_category_pending(updated, language)
+
     async def _admin_fast_path(
         self,
         telegram_id: int,
