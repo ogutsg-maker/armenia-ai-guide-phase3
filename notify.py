@@ -49,6 +49,20 @@ async def notify(bot_or_app, user_id, title="", body="", *, kind="info",
         logger.exception("Could not persist notification for %s", user_id)
 
     bot = _resolve_bot(bot_or_app)
+    owns_bot = False
+    if bot is None:
+        # Unified AI actions do not always have an aiohttp Application/aiogram
+        # Bot object available. Fall back to the configured Telegram bot so an
+        # approval/correction notification is still actually delivered.
+        try:
+            import os
+            from aiogram import Bot
+            token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+            if token:
+                bot = Bot(token=token)
+                owns_bot = True
+        except Exception:
+            bot = None
     if bot is not None:
         text = telegram_text or (f"{title}\n\n{body}" if title and body else (title or body))
         if text:
@@ -62,4 +76,10 @@ async def notify(bot_or_app, user_id, title="", body="", *, kind="info",
             except Exception:
                 # user never started the bot / blocked it / bot missing — fine
                 logger.debug("Telegram push skipped for %s", user_id)
+            finally:
+                if owns_bot:
+                    try:
+                        await bot.session.close()
+                    except Exception:
+                        pass
     return row
