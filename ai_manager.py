@@ -753,56 +753,34 @@ class AIManager:
 
         text = str(message or "").casefold()
         bulk_action_intent = re.search(
-            r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц).{0,80}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)", text,
+            r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц).{0,100}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)",
+            text,
         ) or re.search(
-            r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,80}(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղ|fix|classif|categor|resolve|assign|присво|исправ|классифиц)", text,
+            r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,100}(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղ|fix|classif|categor|resolve|assign|присво|исправ|классифиц)",
+            text,
         )
         if bulk_action_intent:
             try:
-                preview = data_core.prepare_bulk_catalog_resolution(
-                    application_id=app_id, resolve_all=True, actor_user_id=telegram_id,
+                import secrets
+                pending_existing = await self._pending(telegram_id, ContextType.ADMIN)
+                if (
+                    pending_existing
+                    and pending_existing.get("type") == "bulk_resolve_categories"
+                    and int(pending_existing.get("application_id") or 0) == int(app_id)
+                ):
+                    return await self._render_category_pending(pending_existing, language)
+
+                init = data_core.init_bulk_catalog_resolution(
+                    application_id=app_id,
+                    actor_user_id=telegram_id,
                 )
-                if preview.get("status") == "needs_admin_review":
-                    ambiguous = preview.get("ambiguous") or []
-                    indexes = [int(x.get("service_index")) for x in ambiguous if x.get("service_index") is not None]
-                    candidates_result = data_core.admin_catalog_candidates(
-                        application_id=app_id, service_indexes=indexes, limit_per_service=5,
-                        actor_user_id=telegram_id,
-                    )
-                    compact_candidates = []
-                    for item in candidates_result.get("items") or []:
-                        compact_candidates.append({
-                            "service_index": int(item.get("service_index")),
-                            "service_name": str(item.get("service_name") or "—"),
-                            "candidates": [
-                                {"catalog_name": str(x.get("catalog_name") or "—")}
-                                for x in (item.get("candidates") or [])[:5]
-                            ],
-                        })
-                    blocks = []
-                    for item in compact_candidates:
-                        options = "\n".join(
-                            f"   {n}. {opt['catalog_name']}"
-                            for n, opt in enumerate(item["candidates"], 1)
-                        )
-                        blocks.append(f"• {item['service_name']}\n{options}")
-                    header = (
-                        f"Հայտ #{app_id}-ում {len(ambiguous)} ծառայություն չի դասակարգվել։ Ընտրեք յուրաքանչյուրի համար 1–3 տարբերակ։"
-                        if language == "hy" else
-                        f"В заявке #{app_id} {len(ambiguous)} услуг не классифицировано. Выберите для каждой вариант 1–3."
-                        if language == "ru" else
-                        f"Application #{app_id}: {len(ambiguous)} services need review. Choose option 1–3 for each."
-                    )
-                    return {"reply": header + "\n\n" + "\n\n".join(blocks), "fast_path": True, "application_id": app_id, "needs_review": True, "tool_result": preview}
-                action = dict(preview.get("action") or {})
-                await self._set_pending(telegram_id, ContextType.ADMIN, action)
-                summary = str(preview.get("summary") or "")
-                await self._save_history(telegram_id, ContextType.ADMIN, "ai", summary, {"fast_path": True, "bulk_resolution": True, "pending_action": action})
-                confirm = "Հաստատո՞ւմ եք։" if language == "hy" else "Подтверждаете?" if language == "ru" else "Confirm?"
-                return {"reply": summary + "\\n\\n" + confirm, "confirmation_pending": True, "fast_path": True, "application_id": app_id, "tool_result": preview}
+                pending = dict(init.get("pending_action") or {})
+                pending["confirmation_token"] = secrets.token_urlsafe(24)
+                await self._set_pending(telegram_id, ContextType.ADMIN, pending)
+                return await self._render_category_pending(pending, language)
             except Exception as exc:
-                logger.exception("Admin bulk catalog resolution fast path failed")
-                return {"reply": self._error_text(language), "error": str(exc)}
+                logger.exception("Admin bulk catalog pending_action initialization failed")
+                return {"reply": self._error_text(language), "error": str(exc), "fast_path": True}
 
         # Read-only application catalogue/subcategory requests are deterministic.
         # This keeps follow-ups such as "բոլորը" anchored to the active application
@@ -1156,6 +1134,26 @@ class AIManager:
         session_context = await self._session_context(telegram_id, role)
 
         if role == ContextType.ADMIN:
+            pending_fast = await self._admin_category_pending_fast_path(
+                telegram_id,
+                message,
+                SessionState.from_dict(session_context).pending_action,
+                language,
+            )
+            if pending_fast is not None:
+                await self._save_history(
+                    telegram_id,
+                    role,
+                    "ai",
+                    str(pending_fast.get("reply") or ""),
+                    {
+                        "fast_path": True,
+                        "confirmed": pending_fast.get("confirmed"),
+                        "selection_rejected": pending_fast.get("selection_rejected"),
+                    },
+                )
+                return pending_fast
+
             fast = await self._admin_fast_path(
                 telegram_id, message, session_context, language
             )
