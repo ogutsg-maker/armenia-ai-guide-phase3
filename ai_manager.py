@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from pydantic import BaseModel, Field, ValidationError
 from groq import AsyncGroq
 
 import ai_cost_center
@@ -39,6 +40,13 @@ _CONFIRMATIONS = {
 _CANCELS = {
     "no", "нет", "ոչ", "չեղարկել", "отмена", "отменить", "cancel",
 }
+
+
+class CategorySelectionRequest(BaseModel):
+    """Strict Fast Path payload validation; business checks happen afterwards."""
+    service_id: int = Field(gt=0)
+    chosen_cat_id: int = Field(gt=0)
+
 
 
 @dataclass
