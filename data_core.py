@@ -2579,7 +2579,7 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int,
                       ORDER BY CASE WHEN status='approved' THEN 0 ELSE 1 END, created_at DESC,id DESC
                       LIMIT 1""", (int(partner_id), int(company_id)))
     contact = str(phone or (obj or {}).get("phone") or company.get("phone") or "").strip() or None
-    payload = {"source":"partner_service_ai","company_id":int(company_id),
+    payload = {"source":"partner_service","company_id":int(company_id),
                "object_id":int(obj["id"]) if obj else None,
                "object_name":(obj or {}).get("object_name"),
                "location_marz":(obj or {}).get("marz"),"location_city":(obj or {}).get("city"),
