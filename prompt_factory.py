@@ -180,7 +180,8 @@ class PromptFactory:
         trusted_context: dict[str, Any] | None = None,
         language: str = "hy",
         task_instructions: str | None = None,
-    ) -> str:        role = as_context_type(context_type)
+    ) -> str:
+        role = as_context_type(context_type)
         return (
             "[AI_ROLE_INSTRUCTIONS]\n"
             + _ROLE_INSTRUCTIONS[role]
