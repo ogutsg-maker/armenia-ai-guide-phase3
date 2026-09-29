@@ -2545,6 +2545,67 @@ def create_partner_service(*, partner_id: int, actor_user_id: int, company_id: i
     return row
 
 
+def create_partner_service_proposal(*, partner_id: int, actor_user_id: int,
+                                      company_id: int, name: str, price: Any = None,
+                                      address_id: int | None = None,
+                                      phone: str | None = None,
+                                      category_id: int | None = None) -> dict:
+    """Create a new-service application instead of activating a service directly."""
+    checked = validate_service_payload(
+        partner_id=int(partner_id), actor_user_id=int(actor_user_id),
+        company_id=int(company_id), name=name, price=price,
+        category_id=category_id,
+    )
+    if address_id is not None:
+        obj = one("SELECT id,partner_id,business_id,object_name,address,city,marz,phone FROM partner_objects WHERE id=%s", (int(address_id),))
+        if not obj or int(obj.get("partner_id") or 0) != int(partner_id):
+            raise PermissionError("address_not_owned")
+        if int(obj.get("business_id") or 0) != int(company_id):
+            raise PermissionError("address_not_in_company")
+    else:
+        obj = one("""SELECT id,partner_id,business_id,object_name,address,city,marz,phone
+                     FROM partner_objects
+                     WHERE partner_id=%s AND business_id=%s AND COALESCE(is_active,TRUE)=TRUE
+                     ORDER BY id LIMIT 1""", (int(partner_id), int(company_id)))
+    company = get_company(int(company_id))
+    if not company:
+        raise ValueError("company_not_found")
+    partner = get_partner(int(partner_id)) or {}
+    document = one("""SELECT id,status,document_type,original_filename
+                      FROM partner_verification_documents
+                      WHERE partner_id=%s AND business_id=%s
+                        AND COALESCE(is_current,TRUE)=TRUE
+                        AND status IN ('pending','under_review','approved')
+                      ORDER BY CASE WHEN status='approved' THEN 0 ELSE 1 END, created_at DESC,id DESC
+                      LIMIT 1""", (int(partner_id), int(company_id)))
+    contact = str(phone or (obj or {}).get("phone") or company.get("phone") or "").strip() or None
+    payload = {"source":"partner_service_ai","company_id":int(company_id),
+               "object_id":int(obj["id"]) if obj else None,
+               "object_name":(obj or {}).get("object_name"),
+               "location_marz":(obj or {}).get("marz"),"location_city":(obj or {}).get("city"),
+               "address":(obj or {}).get("address"),"contact_phone":contact,
+               "services":[{"name":checked["name"],"price":checked["price"],
+                           "object_id":int(obj["id"]) if obj else None,
+                           "contact_phone":contact,
+                           "matched_subcategory_id":int(category_id) if category_id is not None else None,
+                           "direction_id":None}]}
+    row = one("""INSERT INTO partner_applications(
+                    partner_id,business_id,status,business_name,location_marz,location_city,
+                    address,object_name,object_id,phone,category_id,service_name,price,
+                    description,document_id,payload_json)
+                 VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                 RETURNING id AS application_id,id,status,business_id,document_id,service_name,price,
+                           category_id,master_category_id,created_at""",
+              (int(partner_id),int(company_id),company.get("name") or partner.get("business_name") or "",
+               (obj or {}).get("marz"),(obj or {}).get("city"),(obj or {}).get("address"),
+               (obj or {}).get("object_name"),int(obj["id"]) if obj else None,contact,
+               category_id,checked["name"],checked["price"],"",int(document["id"]) if document else None,
+               json_dump(payload)), True)
+    if not row:
+        raise ValueError("service_application_create_failed")
+    return row
+
+
 # ---------------------------------------------------------------------------
 # Operational AI context reads
 # ---------------------------------------------------------------------------
