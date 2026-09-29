@@ -1125,6 +1125,18 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                     )
                 )
 
+            # HARD SAFETY GATE:
+            # A new/unverified partner registration can NEVER enter pending_admin
+            # without a verification document. Keep this check immediately before
+            # the status transition so no other branch can bypass document validation.
+            partner_status = str(p.get("status") or "").lower()
+            is_initial_registration = partner_status != "approved" and not is_service_proposal
+            if is_initial_registration and not a.get("document_id"):
+                return web.json_response(
+                    {"ok":False,"error":"document_required","message":"A verification document is required before submitting this application."},
+                    status=409
+                )
+
             # A new-service proposal that was already approved by Admin as a
             # new direction and is now waiting for the partner's document must
             # stay in the document workflow. The partner is allowed to correct
