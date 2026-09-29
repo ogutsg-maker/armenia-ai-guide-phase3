@@ -549,6 +549,50 @@ class AIManager:
             {"active_application_id": app_id},
         )
 
+        # Approval is a distinct intent and must never fall through to
+        # the generic "open application" branch.
+        approval_intent = re.search(
+            r"(?:հայտ|заяв|application)\\s*(?:#|№)?\\s*\\d*.*?"
+            r"(?:հաստատիր|հաստատել|հաստատի|approve|одобр|утверд|ակտիվացրու|активир)",
+            str(message or "").casefold(),
+        )
+        if approval_intent:
+            try:
+                gate = data_core.prepare_application_approval(
+                    application_id=app_id,
+                    actor_user_id=telegram_id,
+                )
+                if not gate.get("can_approve"):
+                    reply = str(gate.get("message") or "Հայտը դեռ չի կարելի հաստատել։")
+                    await self._save_history(
+                        telegram_id, ContextType.ADMIN, "ai", reply,
+                        {"fast_path": True, "approval_blocked": gate.get("reason_code")},
+                    )
+                    return {
+                        "reply": reply,
+                        "fast_path": True,
+                        "application_id": app_id,
+                        "approval_blocked": True,
+                        "tool_result": gate,
+                    }
+                action = dict(gate.get("action") or {})
+                await self._set_pending(telegram_id, ContextType.ADMIN, action)
+                summary = str(gate.get("summary") or f"Հաստատել հայտ #{app_id}?")
+                await self._save_history(
+                    telegram_id, ContextType.ADMIN, "ai", summary,
+                    {"fast_path": True, "pending_action": action},
+                )
+                return {
+                    "reply": summary,
+                    "confirmation_pending": True,
+                    "fast_path": True,
+                    "application_id": app_id,
+                    "tool_result": gate,
+                }
+            except Exception as exc:
+                logger.exception("Admin deterministic approval fast path failed")
+                return {"reply": self._error_text(language), "error": str(exc)}
+
         price_edit = self._extract_admin_price_edit(message, services)
         if not price_edit:
             # A bare "fix application #39" is deterministic too: load it and
