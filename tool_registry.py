@@ -3,7 +3,8 @@
 The LLM can only request tools. ToolRegistry is the security boundary:
 READ tools may return verified data; ACTION_CONFIRM tools only prepare an
 action. Actual mutations are executed later by execute_confirmed(), after the
-user confirms and backend ownership/state validation runs again.
+user confirms and backend ownership/state validation runs again. Stateful admin
+continuations are handled by AIManager before Groq is called.
 """
 from __future__ import annotations
 
@@ -522,8 +523,13 @@ class ToolRegistry:
         if self.context_type == ContextType.ADMIN and not self._admin_allowed():
             return []
         visible = [s for s in self._all_specs() if self.context_type in s.contexts]
-        if self.context_type == ContextType.ADMIN and self.session_state.get("conversation_state") == "bulk_fixing_categories":
-            return [s for s in visible if s.name == "bulk_resolve_catalog_categories"]
+        if self.context_type == ContextType.ADMIN and self.session_state.get("conversation_state") in {
+            "bulk_category_resolution", "bulk_category_review", "bulk_category_confirmation"
+        }:
+            return [s for s in visible if s.name in {
+                "bulk_resolve_catalog_categories", "admin_catalog_candidates",
+                "admin_preview_catalog_resolution", "admin_apply_catalog_resolution"
+            }]
         return visible
 
     def definitions(self) -> list[dict[str, Any]]:
