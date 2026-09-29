@@ -560,9 +560,9 @@ class AIManager:
 
         text = str(message or "").casefold()
         bulk_action_intent = re.search(
-            r"(?:դասակարգ|կատեգոր|ենթաուղղ|ուղղիր|ուղղել|fix|classif|categor|resolve|подкатегор|категор|исправ).{0,80}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)", text,
+            r"(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղել|fix|classif|categor|resolve|assign|присво|исправ|классифиц).{0,80}(?:բոլոր|բոլորը|all|все|ծառայ|услуг|service)", text,
         ) or re.search(
-            r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,80}(?:դասակարգ|կատեգոր|ենթաուղղ|ուղղ|fix|classif|categor|resolve|подкатегор|категор|исправ)", text,
+            r"(?:բոլոր|բոլորը|all|все|բոլոր ծառայ|все услуги|all services).{0,80}(?:դասակարգ|դասավոր|վերագր|կապիր|ուղղիր|ուղղ|fix|classif|categor|resolve|assign|присво|исправ|классифиц)", text,
         )
         bulk_state = str(session_context.get("conversation_state") or "") == "bulk_fixing_categories"
         bare_all = bool(re.fullmatch(r"\s*(?:բոլորը|բոլոր|all|все)\s*[.!?]*\s*", str(message or ""), flags=re.I))
