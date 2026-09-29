@@ -339,7 +339,7 @@ class ToolRegistry:
                     "resolve_all": {"type": "boolean"},
                 },
                 required=("application_id", "resolve_all"),
-                tool_type=ToolType.ACTION_CONFIRM,
+                tool_type=ToolType.READ,
                 contexts=a,
             ),
             self._spec(
@@ -663,9 +663,8 @@ class ToolRegistry:
                 application_id = int(args["application_id"])
                 if not bool(args.get("resolve_all")):
                     raise ValueError("bulk_resolution_requires_resolve_all")
-                return data_core.prepare_bulk_catalog_resolution(
+                return data_core.init_bulk_catalog_resolution(
                     application_id=application_id,
-                    resolve_all=True,
                     actor_user_id=self.telegram_id,
                 )
             if name == "admin_preview_application_service_price":
