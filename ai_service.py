@@ -95,13 +95,6 @@ class AIService:
             except Exception:
                 return {}
 
-    def _groq_completion(self, messages, model: str):
-        if not self.groq_client:
-            raise RuntimeError("GROQ_API_KEY is not configured")
-        return self.groq_client.chat.completions.create(
-            model=model, messages=messages, temperature=0.2
-        )
-
     def _groq_completion_json(self, messages, model: str, max_tokens: int):
         if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
         kwargs={"model":model,"messages":messages,"temperature":0,"max_tokens":max_tokens,"response_format":{"type":"json_object"}}
@@ -121,17 +114,6 @@ class AIService:
     async def structured_json(self, system_prompt: str, user_text: str, *, schema_name: str = "response", schema: dict | None = None, max_tokens: int = 900, chain: str = "unknown", stage: str = "unknown", operation: str = "structured_json", purpose: str = "", partner_id: int | None = None, user_id: int | None = None, company_id: int | None = None, order_id: int | None = None, negotiation_id: int | None = None) -> dict:
         """Strict JSON through Groq only."""
         return await self.chat_json(system_prompt,user_text,max_tokens=max_tokens,chain=chain,stage=stage,operation=operation,purpose=purpose,partner_id=partner_id,user_id=user_id,company_id=company_id,order_id=order_id,negotiation_id=negotiation_id)
-
-    async def _call_groq(self, system_prompt: str, user_text: str, json_mode: bool = False, model: str | None = None) -> str:
-        clean=self.clean_sensitive_data(user_text)
-        messages=[{"role":"system","content":system_prompt},{"role":"user","content":clean}]
-        if not self.groq_client: raise RuntimeError("GROQ_API_KEY is not configured")
-        selected=model or self.groq_model
-        if json_mode:
-            response,_=await asyncio.to_thread(self._groq_completion_json,messages,selected,900)
-        else:
-            response=await asyncio.to_thread(self._groq_completion,messages,selected)
-        return self._text(response)
 
     async def route_message(self, text: str, role: str, context: dict | None = None) -> dict:
         context = context or {}
@@ -270,11 +252,4 @@ Prices are AMD. Preserve a user-provided budget exactly enough for filtering."""
             return getattr(response,"text","") or ""
         except Exception as exc: return f"Ошибка распознавания аудио через Groq: {exc}"
 
-    def process_image_price(self,image_url: str) -> str:
-        if self._get_setting("allow_image_input","true").lower()=="false": return "🔒 Վերբեռնումը ժամանակավորապես անջատված է։"
-        if not self.groq_client: return "Groq AI-ը հասանելի չէ։"
-        try:
-            response=self.groq_client.chat.completions.create(model=self.groq_vision_model,messages=[{"role":"user","content":[{"type":"text","text":"Прочитай прайс-лист. Верни услуги, цены и валюту. Не придумывай отсутствующие данные."},{"type":"image_url","image_url":{"url":image_url}}]}],max_tokens=1500)
-            return self._text(response)
-        except Exception as exc: return f"Ошибка анализа изображения через Groq: {exc}"
 
