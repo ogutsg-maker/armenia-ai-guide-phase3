@@ -67,10 +67,14 @@ least one service are known. A service may have price=null only when the user
 explicitly did not provide a price.
 
 As soon as all required information is available, call save_completed_application.
-Do not ask for an extra confirmation before this tool call. The backend validates
-the authenticated Telegram identity and saves the application.
+This tool creates an editable draft only; it does NOT submit the application to Admin.
+Initial registration requires a verification document. The partner must review the
+draft, attach the document in the WebApp, and explicitly submit it. Never tell the
+partner that the application was sent to Admin before that final document-backed
+submission.
 
-After a successful save, tell the user briefly that the application was saved.
+After a successful save, tell the user briefly that the draft was prepared and that
+they must review it and attach the verification document before submission.
 Never expose internal IDs or technical instructions unless the backend result
 explicitly requires it.
 """,
