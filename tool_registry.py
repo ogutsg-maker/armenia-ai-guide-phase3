@@ -885,13 +885,13 @@ class ToolRegistry:
                 )
             if name == "admin_approve_application":
                 application_id = int(args["application_id"])
-                app = data_core.get_application_full(application_id)
-                if not app:
-                    raise ValueError("application_not_found")
-                if str(app.get("status") or "").lower() in {"approved", "rejected"}:
-                    raise ValueError("application_already_final")
-                return self._prepare_action(name, {"application_id": application_id},
-                                            f"Утвердить заявку #{application_id}?")
+                gate = data_core.prepare_application_approval(
+                    application_id=application_id,
+                    actor_user_id=self.telegram_id,
+                )
+                if not gate.get("can_approve"):
+                    return gate
+                return gate
             if name == "admin_reject_application":
                 reason = str(args.get("reason") or "").strip()
                 if not reason:
@@ -1107,9 +1107,26 @@ class ToolRegistry:
                 )
 
             if name == "admin_approve_application":
-                return {"ok": True, "item": data_core.admin_approve_application(
+                result = data_core.admin_approve_application(
                     int(args["application_id"]), self.telegram_id
-                )}
+                )
+                # Keep partner notification in the unified notification layer.
+                try:
+                    partner = data_core.get_application_full(int(args["application_id"]))
+                    user_id = int(partner.get("user_id") or 0) if partner else 0
+                    if user_id:
+                        from notify import notify
+                        await notify(
+                            None, user_id,
+                            title="✅ Հայտը հաստատվել է",
+                            body="Ձեր գործընկերոջ հայտը հաստատվել է։ Ծառայությունները ակտիվ են, և կարող եք մուտք գործել գործընկերոջ աշխատասենյակ։",
+                            kind="success",
+                            audience="partner",
+                            data={"application_id": int(args["application_id"]), "decision": "approved"},
+                        )
+                except Exception:
+                    pass
+                return {"ok": True, "item": result}
             if name == "admin_reject_application":
                 reason = str(args.get("reason") or "").strip()
                 if not reason:
