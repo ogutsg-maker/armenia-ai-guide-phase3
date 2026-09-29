@@ -1262,7 +1262,7 @@ class ToolRegistry:
             )}
 
         if name == "add_service":
-            return {"ok": True, "item": data_core.create_partner_service(
+            return {"ok": True, "item": data_core.create_partner_service_proposal(
                 partner_id=pid, actor_user_id=self.telegram_id,
                 company_id=int(args["company_id"]), name=args["name"],
                 price=args.get("price"), category_id=args.get("category_id"),
@@ -1276,13 +1276,14 @@ class ToolRegistry:
                 raise ValueError("services_required")
             created = []
             for item in services:
-                created.append(data_core.create_partner_service(
+                created.append(data_core.create_partner_service_proposal(
                     partner_id=pid, actor_user_id=self.telegram_id,
                     company_id=company_id, name=item["name"],
                     price=item.get("price"), category_id=item.get("category_id"),
                     address_id=item.get("address_id"), phone=item.get("phone"),
                 ))
-            return {"ok": True, "items": created, "count": len(created)}
+            return {"ok": True, "items": created, "count": len(created),
+                    "workflow": "admin_verification"}
 
         if name == "update_service":
             return {"ok": True, "item": data_core.update_service_safe(
