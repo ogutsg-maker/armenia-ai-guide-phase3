@@ -171,14 +171,14 @@ async def api_webapp_partner_register(request: web.Request):
     try:
         raw_body = await request.json()
         business_name = str(raw_body.get("business_name") or "").strip()
-        phone = re.sub(r"[\\s\\+\\-]", "", str(raw_body.get("phone") or ""))
+        phone = re.sub(r"[\s+\-]", "", str(raw_body.get("phone") or ""))
 
         if len(business_name) < 2 or len(business_name) > 100:
             return web.json_response(
                 {"ok": False, "error": "Բիզնեսի անվանումը պետք է լինի 2-100 նիշ։"},
                 status=400,
             )
-        if not re.fullmatch(r"374\\d{8}", phone):
+        if not re.fullmatch(r"374\d{8}", phone):
             return web.json_response(
                 {"ok": False, "error": "Հեռախոսահամարը պետք է լինի 374XXXXXXXX ձևաչափով։"},
                 status=400,
