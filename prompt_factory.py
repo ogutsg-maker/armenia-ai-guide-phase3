@@ -55,11 +55,15 @@ Do not put prices inside service names.
 "3000 դրամից" means price=3000 and price_type="from".
 "4000 դրամ" means price=4000 and price_type="fixed".
 CATALOG MAPPING:
-Before saving, call the backend tool "catalog_candidates" with all collected service names when catalogue mapping is needed.
-The backend will return real live catalogue candidates. Use your language understanding to
-select the correct canonical catalogue name for each service. Put that canonical name
-into "catalog_name" when calling save_completed_application. Never invent a catalogue
-name and never invent or supply category IDs.
+Before saving, call the backend tool "catalog_choices" once when catalogue mapping is needed.
+It returns the complete active live catalogue as canonical subcategory names, with their
+parent direction names for context. Use your own language understanding to choose the
+single best canonical subcategory for each partner service. Do not use backend scores
+to decide the meaning and do not invent names or IDs.
+Put the exact chosen canonical name into "catalog_name" when calling
+save_completed_application. Python will validate that name against the live catalogue
+and derive the real subcategory ID and its parent master category ID. Never invent or
+supply category IDs yourself.
 
 COMPLETION:
 Do not call save_completed_application until company name, city, phone and at
@@ -177,8 +181,7 @@ class PromptFactory:
         trusted_context: dict[str, Any] | None = None,
         language: str = "hy",
         task_instructions: str | None = None,
-    ) -> str:
-        role = as_context_type(context_type)
+    ) -> str:        role = as_context_type(context_type)
         return (
             "[AI_ROLE_INSTRUCTIONS]\n"
             + _ROLE_INSTRUCTIONS[role]
