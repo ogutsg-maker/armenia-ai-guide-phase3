@@ -1294,6 +1294,24 @@ class AIManager:
                     tool_call_id=call.id,
                 )
 
+                pending_action = result.get("pending_action")
+                if isinstance(pending_action, dict) and pending_action.get("type") == "bulk_resolve_categories":
+                    pending = dict(pending_action)
+                    pending["confirmation_token"] = secrets.token_urlsafe(24)
+                    await self._set_pending(telegram_id, role, pending)
+                    rendered = await self._render_category_pending(pending, language)
+                    await self._save_history(
+                        telegram_id,
+                        role,
+                        "ai",
+                        str(rendered.get("reply") or ""),
+                        {"pending_action": pending, "tool_name": name},
+                    )
+                    return {
+                        **rendered,
+                        "tool_calls": tool_log,
+                    }
+
                 if result.get("requires_confirmation"):
                     action = result.get("action") or {}
                     pending_action = {
