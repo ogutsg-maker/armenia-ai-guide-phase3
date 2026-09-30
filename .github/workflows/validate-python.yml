@@ -1,0 +1,15 @@
+name: Validate Python
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile ai_manager.py tool_registry.py data_core.py admin_ai_api.py
