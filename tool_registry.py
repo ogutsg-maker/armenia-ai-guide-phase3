@@ -265,7 +265,7 @@ class ToolRegistry:
                 "add_services",
                 "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. Use one item per distinct service. Confirmation is required once for the whole batch.",
                 {
-                    "company_id": {"type": "integer"},
+                    "company_id": _nullable("integer"),
                     "services": {
                         "type": "array",
                         "minItems": 1,
@@ -283,7 +283,7 @@ class ToolRegistry:
                         }
                     }
                 },
-                required=("company_id", "services"),
+                required=("services",),
                 tool_type=ToolType.ACTION_CONFIRM,
                 contexts=p,
             ),
@@ -1006,7 +1006,15 @@ class ToolRegistry:
                 )
 
             if name == "add_service":
-                company_id = int(args["company_id"])
+                raw_company_id = args.get("company_id")
+                if raw_company_id in (None, "", 0, "0"):
+                    raw_company_id = self.trusted_context.get("current_company_id")
+                if raw_company_id in (None, "", 0, "0"):
+                    current = self.trusted_context.get("current_company") or {}
+                    raw_company_id = current.get("id") if isinstance(current, dict) else None
+                if raw_company_id in (None, "", 0, "0"):
+                    raise ValueError("company_context_required")
+                company_id = int(raw_company_id)
                 company = data_core.get_company(company_id)
                 if not company or int(company.get("partner_id") or 0) != pid:
                     raise PermissionError("company_not_owned")
@@ -1030,7 +1038,15 @@ class ToolRegistry:
                 )
 
             if name == "add_services":
-                company_id = int(args["company_id"])
+                raw_company_id = args.get("company_id")
+                if raw_company_id in (None, "", 0, "0"):
+                    raw_company_id = self.trusted_context.get("current_company_id")
+                if raw_company_id in (None, "", 0, "0"):
+                    current = self.trusted_context.get("current_company") or {}
+                    raw_company_id = current.get("id") if isinstance(current, dict) else None
+                if raw_company_id in (None, "", 0, "0"):
+                    raise ValueError("company_context_required")
+                company_id = int(raw_company_id)
                 company = data_core.get_company(company_id)
                 if not company or int(company.get("partner_id") or 0) != pid:
                     raise PermissionError("company_not_owned")
