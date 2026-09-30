@@ -1830,9 +1830,20 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         else:
             execute(
                 """INSERT INTO services
-                   (partner_id,business_id,category_id,subcategory_id,name,price,status,data_json)
-                   VALUES(%s,%s,%s,NULL,%s,%s,'approved',%s)""",
-                (partner_id, bid, cid, name, price, data_json),
+                   (partner_id,business_id,category_id,subcategory_id,name,description,
+                    price,currency,status,data_json,object_id,contact_phone)
+                   VALUES(%s,%s,%s,NULL,%s,%s,%s,'AMD','approved',%s,%s,%s)""",
+                (
+                    partner_id,
+                    bid,
+                    cid,
+                    name,
+                    str(svc.get("description") or "").strip(),
+                    price,
+                    data_json,
+                    int(svc.get("object_id")) if svc.get("object_id") not in (None, "") else None,
+                    str(svc.get("contact_phone") or app_phone or "").strip() or None,
+                ),
             )
 
     execute(
@@ -3590,3 +3601,10 @@ def mark_clarification_answered(clarification_id: int):
         "UPDATE admin_clarifications SET status='answered',answered_at=NOW() WHERE id=%s RETURNING *",
         (int(clarification_id),), True
 )
+
+
+
+
+
+
+
