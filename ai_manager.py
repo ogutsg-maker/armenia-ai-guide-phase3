@@ -1199,9 +1199,21 @@ class AIManager:
         if not body:
             return None
 
-        # Split only on list separators. Service names themselves may contain
-        # spaces and arbitrary words.
-        parts = [p.strip(" ,;") for p in re.split(r"\s*[;,]\s*", body) if p.strip(" ,;")]
+        # Split on explicit list separators and on natural-language
+        # conjunctions between two independently priced services.
+        # Example:
+        #   "ремонт кондиционеров от 8000 и ремонт телевизоров от 6000"
+        # must become two services, while keeping "и" inside a service name.
+        conjunction = (
+            r"(?:и|և|ու|and)\\s+"
+            r"(?=[^,;]+?\\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\\s*"
+            r"\\d)"
+        )
+        parts = [
+            p.strip(" ,;")
+            for p in re.split(r"\\s*[;,]\\s*|" + conjunction, body, flags=re.IGNORECASE)
+            if p.strip(" ,;")
+        ]
         if not parts:
             return None
 
