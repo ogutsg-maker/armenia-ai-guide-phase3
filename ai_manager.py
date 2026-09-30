@@ -1446,6 +1446,25 @@ class AIManager:
         # the same action and only extracts missing slots.
         state = SessionState.from_dict(session_context)
         pending = state.pending_action
+
+        # Bulk category resolution has a backend-owned confirmation flow.
+        # Handle it before the generic ToolRegistry confirmation path because
+        # this pending draft intentionally has no ToolRegistry action name.
+        if role == ContextType.ADMIN and isinstance(pending, dict) and pending.get("type") == "bulk_resolve_categories":
+            pending_fast = await self._admin_category_pending_fast_path(
+                telegram_id, message, pending, language
+            )
+            if pending_fast is not None:
+                await self._save_history(
+                    telegram_id, role, "ai", str(pending_fast.get("reply") or ""),
+                    {
+                        "fast_path": True,
+                        "confirmed": pending_fast.get("confirmed"),
+                        "selection_rejected": pending_fast.get("selection_rejected"),
+                    },
+                )
+                return pending_fast
+
         if pending:
             pending_status = str(pending.get("status") or "").upper()
             if pending_status == "SUBMITTED":
