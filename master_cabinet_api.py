@@ -1221,6 +1221,26 @@ async def api_ai_document_upload(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     bid = _business_id(request, pid)
+    # During partner registration the first company may still be pending and
+    # therefore is not yet status='active'. A verification document must be
+    # uploadable before admin approval, so resolve the requested/latest company
+    # without requiring active status only for this upload operation.
+    if not bid:
+        raw_bid = str(request.headers.get("X-Business-Id") or "").strip()
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                if raw_bid.isdigit():
+                    cur.execute(
+                        "SELECT id FROM partner_businesses WHERE id=%s AND partner_id=%s LIMIT 1",
+                        (int(raw_bid), pid),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT id FROM partner_businesses WHERE partner_id=%s ORDER BY is_default DESC, id DESC LIMIT 1",
+                        (pid,),
+                    )
+                row = cur.fetchone()
+                bid = int(row["id"]) if row else None
     if not bid:
         return web.json_response({"ok": False, "error": "business_required"}, status=400)
 
