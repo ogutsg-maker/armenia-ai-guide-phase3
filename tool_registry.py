@@ -651,6 +651,8 @@ class ToolRegistry:
         spec = self.spec(name)
         if not spec:
             raise PermissionError("tool_not_allowed")
+        if self.context_type not in spec.contexts:
+            raise PermissionError("tool_not_allowed")
 
         if spec.tool_type == ToolType.AUTO_COMMIT:
             if name == "save_completed_application":
