@@ -1210,16 +1210,21 @@ class AIManager:
         return True
 
     async def _extract_pending_partner_data(self, message: str, language: str) -> dict[str, Any]:
-        """NLU only: extract missing slots from a partner's free-form reply.
+        """Extract partner data without ever breaking the collecting-data state.
 
-        This method never chooses IDs, calls tools, or writes to the database.
+        Deterministic extraction handles phone/mode and common address forms.
+        Groq is used only as a text-to-JSON bridge for genuinely free-form input;
+        it cannot choose IDs or write data.
         """
         import re
 
-        text = str(message or "").strip()
+        text = " ".join(str(message or "").strip().split())
         result: dict[str, Any] = {}
+        if not text:
+            return result
 
-        phone_match = re.search(r"(?:\+?374|0)?[ -]?(?:\d[ -]?){8,9}", text)
+        # Phone is deterministic and must never depend on model output.
+        phone_match = re.search(r"(?:\\+?374|0)?[ -]?(?:\\d[ -]?){8,9}", text)
         if phone_match:
             raw = re.sub(r"[^0-9+]", "", phone_match.group(0))
             try:
@@ -1231,43 +1236,89 @@ class AIManager:
                 pass
 
         folded = text.casefold()
-        if any(x in folded for x in ("выезжаю", "выезд", "к клиенту", "на выезде", "mobile", "գնում եմ", "այցել")):
+        if any(x in folded for x in (
+            "выезжаю", "выезд", "к клиенту", "на выезде", "mobile",
+            "գնում եմ", "այցել", "մեկնում եմ", "հաճախորդի մոտ",
+        )):
             result["service_mode"] = "mobile"
-        elif any(x in folded for x in ("по этому адресу", "на месте", "в этом адресе", "по адресу", "at address", "այս հասցեում", "հասցեում")):
+        elif any(x in folded for x in (
+            "по этому адресу", "на месте", "в этом адресе", "по адресу",
+            "at address", "այս հասցեում", "հասցեում", "այս հասցեով",
+        )):
             result["service_mode"] = "at_address"
 
-        # The common deterministic forms are handled without an extra model call.
+        # Explicit address labels are fully deterministic.
         address_match = re.search(
-            r"(?:адрес\s*[:\-]?\s*|address\s*[:\-]?\s*|հասցե\s*[:\-]?\s*)"
-            r"(.+?)(?=(?:тел(?:ефон)?|тел\.|phone|հեռախոս|$))",
+            r"(?:адрес\\s*[:\\-]?\\s*|address\\s*[:\\-]?\\s*|հասցե\\s*[:\\-]?\\s*)"
+            r"(.+?)(?=(?:тел(?:ефон)?|тел\\.|phone|հեռախոս|$))",
             text,
             flags=re.IGNORECASE,
         )
         if address_match:
-            result["address_text"] = address_match.group(1).strip(" ,.;")
+            address = address_match.group(1).strip(" ,.;")
+            if address:
+                result["address_text"] = address
 
+        # Common conversational form: "Երևան, Բյուզանդի 1, աշխատում եմ ... հեռ ..."
+        # Keep the location prefix only; do not mistake the rest of the sentence
+        # for an address.
         if not result.get("address_text"):
-            # If the message looks like a standalone location/address answer,
-            # let the small NLU bridge identify it. It returns text only.
-            prompt = (
-                "Извлеки только недостающие данные из ответа партнера. "
-                "Ничего не выдумывай и не выбирай внутренние ID. "
-                "Верни JSON строго с ключами: address_text, phone, service_mode. "
-                "service_mode должен быть только 'at_address' или 'mobile' или null. "
-                "Если поле отсутствует, верни null. "
-                f"Язык ответа партнера: {language}.\n"
-                f"Сообщение: {json.dumps(text, ensure_ascii=False)}"
+            mode_markers = (
+                "աշխատում եմ", "работаю", "выезжаю", "выезд",
+                "где работаю", "սպասարկում եմ", "սպասարկում",
+                "տեղում", "հաճախորդի մոտ",
             )
+            prefix = text
+            lower_prefix = prefix.casefold()
+            marker_positions = [lower_prefix.find(marker) for marker in mode_markers if lower_prefix.find(marker) >= 0]
+            if marker_positions:
+                candidate = prefix[:min(marker_positions)].strip(" ,.;:-")
+                # Avoid treating a bare conversational preamble as an address.
+                if candidate and any(ch.isdigit() for ch in candidate):
+                    result["address_text"] = candidate
+
+        # If the address is still unknown, use a strict structured-output bridge.
+        # GPT-OSS 20B supports strict JSON Schema; all fields are required and
+        # nullable, so the model cannot answer with an empty/non-JSON payload.
+        if not result.get("address_text"):
+            prompt = (
+                "Extract only facts explicitly present in the partner's message. "
+                "Do not invent, normalize locations, choose IDs, classify services, "
+                "or add explanations. Return exactly one JSON object. "
+                "For absent fields use null. "
+                f"Language: {language}. "
+                f"Message: {json.dumps(text, ensure_ascii=False)}"
+            )
+            schema = {
+                "type": "object",
+                "properties": {
+                    "address_text": {"type": ["string", "null"]},
+                    "phone": {"type": ["string", "null"]},
+                    "service_mode": {
+                        "type": ["string", "null"],
+                        "enum": ["at_address", "mobile", None],
+                    },
+                },
+                "required": ["address_text", "phone", "service_mode"],
+                "additionalProperties": False,
+            }
             try:
-                kwargs: dict[str, Any] = {
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0,
-                    "max_tokens": 300,
-                }
-                if "gpt-oss" not in self.model.lower():
-                    kwargs["response_format"] = {"type": "json_object"}
-                response = await self.client.chat.completions.create(**kwargs)
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "partner_pending_data",
+                            "strict": True,
+                            "schema": schema,
+                        },
+                    },
+                    reasoning_format="hidden",
+                    reasoning_effort="low",
+                    temperature=0,
+                    max_tokens=300,
+                )
                 raw = (response.choices[0].message.content or "{}").strip()
                 parsed = json.loads(raw)
                 if isinstance(parsed, dict):
@@ -1282,8 +1333,12 @@ class AIManager:
                             result["phone"] = normalized
                     if result.get("service_mode") not in {"at_address", "mobile"}:
                         result.pop("service_mode", None)
-            except Exception:
-                logger.exception("Pending partner data NLU failed")
+            except Exception as exc:
+                # Never reset the draft because NLU failed. The deterministic
+                # fields already extracted above remain valid and ToolRegistry
+                # will simply ask for whatever business data is still missing.
+                logger.warning("Pending partner data NLU unavailable: %s", str(exc)[:500])
+
         return result
 
     @staticmethod
