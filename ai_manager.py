@@ -1577,15 +1577,15 @@ class AIManager:
             # An ADMIN action must never be trapped by the partner "wait for
             # administrator review" response.
             if role == ContextType.PARTNER and pending_status == "SUBMITTED":
-                reply = (
-                    "⏳ Ваша заявка уже находится на рассмотрении у администратора. Пожалуйста, ожидайте уведомления."
-                    if language == "ru" else
-                    "⏳ Ձեր հայտը արդեն ադմինիստրատորի ստուգման փուլում է։ Խնդրում ենք սպասել ծանուցմանը։"
-                    if language == "hy" else
-                    "⏳ Your application is already under administrator review. Please wait for the notification."
-                )
-                await self._save_history(telegram_id, role, "ai", reply, {"fast_path": True, "already_submitted": True})
-                return {"reply": reply, "confirmation_pending": False, "submitted": True, "fast_path": True}
+                # SUBMITTED is an application lifecycle status, not an active
+                # conversational lock. A successful submission must never block
+                # the partner from creating the next service/application.
+                #
+                # Older sessions could retain this marker after the application
+                # had already been written to partner_applications. Clear the
+                # stale session state and continue with the new user request.
+                await self._clear_pending(telegram_id, role)
+                pending = None
 
             pending_state = str(pending.get("state") or "awaiting_confirmation")
             if self._is_cancel(message):
