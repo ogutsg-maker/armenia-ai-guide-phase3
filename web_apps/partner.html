@@ -34,6 +34,19 @@ async function api(path,body,method="POST"){
   if(!r.ok||d.ok===false)throw new Error(d.detail||d.message||d.error||("HTTP "+r.status));
   return d;
 }
+async function restoreExistingPartner(){
+  if(!initData) return false;
+  try{
+    const r=await fetch("/api/webapp/session",{headers:{"X-Telegram-Init-Data":initData}});
+    if(!r.ok) return false;
+    const s=await r.json();
+    if(s.ok && s.role==="partner" && s.destination){
+      window.location.replace("/"+s.destination);
+      return true;
+    }
+  }catch(e){console.warn("Partner session restore failed",e)}
+  return false;
+}
 function renderPureRegistrationForm(){
   registration.innerHTML='<div class="notice">Գրանցման առաջին քայլում անհրաժեշտ է միայն բիզնեսի անունը և հեռախոսահամարը։</div>'+
     '<div class="grid">'+
@@ -60,5 +73,5 @@ async function registerPartner(){
 }
 try{if(tg?.ready)tg.ready();if(tg?.expand)tg.expand()}catch(e){}
 if(!initData){statusEl.innerHTML='<span class="error">Բացեք այս բաժինը Telegram հավելվածում։</span>'}
-renderPureRegistrationForm();
+(async()=>{if(!(await restoreExistingPartner())) renderPureRegistrationForm()})();
 </script></body></html>
