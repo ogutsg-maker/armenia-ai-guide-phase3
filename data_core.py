@@ -2600,13 +2600,15 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
                    "price_type": price_type}],
         service_mode=service_mode,
         service_location=service_location,
+        submission_token=submission_token,
     )
 
 
 def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                                      company_id: int, services: list[dict[str, Any]],
                                      service_mode: str | None = None,
-                                     service_location: dict[str, Any] | None = None) -> dict:
+                                     service_location: dict[str, Any] | None = None,
+                                     submission_token: str | None = None) -> dict:
     """Create ONE admin-review application containing the whole service batch."""
     pid = int(partner_id)
     cid = int(company_id)
@@ -2617,6 +2619,26 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     raw_services = services if isinstance(services, list) else []
     if not raw_services:
         raise ValueError("services_required")
+
+    token = str(submission_token or "").strip()
+    if token:
+        existing_submission = one(
+            """SELECT id AS application_id,id,status,business_id,document_id,
+                      service_name,price,category_id,master_category_id,created_at
+               FROM partner_applications
+               WHERE partner_id=%s
+                 AND business_id=%s
+                 AND COALESCE(payload_json->>'submission_token','')=%s
+               ORDER BY id DESC
+               LIMIT 1""",
+            (pid, cid, token),
+        )
+        if existing_submission:
+            return {
+                **existing_submission,
+                "workflow": "admin_verification",
+                "idempotent": True,
+            }
 
     company_object = one(
         """SELECT id,partner_id,business_id,object_name,address,city,marz,phone
@@ -2755,6 +2777,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         "service_mode": service_mode if service_mode in {"at_address", "mobile"} else None,
         "service_location": service_location if isinstance(service_location, dict) else None,
         "services": prepared,
+        "submission_token": token or None,
     }
 
     # Keep the application header synchronized with the first service, while
