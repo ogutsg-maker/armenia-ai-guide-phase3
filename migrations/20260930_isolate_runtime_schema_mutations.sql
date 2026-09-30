@@ -347,6 +347,17 @@ WHERE a.id=(
 AND a.description IS NOT NULL
 AND trim(a.description)<>'';
 
+-- 13. Remove duplicated company profile text from legacy service descriptions.
+UPDATE services s
+SET description='', updated_at=NOW()
+FROM partner_businesses b
+JOIN partners p ON p.id=b.partner_id
+WHERE s.business_id=b.id
+  AND b.is_default=TRUE
+  AND s.description IS NOT NULL
+  AND p.business_description IS NOT NULL
+  AND trim(s.description)=trim(p.business_description);
+
 -- 14. Final company description/phone normalization guards.
 UPDATE partner_businesses
 SET description=trim(substring(description from 'Мы занимаемся ([^.]+)'))
@@ -359,17 +370,6 @@ WHERE description ~ 'We provide [^.]+';
 UPDATE partner_businesses
 SET description=trim(substring(description from '^(.+?)։[[:space:]]*Հիմնական ծառայություններն'))
 WHERE description ~ '։[[:space:]]*Հիմնական ծառայություններն';
-
--- 13. Remove duplicated company profile text from legacy service descriptions.
-UPDATE services s
-SET description='', updated_at=NOW()
-FROM partner_businesses b
-JOIN partners p ON p.id=b.partner_id
-WHERE s.business_id=b.id
-  AND b.is_default=TRUE
-  AND s.description IS NOT NULL
-  AND p.business_description IS NOT NULL
-  AND trim(s.description)=trim(p.business_description);
 
 -- 15. Repair duplicate directions before final uniqueness.
 UPDATE partner_directions pd
