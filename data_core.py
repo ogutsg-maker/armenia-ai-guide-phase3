@@ -2570,12 +2570,14 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
                                       address_id: int | None = None,
                                       phone: str | None = None,
                                       category_id: int | None = None,
-                                      description: str | None = None) -> dict:
+                                      description: str | None = None,
+                                      price_type: str | None = None) -> dict:
     """Create one admin-review application for a single AI-added service."""
     return create_partner_services_proposal(
         partner_id=partner_id, actor_user_id=actor_user_id, company_id=company_id,
         services=[{"name": name, "price": price, "address_id": address_id,
-                   "phone": phone, "category_id": category_id, "description": description}],
+                   "phone": phone, "category_id": category_id, "description": description,
+                   "price_type": price_type}],
     )
 
 
