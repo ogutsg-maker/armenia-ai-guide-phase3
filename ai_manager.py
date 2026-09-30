@@ -1285,12 +1285,43 @@ class AIManager:
                     role.value, round_no, estimated_input_tokens,
                 )
             try:
+                # gpt-oss-20b can sometimes return a valid natural-language
+                # confirmation instead of emitting a function call when generic
+                # tool_choice="required" is used. For explicit partner service
+                # commands, force the exact mutation tool.
+                partner_tool_choice = "auto"
+                if definitions and role == ContextType.PARTNER and round_no == 0:
+                    normalized_message = str(message or "").casefold()
+                    service_markers = (
+                        "создай услугу", "создай услуги", "добавь услугу", "добавь услуги",
+                        "create service", "create services", "add service", "add services",
+                        "ավելացրու ծառայ", "ստեղծիր ծառայ",
+                    )
+                    if any(marker in normalized_message for marker in service_markers):
+                        available_names = {
+                            str(item.get("function", {}).get("name") or "")
+                            for item in definitions
+                            if isinstance(item, dict)
+                        }
+                        if "add_services" in available_names:
+                            partner_tool_choice = {
+                                "type": "function",
+                                "function": {"name": "add_services"},
+                            }
+                        elif "add_service" in available_names:
+                            partner_tool_choice = {
+                                "type": "function",
+                                "function": {"name": "add_service"},
+                            }
+                    else:
+                        partner_tool_choice = "required"
+
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     tools=definitions or None,
                     tool_choice=(
-                        "required"
+                        partner_tool_choice
                         if definitions and role == ContextType.PARTNER and round_no == 0
                         else ("auto" if definitions else None)
                     ),
