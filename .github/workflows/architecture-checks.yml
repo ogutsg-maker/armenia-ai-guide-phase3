@@ -56,4 +56,9 @@ jobs:
       - name: Run PostgreSQL 17 integration harness
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          TELEGRAM_BOT_TOKEN: "ci-test-token"
+          ADMIN_TELEGRAM_ID: "0"
+          GROQ_API_KEY: "ci-test-groq-key"
+          OPENAI_API_KEY: ""
+          WEBAPP_BASE_URL: "http://localhost:10000"
         run: python -m pytest -v tests/integration/test_startup_bootstrap.py
