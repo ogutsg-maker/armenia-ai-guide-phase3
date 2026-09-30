@@ -279,7 +279,7 @@ class ToolRegistry:
                                 "phone": _nullable("string"),
                                 "description": _nullable("string")
                             },
-                            "required": ["name", "price", "address_id", "phone"],
+                            "required": ["name", "price"],
                             "additionalProperties": False
                         }
                     }
@@ -1080,6 +1080,7 @@ class ToolRegistry:
                 company = data_core.get_company(company_id)
                 if not company or int(company.get("partner_id") or 0) != pid:
                     raise PermissionError("company_not_owned")
+
                 raw_services = args.get("services") or []
                 if not isinstance(raw_services, list) or not raw_services:
                     raise ValueError("services_required")
@@ -1092,11 +1093,42 @@ class ToolRegistry:
                     if int(x.get("business_id") or 0) == company_id
                     and str(x.get("address") or "").strip()
                 ]
-                if not company_addresses and not any(
-                    isinstance(raw, dict) and raw.get("address_id") not in (None, "")
-                    for raw in raw_services[:30]
-                ):
-                    raise ValueError("service_address_required")
+
+                # A pending action may contain a human-entered address or GPS
+                # location that does not yet exist as a partner_object. It is
+                # kept as draft data until the final confirmation.
+                address_text = str(args.get("address_text") or "").strip()
+                location = args.get("service_location") if isinstance(args.get("service_location"), dict) else None
+                selected_address_id = args.get("address_id")
+                if selected_address_id not in (None, ""):
+                    selected_address_id = int(selected_address_id)
+                    selected = next(
+                        (x for x in company_addresses if int(x.get("id") or 0) == selected_address_id),
+                        None,
+                    )
+                    if not selected:
+                        raise PermissionError("address_not_in_company")
+                elif len(company_addresses) == 1:
+                    selected_address_id = int(company_addresses[0]["id"])
+                    selected = company_addresses[0]
+                else:
+                    selected = None
+
+                phone = data_core.normalize_phone_number(args.get("phone"))
+                if not phone and selected:
+                    phone = data_core.normalize_phone_number(selected.get("phone"))
+                if not phone:
+                    phone = data_core.normalize_phone_number(company.get("phone"))
+
+                service_mode = str(args.get("service_mode") or "").strip().lower()
+                if service_mode not in {"at_address", "mobile"}:
+                    # Keep the raw natural-language value out of the DB contract.
+                    service_mode = None
+
+                document = data_core.get_current_partner_document(
+                    partner_id=pid, company_id=company_id
+                )
+
                 prepared = []
                 for raw in raw_services[:30]:
                     if not isinstance(raw, dict):
@@ -1109,48 +1141,54 @@ class ToolRegistry:
                         company_id=company_id, name=service_name,
                         price=raw.get("price"), category_id=None,
                     )
-                    address_id = raw.get("address_id")
-                    if address_id is not None:
-                        address_id = int(address_id)
-                        obj = next(
-                            (x for x in addresses if int(x.get("id") or 0) == address_id),
-                            None,
-                        )
-                        if not obj or int(obj.get("business_id") or 0) != company_id:
-                            raise PermissionError("address_not_in_company")
                     prepared.append({
                         "name": checked["name"],
                         "price": checked["price"],
-                        "price_type": raw.get("price_type") or "fixed",
-                        "address_id": address_id,
-                        "phone": raw.get("phone"),
+                        "price_type": raw.get("price_type") or "from",
+                        "address_id": selected_address_id,
+                        "phone": phone,
                         "description": raw.get("description"),
                     })
-                if not prepared:
-                    raise ValueError("services_required")
 
-                # Validate the complete application prerequisites before the
-                # partner sees the final confirmation. A service proposal
-                # without a current company document must never be created.
-                document = data_core.get_current_partner_document(
-                    partner_id=pid, company_id=company_id
-                )
-                if not document:
-                    raise ValueError("document_required")
-
-                # Classification is backend-owned. The model supplies only
-                # service names; live catalog matching supplies IDs/status.
                 prepared = data_core.resolve_catalog_services(prepared, limit=500)
+
+                missing = []
+                if not selected_address_id and not address_text and not location:
+                    missing.append("address")
+                if not phone:
+                    missing.append("phone")
+                if not service_mode:
+                    missing.append("service_mode")
+                if not document:
+                    missing.append("document")
+
+                action_args = {
+                    "company_id": company_id,
+                    "company_name": company.get("name") or "",
+                    "services": prepared,
+                    "address_id": selected_address_id,
+                    "address_text": address_text or (selected or {}).get("address"),
+                    "phone": phone,
+                    "service_mode": service_mode,
+                    "service_location": location,
+                }
+
+                if missing:
+                    return {
+                        "ok": True,
+                        "requires_data": True,
+                        "missing_fields": missing,
+                        "action": {"name": "add_services", "args": action_args},
+                        "services": prepared,
+                        "company": company,
+                    }
+
+                # All prerequisites are present. No DB mutation occurs here.
+                # The final confirmation path will create ONE application.
                 return self._prepare_action(
                     name,
-                    {
-                        "company_id": company_id,
-                        "company_name": company.get("name") or "",
-                        "services": prepared,
-                        "document_id": int(document["id"]),
-                        "document_status": document.get("status"),
-                    },
-                    f'Добавить {len(prepared)} услуг(и) в заявку на проверку компании «{company.get("name") or ""}»?',
+                    action_args,
+                    f'Подготовить заявку на добавление {len(prepared)} услуг(и) в компанию «{company.get("name") or ""}»?',
                 )
 
             if name == "update_service":
@@ -1351,6 +1389,34 @@ class ToolRegistry:
             services = args.get("services") or []
             if not services:
                 raise ValueError("services_required")
+
+            # A new address is still a draft until the user confirms the
+            # complete ADD_SERVICES action. Only then do we create the object
+            # and the single admin-review application.
+            address_id = args.get("address_id")
+            address_text = str(args.get("address_text") or "").strip()
+            service_location = args.get("service_location") if isinstance(args.get("service_location"), dict) else {}
+            if address_id in (None, "") and (address_text or service_location):
+                if not address_text and service_location:
+                    lat = service_location.get("latitude")
+                    lon = service_location.get("longitude")
+                    if lat is not None and lon is not None:
+                        address_text = f"GPS: {lat}, {lon}"
+                if address_text:
+                    created = data_core.create_partner_address(
+                        partner_id=pid,
+                        actor_user_id=self.telegram_id,
+                        company_id=company_id,
+                        address=address_text,
+                        city=service_location.get("city"),
+                        marz=service_location.get("marz"),
+                        phone=args.get("phone"),
+                        object_name="AI service location",
+                    )
+                    address_id = int(created["id"])
+                    for item in services:
+                        item["address_id"] = address_id
+
             result = data_core.create_partner_services_proposal(
                 partner_id=pid,
                 actor_user_id=self.telegram_id,
