@@ -1088,12 +1088,26 @@ class ToolRegistry:
                 if not prepared:
                     raise ValueError("services_required")
 
+                # Validate the complete application prerequisites before the
+                # partner sees the final confirmation. A service proposal
+                # without a current company document must never be created.
+                document = data_core.get_current_partner_document(
+                    partner_id=pid, company_id=company_id
+                )
+                if not document:
+                    raise ValueError("document_required")
+
+                # Classification is backend-owned. The model supplies only
+                # service names; live catalog matching supplies IDs/status.
+                prepared = data_core.resolve_catalog_services(prepared, limit=500)
                 return self._prepare_action(
                     name,
                     {
                         "company_id": company_id,
                         "company_name": company.get("name") or "",
                         "services": prepared,
+                        "document_id": int(document["id"]),
+                        "document_status": document.get("status"),
                     },
                     f'Добавить {len(prepared)} услуг(и) в заявку на проверку компании «{company.get("name") or ""}»?',
                 )
