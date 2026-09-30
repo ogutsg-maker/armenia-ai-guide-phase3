@@ -255,6 +255,7 @@ class ToolRegistry:
                     "category_id": _nullable("integer"),
                     "address_id": _nullable("integer"),
                     "phone": _nullable("string"),
+                    "description": _nullable("string"),
                 },
                 required=("company_id", "name"),
                 tool_type=ToolType.ACTION_CONFIRM,
@@ -274,7 +275,8 @@ class ToolRegistry:
                                 "name": {"type": "string"},
                                 "price": _nullable("number"),
                                 "address_id": _nullable("integer"),
-                                "phone": _nullable("string")
+                                "phone": _nullable("string"),
+                                "description": _nullable("string")
                             },
                             "required": ["name", "price", "address_id", "phone"],
                             "additionalProperties": False
@@ -1270,6 +1272,7 @@ class ToolRegistry:
                 company_id=int(args["company_id"]), name=args["name"],
                 price=args.get("price"), category_id=args.get("category_id"),
                 address_id=args.get("address_id"), phone=args.get("phone"),
+                description=args.get("description"),
             )}
 
         if name == "add_services":
@@ -1277,16 +1280,13 @@ class ToolRegistry:
             services = args.get("services") or []
             if not services:
                 raise ValueError("services_required")
-            created = []
-            for item in services:
-                created.append(data_core.create_partner_service_proposal(
-                    partner_id=pid, actor_user_id=self.telegram_id,
-                    company_id=company_id, name=item["name"],
-                    price=item.get("price"), category_id=item.get("category_id"),
-                    address_id=item.get("address_id"), phone=item.get("phone"),
-                ))
-            return {"ok": True, "items": created, "count": len(created),
-                    "workflow": "admin_verification"}
+            result = data_core.create_partner_services_proposal(
+                partner_id=pid,
+                actor_user_id=self.telegram_id,
+                company_id=company_id,
+                services=services,
+            )
+            return {"ok": True, **result}
 
         if name == "update_service":
             return {"ok": True, "item": data_core.update_service_safe(
