@@ -1141,7 +1141,7 @@ class ToolRegistry:
                     phone = data_core.normalize_phone_number(company.get("phone"))
 
                 service_mode = str(args.get("service_mode") or "").strip().lower()
-                if service_mode not in {"at_address", "mobile"}:
+                if service_mode not in {"at_address", "mobile", "both"}:
                     # Keep the raw natural-language value out of the DB contract.
                     service_mode = None
 
