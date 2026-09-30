@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 from groq import AsyncGroq
+from openai import AsyncOpenAI
 
 import ai_cost_center
 import platform_db
@@ -104,6 +105,20 @@ class AIManager:
         # The application owns retry/backoff policy; this prevents a single
         # 429 from turning into a long chain of hidden requests.
         self.client = AsyncGroq(api_key=key, max_retries=0)
+        # Provider fallback is explicit and one-shot: a Groq 429 never causes
+        # another Groq request. OpenAI/OpenRouter are used only when configured.
+        self.openai_client = None
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if openai_key:
+            self.openai_client = AsyncOpenAI(api_key=openai_key, max_retries=0)
+        self.openrouter_client = None
+        openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        if openrouter_key:
+            self.openrouter_client = AsyncOpenAI(
+                api_key=openrouter_key,
+                base_url="https://openrouter.ai/api/v1",
+                max_retries=0,
+            )
         self.db = db_pool
         self.model = (
             model
@@ -113,6 +128,46 @@ class AIManager:
         self.history = history_provider or HistoryProvider()
         self.max_history = max(2, min(int(max_history), 50))
         self.max_tool_rounds = max(1, min(int(max_tool_rounds), 8))
+
+    async def _chat_completion_with_fallback(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | None,
+        temperature: float,
+        max_tokens: int,
+    ):
+        """Call Groq once; on 429, move once to OpenAI then OpenRouter."""
+        providers = [("groq", self.client, self.model)]
+        if self.openai_client:
+            providers.append(("openai", self.openai_client, os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()))
+        if self.openrouter_client:
+            providers.append(("openrouter", self.openrouter_client, os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b").strip()))
+
+        last_exc = None
+        for index, (provider, client, model) in enumerate(providers):
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tools or None,
+                    tool_choice=tool_choice,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if provider != "groq":
+                    logger.warning("AI provider fallback used: %s", provider)
+                return response, provider
+            except Exception as exc:
+                last_exc = exc
+                status = getattr(exc, "status_code", None)
+                is_429 = status == 429 or "429" in str(exc) or "rate_limit" in str(exc).lower()
+                if provider == "groq" and is_429 and index + 1 < len(providers):
+                    logger.warning("Groq rate limit; switching provider without retrying Groq")
+                    continue
+                raise
+        raise last_exc or RuntimeError("no_ai_provider_available")
 
     @staticmethod
     def _context(value: AIContext | ContextType | str) -> ContextType:
@@ -1923,16 +1978,11 @@ class AIManager:
                 # action parser above; all other messages use normal auto selection.
                 partner_tool_choice = "auto"
 
-                response = await self.client.chat.completions.create(
-                    model=self.model,
+                response, provider_used = await self._chat_completion_with_fallback(
                     messages=messages,
                     tools=definitions or None,
                     tool_choice=("auto" if definitions else None),
                     temperature=0.1,
-                    # gpt-oss tool calls can spend completion budget on reasoning before
-                    # emitting the JSON arguments. Registration saves may contain many
-                    # services, so 900 was too small and produced truncated JSON such as
-                    # {"address". Keep registration isolated at a safe 1600-token ceiling.
                     max_tokens=700 if role == ContextType.ADMIN else 1600,
                 )
                 await self._cost_log(
@@ -2174,6 +2224,16 @@ class AIManager:
             extra_context=extra_context,
             language=language,
         )
+
+
+
+
+
+
+
+
+
+
 
 
 
