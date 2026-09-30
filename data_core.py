@@ -2649,17 +2649,22 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             if not service_object:
                 raise PermissionError("address_not_in_company")
 
+        if not service_object or not str(service_object.get("address") or "").strip():
+            raise ValueError("service_address_required")
+
         service_phone = str(
             raw.get("phone")
             or (service_object or {}).get("phone")
             or company_phone
             or ""
         ).strip() or None
+        if not service_phone:
+            raise ValueError("service_phone_required")
 
         prepared.append({
             "name": checked["name"],
             "price": checked["price"],
-            "price_type": raw.get("price_type"),
+            "price_type": raw.get("price_type") or "fixed",
             "description": str(raw.get("description") or "").strip(),
             "object_id": int(service_object["id"]) if service_object else None,
             "object_name": (service_object or {}).get("object_name"),
