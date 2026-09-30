@@ -1044,79 +1044,47 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
-                company_addresses = [
-                    x for x in data_core.get_partner_addresses(
-                        pid, actor_user_id=self.telegram_id, limit=200
-                    )
-                    if int(x.get("business_id") or 0) == company_id
-                    and str(x.get("address") or "").strip()
-                ]
-                address_id = args.get("address_id")
-                if address_id in (None, ""):
-                    # The company context is trusted. If it has exactly one
-                    # active address, use it automatically; asking the partner
-                    # for an internal address_id would make a natural-language
-                    # service command unnecessarily fragile.
-                    if len(company_addresses) == 1:
-                        address_id = int(company_addresses[0]["id"])
-                    elif not company_addresses:
+                if args.get("address_id") in (None, ""):
+                    company_addresses = [
+                        x for x in data_core.get_partner_addresses(
+                            pid, actor_user_id=self.telegram_id, limit=200
+                        )
+                        if int(x.get("business_id") or 0) == company_id
+                        and str(x.get("address") or "").strip()
+                    ]
+                    if not company_addresses:
                         raise ValueError("service_address_required")
-                    else:
-                        raise ValueError("service_address_ambiguous")
-
-                selected_address = next(
-                    (
-                        x for x in company_addresses
-                        if int(x.get("id") or 0) == int(address_id)
-                    ),
-                    None,
-                )
-                if not selected_address:
-                    raise PermissionError("address_not_in_company")
-
                 document = data_core.get_current_partner_document(
                     partner_id=pid, company_id=company_id
                 )
                 if not document:
                     raise ValueError("document_required")
-
-                phone = data_core.normalize_phone_number(args.get("phone"))
-                if not phone:
-                    phone = data_core.normalize_phone_number(selected_address.get("phone"))
-                if not phone:
-                    phone = data_core.normalize_phone_number(company.get("phone"))
-                if not phone:
-                    raise ValueError("service_phone_required")
-
                 resolved = data_core.resolve_catalog_services([{
                     "name": checked["name"],
                     "price": checked["price"],
                     "price_type": args.get("price_type") or "fixed",
-                    "address_id": int(address_id),
-                    "phone": phone,
+                    "address_id": args.get("address_id"),
+                    "phone": args.get("phone"),
                     "description": args.get("description"),
                 }], limit=500)[0]
-
-                action_args = {
-                    "company_id": company_id,
-                    "name": resolved["name"],
-                    "price": resolved.get("price"),
-                    "price_type": resolved.get("price_type") or "fixed",
-                    "category_id": resolved.get("category_id"),
-                    "master_category_id": resolved.get("master_category_id"),
-                    "address_id": int(address_id),
-                    "phone": resolved.get("phone") or phone,
-                    "description": resolved.get("description"),
-                    "catalog_match_status": resolved.get("catalog_match_status"),
-                    "catalog_options": resolved.get("catalog_options") or [],
-                    "document_id": int(document["id"]),
-                    "document_status": document.get("status"),
-                    "submission_token": str(args.get("submission_token") or "").strip() or secrets.token_urlsafe(24),
-                }
                 return self._prepare_action(
                     name,
-                    action_args,
-                    f'Ավելացնել «{checked["name"]}» ծառայությունը «{company.get("name") or ""}» ընկերության ծառայությունների հայտում։ Հաստատո՞ւմ եք։',
+                    {
+                        "company_id": company_id,
+                        "name": resolved["name"],
+                        "price": resolved.get("price"),
+                        "price_type": resolved.get("price_type") or "fixed",
+                        "category_id": resolved.get("category_id"),
+                        "master_category_id": resolved.get("master_category_id"),
+                        "address_id": resolved.get("address_id"),
+                        "phone": resolved.get("phone"),
+                        "description": resolved.get("description"),
+                        "catalog_match_status": resolved.get("catalog_match_status"),
+                        "catalog_options": resolved.get("catalog_options") or [],
+                        "document_id": int(document["id"]),
+                        "document_status": document.get("status"),
+                    },
+                    f'Добавить услугу «{checked["name"]}» в заявку на проверку компании «{company.get("name") or ""}»?',
                 )
 
             if name == "add_services":
@@ -1443,8 +1411,6 @@ class ToolRegistry:
                 price=args.get("price"), category_id=args.get("category_id"),
                 address_id=args.get("address_id"), phone=args.get("phone"),
                 description=args.get("description"),
-                price_type=args.get("price_type"),
-                submission_token=args.get("submission_token"),
             )}
 
         if name == "add_services":
