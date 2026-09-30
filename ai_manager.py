@@ -1224,7 +1224,7 @@ class AIManager:
             return result
 
         # Phone is deterministic and must never depend on model output.
-        phone_match = re.search(r"(?:\\+?374|0)?[ -]?(?:\\d[ -]?){8,9}", text)
+        phone_match = re.search(r"(?:\+?374|0)?[ -]?(?:\d[ -]?){8,9}", text)
         if phone_match:
             raw = re.sub(r"[^0-9+]", "", phone_match.group(0))
             try:
@@ -1238,12 +1238,12 @@ class AIManager:
         folded = text.casefold()
         if any(x in folded for x in (
             "выезжаю", "выезд", "к клиенту", "на выезде", "mobile",
-            "գնում եմ", "այցել", "մեկնում եմ", "հաճախորդի մոտ",
+            "գնում եմ", "այցել", "մեկնում եմ", "հաճախորդի մոտ", "մեկնում եմ հաճախորդի մոտ",
         )):
             result["service_mode"] = "mobile"
         elif any(x in folded for x in (
             "по этому адресу", "на месте", "в этом адресе", "по адресу",
-            "at address", "այս հասցեում", "հասցեում", "այս հասցեով",
+            "at address", "այս հասցեում", "հասցեում", "այս հասցեով", "աշխատում եմ", "աշխատում եմ Երևանի տարածքում", "աշխատում եմ այս հասցեում", "աշխատում եմ հասցեում",
         )):
             result["service_mode"] = "at_address"
 
