@@ -1705,6 +1705,7 @@ class AIManager:
                             # Never report approval merely because the mutation
                             # call returned without raising: re-read the application
                             # and verify the canonical state and materialized services.
+                            import data_core
                             application_id = int(pending_args.get("application_id") or 0)
                             verified = data_core.get_application_full(application_id)
                             verified_status = str((verified or {}).get("status") or "").strip().lower()
