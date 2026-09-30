@@ -1885,6 +1885,27 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
            WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
         (partner_id,),
     )
+
+    # Final backend truth gate: an approval is not considered successful until
+    # every service from the application is actually materialized in the
+    # canonical services table for this exact company. This prevents the AI
+    # layer from ever reporting "active" while the partner cabinet still sees
+    # only the application record.
+    materialized = rows(
+        """SELECT id,name,price,status,category_id,business_id
+           FROM services
+           WHERE partner_id=%s AND business_id=%s
+             AND status='approved'
+             AND data_json->>'application_id'=%s
+           ORDER BY id""",
+        (partner_id, int(bid), str(int(application_id))),
+    )
+    if len(materialized) < len(services):
+        raise RuntimeError(
+            f"application_service_materialization_failed: application={int(application_id)} "
+            f"expected={len(services)} actual={len(materialized)}"
+        )
+
     return one(
         """UPDATE partner_applications
            SET status='approved',reviewed_by=%s,reviewed_at=NOW(),
