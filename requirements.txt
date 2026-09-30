@@ -1,7 +1,8 @@
 # Telegram Bot Framework
 aiogram==3.13.1
 
-# AI Providers
+ # AI Providers
+openai>=1.50
 groq>=0.5
 
 # Database
