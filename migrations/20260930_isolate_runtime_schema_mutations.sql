@@ -51,6 +51,17 @@ INSERT INTO category_settings(category_id)
     SELECT id FROM categories
     ON CONFLICT(category_id) DO NOTHING;
 
+-- partner_directions_api.py: structural changes
+ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS name_en TEXT;
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS name_en TEXT;
+ALTER TABLE partner_verification_documents
+        ADD COLUMN IF NOT EXISTS partner_direction_id BIGINT REFERENCES partner_directions(id) ON DELETE SET NULL;
+ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS proposed_subcategory_name TEXT;
+ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS partner_direction_id BIGINT REFERENCES partner_directions(id) ON DELETE SET NULL;
+ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS document_id BIGINT REFERENCES partner_verification_documents(id) ON DELETE SET NULL;
+ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 -- partner_directions_api.py: legacy direction backfills
 INSERT INTO partner_directions(partner_id, master_category_id, status)
     SELECT DISTINCT p.id, c.master_category_id,
@@ -60,12 +71,9 @@ INSERT INTO partner_directions(partner_id, master_category_id, status)
     JOIN master_skills ms ON ms.user_id=p.user_id AND ms.is_active=TRUE
     JOIN categories c ON c.id=ms.category_id
     WHERE c.master_category_id IS NOT NULL
-      AND NOT EXISTS (
-          SELECT 1 FROM partner_directions pd
-          WHERE pd.partner_id=p.id
-            AND pd.master_category_id=c.master_category_id
-      )
-    
+      AND NOT EXISTS (H
+    ;
+
 INSERT INTO partner_direction_categories(partner_direction_id, category_id)
     SELECT pd.id, ms.category_id
     FROM partner_directions pd
@@ -84,7 +92,7 @@ UPDATE partner_verification_documents d
         GROUP BY d2.id
       ) x
      WHERE d.id=x.doc_id AND d.partner_direction_id IS NULL
-    
+    ;
 
 -- partner_lifecycle_schema.py: partner status synchronization trigger
 CREATE OR REPLACE FUNCTION sync_partner_after_direction_change()
