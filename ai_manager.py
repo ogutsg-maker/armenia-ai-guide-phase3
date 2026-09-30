@@ -1510,6 +1510,34 @@ class AIManager:
                         "company_id": trusted_for_prompt.get("current_company_id"),
                         "services": parsed_service_action,
                     })
+                    if result.get("requires_data"):
+                        action = result.get("action") or {}
+                        pending_action = {
+                            "name": str(action.get("name") or "add_services"),
+                            "args": dict(action.get("args") or {}),
+                            "missing_fields": list(result.get("missing_fields") or []),
+                            "state": "collecting_data",
+                            "created_at": int(time.time()),
+                        }
+                        await self._update_session_context(
+                            telegram_id, role, {"pending_action": pending_action}
+                        )
+                        reply = self._partner_missing_reply(language, pending_action)
+                        await self._save_history(
+                            telegram_id, role, "ai", reply,
+                            {"collecting_data": True, "action": pending_action,
+                             "deterministic_parser": True},
+                        )
+                        return {
+                            "reply": reply,
+                            "pending_action": pending_action,
+                            "collecting_data": True,
+                            "tool_calls": [{
+                                "name": "add_services",
+                                "arguments": parsed_service_action,
+                                "deterministic": True,
+                            }],
+                        }
                     if result.get("requires_confirmation"):
                         action = result.get("action") or {}
                         pending_action = {
