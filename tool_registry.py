@@ -1422,6 +1422,8 @@ class ToolRegistry:
                 actor_user_id=self.telegram_id,
                 company_id=company_id,
                 services=services,
+                service_mode=args.get("service_mode"),
+                service_location=args.get("service_location"),
             )
             return {"ok": True, **result}
 
