@@ -94,7 +94,7 @@ async function uploadAiDocument(input){
     fd.append('document_type','business_document');
     const headersObj={...headers()};
     if(state.current?.id)headersObj['X-Business-Id']=String(state.current.id);
-    const r=await fetch('/api/master/0/documents/upload',{method:'POST',headers:headersObj,body:fd});
+    const r=await fetch('/api/master/0/ai-command/document',{method:'POST',headers:headersObj,body:fd});
     const d=await r.json().catch(()=>({ok:false,error:'bad_json'}));
     if(!r.ok||d.ok===false)throw new Error(d.error||d.message||('HTTP '+r.status));
     if(status)status.textContent=(state.lang==='hy'?'📎 Կցված է՝ ':state.lang==='ru'?'📎 Прикреплён: ':'📎 Attached: ')+(d.filename||file.name);
