@@ -1089,7 +1089,7 @@ def check_application(application_id: int) -> dict[str, Any]:
 def normalize_phone_number(phone: Any) -> str | None:
     """Normalize an Armenian phone deterministically; return None if invalid."""
     import re
-    digits = re.sub(r"\\D", "", str(phone or ""))
+    digits = re.sub(r"\D", "", str(phone or ""))
     if not digits:
         return None
     if digits.startswith("0"):
