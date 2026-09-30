@@ -1518,6 +1518,11 @@ class AIManager:
                 if self._is_confirmation(message):
                     pending_name = str(pending.get("name") or "").strip()
                     pending_args = dict(pending.get("args") or {})
+                    is_partner_submission = (
+                        role == ContextType.PARTNER
+                        and pending_name in {"add_service", "add_services"}
+                    )
+
                     try:
                         confirm_tools = ToolRegistry(
                             telegram_id=int(telegram_id),
@@ -1525,44 +1530,113 @@ class AIManager:
                             trusted_context=trusted,
                             session_state=state.to_dict(),
                         )
-                        # Mark the action as submitted BEFORE the final DB write.
-                        # The same persisted draft therefore cannot be submitted twice.
-                        pending["status"] = "SUBMITTED"
-                        pending["state"] = "submitted"
-                        pending["submission_token"] = str(
-                            pending.get("submission_token") or secrets.token_urlsafe(24)
+
+                        # Only partner service/application submission gets the
+                        # idempotent SUBMITTED marker. Admin actions have their
+                        # own lifecycle and must never become "submitted".
+                        if is_partner_submission:
+                            pending["status"] = "SUBMITTED"
+                            pending["state"] = "submitted"
+                            pending["submission_token"] = str(
+                                pending.get("submission_token") or secrets.token_urlsafe(24)
+                            )
+                            pending_args["submission_token"] = pending["submission_token"]
+                            pending["args"] = pending_args
+                            await self._update_session_context(
+                                telegram_id, role, {"pending_action": pending}
+                            )
+
+                        result = await confirm_tools.execute_confirmed(
+                            pending_name, pending_args
                         )
-                        pending_args["submission_token"] = pending["submission_token"]
-                        pending["args"] = pending_args
-                        await self._update_session_context(
-                            telegram_id, role, {"pending_action": pending}
-                        )
-                        result = await confirm_tools.execute_confirmed(pending_name, pending_args)
-                        application_id = result.get("application_id") if isinstance(result, dict) else None
-                        pending["application_id"] = application_id
-                        await self._update_session_context(
-                            telegram_id, role, {"pending_action": pending}
-                        )
-                        reply = (
-                            "⏳ Հայտը ուղարկվեց ստուգման։" if language == "hy"
-                            else "⏳ Заявка отправлена на проверку."
-                            if language == "ru" else "⏳ The application was sent for review."
-                        )
+
+                        # A successful action consumes its confirmation state.
+                        # Repeated "yes" cannot execute the same action twice.
+                        await self._clear_pending(telegram_id, role)
+
+                        if is_partner_submission:
+                            reply = (
+                                "⏳ Հայտը ուղարկվեց ստուգման։" if language == "hy"
+                                else "⏳ Заявка отправлена на проверку."
+                                if language == "ru"
+                                else "⏳ The application was sent for review."
+                            )
+                        elif pending_name == "admin_approve_application_document":
+                            reply = (
+                                "✅ Փաստաթուղթը հաստատվեց։ Հայտը դեռ սպասում է վերջնական ադմինիստրատիվ հաստատմանը։"
+                                if language == "hy"
+                                else "✅ Документ подтверждён. Заявка остаётся в ожидании окончательного решения администратора."
+                                if language == "ru"
+                                else "✅ The document was approved. The application remains pending final administrator approval."
+                            )
+                        elif pending_name == "admin_approve_application":
+                            reply = (
+                                "✅ Հայտը հաստատվեց։ Ծառայությունները կարող են ակտիվացվել։"
+                                if language == "hy"
+                                else "✅ Заявка подтверждена. Услуги могут быть активированы."
+                                if language == "ru"
+                                else "✅ The application was approved. Services can be activated."
+                            )
+                        elif pending_name == "admin_reject_application":
+                            reply = (
+                                "✅ Հայտը մերժվեց։"
+                                if language == "hy"
+                                else "✅ Заявка отклонена."
+                                if language == "ru"
+                                else "✅ The application was rejected."
+                            )
+                        elif pending_name == "admin_request_document_correction":
+                            reply = (
+                                "✅ Գործընկերոջը ուղարկվել է փաստաթուղթը փոխարինելու պահանջը։"
+                                if language == "hy"
+                                else "✅ Партнёру отправлен запрос на замену документа."
+                                if language == "ru"
+                                else "✅ The partner was asked to replace the document."
+                            )
+                        elif pending_name == "admin_apply_catalog_resolution":
+                            reply = (
+                                "✅ Կատեգորիաները կիրառվեցին։"
+                                if language == "hy"
+                                else "✅ Категории применены."
+                                if language == "ru"
+                                else "✅ Categories applied."
+                            )
+                        else:
+                            reply = self._done_text(language)
+
                         await self._save_history(
                             telegram_id, role, "ai", reply,
-                            {"confirmed_action": pending, "tool_result": result, "fast_path": True},
+                            {
+                                "confirmed_action": pending,
+                                "tool_result": result,
+                                "fast_path": True,
+                            },
                         )
-                        return {"reply": reply, "tool_result": result, "confirmed": True, "fast_path": True}
+                        return {
+                            "reply": reply,
+                            "tool_result": result,
+                            "confirmed": True,
+                            "fast_path": True,
+                        }
+
                     except Exception as exc:
+                        # Keep the pending action for retry if the backend failed.
                         logger.exception("Pending confirmation execution failed")
                         reply = self._error_text(language)
                         await self._save_history(
                             telegram_id, role, "ai", reply,
-                            {"confirmed_action": pending, "error": str(exc)[:1000], "fast_path": True},
+                            {
+                                "confirmed_action": pending,
+                                "error": str(exc)[:1000],
+                                "fast_path": True,
+                            },
                         )
                         return {
-                            "reply": reply, "confirmed": False, "confirmation_required": True,
-                            "fast_path": True, "error": str(exc)[:240],
+                            "reply": reply,
+                            "confirmed": False,
+                            "confirmation_required": True,
+                            "fast_path": True,
+                            "error": str(exc)[:240],
                         }
 
                 reply = (
