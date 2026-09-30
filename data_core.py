@@ -2698,6 +2698,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             first.get("description") or "",
             int(document["id"]) if document else None,
             json_dump(payload),
+        ),
     )
     if not row:
         raise ValueError("service_application_create_failed")
