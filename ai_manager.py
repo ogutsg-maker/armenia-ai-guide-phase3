@@ -1302,17 +1302,6 @@ class AIManager:
         # Catalog resolution is backend-only. It never becomes a partner-facing
         # missing field and never interrupts collection of real business data.
         if language == "hy":
-                lines = []
-                for item in unresolved:
-                    options = item.get("catalog_options") or []
-                    if options:
-                        labels = [str(o.get("category_name_am") or o.get("category_name_ru") or o.get("category_name_en") or "") for o in options]
-                        lines.append(f"• {item.get('name')}: " + " / ".join(x for x in labels if x))
-                    else:
-                        lines.append(f"• {item.get('name')}: հստակ համապատասխանություն դեռ չկա")
-                return "Ծառայությունների կատալոգային դասակարգումը դեռ պետք է ճշտել:\n" + "\n".join(lines)
-            return "I need to resolve the live catalogue classification before I can prepare the application."
-        if language == "hy":
             reply = "Հասկացա 👍 Պատրաստում եմ հետևյալ ծառայությունների հայտը:\n\n" + "\n".join(lines)
             reply += "\n\nԽնդրում եմ լրացրեք միայն այն տվյալները, որոնք դեռ անհրաժեշտ են:\n"
             if "address" in missing:
