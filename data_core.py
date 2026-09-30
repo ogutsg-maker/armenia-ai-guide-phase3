@@ -1092,12 +1092,10 @@ def normalize_phone_number(phone: Any) -> str | None:
     digits = re.sub(r"\D", "", str(phone or ""))
     if not digits:
         return None
+    if digits.startswith("00"):
+        digits = digits[2:]
     if digits.startswith("0"):
         digits = "374" + digits[1:]
-    elif digits.startswith("00"):
-        digits = digits[2:]
-        if digits.startswith("0"):
-            digits = "374" + digits[1:]
     if digits.startswith("374"):
         return digits if len(digits) == 11 else None
     # Accept already-normalized local mobile length only when unambiguous.
