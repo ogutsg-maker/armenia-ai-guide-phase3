@@ -6,6 +6,9 @@ from unittest.mock import MagicMock
 import psycopg
 import pytest
 
+
+RAW_PSYCOPG_CONNECT = psycopg.connect
+
 from database import DatabaseManager
 from runtime_platform_bootstrap import _bootstrap
 
@@ -70,18 +73,12 @@ class GuardedCursor(psycopg.Cursor):
         return super().execute(query, params, **kwargs)
 
 
-class GuardedConnection(psycopg.Connection):
-    def cursor(self, *args, **kwargs):
-        kwargs.setdefault("cursor_factory", GuardedCursor)
-        return super().cursor(*args, **kwargs)
-
-
 @pytest.fixture
 def guarded_psycopg(monkeypatch):
     original = psycopg.connect
 
     def connect(*args, **kwargs):
-        kwargs.setdefault("connection_class", GuardedConnection)
+        kwargs.setdefault("cursor_factory", GuardedCursor)
         return original(*args, **kwargs)
 
     monkeypatch.setattr(psycopg, "connect", connect)
@@ -114,7 +111,7 @@ def runtime_context():
 
 
 def reset_public_schema():
-    with psycopg.connect(DATABASE_URL) as conn:
+    with RAW_PSYCOPG_CONNECT(DATABASE_URL) as conn:
         with conn.cursor() as cur:
             cur.execute("DROP SCHEMA public CASCADE")
             cur.execute("CREATE SCHEMA public")
@@ -200,15 +197,25 @@ def seed_legacy_fixture():
             # migration itself is responsible for the modern business schema.
             cur.execute(
                 """
+                CREATE TABLE users(
+                    id BIGSERIAL PRIMARY KEY,
+                    telegram_id BIGINT UNIQUE
+                );
                 CREATE TABLE partners(
                     id BIGSERIAL PRIMARY KEY,
                     status TEXT,
                     verification_status TEXT,
                     user_id BIGINT,
-                    business_description TEXT
+                    business_name TEXT,
+                    business_description TEXT,
+                    rejection_reason TEXT,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
                 );
                 CREATE TABLE master_categories(
                     id INT PRIMARY KEY
+                );
+                CREATE TABLE category_settings(
+                    category_id INT PRIMARY KEY
                 );
                 CREATE TABLE categories(
                     id INT PRIMARY KEY,
@@ -223,20 +230,23 @@ def seed_legacy_fixture():
                     id BIGSERIAL PRIMARY KEY,
                     partner_id BIGINT NOT NULL,
                     master_category_id INT NOT NULL,
-                    status TEXT NOT NULL
+                    status TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
                 );
                 CREATE TABLE services(
                     id BIGSERIAL PRIMARY KEY,
                     partner_id BIGINT,
                     category_id INT,
                     status TEXT,
-                    description TEXT
+                    description TEXT,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
                 );
                 CREATE TABLE partner_verification_documents(
                     id BIGSERIAL PRIMARY KEY,
                     partner_id BIGINT,
                     partner_direction_id BIGINT,
-                    status TEXT
+                    status TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 CREATE TABLE partner_objects(
                     id BIGSERIAL PRIMARY KEY,
@@ -246,6 +256,13 @@ def seed_legacy_fixture():
                     city TEXT,
                     marz TEXT,
                     data_json JSONB DEFAULT '{}'::jsonb
+                );
+                CREATE TABLE ai_messages(
+                    id BIGSERIAL PRIMARY KEY,
+                    sender_role TEXT NOT NULL
+                );
+                CREATE TABLE ai_usage_ledger(
+                    id BIGSERIAL PRIMARY KEY
                 );
                 CREATE TABLE partner_locations(
                     id BIGSERIAL PRIMARY KEY,
