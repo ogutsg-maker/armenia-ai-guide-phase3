@@ -1411,6 +1411,10 @@ class ToolRegistry:
                 price=args.get("price"), category_id=args.get("category_id"),
                 address_id=args.get("address_id"), phone=args.get("phone"),
                 description=args.get("description"),
+                price_type=args.get("price_type"),
+                service_mode=args.get("service_mode"),
+                service_location=args.get("service_location"),
+                submission_token=args.get("submission_token"),
             )}
 
         if name == "add_services":
