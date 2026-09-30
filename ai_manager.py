@@ -1142,14 +1142,14 @@ class AIManager:
         import re
         text = " ".join(str(message or "").strip().split())
         m = re.match(
-            r"^(?:добавь(?:те)?|добавить|создай(?:те)?|создать)\\s+"
-            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)?\\s*(?P<name>.+?)\\s*$",
+            r"^(?:добавь(?:те)?|добавить|создай(?:те)?|создать)\s+"
+            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)?\s*(?P<name>.+?)\s*$",
             text,
             flags=re.IGNORECASE,
         )
         if not m:
             return None
-        name = re.sub(r"\\s+", " ", m.group("name")).strip(" ,;:.-")
+        name = re.sub(r"\s+", " ", m.group("name")).strip(" ,;:.-")
         # A follow-up without a price is useful only for resolving an already
         # pending unresolved service; it must never silently create a new
         # price-less service.
