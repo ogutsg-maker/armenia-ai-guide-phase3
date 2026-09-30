@@ -1077,6 +1077,16 @@ class ToolRegistry:
                 addresses = data_core.get_partner_addresses(
                     pid, actor_user_id=self.telegram_id, limit=200
                 )
+                company_addresses = [
+                    x for x in addresses
+                    if int(x.get("business_id") or 0) == company_id
+                    and str(x.get("address") or "").strip()
+                ]
+                if not company_addresses and not any(
+                    isinstance(raw, dict) and raw.get("address_id") not in (None, "")
+                    for raw in raw_services[:30]
+                ):
+                    raise ValueError("service_address_required")
                 prepared = []
                 for raw in raw_services[:30]:
                     if not isinstance(raw, dict):
