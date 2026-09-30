@@ -45,35 +45,6 @@ def execute(sql, params=(), returning=False):
 def json_dump(v): return json.dumps(v or {}, ensure_ascii=False)
 
 
-_ai_messages_tool_schema_ready = False
-
-def ensure_ai_messages_tool_schema():
-    """Make ai_messages compatible with OpenAI/Groq tool-call history.
-
-    This is intentionally idempotent and runs once per worker process. Existing
-    installations may already have the legacy sender_role CHECK constraint.
-    """
-    global _ai_messages_tool_schema_ready
-    if _ai_messages_tool_schema_ready:
-        return
-    with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute("""
-                ALTER TABLE ai_messages
-                DROP CONSTRAINT IF EXISTS ai_messages_sender_role_check
-            """)
-            cur.execute("""
-                ALTER TABLE ai_messages
-                ADD CONSTRAINT ai_messages_sender_role_check
-                CHECK (sender_role IN ('client','partner','admin','system','assistant','ai','user','tool'))
-            """)
-            cur.execute("""
-                ALTER TABLE ai_messages
-                ADD COLUMN IF NOT EXISTS tool_call_id VARCHAR(255)
-            """)
-        c.commit()
-    _ai_messages_tool_schema_ready = True
-
 
 def transaction(callback):
     """Run repository operations on one PostgreSQL transaction.
