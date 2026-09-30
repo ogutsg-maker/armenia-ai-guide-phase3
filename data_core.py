@@ -2567,7 +2567,6 @@ def get_current_partner_document(*, partner_id: int, company_id: int) -> dict[st
 
 
 def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, company_id: int, name: str, price: Any = None,
-                                      company_id: int, name: str, price: Any = None,
                                       address_id: int | None = None,
                                       phone: str | None = None,
                                       category_id: int | None = None,
