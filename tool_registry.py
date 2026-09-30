@@ -1024,6 +1024,16 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
+                if args.get("address_id") in (None, ""):
+                    company_addresses = [
+                        x for x in data_core.get_partner_addresses(
+                            pid, actor_user_id=self.telegram_id, limit=200
+                        )
+                        if int(x.get("business_id") or 0) == company_id
+                        and str(x.get("address") or "").strip()
+                    ]
+                    if not company_addresses:
+                        raise ValueError("service_address_required")
                 document = data_core.get_current_partner_document(
                     partner_id=pid, company_id=company_id
                 )
