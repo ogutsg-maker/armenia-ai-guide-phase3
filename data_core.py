@@ -1399,8 +1399,8 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
     except (TypeError, ValueError):
         master_id = None
 
-    # A service proposal may reuse an already approved direction. Registration
-    # itself never bypasses the mandatory registration document.
+    # A service proposal is approvable without a NEW document only when
+    # the company already has an approved verification document.
     document_required = source != "partner_service"
     approved_direction = None
     if source == "partner_service" and business_id and master_id:
@@ -1410,10 +1410,14 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                  AND status='approved' LIMIT 1""",
             (int(row["partner_id"]), int(business_id), int(master_id)),
         )
-        if approved_direction:
-            document_required = False
-        else:
-            document_required = True
+        verified_document = one(
+            """SELECT id,status FROM partner_verification_documents
+               WHERE partner_id=%s AND business_id=%s
+                 AND COALESCE(is_current,TRUE)=TRUE AND status='approved'
+               ORDER BY created_at DESC,id DESC LIMIT 1""",
+            (int(row["partner_id"]), int(business_id)),
+        )
+        document_required = not bool(verified_document)
 
     doc = None
     if document_required:
