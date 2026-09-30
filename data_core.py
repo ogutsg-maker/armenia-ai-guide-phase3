@@ -2549,7 +2549,24 @@ def create_partner_service(*, partner_id: int, actor_user_id: int, company_id: i
     return row
 
 
-def create_partner_service_proposal(*, partner_id: int, actor_user_id: int,
+def get_current_partner_document(*, partner_id: int, company_id: int) -> dict[str, Any] | None:
+    """Return the current verification document for an owned company."""
+    row = one(
+        """SELECT id,status,document_type,original_filename
+           FROM partner_verification_documents
+           WHERE partner_id=%s AND business_id=%s
+             AND COALESCE(is_current,TRUE)=TRUE
+           ORDER BY CASE WHEN status='approved' THEN 0
+                         WHEN status='under_review' THEN 1
+                         WHEN status='pending' THEN 2 ELSE 3 END,
+                    created_at DESC,id DESC
+           LIMIT 1""",
+        (int(partner_id), int(company_id)),
+    )
+    return row
+
+
+def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, company_id: int, name: str, price: Any = None,
                                       company_id: int, name: str, price: Any = None,
                                       address_id: int | None = None,
                                       phone: str | None = None,
