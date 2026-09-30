@@ -1086,6 +1086,24 @@ def check_application(application_id: int) -> dict[str, Any]:
             "master_category_id": master_id,
             "subcategory_name": app.get("subcategory_name")}
 
+def normalize_phone_number(phone: Any) -> str | None:
+    """Normalize an Armenian phone deterministically; return None if invalid."""
+    import re
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if not digits:
+        return None
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("0"):
+        digits = "374" + digits[1:]
+    if digits.startswith("374"):
+        return digits if len(digits) == 11 else None
+    # Accept already-normalized local mobile length only when unambiguous.
+    if len(digits) == 8:
+        return "374" + digits
+    return None
+
+
 def validate_service_payload(*, partner_id: int, actor_user_id: int, company_id: int | None,
                             name: str, price: Any = None, category_id: int | None = None) -> dict:
     """Validate a proposed service without writing anything."""
@@ -2571,18 +2589,24 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
                                       phone: str | None = None,
                                       category_id: int | None = None,
                                       description: str | None = None,
-                                      price_type: str | None = None) -> dict:
+                                      price_type: str | None = None,
+                                      service_mode: str | None = None,
+                                      service_location: dict[str, Any] | None = None) -> dict:
     """Create one admin-review application for a single AI-added service."""
     return create_partner_services_proposal(
         partner_id=partner_id, actor_user_id=actor_user_id, company_id=company_id,
         services=[{"name": name, "price": price, "address_id": address_id,
                    "phone": phone, "category_id": category_id, "description": description,
                    "price_type": price_type}],
+        service_mode=service_mode,
+        service_location=service_location,
     )
 
 
 def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
-                                     company_id: int, services: list[dict[str, Any]]) -> dict:
+                                     company_id: int, services: list[dict[str, Any]],
+                                     service_mode: str | None = None,
+                                     service_location: dict[str, Any] | None = None) -> dict:
     """Create ONE admin-review application containing the whole service batch."""
     pid = int(partner_id)
     cid = int(company_id)
@@ -2602,6 +2626,22 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
            ORDER BY id LIMIT 1""",
         (pid, cid),
     )
+    # If the confirmed draft selected a specific/new service address,
+    # use that object as the application header as well.
+    requested_header_object_id = None
+    if raw_services and isinstance(raw_services[0], dict):
+        requested_header_object_id = raw_services[0].get("address_id")
+    if requested_header_object_id not in (None, ""):
+        header_object = one(
+            """SELECT id,partner_id,business_id,object_name,address,city,marz,phone
+               FROM partner_objects
+               WHERE id=%s AND partner_id=%s AND business_id=%s
+                 AND COALESCE(is_active,TRUE)=TRUE""",
+            (int(requested_header_object_id), pid, cid),
+        )
+        if header_object:
+            company_object = header_object
+
     document = one(
         """SELECT id,status,document_type,original_filename
            FROM partner_verification_documents
@@ -2712,6 +2752,8 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                 "catalog_classification": "backend_live_catalog",
             },
         },
+        "service_mode": service_mode if service_mode in {"at_address", "mobile"} else None,
+        "service_location": service_location if isinstance(service_location, dict) else None,
         "services": prepared,
     }
 

@@ -1211,6 +1211,68 @@ async def api_business_delete(request: web.Request):
 
 
 
+async def api_ai_document_upload(request: web.Request):
+    """Upload a verification document for the current AI pending action.
+
+    This does not create an application. The document becomes available to
+    the deterministic ADD_SERVICES action and is attached only when the
+    partner confirms the final preview.
+    """
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    bid = _business_id(request, pid)
+    if not bid:
+        return web.json_response({"ok": False, "error": "business_required"}, status=400)
+
+    reader = await request.multipart()
+    file_part = None
+    while True:
+        part = await reader.next()
+        if part is None:
+            break
+        if part.name == "file":
+            file_part = part
+            break
+    if file_part is None:
+        return web.json_response({"ok": False, "error": "file_required"}, status=400)
+
+    filename = file_part.filename or "document"
+    allowed = {
+        ".pdf": "application/pdf",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if suffix not in allowed:
+        return web.json_response({"ok": False, "error": "unsupported_file_type"}, status=400)
+
+    data = await file_part.read()
+    if len(data) > 10 * 1024 * 1024:
+        return web.json_response({"ok": False, "error": "file_too_large"}, status=400)
+
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO partner_verification_documents
+                   (partner_id, business_id, document_type, original_filename,
+                    file_data, mime_type, file_size, status, is_current)
+                   VALUES(%s,%s,'business_document',%s,%s,%s,%s,'pending',TRUE)
+                   RETURNING id,status,original_filename""",
+                (pid, bid, filename, data, allowed[suffix], len(data)),
+            )
+            doc = cur.fetchone()
+        conn.commit()
+
+    return web.json_response({
+        "ok": True,
+        "document_id": int(doc["id"]),
+        "status": doc["status"],
+        "filename": doc["original_filename"],
+    })
+
+
 async def api_application_document_upload(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -1368,6 +1430,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_delete("/api/master/{id}/businesses/{business_id}", api_business_delete)
     app.router.add_post("/api/master/{id}/businesses/{business_id}", api_business_update)
     app.router.add_post("/api/master/{id}/ai-command", api_ai_command)
+    app.router.add_post("/api/master/{id}/ai-command/document", api_ai_document_upload)
     app.router.add_post("/api/master/{id}/ai-command/confirm", api_ai_command_confirm)
     app.router.add_get("/api/master/{id}/settings", api_settings)
     app.router.add_post("/api/master/{id}/settings", api_settings_update)

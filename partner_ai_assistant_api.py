@@ -217,11 +217,20 @@ async def api_ai_command(request: web.Request):
         except (TypeError, ValueError):
             business_id = None
 
+        message_context = {
+            "document": data.get("document") if isinstance(data.get("document"), dict) else None,
+            "location": data.get("location") if isinstance(data.get("location"), dict) else None,
+            "contact": data.get("contact") if isinstance(data.get("contact"), dict) else None,
+        }
+        extra = {"message_context": message_context}
+        if business_id:
+            extra["business_id"] = business_id
+
         result = await manager.handle_message(
             uid,
             message,
             ContextType.PARTNER,
-            extra_context={"business_id": business_id} if business_id else None,
+            extra_context=extra,
             language=language,
         )
     except Exception as exc:

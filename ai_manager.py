@@ -1136,6 +1136,146 @@ class AIManager:
 
         return result or None
 
+    async def _extract_pending_partner_data(self, message: str, language: str) -> dict[str, Any]:
+        """NLU only: extract missing slots from a partner's free-form reply.
+
+        This method never chooses IDs, calls tools, or writes to the database.
+        """
+        import re
+
+        text = str(message or "").strip()
+        result: dict[str, Any] = {}
+
+        phone_match = re.search(r"(?:\+?374|0)?[ -]?(?:\d[ -]?){8,9}", text)
+        if phone_match:
+            raw = re.sub(r"[^0-9+]", "", phone_match.group(0))
+            try:
+                import data_core
+                normalized = data_core.normalize_phone_number(raw)
+                if normalized:
+                    result["phone"] = normalized
+            except Exception:
+                pass
+
+        folded = text.casefold()
+        if any(x in folded for x in ("выезжаю", "выезд", "к клиенту", "на выезде", "mobile", "գնում եմ", "այցել")):
+            result["service_mode"] = "mobile"
+        elif any(x in folded for x in ("по этому адресу", "на месте", "в этом адресе", "по адресу", "at address", "այս հասցեում", "հասցեում")):
+            result["service_mode"] = "at_address"
+
+        # The common deterministic forms are handled without an extra model call.
+        address_match = re.search(
+            r"(?:адрес\s*[:\-]?\s*|address\s*[:\-]?\s*|հասցե\s*[:\-]?\s*)"
+            r"(.+?)(?=(?:тел(?:ефон)?|тел\.|phone|հեռախոս|$))",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if address_match:
+            result["address_text"] = address_match.group(1).strip(" ,.;")
+
+        if not result.get("address_text"):
+            # If the message looks like a standalone location/address answer,
+            # let the small NLU bridge identify it. It returns text only.
+            prompt = (
+                "Извлеки только недостающие данные из ответа партнера. "
+                "Ничего не выдумывай и не выбирай внутренние ID. "
+                "Верни JSON строго с ключами: address_text, phone, service_mode. "
+                "service_mode должен быть только 'at_address' или 'mobile' или null. "
+                "Если поле отсутствует, верни null. "
+                f"Язык ответа партнера: {language}.\n"
+                f"Сообщение: {json.dumps(text, ensure_ascii=False)}"
+            )
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                    "max_tokens": 300,
+                }
+                if "gpt-oss" not in self.model.lower():
+                    kwargs["response_format"] = {"type": "json_object"}
+                response = await self.client.chat.completions.create(**kwargs)
+                raw = (response.choices[0].message.content or "{}").strip()
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    for key in ("address_text", "phone", "service_mode"):
+                        value = parsed.get(key)
+                        if value not in (None, ""):
+                            result[key] = value
+                    if result.get("phone"):
+                        import data_core
+                        normalized = data_core.normalize_phone_number(result["phone"])
+                        if normalized:
+                            result["phone"] = normalized
+                    if result.get("service_mode") not in {"at_address", "mobile"}:
+                        result.pop("service_mode", None)
+            except Exception:
+                logger.exception("Pending partner data NLU failed")
+        return result
+
+    @staticmethod
+    def _partner_missing_reply(language: str, pending: dict[str, Any]) -> str:
+        missing = set(pending.get("missing_fields") or [])
+        services = pending.get("args", {}).get("services") or []
+        lines = []
+        for item in services:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            price = item.get("price")
+            if name:
+                shown = f" — от {int(float(price)):,} ֏".replace(",", " ") if price not in (None, "") else ""
+                lines.append(f"• {name}{shown}")
+        if "catalog_resolution" in missing:
+            unresolved = [
+                x for x in services
+                if isinstance(x, dict) and str(x.get("catalog_match_status") or "") != "matched"
+            ]
+            if language == "ru":
+                lines = []
+                for item in unresolved:
+                    options = item.get("catalog_options") or []
+                    if options:
+                        labels = [str(o.get("category_name_ru") or o.get("category_name_am") or o.get("category_name_en") or "") for o in options]
+                        lines.append(f"• {item.get('name')}: " + " / ".join(x for x in labels if x))
+                    else:
+                        lines.append(f"• {item.get('name')}: точного совпадения пока нет")
+                return "Я проверяю услуги по живому каталогу. Нужно уточнить классификацию:\n" + "\n".join(lines)
+            if language == "hy":
+                lines = []
+                for item in unresolved:
+                    options = item.get("catalog_options") or []
+                    if options:
+                        labels = [str(o.get("category_name_am") or o.get("category_name_ru") or o.get("category_name_en") or "") for o in options]
+                        lines.append(f"• {item.get('name')}: " + " / ".join(x for x in labels if x))
+                    else:
+                        lines.append(f"• {item.get('name')}: հստակ համապատասխանություն դեռ չկա")
+                return "Ծառայությունների կատալոգային դասակարգումը դեռ պետք է ճշտել:\n" + "\n".join(lines)
+            return "I need to resolve the live catalogue classification before I can prepare the application."
+        if language == "hy":
+            reply = "Հասկացա 👍 Պատրաստում եմ հետևյալ ծառայությունների հայտը:\n\n" + "\n".join(lines)
+            reply += "\n\nԽնդրում եմ լրացրեք միայն այն տվյալները, որոնք դեռ անհրաժեշտ են:\n"
+            if "address" in missing:
+                reply += "📍 Նշեք ծառայությունների հասցեն կամ ուղարկեք լոկացիան։\n"
+            if "phone" in missing:
+                reply += "📞 Տվեք կապի հեռախոսահամարը։\n"
+            if "service_mode" in missing:
+                reply += "🚗 Աշխատո՞ւմ եք այս հասցեում, թե՞ մեկնում եք հաճախորդի մոտ։\n"
+            if "document" in missing:
+                reply += "📎 Կցեք հաստատող փաստաթուղթը։"
+            return reply.strip()
+        reply = "Понял 👍 Готовлю заявку на эти услуги:\n\n" + "\n".join(lines)
+        reply += "\n\nПожалуйста, дайте только недостающие данные:\n"
+        if "address" in missing:
+            reply += "📍 Укажите адрес оказания услуг или отправьте геолокацию.\n"
+        if "phone" in missing:
+            reply += "📞 Укажите номер телефона для связи.\n"
+        if "service_mode" in missing:
+            reply += "🚗 Укажите: услуги по этому адресу или выезжаете к клиенту.\n"
+        if "document" in missing:
+            reply += "📎 Прикрепите подтверждающий документ."
+        return reply.strip()
+
     async def chat(
         self,
         telegram_id: int,
@@ -1197,85 +1337,149 @@ class AIManager:
         )
         session_context = await self._session_context(telegram_id, role)
 
-        # HARD FAST PATH: confirmation/cancellation of a pending action must
-        # never go back through Groq. The pending action is backend-owned
-        # state; routing "yes/այո/да" through the model was the source of the
-        # partner confirmation loop in /api/master/{id}/ai-command.
+        # HARD FAST PATH / ACTION STATE:
+        # awaiting_confirmation never touches Groq. collecting_data continues
+        # the same action and only extracts missing slots.
         state = SessionState.from_dict(session_context)
         pending = state.pending_action
         if pending:
+            pending_state = str(pending.get("state") or "awaiting_confirmation")
             if self._is_cancel(message):
                 await self._clear_pending(telegram_id, role)
                 reply = self._cancel_text(language)
-                await self._save_history(
-                    telegram_id, role, "ai", reply, {"cancelled": True, "fast_path": True}
-                )
+                await self._save_history(telegram_id, role, "ai", reply, {"cancelled": True, "fast_path": True})
                 return {"reply": reply, "cancelled": True, "fast_path": True}
 
-            if self._is_confirmation(message):
-                pending_name = str(pending.get("name") or "").strip()
-                pending_args = dict(pending.get("args") or {})
-                if str(pending.get("state") or "awaiting_confirmation") != "awaiting_confirmation":
-                    await self._clear_pending(telegram_id, role)
-                    return {
-                        "reply": self._error_text(language),
-                        "confirmed": False,
-                        "fast_path": True,
-                        "error": "invalid_pending_state",
-                    }
-                try:
-                    confirm_tools = ToolRegistry(
-                        telegram_id=int(telegram_id),
-                        context_type=role,
-                        trusted_context=trusted,
-                        session_state=state.to_dict(),
-                    )
-                    result = await confirm_tools.execute_confirmed(
-                        pending_name, pending_args
-                    )
-                    await self._clear_pending(telegram_id, role)
-                    reply = self._done_text(language)
-                    await self._save_history(
-                        telegram_id, role, "ai", reply,
-                        {
-                            "confirmed_action": pending,
-                            "tool_result": result,
-                            "fast_path": True,
-                        },
-                    )
-                    return {
-                        "reply": reply,
-                        "tool_result": result,
-                        "confirmed": True,
-                        "fast_path": True,
-                    }
-                except Exception as exc:
-                    # Keep the pending action so the user can retry the same
-                    # explicit confirmation without asking Groq to rediscover it.
-                    logger.exception("Pending confirmation execution failed")
-                    reply = self._error_text(language)
-                    await self._save_history(
-                        telegram_id, role, "ai", reply,
-                        {"confirmed_action": pending, "error": str(exc)[:1000], "fast_path": True},
-                    )
-                    return {
-                        "reply": reply,
-                        "confirmed": False,
-                        "confirmation_required": True,
-                        "fast_path": True,
-                        "error": str(exc)[:240],
-                    }
+            if pending_state == "awaiting_confirmation":
+                if self._is_confirmation(message):
+                    pending_name = str(pending.get("name") or "").strip()
+                    pending_args = dict(pending.get("args") or {})
+                    try:
+                        confirm_tools = ToolRegistry(
+                            telegram_id=int(telegram_id),
+                            context_type=role,
+                            trusted_context=trusted,
+                            session_state=state.to_dict(),
+                        )
+                        result = await confirm_tools.execute_confirmed(pending_name, pending_args)
+                        await self._clear_pending(telegram_id, role)
+                        reply = (
+                            "⏳ Հայտը ուղարկվեց ստուգման։" if language == "hy"
+                            else "⏳ Заявка отправлена на проверку."
+                            if language == "ru" else "⏳ The application was sent for review."
+                        )
+                        await self._save_history(
+                            telegram_id, role, "ai", reply,
+                            {"confirmed_action": pending, "tool_result": result, "fast_path": True},
+                        )
+                        return {"reply": reply, "tool_result": result, "confirmed": True, "fast_path": True}
+                    except Exception as exc:
+                        logger.exception("Pending confirmation execution failed")
+                        reply = self._error_text(language)
+                        await self._save_history(
+                            telegram_id, role, "ai", reply,
+                            {"confirmed_action": pending, "error": str(exc)[:1000], "fast_path": True},
+                        )
+                        return {
+                            "reply": reply, "confirmed": False, "confirmation_required": True,
+                            "fast_path": True, "error": str(exc)[:240],
+                        }
 
-            reply = (
-                "Նախ հաստատեք կամ չեղարկեք սպասվող փոփոխությունը։"
-                if language == "hy" else
-                "Сначала подтвердите или отмените ожидающее изменение."
-                if language == "ru" else
-                "Please confirm or cancel the pending change first."
-            )
-            return {"reply": reply, "confirmation_pending": True, "fast_path": True}
+                reply = (
+                    "Նախ հաստատեք կամ չեղարկեք պատրաստված հայտը։"
+                    if language == "hy"
+                    else "Сначала подтвердите или отмените подготовленную заявку."
+                    if language == "ru"
+                    else "Please confirm or cancel the prepared application."
+                )
+                return {"reply": reply, "confirmation_pending": True, "fast_path": True}
+
+            if pending_state == "collecting_data" and role == ContextType.PARTNER:
+                pending = dict(pending)
+                pending_args = dict(pending.get("args") or {})
+                collected = dict(pending_args)
+
+                # Platform objects are trusted facts; the model never invents them.
+                message_context = (extra_context or {}).get("message_context") or {}
+                if isinstance(message_context, dict):
+                    document = message_context.get("document")
+                    location = message_context.get("location")
+                    contact = message_context.get("contact")
+                    if document:
+                        collected["document"] = document
+                    if location:
+                        collected["service_location"] = location
+                    if contact and contact.get("phone_number"):
+                        import data_core
+                        normalized = data_core.normalize_phone_number(contact.get("phone_number"))
+                        if normalized:
+                            collected["phone"] = normalized
+
+                extracted = await self._extract_pending_partner_data(message, language)
+                for key, value in extracted.items():
+                    if value not in (None, ""):
+                        collected[key] = value
+
+                tools = ToolRegistry(
+                    telegram_id=int(telegram_id),
+                    context_type=role,
+                    trusted_context=trusted,
+                    session_state=state.to_dict(),
+                )
+                result = await tools.execute("add_services", collected)
+
+                if result.get("requires_data"):
+                    action = result.get("action") or {"name": "add_services", "args": collected}
+                    new_pending = {
+                        "name": "add_services",
+                        "args": dict(action.get("args") or collected),
+                        "missing_fields": list(result.get("missing_fields") or []),
+                        "state": "collecting_data",
+                        "created_at": pending.get("created_at") or int(time.time()),
+                    }
+                    await self._update_session_context(
+                        telegram_id, role, {"pending_action": new_pending}
+                    )
+                    reply = self._partner_missing_reply(language, new_pending)
+                    await self._save_history(
+                        telegram_id, role, "ai", reply,
+                        {"pending_action": new_pending, "collecting_data": True},
+                    )
+                    return {"reply": reply, "pending_action": new_pending, "collecting_data": True}
+
+                if result.get("requires_confirmation"):
+                    action = result.get("action") or {}
+                    new_pending = {
+                        "name": str(action.get("name") or "add_services"),
+                        "args": dict(action.get("args") or {}),
+                        "summary": str(result.get("summary") or ""),
+                        "state": "awaiting_confirmation",
+                        "created_at": pending.get("created_at") or int(time.time()),
+                    }
+                    await self._set_pending(telegram_id, role, new_pending)
+                    summary = self._partner_action_summary(language, new_pending, new_pending["summary"])
+                    # Add the operational context to the final preview.
+                    args = new_pending["args"]
+                    location = args.get("address_text") or "геолокация"
+                    mode = args.get("service_mode")
+                    if language == "hy":
+                        mode_label = "մեկնում հաճախորդի մոտ" if mode == "mobile" else "այս հասցեում"
+                        summary = "Պատրաստ է ստուգման ուղարկելու համար:\n\n" + summary.split("\n\n")[0] + f"\n📍 Տեղը՝ {location}\n🚗 Ռեժիմ՝ {mode_label}\n📎 Փաստաթուղթը կցված է։\n\nՀաստատո՞ւմ եք։"
+                    elif language == "ru":
+                        summary = summary.split("\n\n")[0] + f"\n📍 Место: {location}\n🚗 Режим: {mode}\n📎 Документ прикреплён.\n\nПодтверждаете?"
+                    new_pending["summary"] = summary
+                    await self._update_session_context(
+                        telegram_id, role, {"pending_action": new_pending}
+                    )
+                    await self._save_history(
+                        telegram_id, role, "ai", summary,
+                        {"confirmation_required": True, "action": new_pending},
+                    )
+                    return {"reply": summary, "confirmation_required": True, "pending_action": new_pending}
+                return {"reply": result.get("reply") or self._error_text(language)}
 
         if role == ContextType.ADMIN:
+
             pending_fast = await self._admin_category_pending_fast_path(
                 telegram_id,
                 message,
@@ -1333,6 +1537,34 @@ class AIManager:
                         "company_id": trusted_for_prompt.get("current_company_id"),
                         "services": parsed_service_action,
                     })
+                    if result.get("requires_data"):
+                        action = result.get("action") or {}
+                        pending_action = {
+                            "name": str(action.get("name") or "add_services"),
+                            "args": dict(action.get("args") or {}),
+                            "missing_fields": list(result.get("missing_fields") or []),
+                            "state": "collecting_data",
+                            "created_at": int(time.time()),
+                        }
+                        await self._update_session_context(
+                            telegram_id, role, {"pending_action": pending_action}
+                        )
+                        reply = self._partner_missing_reply(language, pending_action)
+                        await self._save_history(
+                            telegram_id, role, "ai", reply,
+                            {"collecting_data": True, "action": pending_action,
+                             "deterministic_parser": True},
+                        )
+                        return {
+                            "reply": reply,
+                            "pending_action": pending_action,
+                            "collecting_data": True,
+                            "tool_calls": [{
+                                "name": "add_services",
+                                "arguments": parsed_service_action,
+                                "deterministic": True,
+                            }],
+                        }
                     if result.get("requires_confirmation"):
                         action = result.get("action") or {}
                         pending_action = {
