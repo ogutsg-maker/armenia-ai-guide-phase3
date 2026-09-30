@@ -5,7 +5,6 @@ from decimal import Decimal
 from datetime import datetime, date
 from aiohttp import web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
-from booking_schema import ensure_booking_schema
 import qr_util
 from idram import IdramProvider
 from ai_negotiator import AINegotiator
@@ -557,7 +556,6 @@ async def idram_fail(request):
     return _idram_return_page('\u041f\u043b\u0430\u0442\u0451\u0436 \u043d\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d','\u041e\u043f\u043b\u0430\u0442\u0430 \u043d\u0435 \u043f\u0440\u043e\u0448\u043b\u0430 \u0438\u043b\u0438 \u0431\u044b\u043b\u0430 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0451 \u0440\u0430\u0437.')
 
 def register_marketplace_flow_routes(app):
-    ensure_booking_schema()
     app.router.add_post('/api/market/client/search',client_search)
     app.router.add_post('/api/market/client/request',create_request)
     app.router.add_post('/api/market/client/request/{request_id}/select',select_candidate)
