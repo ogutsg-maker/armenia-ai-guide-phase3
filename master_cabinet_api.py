@@ -1212,19 +1212,17 @@ async def api_business_delete(request: web.Request):
 
 
 async def api_ai_document_upload(request: web.Request):
-    """Upload a verification document for the current AI pending action.
+    """Upload a verification document and bind it to the AI Manager draft.
 
-    This does not create an application. The document becomes available to
-    the deterministic ADD_SERVICES action and is attached only when the
-    partner confirms the final preview.
+    The file upload is deterministic. It must update the persisted partner
+    pending_action directly; a second AI turn is only needed by the UI when
+    the draft is still collecting data. Once the action is SUBMITTED, the
+    upload is informational and must never trigger a second submission.
     """
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     bid = _business_id(request, pid)
-    # During partner registration the first company may still be pending and
-    # therefore is not yet status='active'. A verification document must be
-    # uploadable before admin approval, so resolve the requested/latest company
-    # without requiring active status only for this upload operation.
+
     if not bid:
         raw_bid = str(request.headers.get("X-Business-Id") or "").strip()
         with _connect() as conn:
@@ -1271,6 +1269,8 @@ async def api_ai_document_upload(request: web.Request):
     data = await file_part.read()
     if len(data) > 10 * 1024 * 1024:
         return web.json_response({"ok": False, "error": "file_too_large"}, status=400)
+    if not data:
+        return web.json_response({"ok": False, "error": "empty_file"}, status=400)
 
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -1285,11 +1285,49 @@ async def api_ai_document_upload(request: web.Request):
             doc = cur.fetchone()
         conn.commit()
 
+    # Bind the uploaded document to the persisted AI Manager draft. This is
+    # backend state, not an AI decision, and therefore must happen without Groq.
+    pending_status = None
+    pending_ready = False
+    try:
+        import platform_db
+        session = platform_db.active_session(int(uid), "partner", "ai_manager")
+        if session:
+            context = session.get("context_json") or {}
+            if isinstance(context, str):
+                context = json.loads(context or "{}")
+            pending = context.get("pending_action") if isinstance(context, dict) else None
+            if isinstance(pending, dict):
+                pending_status = str(pending.get("status") or "").upper()
+                if pending_status != "SUBMITTED":
+                    args = dict(pending.get("args") or {})
+                    document = {
+                        "document_id": int(doc["id"]),
+                        "file_id": str(doc["id"]),
+                        "filename": str(doc["original_filename"] or filename),
+                        "mime_type": allowed[suffix],
+                        "size": len(data),
+                    }
+                    args["document"] = document
+                    pending["args"] = args
+                    missing = [str(x) for x in (pending.get("missing_fields") or [])]
+                    pending["missing_fields"] = [x for x in missing if x != "document"]
+                    pending_status = str(pending.get("status") or "COLLECTING_DATA").upper()
+                    pending_ready = pending_status == "COLLECTING_DATA" and not pending["missing_fields"]
+                    platform_db.update_session(
+                        int(session["id"]),
+                        {**context, "pending_action": pending},
+                    )
+    except Exception:
+        logger.exception("Could not bind uploaded document to AI pending_action")
+
     return web.json_response({
         "ok": True,
         "document_id": int(doc["id"]),
         "status": doc["status"],
         "filename": doc["original_filename"],
+        "pending_status": pending_status,
+        "pending_ready_for_confirmation": pending_ready,
     })
 
 
