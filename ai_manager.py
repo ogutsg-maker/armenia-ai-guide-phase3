@@ -1260,7 +1260,7 @@ class AIManager:
             if "phone" in missing:
                 reply += "📞 Տվեք կապի հեռախոսահամարը։\n"
             if "service_mode" in missing:
-                reply += "🚗 Աշխատո՞ւմ եք այս հասցեում, թե՞ выезжаете к клиенту։\n"
+                reply += "🚗 Աշխատո՞ւմ եք այս հասցեում, թե՞ մեկնում եք հաճախորդի մոտ։\n"
             if "document" in missing:
                 reply += "📎 Կցեք հաստատող փաստաթուղթը։"
             return reply.strip()
@@ -1461,9 +1461,10 @@ class AIManager:
                     # Add the operational context to the final preview.
                     args = new_pending["args"]
                     location = args.get("address_text") or "геолокация"
-                    mode = "выезд к клиенту" if args.get("service_mode") == "mobile" else "по адресу"
+                    mode = args.get("service_mode")
                     if language == "hy":
-                        summary = "Պատրաստ է ստուգման ուղարկելու համար:\n\n" + summary.split("\n\n")[0] + f"\n📍 Տեղը՝ {location}\n🚗 Ռեժիմ՝ {'մեկնում հաճախորդի մոտ' if mode == 'выезд к клиенту' else 'այս հասցեում'}\n📎 Փաստաթուղթը կցված է։\n\nՀաստատո՞ւմ եք։"
+                        mode_label = "մեկնում հաճախորդի մոտ" if mode == "mobile" else "այս հասցեում"
+                        summary = "Պատրաստ է ստուգման ուղարկելու համար:\n\n" + summary.split("\n\n")[0] + f"\n📍 Տեղը՝ {location}\n🚗 Ռեժիմ՝ {mode_label}\n📎 Փաստաթուղթը կցված է։\n\nՀաստատո՞ւմ եք։"
                     elif language == "ru":
                         summary = summary.split("\n\n")[0] + f"\n📍 Место: {location}\n🚗 Режим: {mode}\n📎 Документ прикреплён.\n\nПодтверждаете?"
                     new_pending["summary"] = summary
