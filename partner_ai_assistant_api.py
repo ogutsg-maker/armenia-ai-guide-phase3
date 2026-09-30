@@ -208,10 +208,20 @@ async def api_ai_command(request: web.Request):
 
     try:
         manager = request.app.get("ai_manager") or AIManager()
+        # The cabinet already knows which company is open. Pass that trusted
+        # UI context into AIManager; never make Groq rediscover or ask for an
+        # internal company_id.
+        raw_business_id = data.get("business_id")
+        try:
+            business_id = int(raw_business_id) if raw_business_id not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            business_id = None
+
         result = await manager.handle_message(
             uid,
             message,
             ContextType.PARTNER,
+            extra_context={"business_id": business_id} if business_id else None,
             language=language,
         )
     except Exception as exc:
