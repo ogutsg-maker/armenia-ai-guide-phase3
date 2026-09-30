@@ -163,8 +163,12 @@ class AIManager:
                 last_exc = exc
                 status = getattr(exc, "status_code", None)
                 is_429 = status == 429 or "429" in str(exc) or "rate_limit" in str(exc).lower()
-                if provider == "groq" and is_429 and index + 1 < len(providers):
-                    logger.warning("Groq rate limit; switching provider without retrying Groq")
+                if is_429 and index + 1 < len(providers):
+                    logger.warning(
+                        "AI provider rate limit/quota (%s); switching to next provider without retrying %s",
+                        provider,
+                        provider,
+                    )
                     continue
                 raise
         raise last_exc or RuntimeError("no_ai_provider_available")
@@ -959,7 +963,31 @@ class AIManager:
             r"|(?:հաստատ|approve|одобр|утверд|ակտիվ|activat|ակտիվացրու|ակտիվացր).*?(?:#|№|\bID\b|\bИД\b)\s*\d+",
             str(message or "").casefold(),
         ))
+        # A focused application remains the authoritative target for short
+        # follow-ups such as "հաստատել", "ակտիվացրու" or "approve".
+        # Never send these deterministic approval continuations to Groq.
+        bare_approval = bool(re.fullmatch(
+            r"(?:հաստատիր|հաստատել|հաստատի|հաստատե՞լ|հաստատում եմ|"
+            r"approve|одобри|одобрить|утвердить|утверди|"
+            r"ակտիվացրու|ակտիվացր|активируй|активировать|activate)",
+            str(message or "").strip().casefold(),
+        ))
+        if bare_approval and app_id is not None:
+            approval_intent = True
+
         if approval_intent or explicit_id_approval:
+            if app_id is None:
+                return {
+                    "reply": (
+                        "Նշեք հայտի համարը։"
+                        if language == "hy"
+                        else "Укажите номер заявки."
+                        if language == "ru"
+                        else "Please specify the application number."
+                    ),
+                    "fast_path": True,
+                    "needs_clarification": True,
+                }
             try:
                 gate = data_core.prepare_application_approval(
                     application_id=app_id,
@@ -1673,13 +1701,28 @@ class AIManager:
                                 else "✅ The document was approved. The application remains pending final administrator approval."
                             )
                         elif pending_name == "admin_approve_application":
-                            reply = (
-                                "✅ Հայտը հաստատվեց։ Ծառայությունները կարող են ակտիվացվել։"
-                                if language == "hy"
-                                else "✅ Заявка подтверждена. Услуги могут быть активированы."
-                                if language == "ru"
-                                else "✅ The application was approved. Services can be activated."
-                            )
+                            # The backend result is the only source of truth.
+                            # Never report approval merely because the mutation
+                            # call returned without raising: re-read the application
+                            # and verify the canonical state and materialized services.
+                            application_id = int(pending_args.get("application_id") or 0)
+                            verified = data_core.get_application_full(application_id)
+                            verified_status = str((verified or {}).get("status") or "").strip().lower()
+                            if verified_status != "approved":
+                                raise RuntimeError(
+                                    f"approval_verification_failed: application={application_id} status={verified_status or 'missing'}"
+                                )
+                            verified_services = data_core.application_service_items(application_id)
+                            if not verified_services:
+                                raise RuntimeError(
+                                    f"approval_verification_failed: application={application_id} services_missing"
+                                )
+                            if language == "hy":
+                                reply = f"✅ Հայտ #{application_id}-ը հաստատված և ակտիվ է։ {len(verified_services)} ծառայություն ակտիվացված է։"
+                            elif language == "ru":
+                                reply = f"✅ Заявка #{application_id} подтверждена и активна. Активировано услуг: {len(verified_services)}."
+                            else:
+                                reply = f"✅ Application #{application_id} is approved and active. Activated services: {len(verified_services)}."
                         elif pending_name == "admin_reject_application":
                             reply = (
                                 "✅ Հայտը մերժվեց։"
