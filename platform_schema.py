@@ -22,47 +22,7 @@ def _connect():
 
 
 def ensure_platform_schema() -> None:
-    sql = r'''
-    -- ---------------------------------------------------------------------
-    -- Core partner tables
-    -- ---------------------------------------------------------------------
-    CREATE TABLE IF NOT EXISTS partners (
-        id BIGSERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL UNIQUE REFERENCES users(telegram_id) ON DELETE CASCADE,
-        business_name TEXT NOT NULL DEFAULT '',
-        business_description TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'draft'
-            CHECK (status IN ('draft','pending','under_review','approved','rejected','suspended','blocked')),
-        verification_status TEXT NOT NULL DEFAULT 'not_submitted'
-            CHECK (verification_status IN ('not_submitted','pending','approved','rejected')),
-        rejection_reason TEXT,
-        contact_share_policy TEXT NOT NULL DEFAULT 'after_booking'
-            CHECK (contact_share_policy IN ('after_booking','premium','never')),
-        contact_sharing_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-        premium_contact_sharing_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-        profile_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    -- WebApp authentication can reach partner registration before the legacy
-    -- bot registration path has inserted the user. Keep the FK strict, but
-    -- automatically create the minimal users row first.
-    CREATE OR REPLACE FUNCTION ensure_partner_user_exists()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        INSERT INTO users (telegram_id)
-        VALUES (NEW.user_id)
-        ON CONFLICT (telegram_id) DO NOTHING;
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql SET search_path = public, pg_temp;
-
-    DROP TRIGGER IF EXISTS trg_ensure_partner_user_exists ON partners;
-    CREATE TRIGGER trg_ensure_partner_user_exists
-    BEFORE INSERT ON partners
-    FOR EACH ROW
-    EXECUTE FUNCTION ensure_partner_user_exists();
+    sql = r'''\n
 
     CREATE TABLE IF NOT EXISTS partner_locations (
         id BIGSERIAL PRIMARY KEY,
@@ -80,6 +40,7 @@ def ensure_platform_schema() -> None:
         exchange_rate_amd NUMERIC(18,6) NOT NULL DEFAULT 0
     );
 
+
     CREATE TABLE IF NOT EXISTS partner_objects (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
@@ -91,15 +52,6 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Canonical object-level weekly schedule. Kept separate from data_json so
-    -- partner edits cannot be overwritten by legacy registration metadata.
-    ALTER TABLE partner_objects
-        ADD COLUMN IF NOT EXISTS working_hours JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-    UPDATE partner_objects
-       SET working_hours = COALESCE(data_json->'working_hours', '{}'::jsonb)
-     WHERE working_hours = '{}'::jsonb
-       AND COALESCE(data_json->'working_hours', '{}'::jsonb) <> '{}'::jsonb;
 
     CREATE TABLE IF NOT EXISTS services (
         id BIGSERIAL PRIMARY KEY,
@@ -568,7 +520,7 @@ def ensure_platform_schema() -> None:
     CREATE INDEX IF NOT EXISTS idx_support_ticket_messages ON support_ticket_messages(ticket_id, created_at);
     ALTER TABLE ai_usage_ledger ADD COLUMN IF NOT EXISTS total_cost_amd NUMERIC(18,4) NOT NULL DEFAULT 0;
     ALTER TABLE ai_usage_ledger ADD COLUMN IF NOT EXISTS exchange_rate_amd NUMERIC(18,6) NOT NULL DEFAULT 0;
-    '''
+    \n    '''
 
     with _connect() as conn:
         with conn.cursor() as cur:
