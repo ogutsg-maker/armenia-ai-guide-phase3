@@ -499,6 +499,98 @@ def apply_pending_category_resolution(*, pending_action: dict[str, Any],
         actor_user_id=int(actor_user_id),
     )
 
+def admin_approve_application_document(*, application_id: int, actor_user_id: int) -> dict[str, Any]:
+    """Approve the pending verification document attached to one application."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    status = str(app.get("status") or "").strip().lower()
+    if status in {"approved", "rejected", "cancelled"}:
+        raise ValueError("application_finalized")
+
+    # Prefer the document explicitly attached to this application. Legacy rows
+    # may have no application_id, so fall back to the company's current pending
+    # document only when it is unambiguous.
+    docs = rows(
+        """SELECT id,status,application_id,business_id,partner_id,created_at
+           FROM partner_verification_documents
+           WHERE partner_id=%s
+             AND (application_id=%s OR (application_id IS NULL AND business_id=%s))
+           ORDER BY CASE WHEN application_id=%s THEN 0 ELSE 1 END, created_at DESC, id DESC
+           LIMIT 10""",
+        (
+            int(app.get("partner_id") or 0),
+            int(application_id),
+            int(app.get("business_id") or 0),
+            int(application_id),
+        ),
+    )
+    if not docs:
+        raise ValueError("verification_document_not_found")
+
+    pending = [x for x in docs if str(x.get("status") or "").lower() == "pending"]
+    doc = pending[0] if pending else docs[0]
+    doc_status = str(doc.get("status") or "").lower()
+    if doc_status == "approved":
+        return {
+            "ok": True,
+            "application_id": int(application_id),
+            "document_id": int(doc["id"]),
+            "document_status": "approved",
+            "status": status,
+            "already_approved": True,
+        }
+    if doc_status != "pending":
+        raise ValueError("verification_document_not_pending")
+
+    updated = execute(
+        """UPDATE partner_verification_documents
+           SET status='approved', rejection_reason=NULL,
+               reviewed_by=%s, reviewed_at=NOW()
+           WHERE id=%s AND status='pending'
+           RETURNING id,status,reviewed_at""",
+        (int(actor_user_id), int(doc["id"])),
+        returning=True,
+    )
+    if not updated:
+        # Another admin may have approved it between the read and write.
+        fresh = one(
+            "SELECT id,status FROM partner_verification_documents WHERE id=%s",
+            (int(doc["id"]),),
+        )
+        if fresh and str(fresh.get("status") or "").lower() == "approved":
+            return {
+                "ok": True,
+                "application_id": int(application_id),
+                "document_id": int(doc["id"]),
+                "document_status": "approved",
+                "status": status,
+                "already_approved": True,
+            }
+        raise RuntimeError("document_approval_update_failed")
+
+    # Keep the application in the moderation queue. The application itself is
+    # NOT approved here; that remains a separate confirmed admin action.
+    if status == "document_under_review":
+        execute(
+            """UPDATE partner_applications
+               SET status='pending_admin', updated_at=NOW()
+               WHERE id=%s AND status='document_under_review'""",
+            (int(application_id),),
+            returning=False,
+        )
+
+    return {
+        "ok": True,
+        "application_id": int(application_id),
+        "document_id": int(doc["id"]),
+        "document_status": "approved",
+        "status": "pending_admin" if status == "document_under_review" else status,
+    }
+
+
 def _application_payload_services(application: dict[str, Any]) -> list[dict[str, Any]]:
     payload = application.get("payload_json") or {}
     if isinstance(payload, str):
