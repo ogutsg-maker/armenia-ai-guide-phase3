@@ -2702,9 +2702,10 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     row = one(
         """INSERT INTO partner_applications(
                partner_id,business_id,status,business_name,location_marz,location_city,
-               address,object_name,object_id,phone,category_id,service_name,price,
-               description,document_id,payload_json)
-           VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+               address,object_name,object_id,phone,direction_name,master_category_id,
+               subcategory_name,category_id,service_name,price,description,document_id,
+               payload_json)
+           VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
            RETURNING id AS application_id,id,status,business_id,document_id,
                      service_name,price,category_id,master_category_id,created_at""",
         (
@@ -2717,11 +2718,16 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             (company_object or {}).get("object_name"),
             int(company_object["id"]) if company_object else None,
             company_phone,
+            first_category.get("master_name_am") if first_category else None,
+            int(first_master_id) if first_master_id not in (None, "") else (
+                int(first_category["master_category_id"]) if first_category and first_category.get("master_category_id") else None
+            ),
+            first_category.get("name_am") if first_category else None,
             first.get("category_id"),
             first["name"],
             first.get("price"),
             first.get("description") or "",
-            int(document["id"]) if document else None,
+            int(document["id"]),
             json_dump(payload),
         ),
     )
