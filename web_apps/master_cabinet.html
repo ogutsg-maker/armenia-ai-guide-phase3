@@ -666,7 +666,24 @@ function renderSettings(){const s=state.settings||{};const share=s.contact_shari
 async function saveGeneralSetting(key,value){try{await api('/api/master/0/settings',{method:'POST',body:{[key]:value}});if(!state.settings)state.settings={};state.settings[key]=value;toast('✓ '+tr('saved'))}catch(e){toast(e.message)}}
 async function changeLang(v){state.lang=v;applyLang();await saveGeneralSetting('lang',v);renderAll()}
 /* Initial */
-async function renderAll(){applyLang();try{await loadBusinesses();await loadBusinessData();renderBusinesses();if(state.current)document.getElementById('businessSelect').value=state.current.id;setView('businesses',false)}catch(e){console.error('partner cabinet init failed',e);const root=document.getElementById('businesses');if(root)root.innerHTML='<div class="detail"><div class="notice">⚠️ '+esc(e.message||'Չհաջողվեց բեռնել կաբինետը')+'</div><button class="btn" onclick="refreshCabinet()">↻ '+(state.lang==='hy'?'Կրկին փորձել':state.lang==='ru'?'Повторить':'Retry')+'</button></div>'}}
+async function renderAll(){
+  applyLang();
+  // Paint the cabinet shell immediately. Network/API failures must never leave
+  // the Mini App with an empty white main area.
+  const root=document.getElementById('businesses');
+  if(root)root.innerHTML='<div class="detail"><div class="notice">⏳ '+(state.lang==='hy'?'Բեռնում…':state.lang==='ru'?'Загрузка…':'Loading…')+'</div></div>';
+  try{
+    await loadBusinesses();
+    if(state.current) await loadBusinessData();
+    renderBusinesses();
+    if(state.current) document.getElementById('businessSelect').value=state.current.id;
+    setView('businesses',false);
+  }catch(e){
+    console.error('partner cabinet init failed',e);
+    if(root)root.innerHTML='<div class="detail"><div class="notice">⚠️ '+esc(e.message||'Չհաջողվեց բեռնել կաբինետը')+'</div><button class="btn" onclick="refreshCabinet()">↻ '+(state.lang==='hy'?'Կրկին փորձել':state.lang==='ru'?'Повторить':'Retry')+'</button></div>';
+    setView('businesses',false);
+  }
+}
 renderAll();
 </script>
 </body>
