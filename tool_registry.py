@@ -1161,12 +1161,10 @@ class ToolRegistry:
                     missing.append("service_mode")
                 if not document:
                     missing.append("document")
-                unresolved_catalog = [
-                    item for item in prepared
-                    if str(item.get("catalog_match_status") or "") != "matched"
-                ]
-                if unresolved_catalog:
-                    missing.append("catalog_resolution")
+                # Catalog resolution is deliberately NOT a required slot.
+                # Unresolved services stay in the draft with their original name
+                # and price; Data Core may resolve them again on each subsequent
+                # validation and Admin can review the technical flag later.
 
                 action_args = {
                     "company_id": company_id,
@@ -1430,6 +1428,7 @@ class ToolRegistry:
                 services=services,
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
+                submission_token=args.get("submission_token"),
             )
             return {"ok": True, **result}
 
