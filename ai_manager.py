@@ -812,10 +812,25 @@ class AIManager:
         m = re.search(r"(?:#|№)\s*(\d+)", str(message))
         if m:
             app_id = int(m.group(1))
+            # Persist the explicit application reference as the admin's focused
+            # backend entity so subsequent natural-language commands can refer
+            # to it safely ("статус", "активируй", "проверь документ").
+            session_context["last_focused_application_id"] = app_id
+            await self._update_session_context(
+                telegram_id, ContextType.ADMIN,
+                {"last_focused_application_id": app_id},
+            )
+        # If the admin continues an already focused application without
+        # repeating its number ("проверено, активируй"), use only the backend-
+        # owned last-focused application. Never guess from arbitrary history.
         if app_id is None:
-            # Bulk catalogue resolution is initiated only through the AI tool contract.
-            # Natural-language requests must go through Groq -> ToolRegistry -> Data Core.
-            return None
+            focused = session_context.get("last_focused_application_id")
+            try:
+                app_id = int(focused) if focused not in (None, "", 0, "0") else None
+            except (TypeError, ValueError):
+                app_id = None
+            if app_id is None:
+                return None
 
         # Read-only application catalogue/subcategory requests are deterministic.
         # This keeps follow-ups such as "բոլորը" anchored to the active application
@@ -1496,7 +1511,10 @@ class AIManager:
 
         if pending:
             pending_status = str(pending.get("status") or "").upper()
-            if pending_status == "SUBMITTED":
+            # SUBMITTED is a partner-application lifecycle state only.
+            # An ADMIN action must never be trapped by the partner "wait for
+            # administrator review" response.
+            if role == ContextType.PARTNER and pending_status == "SUBMITTED":
                 reply = (
                     "⏳ Ваша заявка уже находится на рассмотрении у администратора. Пожалуйста, ожидайте уведомления."
                     if language == "ru" else
@@ -2156,3 +2174,13 @@ class AIManager:
             extra_context=extra_context,
             language=language,
         )
+
+
+
+
+
+
+
+
+
+
