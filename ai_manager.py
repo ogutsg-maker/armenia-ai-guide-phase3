@@ -1103,8 +1103,8 @@ class AIManager:
         for part in parts[:30]:
             # Supported natural price forms: "от 5000", "за 5000", "5000".
             m = re.match(
-                r"^(?P<name>.+?)\\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\\s*"
-                r"(?P<price>\\d[\\d\\s.,]*)\\s*(?:֏|դր(?:ամ)?|amd|₽|руб(?:лей|\.)?)?\\s*$",
+                r"^(?P<name>.+?)\\s+(?P<price_type>от|за|по|цена(?: от)?|price(?: from)?|from)?\\s*"
+                r"(?P<price>\\d[\\d\\s.,]*)\\s*(?:֏|դր(?:ամ)?|amd|₽|руб(?:лей|\\.)?)?\\s*$",
                 part,
                 flags=re.IGNORECASE,
             )
@@ -1123,9 +1123,12 @@ class AIManager:
             if price < 0:
                 return None
 
+            raw_price_type = str(m.group("price_type") or "").casefold()
+            price_type = "from" if raw_price_type in {"от", "from", "цена от", "price from"} else "fixed"
             result.append({
                 "name": name,
                 "price": int(price) if price.is_integer() else price,
+                "price_type": price_type,
                 "address_id": None,
                 "phone": None,
                 "description": None,
