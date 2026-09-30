@@ -1431,6 +1431,8 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_post("/api/master/{id}/businesses/{business_id}", api_business_update)
     app.router.add_post("/api/master/{id}/ai-command", api_ai_command)
     app.router.add_post("/api/master/{id}/ai-command/document", api_ai_document_upload)
+    # Backward-compatible alias for cached Mini App clients that still use the old URL.
+    app.router.add_post("/api/master/{id}/documents/upload", api_ai_document_upload)
     app.router.add_post("/api/master/{id}/ai-command/confirm", api_ai_command_confirm)
     app.router.add_get("/api/master/{id}/settings", api_settings)
     app.router.add_post("/api/master/{id}/settings", api_settings_update)
