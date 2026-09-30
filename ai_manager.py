@@ -1226,6 +1226,32 @@ class AIManager:
             if name:
                 shown = f" — от {int(float(price)):,} ֏".replace(",", " ") if price not in (None, "") else ""
                 lines.append(f"• {name}{shown}")
+        if "catalog_resolution" in missing:
+            unresolved = [
+                x for x in services
+                if isinstance(x, dict) and str(x.get("catalog_match_status") or "") != "matched"
+            ]
+            if language == "ru":
+                lines = []
+                for item in unresolved:
+                    options = item.get("catalog_options") or []
+                    if options:
+                        labels = [str(o.get("category_name_ru") or o.get("category_name_am") or o.get("category_name_en") or "") for o in options]
+                        lines.append(f"• {item.get('name')}: " + " / ".join(x for x in labels if x))
+                    else:
+                        lines.append(f"• {item.get('name')}: точного совпадения пока нет")
+                return "Я проверяю услуги по живому каталогу. Нужно уточнить классификацию:\n" + "\n".join(lines)
+            if language == "hy":
+                lines = []
+                for item in unresolved:
+                    options = item.get("catalog_options") or []
+                    if options:
+                        labels = [str(o.get("category_name_am") or o.get("category_name_ru") or o.get("category_name_en") or "") for o in options]
+                        lines.append(f"• {item.get('name')}: " + " / ".join(x for x in labels if x))
+                    else:
+                        lines.append(f"• {item.get('name')}: հստակ համապատասխանություն դեռ չկա")
+                return "Ծառայությունների կատալոգային դասակարգումը դեռ պետք է ճշտել:\n" + "\n".join(lines)
+            return "I need to resolve the live catalogue classification before I can prepare the application."
         if language == "hy":
             reply = "Հասկացա 👍 Պատրաստում եմ հետևյալ ծառայությունների հայտը:\n\n" + "\n".join(lines)
             reply += "\n\nԽնդրում եմ լրացրեք միայն այն տվյալները, որոնք դեռ անհրաժեշտ են:\n"
