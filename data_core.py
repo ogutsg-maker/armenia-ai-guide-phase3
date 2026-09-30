@@ -2685,6 +2685,9 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     # document; a new document is not required when an approved one exists.
     if not document:
         raise ValueError("document_required")
+    document_status = str(document.get("status") or "").strip().lower()
+    if document_status in {"rejected", "expired", "cancelled", "canceled"}:
+        raise ValueError("document_replacement_required")
 
     first = prepared[0]
     payload = {
@@ -2723,12 +2726,13 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                address,object_name,object_id,phone,direction_name,master_category_id,
                subcategory_name,category_id,service_name,price,description,document_id,
                payload_json)
-           VALUES(%s,%s,'pending_admin',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
            RETURNING id AS application_id,id,status,business_id,document_id,
                      service_name,price,category_id,master_category_id,created_at""",
         (
             pid,
             cid,
+            "pending_admin" if document_status == "approved" else "document_under_review",
             company.get("name") or "",
             (company_object or {}).get("marz"),
             (company_object or {}).get("city"),
