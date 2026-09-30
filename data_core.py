@@ -2628,6 +2628,22 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
            ORDER BY id LIMIT 1""",
         (pid, cid),
     )
+    # If the confirmed draft selected a specific/new service address,
+    # use that object as the application header as well.
+    requested_header_object_id = None
+    if raw_services and isinstance(raw_services[0], dict):
+        requested_header_object_id = raw_services[0].get("address_id")
+    if requested_header_object_id not in (None, ""):
+        header_object = one(
+            """SELECT id,partner_id,business_id,object_name,address,city,marz,phone
+               FROM partner_objects
+               WHERE id=%s AND partner_id=%s AND business_id=%s
+                 AND COALESCE(is_active,TRUE)=TRUE""",
+            (int(requested_header_object_id), pid, cid),
+        )
+        if header_object:
+            company_object = header_object
+
     document = one(
         """SELECT id,status,document_type,original_filename
            FROM partner_verification_documents
