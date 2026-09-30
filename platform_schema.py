@@ -234,11 +234,19 @@ def ensure_platform_schema() -> None:
     CREATE TABLE IF NOT EXISTS ai_messages (
         id BIGSERIAL PRIMARY KEY,
         session_id BIGINT NOT NULL REFERENCES ai_sessions(id) ON DELETE CASCADE,
-        sender_role TEXT NOT NULL CHECK (sender_role IN ('user','ai','admin','system')),
+        sender_role TEXT NOT NULL CHECK (sender_role IN ('user','ai','admin','system','assistant','tool','client','partner')),
         message_text TEXT NOT NULL,
         data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+        tool_call_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE ai_messages
+        ADD COLUMN IF NOT EXISTS tool_call_id TEXT;
+    ALTER TABLE ai_messages
+        DROP CONSTRAINT IF EXISTS ai_messages_sender_role_check;
+    ALTER TABLE ai_messages
+        ADD CONSTRAINT ai_messages_sender_role_check
+        CHECK (sender_role IN ('user','ai','admin','system','assistant','tool','client','partner'));
     CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_messages(session_id, created_at);
 
     CREATE TABLE IF NOT EXISTS ai_catalog_proposals (
