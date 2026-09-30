@@ -70,8 +70,51 @@ state.objects=o.objects||[];state.services=s.services||[];state.documents=docs.d
 async function loadApplications(){const h=state.current?{'X-Business-Id':String(state.current.id)}:{};const d=await api('/api/master/0/applications',{headers:h});state.applications=d.applications||[]}
 function applicationRows(){const bid=state.current?.id;const all=state.applications||[];if(!bid)return all;const scoped=all.filter(a=>a.business_id!=null&&String(a.business_id)===String(bid));return scoped.length||all.some(a=>a.business_id!=null)?scoped:all}
 async function openMain(id){try{if(id==='ai'){renderAi();setView('ai')}if(id==='businesses'){renderBusinesses();setView('businesses')}if(id==='applications'){await loadApplications();renderApplications();setView('applications')}if(id==='notifications'){await loadNotifications();renderNotifications();setView('notifications')}if(id==='orders'){const d=await api('/api/master/0/bookings');state.bookings=d.bookings||[];renderOrders();setView('orders')}if(id==='negotiations'){await loadNegotiations();setView('negotiations')}if(id==='settings'){const d=await api('/api/master/0/settings');state.settings=d.settings||{};renderSettings();setView('settings')}}catch(e){toast(e.message)}}
-function renderAi(){const e=document.getElementById('ai');e.innerHTML='<div class="heading"><div><h1>🤖 '+tr('ai')+'</h1><p>'+({hy:'Ձեր աջ ձեռքը՝ կառավարելու ամբողջ աշխատանքային տարածքը։',ru:'Ваш правый помощник — управляйте кабинетом обычным разговором.',en:'Your right hand — manage the whole cabinet by simply talking.'}[state.lang]||'')+'</p></div></div><div class="detail ai-chat"><div id="aiMessages" class="ai-messages"><div class="ai-msg ai">'+({hy:'Բարև 👋 Ասեք կամ գրեք, ինչ եք ուզում անել։ Ես կփորձեմ հասկանալ և ցույց կտամ գործողությունը հաստատելուց առաջ։',ru:'Здравствуйте 👋 Скажите или напишите, что хотите сделать. Я пойму задачу и покажу действие перед изменением данных.',en:'Hello 👋 Tell me or write what you want to do. I will understand the task and show the action before changing data.'}[state.lang]||'')+'</div></div><div class="ai-compose"><button class="ai-mic" onclick="startAiVoice()">🎤</button><textarea id="aiInput" placeholder="'+({hy:'Գրեք ձեր խնդրանքը...',ru:'Напишите, что хотите сделать...',en:'Tell me what you want to do...'}[state.lang]||'')+'"></textarea><button class="ai-send" onclick="sendAiCommand()">➤</button></div><div id="aiPreview" class="ai-preview"></div></div>';const t=document.getElementById('aiInput');t?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendAiCommand()}})}
+function renderAi(){const e=document.getElementById('ai');e.innerHTML='<div class="heading"><div><h1>🤖 '+tr('ai')+'</h1><p>'+({hy:'Ձեր աջ ձեռքը՝ կառավարելու ամբողջ աշխատանքային տարածքը։',ru:'Ваш правый помощник — управляйте кабинетом обычным разговором.',en:'Your right hand — manage the whole cabinet by simply talking.'}[state.lang]||'')+'</p></div></div><div class="detail ai-chat"><div id="aiMessages" class="ai-messages"><div class="ai-msg ai">'+({hy:'Բարև 👋 Ասեք կամ գրեք, ինչ եք ուզում անել։ Ես կփորձեմ հասկանալ և ցույց կտամ գործողությունը հաստատելուց առաջ։',ru:'Здравствуйте 👋 Скажите или напишите, что хотите сделать. Я пойму задачу и покажу действие перед изменением данных.',en:'Hello 👋 Tell me or write what you want to do. I will understand the task and show the action before changing data.'}[state.lang]||'')+'</div></div><div class="ai-compose"><button class="ai-mic" onclick="startAiVoice()">🎤</button><textarea id="aiInput" placeholder="'+({hy:'Գրեք ձեր խնդրանքը...',ru:'Напишите, что хотите сделать...',en:'Tell me what you want to do...'}[state.lang]||'')+'"></textarea><button class="ai-attach" type="button" onclick="document.getElementById('aiDocumentInput')?.click()" title="'+({hy:'Կցել փաստաթուղթ',ru:'Прикрепить документ',en:'Attach document'}[state.lang]||'Attach document')+'">📎</button><input id="aiDocumentInput" type="file" accept=".pdf,image/jpeg,image/png,image/webp" style="display:none" onchange="uploadAiDocument(this)"><button class="ai-send" onclick="sendAiCommand()">➤</button></div><div id="aiDocumentStatus" class="muted small" style="margin-top:7px"></div><div id="aiPreview" class="ai-preview"></div></div>';const t=document.getElementById('aiInput');t?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendAiCommand()}})}
 function aiAdd(role,text){const e=document.getElementById('aiMessages');if(!e)return;const d=document.createElement('div');d.className='ai-msg '+role;d.textContent=text;e.appendChild(d);e.scrollTop=e.scrollHeight}
+async function uploadAiDocument(input){
+  const file=input?.files?.[0];
+  if(!file)return;
+  const status=document.getElementById('aiDocumentStatus');
+  const allowed=['application/pdf','image/jpeg','image/png','image/webp'];
+  if(!allowed.includes(file.type)){
+    toast(state.lang==='hy'?'Թույլատրվում են PDF, JPG, PNG կամ WEBP ֆայլեր։':state.lang==='ru'?'Разрешены только PDF, JPG, PNG или WEBP.':'Only PDF, JPG, PNG or WEBP files are allowed.');
+    input.value='';
+    return;
+  }
+  if(file.size>10*1024*1024){
+    toast(state.lang==='hy'?'Ֆայլը չպետք է գերազանցի 10 ՄԲ-ը։':state.lang==='ru'?'Файл не должен превышать 10 МБ.':'File must not exceed 10 MB.');
+    input.value='';
+    return;
+  }
+  try{
+    if(status)status.textContent=state.lang==='hy'?'📎 Փաստաթուղթը բեռնվում է…':state.lang==='ru'?'📎 Документ загружается…':'📎 Uploading document…';
+    const fd=new FormData();
+    fd.append('file',file);
+    fd.append('document_type','business_document');
+    const headersObj={...headers()};
+    if(state.current?.id)headersObj['X-Business-Id']=String(state.current.id);
+    const r=await fetch('/api/master/0/ai-command/document',{method:'POST',headers:headersObj,body:fd});
+    const d=await r.json().catch(()=>({ok:false,error:'bad_json'}));
+    if(!r.ok||d.ok===false)throw new Error(d.error||d.message||('HTTP '+r.status));
+    if(status)status.textContent=(state.lang==='hy'?'📎 Կցված է՝ ':state.lang==='ru'?'📎 Прикреплён: ':'📎 Attached: ')+(d.filename||file.name);
+    aiAdd('user',state.lang==='hy'?'📎 Փաստաթուղթը կցեցի։':state.lang==='ru'?'📎 Документ прикреплён.':'📎 Document attached.');
+    const p=document.getElementById('aiPreview');
+    if(p)p.innerHTML='<div class="notice">🤖 …</div>';
+    const command=await api('/api/master/0/ai-command',{method:'POST',body:{
+      message:state.lang==='hy'?'Փաստաթուղթը կցված է։':state.lang==='ru'?'Документ прикреплён.':'Document attached.',
+      language:state.lang,
+      business_id:state.current?.id||null
+    }});
+    if(p)p.innerHTML=aiCommandHtml(command);
+    if(command.reply)aiAdd('ai',command.reply);
+  }catch(e){
+    if(status)status.textContent='';
+    toast(e.message||'document_upload_failed');
+  }finally{
+    input.value='';
+  }
+}
 function startAiVoice(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){toast(state.lang==='hy'?'Ձայնային մուտքը հասանելի չէ այս բրաուզերում':state.lang==='ru'?'Голосовой ввод недоступен в этом браузере':'Voice input is not available in this browser');return}const r=new SR();r.lang=state.lang==='hy'?'hy-AM':state.lang==='ru'?'ru-RU':'en-US';r.interimResults=false;r.onresult=e=>{const text=e.results?.[0]?.[0]?.transcript||'';const i=document.getElementById('aiInput');if(i)i.value=text};r.onerror=()=>toast('Voice input error');r.start()}
 async function sendAiCommand(){const i=document.getElementById('aiInput'),text=i?.value.trim();if(!text)return;aiAdd('user',text);i.value='';const p=document.getElementById('aiPreview');if(p)p.innerHTML='<div class="notice">🤖 …</div>';try{const d=await api('/api/master/0/ai-command',{method:'POST',body:{message:text,language:state.lang,business_id:state.current?.id||null}});if(p)p.innerHTML=aiCommandHtml(d);if(d.reply)aiAdd('ai',d.reply)}catch(e){if(p)p.innerHTML='';aiAdd('ai',e.message);}}
 function escNl(v){return esc(v).replace(/\r?\n/g,'<br>');}
