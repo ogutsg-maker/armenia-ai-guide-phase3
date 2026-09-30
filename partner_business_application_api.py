@@ -1473,8 +1473,42 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
                          WHERE id=%s AND partner_id=%s""",(bid,a["partner_id"]))
                 business["status"]="active"
 
+            # Even under an already approved direction, the company itself
+            # must have an approved verification document before a service
+            # proposal can become live. A missing document keeps this
+            # application in the admin queue instead of activating the service.
+            verified_company_document=_one(
+                """SELECT id,status FROM partner_verification_documents
+                   WHERE partner_id=%s AND business_id=%s
+                     AND COALESCE(is_current,TRUE)=TRUE
+                     AND status='approved'
+                   ORDER BY created_at DESC,id DESC LIMIT 1""",
+                (a["partner_id"],bid),
+            )
+            if not verified_company_document:
+                _exec(
+                    """UPDATE partner_applications
+                       SET status='document_pending',
+                           admin_note=%s,
+                           reviewed_by=%s,
+                           reviewed_at=NOW(),
+                           updated_at=NOW()
+                       WHERE id=%s""",
+                    (
+                        "Ընկերության հաստատման փաստաթուղթը բացակայում է կամ դեռ հաստատված չէ։",
+                        _admin(request), aid,
+                    ),
+                )
+                return web.json_response({
+                    "ok": True,
+                    "status": "document_pending",
+                    "application_id": aid,
+                    "document_required": True,
+                    "activated": False,
+                })
+
             # Existing approved direction: one Admin approval is enough for a
-            # new service. No new direction/document workflow is needed.
+            # new service after the company verification gate above.
             approved_direction=_one(
                 "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND master_category_id=%s AND status='approved' LIMIT 1",
                 (a["partner_id"],bid,mid)
