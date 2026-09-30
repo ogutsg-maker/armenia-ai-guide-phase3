@@ -1023,16 +1023,33 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
+                document = data_core.get_current_partner_document(
+                    partner_id=pid, company_id=company_id
+                )
+                if not document:
+                    raise ValueError("document_required")
+                resolved = data_core.resolve_catalog_services([{
+                    "name": checked["name"],
+                    "price": checked["price"],
+                    "address_id": args.get("address_id"),
+                    "phone": args.get("phone"),
+                    "description": args.get("description"),
+                }], limit=500)[0]
                 return self._prepare_action(
                     name,
                     {
                         "company_id": company_id,
-                        "name": checked["name"],
-                        "price": checked["price"],
-                        "category_id": args.get("category_id"),
-                        "address_id": args.get("address_id"),
-                        "phone": args.get("phone"),
-                        "description": args.get("description"),
+                        "name": resolved["name"],
+                        "price": resolved.get("price"),
+                        "category_id": resolved.get("category_id"),
+                        "master_category_id": resolved.get("master_category_id"),
+                        "address_id": resolved.get("address_id"),
+                        "phone": resolved.get("phone"),
+                        "description": resolved.get("description"),
+                        "catalog_match_status": resolved.get("catalog_match_status"),
+                        "catalog_options": resolved.get("catalog_options") or [],
+                        "document_id": int(document["id"]),
+                        "document_status": document.get("status"),
                     },
                     f'Добавить услугу «{checked["name"]}» в заявку на проверку компании «{company.get("name") or ""}»?',
                 )
