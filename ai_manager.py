@@ -1146,7 +1146,7 @@ class AIManager:
         text = str(message or "").strip()
         result: dict[str, Any] = {}
 
-        phone_match = re.search(r"(?:\\+?374|0)?[ -]?(?:\d[ -]?){8,9}", text)
+        phone_match = re.search(r"(?:\+?374|0)?[ -]?(?:\d[ -]?){8,9}", text)
         if phone_match:
             raw = re.sub(r"[^0-9+]", "", phone_match.group(0))
             try:
