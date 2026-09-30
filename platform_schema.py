@@ -475,7 +475,6 @@ def ensure_platform_schema() -> None:
     
     
     
-    CREATE INDEX IF NOT EXISTS idx_services_object ON services(object_id);
     -- Backfill direction-level default tariff on pre-existing installs.
     
     
