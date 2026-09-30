@@ -1081,8 +1081,8 @@ class AIManager:
 
         # Only activate for an explicit service-creation request.
         command = re.match(
-            r"^(?:создай(?:те)?|добавь(?:те)?|создать|добавить)\\s+"
-            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)(?:\\s*[:,-]?\\s*)",
+            r"^(?:создай(?:те)?|добавь(?:те)?|создать|добавить)\s+"
+            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)(?:\s*[:,-]?\s*)",
             text,
             flags=re.IGNORECASE,
         )
@@ -1095,7 +1095,7 @@ class AIManager:
 
         # Split only on list separators. Service names themselves may contain
         # spaces and arbitrary words.
-        parts = [p.strip(" ,;") for p in re.split(r"\s*[;,]\\s*", body) if p.strip(" ,;")]
+        parts = [p.strip(" ,;") for p in re.split(r"\s*[;,]\s*", body) if p.strip(" ,;")]
         if not parts:
             return None
 
@@ -1103,8 +1103,8 @@ class AIManager:
         for part in parts[:30]:
             # Supported natural price forms: "от 5000", "за 5000", "5000".
             m = re.match(
-                r"^(?P<name>.+?)\\s+(?P<price_type>от|за|по|цена(?: от)?|price(?: from)?|from)?\\s*"
-                r"(?P<price>\\d[\\d\\s.,]*)\\s*(?:֏|դր(?:ամ)?|amd|₽|руб(?:лей|\\.)?)?\\s*$",
+                r"^(?P<name>.+?)\s+(?P<price_type>от|за|по|цена(?: от)?|price(?: from)?|from)?\s*"
+                r"(?P<price>\d[\d\s.,]*)\s*(?:֏|դր(?:ամ)?|amd|₽|руб(?:лей|\.)?)?\s*$",
                 part,
                 flags=re.IGNORECASE,
             )
