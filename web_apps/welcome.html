@@ -37,7 +37,7 @@ async function restoreSession(){
     });
     if(!r.ok) return;
     const s=await r.json();
-    if(s.ok && s.role==='partner' && s.partner_status==='approved' && s.destination){
+    if(s.ok && s.role==='partner' && s.destination){
       location.replace('/'+s.destination);
     }
   }catch(e){
