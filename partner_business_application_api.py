@@ -707,27 +707,25 @@ def register_business_application_routes(app, bot_token=None, admin_id=None):
             row["services"]=enriched
             row["catalog_services"]=enriched
 
-            # Service proposals under an already approved direction do NOT need
-            # a new verification document. Documents are required only for a
-            # genuinely new direction or a new company.
+            # A service proposal is ready for activation only when its
+            # company is already verified. An approved direction by itself is
+            # not enough: SAFIR-style companies without a document stay in the
+            # admin queue and visibly show that the document is missing.
             is_service_proposal = payload.get("source") == "partner_service"
             document_required = False
-            if is_service_proposal and str(row.get("partner_status") or "").lower() == "approved":
-                document_required = True
+            if is_service_proposal:
                 business_id = _safe_int(row.get("business_id"))
-                master_id = _safe_int(row.get("master_category_id") or payload.get("master_category_id"))
-                if business_id and master_id:
-                    approved = _one(
-                        """SELECT id FROM partner_directions
+                verified_document = None
+                if business_id:
+                    verified_document = _one(
+                        """SELECT id,status FROM partner_verification_documents
                            WHERE partner_id=%s AND business_id=%s
-                             AND master_category_id=%s AND status='approved'
-                           LIMIT 1""",
-                        (row["partner_id"], business_id, master_id),
+                             AND COALESCE(is_current,TRUE)=TRUE
+                             AND status='approved'
+                           ORDER BY created_at DESC,id DESC LIMIT 1""",
+                        (row["partner_id"], business_id),
                     )
-                    if approved:
-                        document_required = False
-                if payload.get("new_business") is True or not business_id:
-                    document_required = True
+                document_required = not bool(verified_document)
             row["document_required"] = document_required
 
         return web.json_response({"ok":True,"applications":rows})
