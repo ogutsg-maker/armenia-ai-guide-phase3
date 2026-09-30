@@ -143,6 +143,25 @@ class AIManager:
             partner = data_core.get_partner_by_user(int(telegram_id))
             if partner:
                 ctx["partner_id"] = partner.get("id")
+
+                # The open company comes from the authenticated cabinet UI.
+                # It is trusted only after Data Core verifies ownership; Groq
+                # never gets to invent or choose an internal company ID.
+                raw_business_id = ctx.get("business_id")
+                try:
+                    business_id = int(raw_business_id) if raw_business_id not in (None, "", 0, "0") else None
+                except (TypeError, ValueError):
+                    business_id = None
+                if business_id:
+                    company = data_core.get_company(business_id)
+                    if company and int(company.get("partner_id") or 0) == int(partner.get("id") or 0):
+                        ctx["current_company"] = {
+                            "id": int(company["id"]),
+                            "name": company.get("name"),
+                        }
+                        ctx["current_company_id"] = int(company["id"])
+                    else:
+                        ctx.pop("business_id", None)
         return ctx
 
     @staticmethod
