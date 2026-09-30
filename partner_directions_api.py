@@ -68,22 +68,25 @@ def _exec(sql, params=(), returning=False):
 
 
 def ensure_partner_direction_schema():
-    """Non-destructive migration. Existing partner/data rows are preserved."""
+    """Create-only runtime bootstrap for partner directions.
+
+    Versioned migrations own ALTERs, backfills, reconciliation and final
+    uniqueness. Runtime startup only guarantees that required tables/indexes
+    exist for a clean installation.
+    """
     _exec("""
-    
-    
-    
     CREATE TABLE IF NOT EXISTS partner_directions (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+        business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE,
         master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
         status TEXT NOT NULL DEFAULT 'pending'
             CHECK (status IN ('draft','pending','approved','rejected','frozen','deleted')),
         rejection_reason TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(partner_id, master_category_id)
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
     CREATE TABLE IF NOT EXISTS partner_direction_categories (
         id BIGSERIAL PRIMARY KEY,
         partner_direction_id BIGINT NOT NULL REFERENCES partner_directions(id) ON DELETE CASCADE,
@@ -91,9 +94,11 @@ def ensure_partner_direction_schema():
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE(partner_direction_id, category_id)
     );
-    
+
     CREATE INDEX IF NOT EXISTS idx_partner_directions_partner
         ON partner_directions(partner_id, status);
+    CREATE INDEX IF NOT EXISTS idx_partner_directions_business
+        ON partner_directions(business_id, status);
     CREATE INDEX IF NOT EXISTS idx_partner_direction_categories_direction
         ON partner_direction_categories(partner_direction_id);
     CREATE INDEX IF NOT EXISTS idx_partner_verification_documents_direction
@@ -102,6 +107,7 @@ def ensure_partner_direction_schema():
     CREATE TABLE IF NOT EXISTS service_direction_requests (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+        business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE,
         requested_master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
         requested_master_name TEXT,
         requested_service_name TEXT NOT NULL,
@@ -118,15 +124,13 @@ def ensure_partner_direction_schema():
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    
-    
-    
-    
+
     CREATE INDEX IF NOT EXISTS idx_service_direction_requests_partner
         ON service_direction_requests(partner_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_service_direction_requests_status
         ON service_direction_requests(status, created_at DESC);
     """)
+
 def ensure_initial_partner_direction(partner_id: int, user_id: int):
     """Create the registration direction from the already-selected master_skills."""
     ensure_partner_direction_schema()
