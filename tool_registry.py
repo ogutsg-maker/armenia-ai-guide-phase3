@@ -1013,24 +1013,18 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
-                if args.get("address_id") is not None:
-                    addresses = data_core.get_partner_addresses(
-                        pid, actor_user_id=self.telegram_id, limit=200
-                    )
-                    address_id = int(args["address_id"])
-                    obj = next((x for x in addresses if int(x.get("id") or 0) == address_id), None)
-                    if not obj or int(obj.get("business_id") or 0) != company_id:
-                        raise PermissionError("address_not_in_company")
                 return self._prepare_action(
                     name,
                     {
-                        "company_id": company_id, "name": checked["name"],
+                        "company_id": company_id,
+                        "name": checked["name"],
                         "price": checked["price"],
                         "category_id": args.get("category_id"),
                         "address_id": args.get("address_id"),
                         "phone": args.get("phone"),
+                        "description": args.get("description"),
                     },
-                    f"Добавить услугу «{checked['name']}» в компанию «{company.get('name') or ''}»?",
+                    f'Добавить услугу «{checked["name"]}» в заявку на проверку компании «{company.get("name") or ""}»?',
                 )
 
             if name == "add_services":
@@ -1041,6 +1035,7 @@ class ToolRegistry:
                 raw_services = args.get("services") or []
                 if not isinstance(raw_services, list) or not raw_services:
                     raise ValueError("services_required")
+
                 addresses = data_core.get_partner_addresses(
                     pid, actor_user_id=self.telegram_id, limit=200
                 )
@@ -1059,22 +1054,30 @@ class ToolRegistry:
                     address_id = raw.get("address_id")
                     if address_id is not None:
                         address_id = int(address_id)
-                        obj = next((x for x in addresses if int(x.get("id") or 0) == address_id), None)
+                        obj = next(
+                            (x for x in addresses if int(x.get("id") or 0) == address_id),
+                            None,
+                        )
                         if not obj or int(obj.get("business_id") or 0) != company_id:
                             raise PermissionError("address_not_in_company")
                     prepared.append({
                         "name": checked["name"],
                         "price": checked["price"],
-                        "category_id": None,
                         "address_id": address_id,
                         "phone": raw.get("phone"),
+                        "description": raw.get("description"),
                     })
                 if not prepared:
                     raise ValueError("services_required")
+
                 return self._prepare_action(
                     name,
-                    {"company_id": company_id, "company_name": company.get("name") or "", "services": prepared},
-                    "",
+                    {
+                        "company_id": company_id,
+                        "company_name": company.get("name") or "",
+                        "services": prepared,
+                    },
+                    f'Добавить {len(prepared)} услуг(и) в заявку на проверку компании «{company.get("name") or ""}»?',
                 )
 
             if name == "update_service":
