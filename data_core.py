@@ -1609,7 +1609,17 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
     if not row:
         raise ValueError("application_not_found")
     status = str(row.get("status") or "").lower()
-    if status in {"approved", "rejected"}:
+    if status == "approved":
+        # Idempotent final write: a stale confirmation must not fail or
+        # duplicate services when the application was already activated.
+        return {
+            "ok": True,
+            "already_active": True,
+            "application_id": int(application_id),
+            "status": "approved",
+            "message": f"Հայտ #{int(application_id)}-ն արդեն հաստատված և ակտիվ է։",
+        }
+    if status == "rejected":
         raise ValueError("application_already_final")
 
     payload = row.get("payload_json") or {}
