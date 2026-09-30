@@ -223,7 +223,7 @@ def seed_legacy_fixture():
                     id BIGSERIAL PRIMARY KEY,
                     partner_id BIGINT NOT NULL,
                     master_category_id INT NOT NULL,
-                    status TEXT NOT NULL,
+                    status TEXT NOT NULL
                 );
                 CREATE TABLE services(
                     id BIGSERIAL PRIMARY KEY,
