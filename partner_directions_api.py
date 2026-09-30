@@ -127,49 +127,6 @@ def ensure_partner_direction_schema():
     CREATE INDEX IF NOT EXISTS idx_service_direction_requests_status
         ON service_direction_requests(status, created_at DESC);
     """)
-
-    # Backfill legacy master_skills without relying on a missing composite
-    # UNIQUE constraint. partner_directions may now contain multiple rows for
-    # the same master across different businesses.
-    _exec("""
-    INSERT INTO partner_directions(partner_id, master_category_id, status)
-    SELECT DISTINCT p.id, c.master_category_id,
-           CASE WHEN p.status='approved' AND p.verification_status='approved'
-                THEN 'approved' ELSE 'pending' END
-    FROM partners p
-    JOIN master_skills ms ON ms.user_id=p.user_id AND ms.is_active=TRUE
-    JOIN categories c ON c.id=ms.category_id
-    WHERE c.master_category_id IS NOT NULL
-      AND NOT EXISTS (
-          SELECT 1 FROM partner_directions pd
-          WHERE pd.partner_id=p.id
-            AND pd.master_category_id=c.master_category_id
-      )
-    """)
-    _exec("""
-    INSERT INTO partner_direction_categories(partner_direction_id, category_id)
-    SELECT pd.id, ms.category_id
-    FROM partner_directions pd
-    JOIN partners p ON p.id=pd.partner_id
-    JOIN master_skills ms ON ms.user_id=p.user_id AND ms.is_active=TRUE
-    JOIN categories c ON c.id=ms.category_id AND c.master_category_id=pd.master_category_id
-    ON CONFLICT(partner_direction_id, category_id) DO NOTHING
-    """)
-    # The current project already has a single verified document for the initial direction.
-    _exec("""
-    UPDATE partner_verification_documents d
-       SET partner_direction_id = x.direction_id
-      FROM (
-        SELECT d2.id AS doc_id, MIN(pd.id) AS direction_id
-        FROM partner_verification_documents d2
-        JOIN partner_directions pd ON pd.partner_id=d2.partner_id
-        WHERE d2.partner_direction_id IS NULL
-        GROUP BY d2.id
-      ) x
-     WHERE d.id=x.doc_id AND d.partner_direction_id IS NULL
-    """)
-
-
 def ensure_initial_partner_direction(partner_id: int, user_id: int):
     """Create the registration direction from the already-selected master_skills."""
     ensure_partner_direction_schema()
