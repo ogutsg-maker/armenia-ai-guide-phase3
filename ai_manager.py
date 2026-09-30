@@ -1416,6 +1416,18 @@ class AIManager:
         state = SessionState.from_dict(session_context)
         pending = state.pending_action
         if pending:
+            pending_status = str(pending.get("status") or "").upper()
+            if pending_status == "SUBMITTED":
+                reply = (
+                    "⏳ Ваша заявка уже находится на рассмотрении у администратора. Пожалуйста, ожидайте уведомления."
+                    if language == "ru" else
+                    "⏳ Ձեր հայտը արդեն ադմինիստրատորի ստուգման փուլում է։ Խնդրում ենք սպասել ծանուցմանը։"
+                    if language == "hy" else
+                    "⏳ Your application is already under administrator review. Please wait for the notification."
+                )
+                await self._save_history(telegram_id, role, "ai", reply, {"fast_path": True, "already_submitted": True})
+                return {"reply": reply, "confirmation_pending": False, "submitted": True, "fast_path": True}
+
             pending_state = str(pending.get("state") or "awaiting_confirmation")
             if self._is_cancel(message):
                 await self._clear_pending(telegram_id, role)
@@ -1434,8 +1446,24 @@ class AIManager:
                             trusted_context=trusted,
                             session_state=state.to_dict(),
                         )
+                        # Mark the action as submitted BEFORE the final DB write.
+                        # The same persisted draft therefore cannot be submitted twice.
+                        pending["status"] = "SUBMITTED"
+                        pending["state"] = "submitted"
+                        pending["submission_token"] = str(
+                            pending.get("submission_token") or secrets.token_urlsafe(24)
+                        )
+                        pending_args["submission_token"] = pending["submission_token"]
+                        pending["args"] = pending_args
+                        await self._update_session_context(
+                            telegram_id, role, {"pending_action": pending}
+                        )
                         result = await confirm_tools.execute_confirmed(pending_name, pending_args)
-                        await self._clear_pending(telegram_id, role)
+                        application_id = result.get("application_id") if isinstance(result, dict) else None
+                        pending["application_id"] = application_id
+                        await self._update_session_context(
+                            telegram_id, role, {"pending_action": pending}
+                        )
                         reply = (
                             "⏳ Հայտը ուղարկվեց ստուգման։" if language == "hy"
                             else "⏳ Заявка отправлена на проверку."
@@ -1517,6 +1545,7 @@ class AIManager:
                         "args": dict(action.get("args") or collected),
                         "missing_fields": list(result.get("missing_fields") or []),
                         "state": "collecting_data",
+                        "status": "COLLECTING_DATA",
                         "created_at": pending.get("created_at") or int(time.time()),
                     }
                     await self._update_session_context(
@@ -1536,6 +1565,8 @@ class AIManager:
                         "args": dict(action.get("args") or {}),
                         "summary": str(result.get("summary") or ""),
                         "state": "awaiting_confirmation",
+                        "status": "AWAITING_CONFIRMATION",
+                        "submission_token": str(pending.get("submission_token") or secrets.token_urlsafe(24)),
                         "created_at": pending.get("created_at") or int(time.time()),
                     }
                     await self._set_pending(telegram_id, role, new_pending)
@@ -1626,6 +1657,7 @@ class AIManager:
                             "args": dict(action.get("args") or {}),
                             "missing_fields": list(result.get("missing_fields") or []),
                             "state": "collecting_data",
+                            "status": "COLLECTING_DATA",
                             "created_at": int(time.time()),
                         }
                         await self._update_session_context(
@@ -1654,6 +1686,8 @@ class AIManager:
                             "args": dict(action.get("args") or {}),
                             "summary": str(result.get("summary") or ""),
                             "state": "awaiting_confirmation",
+                            "status": "AWAITING_CONFIRMATION",
+                            "submission_token": secrets.token_urlsafe(24),
                             "created_at": int(time.time()),
                         }
                         await self._set_pending(telegram_id, role, pending_action)
