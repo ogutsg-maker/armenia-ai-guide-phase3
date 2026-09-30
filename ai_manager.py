@@ -1645,7 +1645,7 @@ class AIManager:
                 await self._save_history(telegram_id, role, "ai", reply, {"cancelled": True, "fast_path": True})
                 return {"reply": reply, "cancelled": True, "fast_path": True}
 
-            if pending_state == "awaiting_confirmation":
+            if pending_state in {"awaiting_confirmation", "submitted"}:
                 if self._is_confirmation(message):
                     pending_name = str(pending.get("name") or "").strip()
                     pending_args = dict(pending.get("args") or {})
