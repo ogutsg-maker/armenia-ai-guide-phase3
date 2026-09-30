@@ -186,8 +186,12 @@ def _catalog_match_score(query: str, candidate: str) -> float:
     overlap = len(qs & cs) / max(1, len(qs | cs))
     containment = 1.0 if q in c or c in q else 0.0
 
-    # Character similarity is only a tie-breaker after meaningful token/root
-    # agreement; it cannot manufacture a category from a generic shared word.
+    # A short user phrase can legitimately omit the service action:
+    # "холодильников" -> "Ремонт холодильников".
+    # The caller handles the important safety decision dynamically by checking
+    # whether the meaningful query root is unique in the LIVE catalogue.
+    # This function therefore only reports lexical evidence; it never invents
+    # a category on its own.
     return min(1.0, 0.78 * overlap + 0.22 * containment)
 
 def _catalog_rankings(query: str, catalog: list[dict[str, Any]]) -> list[tuple[float, dict[str, Any]]]:
@@ -204,8 +208,38 @@ def _catalog_rankings(query: str, catalog: list[dict[str, Any]]) -> list[tuple[f
     return ranked
 
 def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -> list[dict[str, Any]]:
-    """Resolve services using the final confidence/margin contract."""
+    """Resolve services using the live catalogue plus dynamic lexical evidence.
+
+    For abbreviated phrases such as "холодильников", a single meaningful
+    catalogue root is enough only when that root is unique across the live
+    catalogue. This avoids hardcoded dictionaries while preventing generic
+    words from becoming false categories.
+    """
     catalog = search_catalog(limit=max(100, min(int(limit or 500), 500)))
+
+    # Dynamic inverse-frequency index over the live catalogue. No category
+    # names/IDs are hardcoded here.
+    root_frequency: dict[str, int] = {}
+    for cat in catalog:
+        cat_roots = set()
+        for field in ("name_am", "name_ru", "name_en", "slug"):
+            for token in _catalog_tokens(cat.get(field)):
+                root = token
+                suffixes = (
+                    "ներով", "ներին", "ներից", "ների", "երով", "ություն",
+                    "ությունների", "ության", "ություններ", "ական", "ային",
+                    "ը", "ի", "ին", "ից", "ով", "ներ",
+                    "ами", "ями", "ого", "ему", "ом", "ов", "ы", "и",
+                    "а", "я", "у", "ю", "е",
+                )
+                for suffix in sorted(suffixes, key=len, reverse=True):
+                    if len(root) > len(suffix) + 2 and root.endswith(suffix):
+                        root = root[:-len(suffix)]
+                        break
+                if len(root) >= 4:
+                    cat_roots.add(root)
+        for root in cat_roots:
+            root_frequency[root] = root_frequency.get(root, 0) + 1
     resolved: list[dict[str, Any]] = []
     for index, service in enumerate(services):
         item = dict(service)
@@ -225,6 +259,62 @@ def resolve_catalog_services(services: list[dict[str, Any]], limit: int = 500) -
             continue
 
         candidates = _catalog_rankings(name, catalog)
+
+        # Abbreviated service names are common in partner speech. If the
+        # meaningful root(s) from the user phrase occur in exactly one live
+        # category, promote that candidate to high-confidence lexical match.
+        # This is data-driven and therefore works for new catalogue entries
+        # without adding Python dictionaries.
+        query_roots = set()
+        for token in _catalog_tokens(name):
+            root = token
+            suffixes = (
+                "ами", "ями", "ого", "ему", "ом", "ов", "ы", "и", "а", "я",
+                "у", "ю", "е", "ներով", "ներին", "ներից", "ների", "երով",
+                "ություն", "ությունների", "ության", "ություններ", "ական",
+                "ային", "ը", "ի", "ին", "ից", "ով", "ներ",
+            )
+            for suffix in sorted(suffixes, key=len, reverse=True):
+                if len(root) > len(suffix) + 2 and root.endswith(suffix):
+                    root = root[:-len(suffix)]
+                    break
+            if len(root) >= 4:
+                query_roots.add(root)
+
+        unique_candidates = []
+        if query_roots:
+            for idx, (score, cat) in enumerate(candidates):
+                cat_roots = set()
+                for field in ("name_am", "name_ru", "name_en", "slug"):
+                    for token in _catalog_tokens(cat.get(field)):
+                        root = token
+                        suffixes = (
+                            "ами", "ями", "ого", "ему", "ом", "ов", "ы", "и",
+                            "а", "я", "у", "ю", "е", "ներով", "ներին", "ներից",
+                            "ների", "երով", "ություն", "ությունների", "ության",
+                            "ություններ", "ական", "ային", "ը", "ի", "ին", "ից",
+                            "ով", "ներ",
+                        )
+                        for suffix in sorted(suffixes, key=len, reverse=True):
+                            if len(root) > len(suffix) + 2 and root.endswith(suffix):
+                                root = root[:-len(suffix)]
+                                break
+                        if len(root) >= 4:
+                            cat_roots.add(root)
+                shared_unique = [
+                    root for root in query_roots
+                    if root in cat_roots and root_frequency.get(root) == 1
+                ]
+                if shared_unique:
+                    unique_candidates.append((idx, cat, shared_unique))
+
+        if unique_candidates and len(unique_candidates) == 1:
+            idx, unique_cat, _ = unique_candidates[0]
+            candidates = [(1.0, unique_cat)] + [
+                pair for n, pair in enumerate(candidates)
+                if n != idx
+            ]
+
         catalog_name = str(item.get("catalog_name") or "").strip()
         if catalog_name:
             exact = next(
