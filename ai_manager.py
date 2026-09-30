@@ -914,6 +914,35 @@ class AIManager:
                 logger.exception("Admin deterministic approval fast path failed")
                 return {"reply": self._error_text(language), "error": str(exc)}
 
+        document_approval_intent = re.search(
+            r"(?:հաստատիր|հաստատել|հաստատի|approve|одобр|утверд|հաստատե՞լ).*?"
+            r"(?:փաստաթուղթ|документ|document)",
+            str(message or "").casefold(),
+        )
+        if document_approval_intent:
+            try:
+                app = data_core.get_application_full(app_id)
+                if not app:
+                    raise ValueError("application_not_found")
+                action = {
+                    "name": "admin_approve_application_document",
+                    "args": {"application_id": app_id},
+                    "state": "awaiting_confirmation",
+                }
+                await self._set_pending(telegram_id, ContextType.ADMIN, action)
+                summary = (
+                    f"Հաստատե՞լ հայտ #{app_id}-ի կցված փաստաթուղթը?"
+                    if language == "hy" else
+                    f"Подтвердить документ, прикреплённый к заявке #{app_id}?"
+                    if language == "ru" else
+                    f"Approve the document attached to application #{app_id}?"
+                )
+                return {"reply": summary, "confirmation_pending": True, "fast_path": True,
+                        "application_id": app_id}
+            except Exception as exc:
+                logger.exception("Admin deterministic document approval fast path failed")
+                return {"reply": self._error_text(language), "error": str(exc)}
+        
         document_correction_intent = re.search(
             r"(?:հայտ|заяв|application)\s*(?:#|№)?\s*\d*.*?"
             r"(?:փաստաթուղթ|документ|document).*?"
@@ -1812,7 +1841,7 @@ class AIManager:
                     # emitting the JSON arguments. Registration saves may contain many
                     # services, so 900 was too small and produced truncated JSON such as
                     # {"address". Keep registration isolated at a safe 1600-token ceiling.
-                    max_tokens=1600 if role == ContextType.REGISTRATION else 1600,
+                    max_tokens=700 if role == ContextType.ADMIN else 1600,
                 )
                 await self._cost_log(
                     telegram_id, role, getattr(response, "usage", None),
