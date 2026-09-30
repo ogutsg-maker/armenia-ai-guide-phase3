@@ -1463,7 +1463,18 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     app = get_application_full(int(application_id))
     if not app:
         raise ValueError("application_not_found")
-    if str(app.get("status") or "").lower() in {"approved", "rejected"}:
+    current_status = str(app.get("status") or "").lower()
+    if current_status == "approved":
+        # Approval is idempotent. An already approved application is already
+        # materialized; repeated admin commands must never create duplicates.
+        return {
+            "ok": True,
+            "can_approve": False,
+            "already_active": True,
+            "reason_code": "application_already_active",
+            "message": f"Հայտ #{int(application_id)}-ն արդեն հաստատված և ակտիվ է։ Կրկին ակտիվացում պետք չէ։",
+        }
+    if current_status == "rejected":
         raise ValueError("application_already_final")
 
     payload = app.get("payload_json") or {}
