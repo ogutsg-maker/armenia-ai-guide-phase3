@@ -942,9 +942,16 @@ class AIManager:
 
         # Approval is a distinct intent and must never fall through to
         # the generic "open application" branch.
+        # Explicit application approval/activation is a deterministic backend command.
+        # Do not send these commands to Groq: parse the application number locally,
+        # then let Data Core validate and prepare the confirmed action.
         approval_intent = re.search(
-            r"(?:հայտ|заяв|application)\s*(?:#|№)?\s*\d*.*?"
-            r"(?:հաստատիր|հաստատել|հաստատի|approve|одобр|утверд|ակտիվացրու|активир)",
+            r"(?:հաստատիր|հաստատել|հաստատի|հաստատե՞լ|approve|одобр|утверд|"
+            r"ակտիվացրու|ակտիվացրու|ակտիվացր|активир|активируй)"
+            r".*?(?:հայտ|заяв(?:ку|ка)?|application)"
+            r"|(?:հայտ|заяв(?:ку|ка)?|application)"
+            r".*?(?:հաստատիր|հաստատել|հաստատի|հաստատե՞լ|approve|одобр|утверд|"
+            r"ակտիվացրու|ակտիվացր|активир|активируй)",
             str(message or "").casefold(),
         )
         if approval_intent:
