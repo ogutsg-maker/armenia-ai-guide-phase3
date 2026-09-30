@@ -1098,6 +1098,7 @@ class ToolRegistry:
                     prepared.append({
                         "name": checked["name"],
                         "price": checked["price"],
+                        "price_type": raw.get("price_type") or "fixed",
                         "address_id": address_id,
                         "phone": raw.get("phone"),
                         "description": raw.get("description"),
