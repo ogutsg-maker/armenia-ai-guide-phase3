@@ -233,6 +233,33 @@ WHERE a.status='approved'
   )
   AND d.business_id IS DISTINCT FROM a.business_id;
 
+-- 08. Reconcile the approved application's business container.
+UPDATE partner_businesses b
+SET description=COALESCE(
+        substring(a.description from 'Մենք զբաղվում ենք ([^։]+)'),
+        substring(a.description from 'Мы занимаемся ([^.]+)'),
+        substring(a.description from 'We provide ([^.]+)'),
+        b.description
+    ),
+    phone=COALESCE(
+        NULLIF(a.phone,''),
+        NULLIF(a.payload_json->>'phone',''),
+        NULLIF(substring(a.description from '(?:Հեռախոս|Телефон|Phone)[[:space:]]*[:\-]?[[:space:]]*([+0-9][0-9 ()-]{7,})'),''),
+        b.phone
+    ),
+    updated_at=NOW()
+FROM partner_applications a
+WHERE a.id=(
+    SELECT aa.id
+    FROM partner_applications aa
+    WHERE aa.business_id=b.id AND aa.status='approved'
+    ORDER BY aa.created_at DESC,aa.id DESC
+    LIMIT 1
+)
+AND a.description IS NOT NULL
+AND trim(a.description)<>'';
+
+
 -- 09. Reconstruct missing directions from active/approved services.
 UPDATE partner_directions pd
 SET business_id=s.business_id,
@@ -320,32 +347,6 @@ WHERE a.status='approved'
       ORDER BY aa.created_at DESC,aa.id DESC
       LIMIT 1
   );
-
--- 08. Reconcile the approved application's business container.
-UPDATE partner_businesses b
-SET description=COALESCE(
-        substring(a.description from 'Մենք զբաղվում ենք ([^։]+)'),
-        substring(a.description from 'Мы занимаемся ([^.]+)'),
-        substring(a.description from 'We provide ([^.]+)'),
-        b.description
-    ),
-    phone=COALESCE(
-        NULLIF(a.phone,''),
-        NULLIF(a.payload_json->>'phone',''),
-        NULLIF(substring(a.description from '(?:Հեռախոս|Телефон|Phone)[[:space:]]*[:\-]?[[:space:]]*([+0-9][0-9 ()-]{7,})'),''),
-        b.phone
-    ),
-    updated_at=NOW()
-FROM partner_applications a
-WHERE a.id=(
-    SELECT aa.id
-    FROM partner_applications aa
-    WHERE aa.business_id=b.id AND aa.status='approved'
-    ORDER BY aa.created_at DESC,aa.id DESC
-    LIMIT 1
-)
-AND a.description IS NOT NULL
-AND trim(a.description)<>'';
 
 -- 13. Remove duplicated company profile text from legacy service descriptions.
 UPDATE services s
