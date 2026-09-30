@@ -1557,7 +1557,7 @@ class AIManager:
         # same application through several expensive calls.
         if role == ContextType.ADMIN:
             import re
-            match = re.search(r"(?:#|№)\s*(\d+)", str(message or ""))
+            match = re.search(r"(?:#|№|\bID\b|\bИД\b)\s*(\d+)", str(message or ""), re.IGNORECASE)
             if match and any(word in str(message or "").casefold() for word in (
                 "հայտ", "заяв", "application", "ուղղ", "исправ", "փոխ", "измен",
                 "fix", "edit", "գին", "цена", "price",
@@ -2159,13 +2159,18 @@ class AIManager:
                         "tool_calls": tool_log,
                     }
 
-                if result.get("requires_confirmation"):
+                if result.get("requires_confirmation") or (
+                    name == "admin_approve_application"
+                    and result.get("can_approve")
+                    and isinstance(result.get("action"), dict)
+                ):
                     action = result.get("action") or {}
                     pending_action = {
                         "name": str(action.get("name") or name),
                         "args": dict(action.get("args") or {}),
                         "summary": str(result.get("summary") or ""),
                         "state": "awaiting_confirmation",
+                        "status": "AWAITING_CONFIRMATION",
                         "created_at": int(time.time()),
                     }
                     await self._set_pending(
