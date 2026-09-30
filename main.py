@@ -108,14 +108,30 @@ async def api_webapp_session(request: web.Request):
         tg_user.get("first_name") or tg_user.get("last_name") or "",
     )
     partner = db.get_partner_by_user(uid)
-    if partner and str(partner.get("status") or "").lower() == "approved":
-        return web.json_response({
-            "ok": True,
-            "role": "partner",
-            "partner_status": "approved",
-            "destination": "master_cabinet.html",
-            "business_name": partner.get("business_name") or "",
-        })
+
+    # Session restoration must be based on the actual partner/company
+    # relationship, not only on the partner verification status. A partner
+    # who has already created an account/company must never be sent back to
+    # the registration form just because the application is still pending
+    # administrator verification.
+    if partner:
+        partner_status = str(partner.get("status") or "").lower()
+        has_company = False
+        try:
+            companies = data_core.list_companies(partner_id=int(partner["id"]))
+            has_company = bool(companies)
+        except Exception:
+            logger.exception("Could not resolve partner companies for session uid=%s", uid)
+
+        if has_company:
+            return web.json_response({
+                "ok": True,
+                "role": "partner",
+                "partner_status": partner_status or None,
+                "destination": "master_cabinet.html",
+                "business_name": partner.get("business_name") or "",
+            })
+
     return web.json_response({
         "ok": True,
         "role": "client",
