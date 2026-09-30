@@ -274,6 +274,7 @@ class ToolRegistry:
                             "properties": {
                                 "name": {"type": "string"},
                                 "price": _nullable("number"),
+                                "price_type": {"type": "string", "enum": ["from", "fixed"]},
                                 "address_id": _nullable("integer"),
                                 "phone": _nullable("string"),
                                 "description": _nullable("string")
