@@ -1161,6 +1161,12 @@ class ToolRegistry:
                     missing.append("service_mode")
                 if not document:
                     missing.append("document")
+                unresolved_catalog = [
+                    item for item in prepared
+                    if str(item.get("catalog_match_status") or "") != "matched"
+                ]
+                if unresolved_catalog:
+                    missing.append("catalog_resolution")
 
                 action_args = {
                     "company_id": company_id,
