@@ -105,7 +105,7 @@ ALTER TABLE services DROP CONSTRAINT IF EXISTS services_status_check;
 ALTER TABLE services ADD CONSTRAINT services_status_check
     CHECK (status IN ('draft','pending','approved','active','inactive','suspended','rejected','deleted'));
 
--- 03. Application table.
+-- Application table (part of structural expansion).
 CREATE TABLE IF NOT EXISTS partner_applications(
     id BIGSERIAL PRIMARY KEY,
     partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
@@ -321,7 +321,6 @@ WHERE a.status='approved'
       LIMIT 1
   );
 
--- 14. Normalize company description and phone.
 -- 08. Reconcile the approved application's business container.
 UPDATE partner_businesses b
 SET description=COALESCE(
@@ -348,6 +347,7 @@ WHERE a.id=(
 AND a.description IS NOT NULL
 AND trim(a.description)<>'';
 
+-- 14. Final company description/phone normalization guards.
 UPDATE partner_businesses
 SET description=trim(substring(description from 'Мы занимаемся ([^.]+)'))
 WHERE description ~ 'Мы занимаемся [^.]+';
