@@ -57,7 +57,7 @@ INSERT INTO category_settings(category_id)
 -- reconciliation -> repair/cleanup -> final constraints/indexes.
 -- ---------------------------------------------------------------------
 
--- 01. Business container.
+-- 01. Create partner_businesses.
 CREATE TABLE IF NOT EXISTS partner_businesses(
     id BIGSERIAL PRIMARY KEY,
     partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS partner_businesses(
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 02. Structural expansion. partner_direction_id remains a plain BIGINT.
+-- 02. Add business/document/application structural columns. partner_direction_id remains a plain BIGINT.
 ALTER TABLE partner_directions
     ADD COLUMN IF NOT EXISTS business_id BIGINT
         REFERENCES partner_businesses(id) ON DELETE CASCADE;
@@ -100,6 +100,7 @@ ALTER TABLE service_direction_requests
     ADD COLUMN IF NOT EXISTS business_id BIGINT
         REFERENCES partner_businesses(id) ON DELETE CASCADE;
 
+-- 03. Expand services.status lifecycle constraint.
 ALTER TABLE services DROP CONSTRAINT IF EXISTS services_status_check;
 ALTER TABLE services ADD CONSTRAINT services_status_check
     CHECK (status IN ('draft','pending','approved','active','inactive','suspended','rejected','deleted'));
@@ -136,7 +137,7 @@ CREATE TABLE IF NOT EXISTS partner_applications(
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 04. Entities: one default business for legacy partners without one.
+-- 04. Create default business entities for eligible legacy partners.
 INSERT INTO partner_businesses(partner_id,name,description,is_default)
 SELECT p.id, COALESCE(NULLIF(p.business_name,''),'Իմ բիզնեսը'),
        p.business_description, TRUE
@@ -160,7 +161,7 @@ AND NOT EXISTS (
       AND x.id<>b.id
 );
 
--- 05. Base backfill to the default company.
+-- 05. Backfill legacy rows to the default company.
 UPDATE partner_directions pd
 SET business_id=b.id
 FROM partner_businesses b
@@ -203,7 +204,7 @@ WHERE b.partner_id=r.partner_id
   AND b.is_default=TRUE
   AND r.business_id IS NULL;
 
--- 06. Reconcile approved applications with their company.
+-- 06. Reconcile directions through approved applications.
 UPDATE partner_directions pd
 SET business_id=a.business_id
 FROM partner_applications a
@@ -213,6 +214,7 @@ WHERE a.status='approved'
   AND pd.master_category_id=a.master_category_id
   AND pd.business_id IS DISTINCT FROM a.business_id;
 
+-- 07. Reconcile documents through approved applications.
 UPDATE partner_verification_documents d
 SET business_id=a.business_id
 FROM partner_applications a
@@ -231,7 +233,7 @@ WHERE a.status='approved'
   )
   AND d.business_id IS DISTINCT FROM a.business_id;
 
--- 07. Reconcile directions from real active/approved services.
+-- 09. Reconstruct missing directions from active/approved services.
 UPDATE partner_directions pd
 SET business_id=s.business_id,
     status=CASE WHEN pd.status='deleted' THEN 'approved' ELSE pd.status END,
@@ -266,6 +268,7 @@ WHERE s.business_id IS NOT NULL
         AND pd.master_category_id=c.master_category_id
   );
 
+-- 10. Fill partner_direction_categories from real services.
 INSERT INTO partner_direction_categories(partner_direction_id,category_id)
 SELECT pd.id,s.category_id
 FROM services s
@@ -279,7 +282,7 @@ WHERE s.business_id IS NOT NULL
   AND s.status IN ('active','approved')
 ON CONFLICT(partner_direction_id,category_id) DO NOTHING;
 
--- 08. Document-to-direction reconciliation: DML only, no FK.
+-- 11. Link documents to directions using DML only; no FK is introduced.
 UPDATE partner_verification_documents d
 SET partner_direction_id=pd.id
 FROM partner_directions pd
@@ -293,7 +296,7 @@ WHERE d.business_id=pd.business_id
       WHERE pdc.partner_direction_id=pd.id
   );
 
--- 09. Rebuild legacy approved objects.
+-- 12. Rebuild legacy approved partner objects.
 INSERT INTO partner_objects(partner_id,business_id,object_name,address,city,marz,data_json)
 SELECT a.partner_id,a.business_id,
        COALESCE(NULLIF(a.object_name,''),NULLIF(a.business_name,''),b.name),
@@ -318,7 +321,8 @@ WHERE a.status='approved'
       LIMIT 1
   );
 
--- 10. Company description/phone reconciliation.
+-- 14. Normalize company description and phone.
+-- 08. Reconcile the approved application's business container.
 UPDATE partner_businesses b
 SET description=COALESCE(
         substring(a.description from 'Մենք զբաղվում ենք ([^։]+)'),
@@ -356,6 +360,7 @@ UPDATE partner_businesses
 SET description=trim(substring(description from '^(.+?)։[[:space:]]*Հիմնական ծառայություններն'))
 WHERE description ~ '։[[:space:]]*Հիմնական ծառայություններն';
 
+-- 13. Remove duplicated company profile text from legacy service descriptions.
 UPDATE services s
 SET description='', updated_at=NOW()
 FROM partner_businesses b
@@ -366,15 +371,7 @@ WHERE s.business_id=b.id
   AND p.business_description IS NOT NULL
   AND trim(s.description)=trim(p.business_description);
 
--- 11. Remove stale service proposals from archived companies.
-DELETE FROM partner_applications
-WHERE status NOT IN ('approved','rejected')
-  AND COALESCE(payload_json->>'source','')='partner_service'
-  AND business_id IN (
-      SELECT id FROM partner_businesses WHERE status='archived'
-  );
-
--- 12. Repair duplicate directions before final uniqueness.
+-- 15. Repair duplicate directions before final uniqueness.
 UPDATE partner_directions pd
 SET status='deleted', updated_at=NOW()
 WHERE pd.business_id IS NOT NULL
@@ -389,10 +386,19 @@ WHERE pd.business_id IS NOT NULL
         AND newer.id>pd.id
   );
 
--- 13. Final constraints and indexes, only after all repairs.
+-- 16. Remove stale service proposals from archived companies.
+DELETE FROM partner_applications
+WHERE status NOT IN ('approved','rejected')
+  AND COALESCE(payload_json->>'source','')='partner_service'
+  AND business_id IN (
+      SELECT id FROM partner_businesses WHERE status='archived'
+  );
+
+-- 17. Remove the legacy single-company uniqueness constraint.
 ALTER TABLE partner_directions
     DROP CONSTRAINT IF EXISTS partner_directions_partner_id_master_category_id_key;
 
+-- 18. Final indexes/uniqueness, only after all repairs.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_partner_direction_business_master
     ON partner_directions(business_id,master_category_id)
     WHERE status <> 'deleted';
