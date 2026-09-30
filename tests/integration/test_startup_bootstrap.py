@@ -35,6 +35,7 @@ class GuardedCursor(psycopg.Cursor):
         allowed = (
             "CREATE TABLE IF NOT EXISTS",
             "CREATE INDEX IF NOT EXISTS",
+            "CREATE UNIQUE INDEX IF NOT EXISTS",
             "CREATE EXTENSION IF NOT EXISTS",
             "SELECT",
             "SHOW",
@@ -232,6 +233,12 @@ def seed_legacy_fixture():
                     master_category_id INT NOT NULL,
                     status TEXT NOT NULL,
                     updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE TABLE partner_direction_categories(
+                    id BIGSERIAL PRIMARY KEY,
+                    partner_direction_id BIGINT NOT NULL,
+                    category_id INT NOT NULL,
+                    UNIQUE(partner_direction_id, category_id)
                 );
                 CREATE TABLE services(
                     id BIGSERIAL PRIMARY KEY,
