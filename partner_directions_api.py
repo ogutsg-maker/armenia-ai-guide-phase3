@@ -134,6 +134,7 @@ def ensure_partner_direction_schema():
     # The current project already has a single verified document for the initial direction.
     def ensure_initial_partner_direction(partner_id: int, user_id: int):
     """Create the registration direction from the already-selected master_skills."""
+    ensure_partner_direction_schema()
     rows = _fetchall("""
         SELECT DISTINCT c.master_category_id
         FROM master_skills ms
