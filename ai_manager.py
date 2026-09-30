@@ -1136,6 +1136,79 @@ class AIManager:
 
         return result or None
 
+    @staticmethod
+    def _pending_service_name(message: str) -> str | None:
+        """Extract a service name from a follow-up add/create message without inventing a price."""
+        import re
+        text = " ".join(str(message or "").strip().split())
+        m = re.match(
+            r"^(?:добавь(?:те)?|добавить|создай(?:те)?|создать)\\s+"
+            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)?\\s*(?P<name>.+?)\\s*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not m:
+            return None
+        name = re.sub(r"\\s+", " ", m.group("name")).strip(" ,;:.-")
+        # A follow-up without a price is useful only for resolving an already
+        # pending unresolved service; it must never silently create a new
+        # price-less service.
+        return name or None
+
+    async def _merge_pending_partner_service(self, pending: dict[str, Any], message: str) -> bool:
+        """Mutate the existing ADD_SERVICES draft; never replace its service list."""
+        services = pending.get("args", {}).get("services")
+        if not isinstance(services, list) or not services:
+            return False
+
+        unresolved = [
+            item for item in services
+            if isinstance(item, dict)
+            and str(item.get("catalog_match_status") or "") != "matched"
+        ]
+        if not unresolved:
+            return False
+
+        name = self._pending_service_name(message)
+        if not name:
+            return False
+
+        import data_core
+        probe = data_core.resolve_catalog_services([{"name": name, "price": 0, "price_type": "from"}], limit=500)
+        if not probe:
+            return False
+        candidate = probe[0]
+        if str(candidate.get("catalog_match_status") or "") != "matched":
+            return False
+
+        target = unresolved[0]
+        # Preserve the original price/description/address data; only replace
+        # the unresolved service name and live catalogue resolution.
+        price = target.get("price")
+        replacement = dict(target)
+        replacement.update({
+            "name": name,
+            "price": price,
+            "price_type": target.get("price_type") or "from",
+            "category_id": candidate.get("category_id"),
+            "master_category_id": candidate.get("master_category_id"),
+            "category_name_am": candidate.get("category_name_am"),
+            "category_name_ru": candidate.get("category_name_ru"),
+            "category_name_en": candidate.get("category_name_en"),
+            "master_name_am": candidate.get("master_name_am"),
+            "master_name_ru": candidate.get("master_name_ru"),
+            "master_name_en": candidate.get("master_name_en"),
+            "catalog_match_score": candidate.get("catalog_match_score"),
+            "catalog_second_score": candidate.get("catalog_second_score"),
+            "catalog_match_margin": candidate.get("catalog_match_margin"),
+            "catalog_match_status": "matched",
+            "catalog_options": [],
+        })
+        target_index = services.index(target)
+        services[target_index] = replacement
+        pending["args"]["services"] = services
+        return True
+
     async def _extract_pending_partner_data(self, message: str, language: str) -> dict[str, Any]:
         """NLU only: extract missing slots from a partner's free-form reply.
 
@@ -1414,6 +1487,15 @@ class AIManager:
                         normalized = data_core.normalize_phone_number(contact.get("phone_number"))
                         if normalized:
                             collected["phone"] = normalized
+
+                # First, try to resolve a clarification against the SAME
+                # pending service list. This is deliberately before generic NLU:
+                # "Добавь ремонт бытовых холодильников" can be a clarification
+                # of the unresolved refrigerator item, not a new action.
+                merged_service = await self._merge_pending_partner_service(pending, message)
+                if merged_service:
+                    pending_args["services"] = pending.get("args", {}).get("services") or []
+                    collected = pending_args
 
                 extracted = await self._extract_pending_partner_data(message, language)
                 for key, value in extracted.items():
