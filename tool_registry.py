@@ -1031,6 +1031,7 @@ class ToolRegistry:
                 resolved = data_core.resolve_catalog_services([{
                     "name": checked["name"],
                     "price": checked["price"],
+                    "price_type": args.get("price_type") or "fixed",
                     "address_id": args.get("address_id"),
                     "phone": args.get("phone"),
                     "description": args.get("description"),
@@ -1041,6 +1042,7 @@ class ToolRegistry:
                         "company_id": company_id,
                         "name": resolved["name"],
                         "price": resolved.get("price"),
+                        "price_type": resolved.get("price_type") or "fixed",
                         "category_id": resolved.get("category_id"),
                         "master_category_id": resolved.get("master_category_id"),
                         "address_id": resolved.get("address_id"),
