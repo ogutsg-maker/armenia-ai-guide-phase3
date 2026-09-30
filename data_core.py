@@ -1086,6 +1086,26 @@ def check_application(application_id: int) -> dict[str, Any]:
             "master_category_id": master_id,
             "subcategory_name": app.get("subcategory_name")}
 
+def normalize_phone_number(phone: Any) -> str | None:
+    """Normalize an Armenian phone deterministically; return None if invalid."""
+    import re
+    digits = re.sub(r"\\D", "", str(phone or ""))
+    if not digits:
+        return None
+    if digits.startswith("0"):
+        digits = "374" + digits[1:]
+    elif digits.startswith("00"):
+        digits = digits[2:]
+        if digits.startswith("0"):
+            digits = "374" + digits[1:]
+    if digits.startswith("374"):
+        return digits if len(digits) == 11 else None
+    # Accept already-normalized local mobile length only when unambiguous.
+    if len(digits) == 8:
+        return "374" + digits
+    return None
+
+
 def validate_service_payload(*, partner_id: int, actor_user_id: int, company_id: int | None,
                             name: str, price: Any = None, category_id: int | None = None) -> dict:
     """Validate a proposed service without writing anything."""
