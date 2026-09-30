@@ -936,24 +936,23 @@ async def _admin_execute_state_action(action):
                 pass
         if not clean:
             return "Չկա ջնջման ենթակա հայտ։"
-        rows=platform_db.rows(
-            "SELECT id,status FROM partner_applications WHERE id = ANY(%s)",
-            (clean,)
-        )
-        existing={int(row["id"]):str(row.get("status") or "") for row in rows if row.get("id") is not None}
-        missing=[x for x in clean if x not in existing]
-        already_deleted=[x for x in clean if existing.get(x)=="deleted"]
-        target=[x for x in clean if x in existing and existing.get(x)!="deleted"]
-        if target:
-            platform_db.execute(
-                "UPDATE partner_applications SET status='deleted',updated_at=NOW() WHERE id = ANY(%s) AND status <> 'deleted'",
-                (target,)
-            )
-        parts=[]
-        if target: parts.append("ջնջված՝ "+", ".join("#"+str(x) for x in target))
-        if already_deleted: parts.append("արդեն ջնջված՝ "+", ".join("#"+str(x) for x in already_deleted))
-        if missing: parts.append("չգտնվեց՝ "+", ".join("#"+str(x) for x in missing))
-        return "✓ Հայտերի արդյունք՝ "+"; ".join(parts)+"."
+
+        def _delete(cur):
+            cur.execute("SELECT id,status FROM partner_applications WHERE id = ANY(%s)", (clean,))
+            rows=cur.fetchall()
+            existing={int(row["id"]):str(row.get("status") or "") for row in rows if row.get("id") is not None}
+            missing=[x for x in clean if x not in existing]
+            already_deleted=[x for x in clean if existing.get(x)=="deleted"]
+            target=[x for x in clean if x in existing and existing.get(x)!="deleted"]
+            if target:
+                cur.execute("UPDATE partner_applications SET status='deleted',updated_at=NOW() WHERE id = ANY(%s) AND status <> 'deleted'", (target,))
+            parts=[]
+            if target: parts.append("ջնջված՝ "+", ".join("#"+str(x) for x in target))
+            if already_deleted: parts.append("արդեն ջնջված՝ "+", ".join("#"+str(x) for x in already_deleted))
+            if missing: parts.append("չգտնվեց՝ "+", ".join("#"+str(x) for x in missing))
+            return "✓ Հայտերի արդյունք՝ "+"; ".join(parts)+"."
+        return platform_db.transaction(_delete)
+
     aid=int(action.get("application_id") or 0)
     if aid <= 0:
         return "Հայտի ID-ն սխալ է։"
@@ -962,19 +961,24 @@ async def _admin_execute_state_action(action):
         return "Հայտ #"+str(aid)+" չի գտնվել։"
     if str(current.get("status") or "")=="deleted":
         return "Հայտ #"+str(aid)+" արդեն ջնջված է։"
+
     if action.get("intent")=="edit_application":
         field=action.get("field")
         if field=="subcategory":
-            cat=platform_db.one("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en
-                FROM categories c WHERE c.id=%s AND c.is_active=TRUE""",(int(action["category_id"]),))
-            app=platform_db.one("SELECT master_category_id FROM partner_applications WHERE id=%s",(aid,))
-            if not cat: return "Подкатегория отсутствует в активном каталоге."
-            if app and app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
-                return "Подкатегория относится к другому направлению."
-            label=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
-            platform_db.execute("UPDATE partner_applications SET category_id=%s,subcategory_name=%s,updated_at=NOW() WHERE id=%s",
-                (int(cat["id"]),label,aid))
-            return "✓ Заявка #"+str(aid)+" : подкатегория изменена на «"+label+"»."
+            def _edit_subcategory(cur):
+                cur.execute("""SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en
+                    FROM categories c WHERE c.id=%s AND c.is_active=TRUE""",(int(action["category_id"]),))
+                cat=cur.fetchone()
+                cur.execute("SELECT master_category_id FROM partner_applications WHERE id=%s",(aid,))
+                app=cur.fetchone()
+                if not cat: return "Подкатегория отсутствует в активном каталоге."
+                if app and app.get("master_category_id") is not None and int(cat["master_category_id"])!=int(app["master_category_id"]):
+                    return "Подкатегория относится к другому направлению."
+                label=str(cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"))
+                cur.execute("UPDATE partner_applications SET category_id=%s,subcategory_name=%s,updated_at=NOW() WHERE id=%s",(int(cat["id"]),label,aid))
+                return "✓ Заявка #"+str(aid)+" : подкатегория изменена на «"+label+"»."
+            return platform_db.transaction(_edit_subcategory)
+
         columns={"name":"service_name","service":"service_name","price":"price","description":"description","note":"admin_note"}
         column=columns.get(field)
         if not column: return "Уточните поле для изменения."
@@ -985,21 +989,33 @@ async def _admin_execute_state_action(action):
         else:
             value=str(value or "").strip()
             if not value: return "Новое значение не указано."
-        platform_db.execute("UPDATE partner_applications SET "+column+"=%s,updated_at=NOW() WHERE id=%s",(value,aid))
-        return "✓ Заявка #"+str(aid)+" : "+str(field)+" изменено."
+
+        def _edit_field(cur):
+            cur.execute("UPDATE partner_applications SET "+column+"=%s,updated_at=NOW() WHERE id=%s",(value,aid))
+            return "✓ Заявка #"+str(aid)+" : "+str(field)+" изменено."
+        return platform_db.transaction(_edit_field)
+
     if action.get("intent")=="approve_application":
-        platform_db.execute("UPDATE partner_applications SET status='document_pending',reviewed_at=NOW(),updated_at=NOW() WHERE id=%s AND status NOT IN ('approved','pending_partner')",(aid,))
-        return "✓ Заявка #"+str(aid)+" переведена на этап документа."
+        def _approve(cur):
+            cur.execute("UPDATE partner_applications SET status='document_pending',reviewed_at=NOW(),updated_at=NOW() WHERE id=%s AND status NOT IN ('approved','pending_partner')",(aid,))
+            return "✓ Заявка #"+str(aid)+" переведена на этап документа."
+        return platform_db.transaction(_approve)
+
     if action.get("intent")=="reject_application":
         reason=str(action.get("reason") or "Отклонено администратором.")[:3000]
-        platform_db.execute("UPDATE partner_applications SET status='rejected',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(reason,aid))
-        return "✓ Заявка #"+str(aid)+" отклонена."
+        def _reject(cur):
+            cur.execute("UPDATE partner_applications SET status='rejected',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(reason,aid))
+            return "✓ Заявка #"+str(aid)+" отклонена."
+        return platform_db.transaction(_reject)
+
     if action.get("intent")=="clarify_application":
         note=str(action.get("admin_note") or "Требуется уточнение данных.")[:3000]
-        platform_db.execute("UPDATE partner_applications SET status='pending_partner',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(note,aid))
-        return "✓ Заявка #"+str(aid)+" отправлена партнёру на уточнение."
-    return "Действие не определено."
+        def _clarify(cur):
+            cur.execute("UPDATE partner_applications SET status='pending_partner',admin_note=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(note,aid))
+            return "✓ Զаявка #"+str(aid)+" отправлена партнёру на уточнение."
+        return platform_db.transaction(_clarify)
 
+    return "Действие не определено."
 
 class AdminAIProviderError(RuntimeError):
     """Groq failed for this request."""
