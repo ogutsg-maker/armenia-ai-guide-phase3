@@ -84,8 +84,7 @@ def list_companies(partner_id: int):
     """Return companies owned by a partner for session restoration/cabinet."""
     return rows(
         """
-        SELECT id, partner_id, name, description, phone, status, is_default,
-               created_at, updated_at
+        SELECT id, partner_id, name, description, phone, status, is_default
         FROM partner_businesses
         WHERE partner_id=%s
           AND status <> 'archived'
