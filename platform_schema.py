@@ -9,20 +9,43 @@ from __future__ import annotations
 import os
 import psycopg
 
-
 def db_url() -> str:
     value = os.getenv("DATABASE_URL", "").strip()
     if not value:
         raise RuntimeError("DATABASE_URL is not configured")
     return value
 
-
 def _connect():
     return psycopg.connect(db_url(), prepare_threshold=None)
 
-
 def ensure_platform_schema() -> None:
-    sql = r'''\n
+    sql = r'''
+    -- ---------------------------------------------------------------------
+    -- Core partner tables
+    -- ---------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS partners (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL UNIQUE REFERENCES users(telegram_id) ON DELETE CASCADE,
+        business_name TEXT NOT NULL DEFAULT '',
+        business_description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'draft'
+            CHECK (status IN ('draft','pending','under_review','approved','rejected','suspended','blocked')),
+        verification_status TEXT NOT NULL DEFAULT 'not_submitted'
+            CHECK (verification_status IN ('not_submitted','pending','approved','rejected')),
+        rejection_reason TEXT,
+        contact_share_policy TEXT NOT NULL DEFAULT 'after_booking'
+            CHECK (contact_share_policy IN ('after_booking','premium','never')),
+        contact_sharing_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        premium_contact_sharing_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        profile_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- WebApp authentication can reach partner registration before the legacy
+    -- bot registration path has inserted the user. Keep the FK strict, but
+    -- automatically create the minimal users row first.
+    
 
     CREATE TABLE IF NOT EXISTS partner_locations (
         id BIGSERIAL PRIMARY KEY,
@@ -40,7 +63,6 @@ def ensure_platform_schema() -> None:
         exchange_rate_amd NUMERIC(18,6) NOT NULL DEFAULT 0
     );
 
-
     CREATE TABLE IF NOT EXISTS partner_objects (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
@@ -52,6 +74,11 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Canonical object-level weekly schedule. Kept separate from data_json so
+    -- partner edits cannot be overwritten by legacy registration metadata.
+    
+
+    
 
     CREATE TABLE IF NOT EXISTS services (
         id BIGSERIAL PRIMARY KEY,
@@ -163,9 +190,7 @@ def ensure_platform_schema() -> None:
 
     -- Ensure every catalog category has an explicit settings row so admin
     -- configuration is never silently missing.
-    INSERT INTO category_settings(category_id)
-    SELECT id FROM categories
-    ON CONFLICT(category_id) DO NOTHING;
+    
 
     -- ---------------------------------------------------------------------
     -- AI / catalog research
@@ -192,13 +217,9 @@ def ensure_platform_schema() -> None:
         tool_call_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    ALTER TABLE ai_messages
-        ADD COLUMN IF NOT EXISTS tool_call_id TEXT;
-    ALTER TABLE ai_messages
-        DROP CONSTRAINT IF EXISTS ai_messages_sender_role_check;
-    ALTER TABLE ai_messages
-        ADD CONSTRAINT ai_messages_sender_role_check
-        CHECK (sender_role IN ('user','ai','admin','system','assistant','tool','client','partner'));
+    
+    
+    
     CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_messages(session_id, created_at);
 
     CREATE TABLE IF NOT EXISTS ai_catalog_proposals (
@@ -299,10 +320,7 @@ def ensure_platform_schema() -> None:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS services_catalog_dummy_guard (
-        id BIGSERIAL PRIMARY KEY
-    );
-    DROP TABLE IF EXISTS services_catalog_dummy_guard;
+    
 
     CREATE TABLE IF NOT EXISTS request_candidates (
         id BIGSERIAL PRIMARY KEY,
@@ -450,22 +468,21 @@ def ensure_platform_schema() -> None:
     CREATE INDEX IF NOT EXISTS idx_ai_research_tasks_status ON ai_research_tasks(status, created_at DESC);
 
     -- Backfill tariff-override columns on pre-existing services tables.
-    ALTER TABLE services ADD COLUMN IF NOT EXISTS commission_type TEXT;
-    ALTER TABLE services ADD COLUMN IF NOT EXISTS commission_value NUMERIC;
+    
+    
     -- A service is delivered at one physical partner object. Keep the
     -- location relation canonical instead of hiding it in data_json.
-    ALTER TABLE services ADD COLUMN IF NOT EXISTS object_id BIGINT;
-    ALTER TABLE services ADD COLUMN IF NOT EXISTS contact_phone TEXT;
-    ALTER TABLE partner_objects ADD COLUMN IF NOT EXISTS phone TEXT;
+    
+    
+    
     CREATE INDEX IF NOT EXISTS idx_services_object ON services(object_id);
     -- Backfill direction-level default tariff on pre-existing installs.
-    ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS commission_type TEXT NOT NULL DEFAULT 'on_top';
-    ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS commission_value NUMERIC NOT NULL DEFAULT 10;
+    
+    
 
     CREATE INDEX IF NOT EXISTS idx_services_partner_status ON services(partner_id, status);
-    ALTER TABLE services DROP CONSTRAINT IF EXISTS fk_services_object;
-    ALTER TABLE services ADD CONSTRAINT fk_services_object
-        FOREIGN KEY (object_id) REFERENCES partner_objects(id) ON DELETE SET NULL;
+    
+    
     CREATE INDEX IF NOT EXISTS idx_partner_locations_partner ON partner_locations(partner_id);
     CREATE INDEX IF NOT EXISTS idx_service_requests_client ON service_requests(client_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_negotiations_request ON negotiations(request_id, status);
@@ -518,9 +535,9 @@ def ensure_platform_schema() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_support_ticket_messages ON support_ticket_messages(ticket_id, created_at);
-    ALTER TABLE ai_usage_ledger ADD COLUMN IF NOT EXISTS total_cost_amd NUMERIC(18,4) NOT NULL DEFAULT 0;
-    ALTER TABLE ai_usage_ledger ADD COLUMN IF NOT EXISTS exchange_rate_amd NUMERIC(18,6) NOT NULL DEFAULT 0;
-    \n    '''
+    
+    
+    '''
 
     with _connect() as conn:
         with conn.cursor() as cur:
