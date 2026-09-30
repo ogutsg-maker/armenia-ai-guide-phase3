@@ -346,7 +346,7 @@ def _admin_guard(request):
 
 def register_partner_direction_routes(app, db=None, bot=None):
     app["partner_direction_bot"] = bot
-async def directions(request):
+    async def directions(request):
         # The current cabinet uses route id=0 as a neutral placeholder.
         # Resolve the real Telegram user from validated Mini App initData,
         # exactly like the main cabinet API does.
