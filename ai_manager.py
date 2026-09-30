@@ -1071,6 +1071,68 @@ class AIManager:
         )
         return parsed if isinstance(parsed, dict) else {}
 
+    @staticmethod
+    def _parse_explicit_partner_services(message: str) -> list[dict[str, Any]] | None:
+        import re
+
+        text = " ".join(str(message or "").strip().split())
+        if not text:
+            return None
+
+        # Only activate for an explicit service-creation request.
+        command = re.match(
+            r"^(?:создай(?:те)?|добавь(?:те)?|создать|добавить)\\s+"
+            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)(?:\\s*[:,-]?\\s*)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not command:
+            return None
+
+        body = text[command.end():].strip()
+        if not body:
+            return None
+
+        # Split only on list separators. Service names themselves may contain
+        # spaces and arbitrary words.
+        parts = [p.strip(" ,;") for p in re.split(r"\\s*[;,]\\s*", body) if p.strip(" ,;")]
+        if not parts:
+            return None
+
+        result: list[dict[str, Any]] = []
+        for part in parts[:30]:
+            # Supported natural price forms: "от 5000", "за 5000", "5000".
+            m = re.match(
+                r"^(?P<name>.+?)\\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\\s*"
+                r"(?P<price>\\d[\\d\\s.,]*)\\s*(?:֏|դր(?:ամ)?|amd|₽|руб(?:лей|\.)?)?\\s*$",
+                part,
+                flags=re.IGNORECASE,
+            )
+            if not m:
+                # Do not guess a price-less service in this deterministic path.
+                return None
+
+            name = re.sub(r"\\s+", " ", m.group("name")).strip(" ,.-")
+            price_raw = m.group("price").replace(" ", "").replace(",", "").replace(".", "")
+            if not name or not price_raw:
+                return None
+            try:
+                price = float(price_raw)
+            except ValueError:
+                return None
+            if price < 0:
+                return None
+
+            result.append({
+                "name": name,
+                "price": int(price) if price.is_integer() else price,
+                "address_id": None,
+                "phone": None,
+                "description": None,
+            })
+
+        return result or None
+
     async def chat(
         self,
         telegram_id: int,
@@ -1256,6 +1318,55 @@ class AIManager:
                     "application_id": int(pending_for_prompt.get("application_id") or 0),
                     "unresolved_count": len(pending_for_prompt.get("unresolved_ambiguities") or []),
                 }
+        # Deterministic partner service command path.
+        # When the user explicitly names services and prices, Python can parse
+        # the small structured part reliably; there is no reason to spend a
+        # tool-call round asking gpt-oss-20b to emit a function call.
+        if role == ContextType.PARTNER and isinstance(message, str):
+            parsed_service_action = self._parse_explicit_partner_services(message)
+            if parsed_service_action:
+                try:
+                    result = await tools.execute("add_services", {
+                        "company_id": trusted_for_prompt.get("current_company_id"),
+                        "services": parsed_service_action,
+                    })
+                    if result.get("requires_confirmation"):
+                        action = result.get("action") or {}
+                        pending_action = {
+                            "name": str(action.get("name") or "add_services"),
+                            "args": dict(action.get("args") or {}),
+                            "summary": str(result.get("summary") or ""),
+                            "state": "awaiting_confirmation",
+                            "created_at": int(time.time()),
+                        }
+                        await self._set_pending(telegram_id, role, pending_action)
+                        summary = self._partner_action_summary(
+                            language, pending_action, pending_action["summary"]
+                        )
+                        pending_action["summary"] = summary
+                        await self._save_history(
+                            telegram_id, role, "ai", summary,
+                            {"confirmation_required": True, "action": pending_action,
+                             "deterministic_parser": True},
+                        )
+                        return {
+                            "reply": summary,
+                            "confirmation_required": True,
+                            "pending_action": pending_action,
+                            "tool_calls": [{
+                                "name": "add_services",
+                                "arguments": parsed_service_action,
+                                "deterministic": True,
+                            }],
+                        }
+                    return result
+                except Exception as exc:
+                    logger.exception("Deterministic partner service command failed")
+                    # Fall through to normal AI handling for commands that the
+                    # parser could not safely execute.
+                    if str(exc) == "company_context_required":
+                        pass
+
         prompt = PromptFactory.build(
             role,
             message=message,
