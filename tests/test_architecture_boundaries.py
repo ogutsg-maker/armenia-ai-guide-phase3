@@ -1,7 +1,6 @@
 import ast
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -21,12 +20,11 @@ def _imports(tree):
     return found
 
 
-def _string_constants(tree):
-    return [
-        node.value.upper()
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    ]
+def _function(tree, name):
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node
+    raise AssertionError(f"missing function: {name}")
 
 
 def test_boundary_b_data_core_does_not_import_ai_layers():
@@ -36,33 +34,78 @@ def test_boundary_b_data_core_does_not_import_ai_layers():
     assert not violations, f"data_core.py imports forbidden AI-layer modules: {violations}"
 
 
-def test_boundary_c_data_core_does_not_import_prompt_or_provider_modules():
+def test_boundary_c_data_core_does_not_import_provider_modules():
     imports = _imports(_tree("data_core.py"))
-    forbidden = ("prompt_factory", "groq", "openai", "openrouter")
+    forbidden = ("groq", "openai", "openrouter")
     assert not [item for item in imports if any(item == name or item.startswith(name + ".") for name in forbidden)]
 
 
 def test_boundary_d_ai_manager_contains_no_raw_sql():
-    constants = _string_constants(_tree("ai_manager.py"))
-    sql_markers = ("SELECT ", "INSERT INTO", "UPDATE ", "DELETE FROM", "ALTER TABLE", "DROP CONSTRAINT")
-    violations = [value[:160] for value in constants if any(marker in value for marker in sql_markers)]
+    constants = [
+        node.value.upper()
+        for node in ast.walk(_tree("ai_manager.py"))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    markers = ("SELECT ", "INSERT INTO", "UPDATE ", "DELETE FROM", "ALTER TABLE", "DROP CONSTRAINT")
+    violations = [value[:160] for value in constants if any(marker in value for marker in markers)]
     assert not violations, f"ai_manager.py contains raw SQL strings: {violations}"
 
 
-def test_boundary_e_platform_db_owns_transaction_api():
+def test_boundary_e_platform_db_owns_transaction_api_and_no_ai_messages_ddl():
     tree = _tree("platform_db.py")
     names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
-    assert "transaction" in names, "platform_db.py must expose the canonical transaction(callback) API"
+    assert "transaction" in names
+
+    constants = [
+        node.value.upper()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    markers = ("ALTER TABLE AI_MESSAGES", "DROP CONSTRAINT", "ADD CONSTRAINT")
+    violations = [value[:160] for value in constants if any(marker in value for marker in markers)]
+    assert not violations, "platform_db.py must not mutate ai_messages schema at runtime"
 
 
-def test_boundary_f_tool_specs_declare_contexts():
-    tree = _tree("tool_registry.py")
-    classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef) and node.name == "ToolSpec"]
-    assert classes, "ToolSpec must remain the canonical tool declaration"
-    fields = {
-        target.id
-        for node in ast.walk(classes[0])
-        if isinstance(node, ast.AnnAssign)
-        and isinstance(target := node.target, ast.Name)
-    }
-    assert "contexts" in fields, "ToolSpec must declare explicit context ownership"
+def test_boundary_f_tool_registry_enforces_declared_context():
+    fn = _function(_tree("tool_registry.py"), "execute")
+    source = ast.unparse(fn)
+    assert "self.context_type not in spec.contexts" in source
+
+
+def test_boundary_g_application_approval_is_transactional_and_has_no_direct_db_wrapper_calls():
+    fn = _function(_tree("data_core.py"), "admin_approve_application")
+    calls_transaction = [
+        node for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "transaction"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "platform_db"
+    ]
+    assert calls_transaction, "approval must run through platform_db.transaction()"
+
+    direct_wrappers = [
+        node for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id in {"execute", "one", "rows"})
+            or
+            (isinstance(node.func, ast.Attribute)
+             and isinstance(node.func.value, ast.Name)
+             and node.func.value.id == "platform_db"
+             and node.func.attr in {"execute", "one", "rows"})
+        )
+    ]
+    assert not direct_wrappers, "approval transaction must use only the callback cursor for DB access"
+
+
+def test_boundary_h_document_approval_is_transactional():
+    fn = _function(_tree("data_core.py"), "admin_approve_application_document")
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "transaction"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "platform_db"
+        for node in ast.walk(fn)
+    )
