@@ -101,13 +101,12 @@ async function uploadAiDocument(input){
     aiAdd('user',state.lang==='hy'?'📎 Փաստաթուղթը կցեցի։':state.lang==='ru'?'📎 Документ прикреплён.':'📎 Document attached.');
     const p=document.getElementById('aiPreview');
     if(p)p.innerHTML='<div class="notice">🤖 …</div>';
-    const command=await api('/api/master/0/ai-command',{method:'POST',body:{
-      message:state.lang==='hy'?'Փաստաթուղթը կցված է։':state.lang==='ru'?'Документ прикреплён.':'Document attached.',
-      language:state.lang,
-      business_id:state.current?.id||null
-    }});
-    if(p)p.innerHTML=aiCommandHtml(command);
-    if(command.reply)aiAdd('ai',command.reply);
+        // Uploading the file is already the document action. Do not send a
+    // second AI command: after confirmation it produced a misleading duplicate
+    // "application sent" message and consumed another AI operation.
+    if(p)p.innerHTML='';
+    await loadApplications().catch(()=>{});
+    if(typeof renderApplications==='function')renderApplications();
   }catch(e){
     if(status)status.textContent='';
     toast(e.message||'document_upload_failed');
