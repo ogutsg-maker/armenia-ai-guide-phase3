@@ -1597,323 +1597,323 @@ def request_application_document_correction(*, application_id: int, reason: str,
 
 
 def admin_approve_application(application_id: int, admin_telegram_id: int):
-    """Approve a partner application only after backend-owned verification gates.
-
-    Registration applications always require an approved verification document.
-    New-service proposals under an already approved partner direction do not
-    require a new document. New directions still require an approved document.
-    """
+    """Atomically approve and materialize one application using one DB cursor."""
     if not is_admin(int(admin_telegram_id)):
         raise PermissionError("admin_required")
-    row = get_application_full(int(application_id))
-    if not row:
-        raise ValueError("application_not_found")
-    status = str(row.get("status") or "").lower()
-    if status == "approved":
-        # Idempotent final write: a stale confirmation must not fail or
-        # duplicate services when the application was already activated.
-        return {
-            "ok": True,
-            "already_active": True,
-            "application_id": int(application_id),
-            "status": "approved",
-            "message": f"Հայտ #{int(application_id)}-ն արդեն հաստատված և ակտիվ է։",
-        }
-    if status == "rejected":
-        raise ValueError("application_already_final")
 
-    payload = row.get("payload_json") or {}
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except Exception:
+    def _approve(cur):
+        cur.execute(
+            """SELECT a.*,p.user_id,p.business_name AS partner_business_name
+               FROM partner_applications a LEFT JOIN partners p ON p.id=a.partner_id
+               WHERE a.id=%s FOR UPDATE""",
+            (int(application_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ValueError("application_not_found")
+
+        status = str(row.get("status") or "").lower()
+        if status == "approved":
+            return {"ok": True, "already_active": True, "application_id": int(application_id),
+                    "status": "approved",
+                    "message": f"Հայտ #{int(application_id)}-ն արդեն հաստատված և ակտիվ է։"}
+        if status == "rejected":
+            raise ValueError("application_already_final")
+
+        payload = row.get("payload_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                payload = {}
+        if not isinstance(payload, dict):
             payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
 
-    source = str(payload.get("source") or "").strip().lower()
-    business_id = row.get("business_id")
-    master_id = row.get("master_category_id") or payload.get("master_category_id") or payload.get("ai_master_category_id")
-    try:
-        master_id = int(master_id) if master_id is not None else None
-    except (TypeError, ValueError):
-        master_id = None
-
-    # A service proposal is approvable without a NEW document only when
-    # the company already has an approved verification document.
-    document_required = source != "partner_service"
-    approved_direction = None
-    if source == "partner_service" and business_id and master_id:
-        approved_direction = one(
-            """SELECT id FROM partner_directions
-               WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
-                 AND status='approved' LIMIT 1""",
-            (int(row["partner_id"]), int(business_id), int(master_id)),
-        )
-        verified_document = one(
-            """SELECT id,status FROM partner_verification_documents
-               WHERE partner_id=%s AND business_id=%s
-                 AND COALESCE(is_current,TRUE)=TRUE AND status='approved'
-               ORDER BY created_at DESC,id DESC LIMIT 1""",
-            (int(row["partner_id"]), int(business_id)),
-        )
-        document_required = not bool(verified_document)
-
-    doc = None
-    if document_required:
-        doc_id = row.get("document_id")
-        if not doc_id:
-            raise ValueError("document_required")
-        doc = one(
-            """SELECT id,status FROM partner_verification_documents
-               WHERE id=%s AND partner_id=%s
-               LIMIT 1""",
-            (int(doc_id), int(row["partner_id"])),
-        )
-        if not doc:
-            raise ValueError("document_not_found")
-        if str(doc.get("status") or "").lower() != "approved":
-            raise ValueError("document_not_approved")
-
-    services = _application_payload_services(row)
-    if not services:
-        raise ValueError("application_services_missing")
-
-    category_ids = []
-    for svc in services:
-        cid = svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id")
+        source = str(payload.get("source") or "").strip().lower()
+        business_id = row.get("business_id")
+        master_id = row.get("master_category_id") or payload.get("master_category_id") or payload.get("ai_master_category_id")
         try:
-            cid = int(cid) if cid is not None else None
+            master_id = int(master_id) if master_id is not None else None
         except (TypeError, ValueError):
-            cid = None
-        if cid is None:
-            raise ValueError("services_need_classification")
-        category_ids.append(cid)
+            master_id = None
 
-    if master_id is None:
-        first_cat = get_catalog_category(category_ids[0]) if category_ids else None
-        master_id = int(first_cat["master_category_id"]) if first_cat and first_cat.get("master_category_id") else None
-    if master_id is None:
-        raise ValueError("direction_required")
+        document_required = source != "partner_service"
+        approved_direction = None
+        if source == "partner_service" and business_id and master_id:
+            cur.execute(
+                """SELECT id FROM partner_directions
+                   WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
+                     AND status='approved' LIMIT 1""",
+                (int(row["partner_id"]), int(business_id), int(master_id)),
+            )
+            approved_direction = cur.fetchone()
+            cur.execute(
+                """SELECT id,status FROM partner_verification_documents
+                   WHERE partner_id=%s AND business_id=%s
+                     AND COALESCE(is_current,TRUE)=TRUE AND status='approved'
+                   ORDER BY created_at DESC,id DESC LIMIT 1""",
+                (int(row["partner_id"]), int(business_id)),
+            )
+            document_required = not bool(cur.fetchone())
 
-    valid = rows(
-        """SELECT id FROM categories
-           WHERE master_category_id=%s AND id=ANY(%s::int[]) AND is_active=TRUE""",
-        (int(master_id), list(set(category_ids))),
-    )
-    valid_ids = {int(x["id"]) for x in valid}
-    invalid = [cid for cid in category_ids if cid not in valid_ids]
-    if invalid:
-        raise ValueError("invalid_subcategory_for_direction")
+        doc = None
+        if document_required:
+            doc_id = row.get("document_id")
+            if not doc_id:
+                raise ValueError("document_required")
+            cur.execute(
+                """SELECT id,status FROM partner_verification_documents
+                   WHERE id=%s AND partner_id=%s
+                   LIMIT 1 FOR UPDATE""",
+                (int(doc_id), int(row["partner_id"])),
+            )
+            doc = cur.fetchone()
+            if not doc:
+                raise ValueError("document_not_found")
+            if str(doc.get("status") or "").lower() != "approved":
+                raise ValueError("document_not_approved")
 
-    partner_id = int(row["partner_id"])
-    bid = int(business_id) if business_id else None
-    if bid:
-        business = one(
-            "SELECT id,status FROM partner_businesses WHERE id=%s AND partner_id=%s",
+        raw_services = payload.get("services") or []
+        services = [dict(x) for x in raw_services if isinstance(x, dict)]
+        if not services:
+            legacy_name = str(row.get("service_name") or "").strip()
+            if legacy_name:
+                services = [{"name": legacy_name, "price": row.get("price"),
+                             "category_id": row.get("category_id"),
+                             "description": row.get("description")}]
+        if not services:
+            raise ValueError("application_services_missing")
+
+        category_ids = []
+        for svc in services:
+            cid = svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id")
+            try:
+                cid = int(cid) if cid is not None else None
+            except (TypeError, ValueError):
+                cid = None
+            if cid is None:
+                raise ValueError("services_need_classification")
+            category_ids.append(cid)
+
+        if master_id is None:
+            cur.execute(
+                "SELECT master_category_id FROM categories WHERE id=%s AND is_active=TRUE LIMIT 1",
+                (int(category_ids[0]),),
+            )
+            first_cat = cur.fetchone()
+            master_id = int(first_cat["master_category_id"]) if first_cat and first_cat.get("master_category_id") else None
+        if master_id is None:
+            raise ValueError("direction_required")
+
+        cur.execute(
+            """SELECT id FROM categories
+               WHERE master_category_id=%s AND id=ANY(%s::int[]) AND is_active=TRUE""",
+            (int(master_id), list(set(category_ids))),
+        )
+        valid_ids = {int(x["id"]) for x in cur.fetchall()}
+        invalid = [cid for cid in category_ids if cid not in valid_ids]
+        if invalid:
+            raise ValueError("invalid_subcategory_for_direction")
+
+        partner_id = int(row["partner_id"])
+        bid = int(business_id) if business_id else None
+        if bid:
+            cur.execute(
+                "SELECT id,status,name,description,phone FROM partner_businesses WHERE id=%s AND partner_id=%s FOR UPDATE",
+                (bid, partner_id),
+            )
+            business = cur.fetchone()
+            if not business:
+                raise ValueError("business_not_found")
+        else:
+            cur.execute(
+                """SELECT id,status,name,description,phone FROM partner_businesses
+                   WHERE partner_id=%s ORDER BY is_default DESC,id LIMIT 1 FOR UPDATE""",
+                (partner_id,),
+            )
+            business = cur.fetchone()
+            if business:
+                bid = int(business["id"])
+            else:
+                cur.execute(
+                    """INSERT INTO partner_businesses(partner_id,name,description,is_default)
+                       VALUES(%s,%s,%s,TRUE) RETURNING id,status,name,description,phone""",
+                    (partner_id, row.get("business_name") or "Իմ բիզնեսը", row.get("description")),
+                )
+                business = cur.fetchone()
+                bid = int(business["id"])
+
+        cur.execute(
+            """UPDATE partner_businesses
+               SET name=%s,description=%s,phone=%s,status='active',updated_at=NOW()
+               WHERE id=%s AND partner_id=%s""",
+            (str(row.get("business_name") or "").strip() or (business.get("name") or "Իմ բիզնեսը"),
+             str(row.get("description") or "").strip() or None,
+             str(row.get("phone") or "").strip() or None, int(bid), partner_id),
+        )
+
+        app_address = str(row.get("address") or "").strip()
+        app_city = str(row.get("location_city") or "").strip() or None
+        app_marz = str(row.get("location_marz") or "").strip() or None
+        app_phone = str(row.get("phone") or "").strip() or None
+        object_id = None
+        if app_address:
+            cur.execute(
+                """SELECT id FROM partner_objects
+                   WHERE partner_id=%s AND business_id=%s AND address=%s
+                     AND COALESCE(city,'')=COALESCE(%s,'')
+                   ORDER BY id LIMIT 1 FOR UPDATE""",
+                (partner_id, int(bid), app_address, app_city),
+            )
+            existing_object = cur.fetchone()
+            if existing_object:
+                object_id = int(existing_object["id"])
+                cur.execute(
+                    """UPDATE partner_objects SET city=%s,marz=%s,phone=%s,object_name=%s
+                       WHERE id=%s AND partner_id=%s""",
+                    (app_city, app_marz, app_phone,
+                     str(row.get("business_name") or "").strip() or None, object_id, partner_id),
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO partner_objects
+                       (partner_id,business_id,object_name,address,city,marz,phone)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                    (partner_id, int(bid), str(row.get("business_name") or "").strip() or None,
+                     app_address, app_city, app_marz, app_phone),
+                )
+                object_id = int(cur.fetchone()["id"])
+
+        if not approved_direction:
+            cur.execute(
+                """SELECT id FROM partner_directions
+                   WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
+                   ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+                (partner_id, bid, int(master_id)),
+            )
+            approved_direction = cur.fetchone()
+
+        if approved_direction:
+            direction_id = int(approved_direction["id"])
+            cur.execute(
+                """UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW()
+                   WHERE id=%s""",
+                (direction_id,),
+            )
+        else:
+            cur.execute(
+                """INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+                   VALUES(%s,%s,%s,'approved') RETURNING id""",
+                (partner_id, bid, int(master_id)),
+            )
+            direction_id = int(cur.fetchone()["id"])
+
+        for cid in sorted(set(category_ids)):
+            cur.execute(
+                """INSERT INTO partner_direction_categories(partner_direction_id,category_id)
+                   VALUES(%s,%s) ON CONFLICT DO NOTHING""",
+                (direction_id, int(cid)),
+            )
+
+        if doc:
+            cur.execute(
+                """UPDATE partner_verification_documents
+                   SET business_id=%s,partner_direction_id=%s,status='approved',
+                       rejection_reason=NULL,reviewed_by=%s,reviewed_at=NOW()
+                   WHERE id=%s""",
+                (bid, direction_id, int(admin_telegram_id), int(doc["id"])),
+            )
+
+        for svc in services:
+            name = str(svc.get("name") or svc.get("service_name") or "").strip()[:300]
+            if not name:
+                raise ValueError("service_name_required")
+            cid = int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
+            price = svc.get("price")
+            try:
+                price = float(price) if price not in (None, "") else None
+            except (TypeError, ValueError):
+                price = None
+            service_object_id = svc.get("object_id")
+            if service_object_id in (None, ""):
+                service_object_id = object_id
+
+            cur.execute(
+                """SELECT id FROM services
+                   WHERE partner_id=%s AND business_id=%s AND name=%s AND status<>'deleted'
+                   ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+                (partner_id, bid, name),
+            )
+            existing = cur.fetchone()
+            data_json = json_dump({
+                "application_id": int(application_id),
+                "ai_source": True,
+                "price_type": svc.get("price_type") or "fixed",
+                "matched_subcategory_id": cid,
+                "direction_id": direction_id,
+            })
+            if existing:
+                cur.execute(
+                    """UPDATE services
+                       SET category_id=%s,name=%s,price=%s,status='approved',
+                           data_json=%s::jsonb,object_id=%s,updated_at=NOW()
+                       WHERE id=%s""",
+                    (cid, name, price, data_json, service_object_id, int(existing["id"])),
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO services
+                       (partner_id,business_id,category_id,subcategory_id,name,description,
+                        price,currency,status,data_json,object_id,contact_phone)
+                       VALUES(%s,%s,%s,NULL,%s,%s,%s,'AMD','approved',%s::jsonb,%s,%s)""",
+                    (partner_id, bid, cid, name, str(svc.get("description") or "").strip(),
+                     price, data_json, service_object_id,
+                     str(svc.get("contact_phone") or app_phone or "").strip() or None),
+                )
+
+        cur.execute(
+            """SELECT id,name,price,status,category_id,business_id
+               FROM services
+               WHERE partner_id=%s AND business_id=%s AND status='approved'
+                 AND data_json->>'application_id'=%s ORDER BY id""",
+            (partner_id, int(bid), str(int(application_id))),
+        )
+        materialized = cur.fetchall()
+        if len(materialized) < len(services):
+            raise RuntimeError(
+                f"application_service_materialization_failed: application={int(application_id)} "
+                f"expected={len(services)} actual={len(materialized)}"
+            )
+
+        cur.execute(
+            """UPDATE partner_businesses SET status='active',updated_at=NOW()
+               WHERE id=%s AND partner_id=%s""",
             (bid, partner_id),
         )
-        if not business:
-            raise ValueError("business_not_found")
-    else:
-        business = one(
-            "SELECT id,status FROM partner_businesses WHERE partner_id=%s "
-            "ORDER BY is_default DESC,id LIMIT 1",
+        cur.execute(
+            """UPDATE partners SET status='approved',verification_status='approved',rejection_reason=NULL
+               WHERE id=%s""",
             (partner_id,),
         )
-        if business:
-            bid = int(business["id"])
-        else:
-            business = one(
-                """INSERT INTO partner_businesses(partner_id,name,description,is_default)
-                   VALUES(%s,%s,%s,TRUE) RETURNING id,status""",
-                (partner_id, row.get("business_name") or "Իմ բիզնեսը", row.get("description")),
-            )
-            bid = int(business["id"])
-
-    # Materialize the approved application into the partner's canonical
-    # company/address structure. The application remains the audit source;
-    # partner cabinet reads the normalized entities.
-    execute(
-        """UPDATE partner_businesses
-           SET name=%s,description=%s,phone=%s,status='active',updated_at=NOW()
-           WHERE id=%s AND partner_id=%s""",
-        (
-            str(row.get("business_name") or "").strip() or (business.get("name") or "Իմ բիզնեսը"),
-            str(row.get("description") or "").strip() or None,
-            str(row.get("phone") or "").strip() or None,
-            int(bid), partner_id,
-        ),
-    )
-
-    app_address = str(row.get("address") or "").strip()
-    app_city = str(row.get("location_city") or "").strip() or None
-    app_marz = str(row.get("location_marz") or "").strip() or None
-    app_phone = str(row.get("phone") or "").strip() or None
-    if app_address:
-        existing_object = one(
-            """SELECT id FROM partner_objects
-               WHERE partner_id=%s AND business_id=%s AND address=%s
-                 AND COALESCE(city,'')=COALESCE(%s,'')
-               ORDER BY id LIMIT 1""",
-            (partner_id, int(bid), app_address, app_city),
+        cur.execute(
+            """UPDATE users SET is_verified=TRUE
+               WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
+            (partner_id,),
         )
-        if existing_object:
-            execute(
-                """UPDATE partner_objects
-                   SET city=%s,marz=%s,phone=%s,
-                       object_name=%s
-                   WHERE id=%s AND partner_id=%s""",
-                (
-                    app_city, app_marz, app_phone,
-                    str(row.get("business_name") or "").strip() or None,
-                    int(existing_object["id"]), partner_id,
-                ),
-            )
-        else:
-            execute(
-                """INSERT INTO partner_objects
-                   (partner_id,business_id,object_name,address,city,marz,phone)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    partner_id, int(bid),
-                    str(row.get("business_name") or "").strip() or None,
-                    app_address, app_city, app_marz, app_phone,
-                ),
-            )
-
-    if not approved_direction:
-        approved_direction = one(
-            """SELECT id FROM partner_directions
-               WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
-               ORDER BY id DESC LIMIT 1""",
-            (partner_id, bid, int(master_id)),
+        cur.execute(
+            """UPDATE partner_applications
+               SET status='approved',reviewed_by=%s,reviewed_at=NOW(),
+                   admin_note='Հայտը հաստատված է և ծառայությունները ակտիվացված են։',
+                   business_id=%s,master_category_id=%s,updated_at=NOW()
+               WHERE id=%s RETURNING *""",
+            (int(admin_telegram_id), bid, int(master_id), int(application_id)),
         )
-    if approved_direction:
-        direction_id = int(approved_direction["id"])
-        execute(
-            "UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",
-            (direction_id,),
-        )
-    else:
-        direction = one(
-            """INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
-               VALUES(%s,%s,%s,'approved') RETURNING id""",
-            (partner_id, bid, int(master_id)),
-        )
-        direction_id = int(direction["id"])
+        updated = cur.fetchone()
+        if not updated:
+            raise RuntimeError("application_approval_update_failed")
+        return updated
 
-    for cid in sorted(set(category_ids)):
-        execute(
-            """INSERT INTO partner_direction_categories(partner_direction_id,category_id)
-               VALUES(%s,%s) ON CONFLICT DO NOTHING""",
-            (direction_id, int(cid)),
-        )
-
-    if doc:
-        execute(
-            """UPDATE partner_verification_documents
-               SET business_id=%s,partner_direction_id=%s,status='approved',
-                   rejection_reason=NULL,reviewed_by=%s,reviewed_at=NOW()
-               WHERE id=%s""",
-            (bid, direction_id, int(admin_telegram_id), int(doc["id"])),
-        )
-
-    for svc in services:
-        name = str(svc.get("name") or svc.get("service_name") or "").strip()[:300]
-        cid = int(svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id"))
-        price = svc.get("price")
-        try:
-            price = float(price) if price not in (None, "") else None
-        except (TypeError, ValueError):
-            price = None
-        existing = one(
-            """SELECT id FROM services
-               WHERE partner_id=%s AND business_id=%s AND name=%s AND status<>'deleted'
-               ORDER BY id DESC LIMIT 1""",
-            (partner_id, bid, name),
-        )
-        data_json = json_dump({
-            "application_id": int(application_id),
-            "ai_source": True,
-            "price_type": svc.get("price_type") or "fixed",
-            "matched_subcategory_id": cid,
-            "direction_id": direction_id,
-        })
-        if existing:
-            execute(
-                """UPDATE services
-                   SET category_id=%s,name=%s,price=%s,status='approved',
-                       data_json=%s,updated_at=NOW()
-                   WHERE id=%s""",
-                (cid, name, price, data_json, int(existing["id"])),
-            )
-        else:
-            execute(
-                """INSERT INTO services
-                   (partner_id,business_id,category_id,subcategory_id,name,description,
-                    price,currency,status,data_json,object_id,contact_phone)
-                   VALUES(%s,%s,%s,NULL,%s,%s,%s,'AMD','approved',%s,%s,%s)""",
-                (
-                    partner_id,
-                    bid,
-                    cid,
-                    name,
-                    str(svc.get("description") or "").strip(),
-                    price,
-                    data_json,
-                    int(svc.get("object_id")) if svc.get("object_id") not in (None, "") else None,
-                    str(svc.get("contact_phone") or app_phone or "").strip() or None,
-                ),
-            )
-
-    execute(
-        """UPDATE partner_businesses
-           SET status='active',updated_at=NOW()
-           WHERE id=%s AND partner_id=%s""",
-        (bid, partner_id),
-    )
-    execute(
-        """UPDATE partners
-           SET status='approved',verification_status='approved',rejection_reason=NULL
-           WHERE id=%s""",
-        (partner_id,),
-    )
-    execute(
-        """UPDATE users
-           SET is_verified=TRUE
-           WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
-        (partner_id,),
-    )
-
-    # Final backend truth gate: an approval is not considered successful until
-    # every service from the application is actually materialized in the
-    # canonical services table for this exact company. This prevents the AI
-    # layer from ever reporting "active" while the partner cabinet still sees
-    # only the application record.
-    materialized = rows(
-        """SELECT id,name,price,status,category_id,business_id
-           FROM services
-           WHERE partner_id=%s AND business_id=%s
-             AND status='approved'
-             AND data_json->>'application_id'=%s
-           ORDER BY id""",
-        (partner_id, int(bid), str(int(application_id))),
-    )
-    if len(materialized) < len(services):
-        raise RuntimeError(
-            f"application_service_materialization_failed: application={int(application_id)} "
-            f"expected={len(services)} actual={len(materialized)}"
-        )
-
-    return one(
-        """UPDATE partner_applications
-           SET status='approved',reviewed_by=%s,reviewed_at=NOW(),
-               admin_note='Հայտը հաստատված է և ծառայությունները ակտիվացված են։',
-               business_id=%s,master_category_id=%s,updated_at=NOW()
-           WHERE id=%s RETURNING *""",
-        (int(admin_telegram_id), bid, int(master_id), int(application_id)),
-    )
+    return platform_db.transaction(_approve)
 
 def admin_reject_application(application_id: int, reason: str, admin_telegram_id: int):
     reason = str(reason or "").strip()
