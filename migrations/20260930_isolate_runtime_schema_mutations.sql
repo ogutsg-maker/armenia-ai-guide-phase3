@@ -453,8 +453,8 @@ INSERT INTO partner_direction_categories(partner_direction_id, category_id)
     JOIN partners p ON p.id=pd.partner_id
     JOIN master_skills ms ON ms.user_id=p.user_id AND ms.is_active=TRUE
     JOIN categories c ON c.id=ms.category_id AND c.master_category_id=pd.master_category_id
-    ON CONFLICT(partner_direction_id, category_id) DO NOTHING
-    
+    ON CONFLICT(partner_direction_id, category_id) DO NOTHING;
+
 UPDATE partner_verification_documents d
        SET partner_direction_id = x.direction_id
       FROM (
