@@ -98,6 +98,7 @@ def runtime_context():
     }
 
     # DatabaseManager.__init__ executes its own init_db() path.
+    reset_public_schema()
     db_manager = DatabaseManager()
     __main__.db = db_manager
     __main__.ai = MagicMock()
@@ -223,8 +224,6 @@ def seed_legacy_fixture():
                     partner_id BIGINT NOT NULL,
                     master_category_id INT NOT NULL,
                     status TEXT NOT NULL,
-                    CONSTRAINT partner_directions_partner_id_master_category_id_key
-                        UNIQUE(partner_id, master_category_id)
                 );
                 CREATE TABLE services(
                     id BIGSERIAL PRIMARY KEY,
@@ -354,9 +353,8 @@ def test_scenario_a_legacy_migration():
 
 @pytest.mark.asyncio
 async def test_scenario_b_clean_boot(guarded_psycopg, runtime_context):
-    reset_public_schema()
-
     # DatabaseManager's constructor/init_db is part of the real startup path.
+    # The fixture reset the database before constructing it.
     db_manager = runtime_context
     assert db_manager is not None
 
@@ -368,7 +366,6 @@ async def test_scenario_b_clean_boot(guarded_psycopg, runtime_context):
 async def test_scenario_c_runtime_idempotency(
     guarded_psycopg, runtime_context
 ):
-    reset_public_schema()
     db_manager = runtime_context
     assert db_manager is not None
 
