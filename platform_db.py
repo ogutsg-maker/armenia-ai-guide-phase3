@@ -117,7 +117,6 @@ def create_session(user_id, role, session_type, context=None):
 def update_session(session_id, context):
     return execute('UPDATE ai_sessions SET context_json=%s::jsonb,updated_at=NOW() WHERE id=%s RETURNING *',(json_dump(context),session_id),True)
 def add_ai_message(session_id, sender_role, text, data=None, tool_call_id=None):
-    ensure_ai_messages_tool_schema()
     return execute(
         'INSERT INTO ai_messages(session_id,sender_role,message_text,data_json,tool_call_id) VALUES(%s,%s,%s,%s::jsonb,%s) RETURNING *',
         (session_id,sender_role,text,json_dump(data or {}),tool_call_id),
