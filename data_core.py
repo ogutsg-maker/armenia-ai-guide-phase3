@@ -2657,6 +2657,17 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "subcategory_id": raw.get("subcategory_id"),
         })
 
+    # Classification is a backend responsibility and must happen before the
+    # application is written. The AI may provide service names, but it cannot
+    # invent catalogue IDs. Preserve unresolved services for admin review.
+    prepared = resolve_catalog_services(prepared, limit=500)
+
+    # A service proposal must never reach Admin without an attached document.
+    # Existing approved partners reuse their current company verification
+    # document; a new document is not required when an approved one exists.
+    if not document:
+        raise ValueError("document_required")
+
     first = prepared[0]
     payload = {
         "source": "partner_service",
@@ -2670,9 +2681,23 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "document_id": int(document["id"]) if document else None,
             "document_status": document.get("status") if document else None,
             "document_filename": document.get("original_filename") if document else None,
+            "required_checks": {
+                "document_present": True,
+                "catalog_classification": "backend_live_catalog",
+            },
         },
         "services": prepared,
     }
+
+    # Keep the application header synchronized with the first service, while
+    # the complete per-service classification remains authoritative in payload.
+    first_category_id = first.get("category_id")
+    first_master_id = first.get("master_category_id")
+    first_category = (
+        get_catalog_category(int(first_category_id))
+        if first_category_id not in (None, "")
+        else None
+    )
 
     row = one(
         """INSERT INTO partner_applications(
@@ -2706,7 +2731,10 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     return {
         **row,
         "workflow": "admin_verification",
-        "document_present": bool(document),
+        "document_present": True,
+        "document_status": document.get("status"),
+        "catalog_classified": sum(1 for x in prepared if x.get("catalog_match_status") == "matched"),
+        "catalog_unclassified": sum(1 for x in prepared if x.get("catalog_match_status") != "matched"),
         "company": payload["company"],
         "services": prepared,
     }
