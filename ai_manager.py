@@ -954,7 +954,12 @@ class AIManager:
             r"ակտիվացրու|ակտիվացր|активир|активируй)",
             str(message or "").casefold(),
         )
-        if approval_intent:
+        explicit_id_approval = bool(re.search(
+            r"(?:#|№|\bID\b|\bИД\b)\s*\d+.*?(?:հաստատ|approve|одобр|утверд|ակտիվ|activat|ակտիվացրու|ակտիվացր)"
+            r"|(?:հաստատ|approve|одобр|утверд|ակտիվ|activat|ակտիվացրու|ակտիվացր).*?(?:#|№|\bID\b|\bИД\b)\s*\d+",
+            str(message or "").casefold(),
+        ))
+        if approval_intent or explicit_id_approval:
             try:
                 gate = data_core.prepare_application_approval(
                     application_id=app_id,
@@ -1205,13 +1210,12 @@ class AIManager:
         #   "ремонт кондиционеров от 8000 и ремонт телевизоров от 6000"
         # must become two services, while keeping "и" inside a service name.
         conjunction = (
-            r"(?:и|և|ու|and)\\s+"
-            r"(?=[^,;]+?\\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\\s*"
-            r"\\d)"
+            r"(?:и|և|ու|and)\s+"
+            r"(?=[^,;]+?\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\s*\d)"
         )
         parts = [
             p.strip(" ,;")
-            for p in re.split(r"\\s*[;,]\\s*|" + conjunction, body, flags=re.IGNORECASE)
+            for p in re.split(r"\s*[;,]\s*|" + conjunction, body, flags=re.IGNORECASE)
             if p.strip(" ,;")
         ]
         if not parts:
@@ -1354,15 +1358,22 @@ class AIManager:
                 pass
 
         folded = text.casefold()
-        if any(x in folded for x in (
+        mobile_markers = (
             "выезжаю", "выезд", "к клиенту", "на выезде", "mobile",
-            "գնում եմ", "այցել", "մեկնում եմ", "հաճախորդի մոտ", "մեկնում եմ հաճախորդի մոտ",
-        )):
-            result["service_mode"] = "mobile"
-        elif any(x in folded for x in (
+            "գնում եմ", "այցել", "մեկնում եմ", "հաճախորդի մոտ",
+        )
+        address_markers = (
             "по этому адресу", "на месте", "в этом адресе", "по адресу",
-            "at address", "այս հասցեում", "հասցեում", "այս հասցեով", "աշխատում եմ", "աշխատում եմ Երևանի տարածքում", "աշխատում եմ այս հասցեում", "աշխատում եմ հասցեում",
-        )):
+            "at address", "այս հասցեում", "հասցեում", "այս հասցեով",
+            "աշխատում եմ", "սպասարկում եմ տեղում",
+        )
+        has_mobile = any(x in folded for x in mobile_markers)
+        has_address = any(x in folded for x in address_markers)
+        if has_mobile and has_address:
+            result["service_mode"] = "both"
+        elif has_mobile:
+            result["service_mode"] = "mobile"
+        elif has_address:
             result["service_mode"] = "at_address"
 
         # Explicit address labels are fully deterministic.
@@ -1414,7 +1425,7 @@ class AIManager:
                     "phone": {"type": ["string", "null"]},
                     "service_mode": {
                         "type": ["string", "null"],
-                        "enum": ["at_address", "mobile", None],
+                        "enum": ["at_address", "mobile", "both", None],
                     },
                 },
                 "required": ["address_text", "phone", "service_mode"],
@@ -1449,7 +1460,7 @@ class AIManager:
                         normalized = data_core.normalize_phone_number(result["phone"])
                         if normalized:
                             result["phone"] = normalized
-                    if result.get("service_mode") not in {"at_address", "mobile"}:
+                    if result.get("service_mode") not in {"at_address", "mobile", "both"}:
                         result.pop("service_mode", None)
             except Exception as exc:
                 # Never reset the draft because NLU failed. The deterministic
