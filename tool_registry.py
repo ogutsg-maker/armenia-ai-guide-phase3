@@ -731,13 +731,14 @@ class ToolRegistry:
             return {"ok": True, "items": result}
 
         if name == "search_services":
-            return {"ok": True, "items": data_core.search_services(
+            return {"ok": True, "items": data_core.marketplace_client_search(
+                query=str(args.get("query") or ""),
                 category_id=args.get("category_id"),
                 city=str(args.get("city") or ""),
                 max_price=args.get("max_price"),
                 client_lat=args.get("client_lat"),
                 client_lng=args.get("client_lng"),
-                limit=max(1, min(int(args.get("limit") or 20), 100)),
+                limit=max(1, min(int(args.get("limit") or 20), 50)),
             )}
 
         if name == "get_my_orders":
