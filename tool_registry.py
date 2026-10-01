@@ -179,6 +179,14 @@ class ToolRegistry:
                 contexts=(ContextType.CLIENT, ContextType.PARTNER),
             ),
             self._spec(
+                "confirm_booking",
+                "Confirm one pending booking owned by the authenticated partner and prepare the client's payment invoice. Never confirm a booking for another partner.",
+                {"booking_id": {"type": "integer"}},
+                required=("booking_id",),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=(ContextType.PARTNER,),
+            ),
+            self._spec(
                 "cancel_order",
                 "Prepare cancellation of one owned order. Never execute without explicit confirmation.",
                 {
@@ -955,6 +963,18 @@ class ToolRegistry:
         if self.context_type == ContextType.PARTNER:
             pid = self._partner_id()
 
+            if name == "confirm_booking":
+                order_id = int(args["booking_id"])
+                order = data_core.get_booking(order_id, actor_role="partner", actor_id=self.telegram_id)
+                if not order:
+                    raise PermissionError("booking_not_owned_or_not_found")
+                if str(order.get("status") or "").lower() != "pending_partner_confirmation":
+                    raise ValueError("booking_not_pending_partner_confirmation")
+                return self._prepare_action(
+                    name, {"booking_id": order_id},
+                    f"Подтвердить заказ #{order_id} «{order.get('service_name') or ''}» и подготовить оплату клиента?"
+                )
+
             if name == "add_address":
                 address = str(args.get("address") or "").strip()
                 if not address:
@@ -1317,6 +1337,14 @@ class ToolRegistry:
             raise PermissionError("confirmed_action_not_allowed")
 
         pid = self._partner_id()
+
+        if name == "confirm_booking":
+            result = data_core.confirm_booking_and_prepare_payment(
+                int(args["booking_id"]), self.telegram_id
+            )
+            if not result:
+                raise PermissionError("booking_confirmation_failed")
+            return {"ok": True, **result}
 
         if name == "add_address":
             return {"ok": True, "item": data_core.create_partner_address(
