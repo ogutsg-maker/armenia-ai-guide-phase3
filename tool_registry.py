@@ -1514,7 +1514,15 @@ class ToolRegistry:
             address_id = args.get("address_id")
             address_text = str(args.get("address_text") or "").strip()
             service_location = args.get("service_location") if isinstance(args.get("service_location"), dict) else {}
-            if address_id in (None, "") and (address_text or service_location):
+            effective_modes = {
+                str(item.get("service_mode") or args.get("service_mode") or "").strip().lower()
+                for item in services if isinstance(item, dict)
+            }
+            needs_fixed_address = any(mode in {"at_address", "both"} for mode in effective_modes)
+            # Mobile-only services have no fixed service address. Do not create
+            # an artificial partner object just because a structured service
+            # location/dispatch payload exists.
+            if needs_fixed_address and address_id in (None, "") and (address_text or service_location):
                 if not address_text and service_location:
                     lat = service_location.get("latitude")
                     lon = service_location.get("longitude")
