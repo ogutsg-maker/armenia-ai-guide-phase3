@@ -1480,8 +1480,9 @@ async def api_admin_registry(request):
 
     return web.json_response({"ok":False,"error":"unknown_registry_type"},status=400)
 
-def register_stage3_routes(app, bot_token=None, admin_id=None):
-    ensure_stage3_schema()
+def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=True):
+    if ensure_schema:
+        ensure_stage3_schema()
     app["stage3_bot_token"] = bot_token
     app["stage3_admin_id"] = admin_id
     app.router.add_get("/api/master/{id}/documents", api_partner_documents)
