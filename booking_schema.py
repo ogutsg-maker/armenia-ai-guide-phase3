@@ -90,7 +90,6 @@ def _ensure_bookings_table(cur) -> None:
     columns = {
         "request_id": "BIGINT",
         "negotiation_id": "BIGINT",
-        "booking_id": "BIGINT",
         "client_id": "BIGINT",
         "partner_id": "BIGINT",
         "service_id": "BIGINT",
@@ -288,6 +287,7 @@ def _ensure_contact_disclosures(cur) -> None:
         """
     )
     columns = {
+        "booking_id": "BIGINT",
         "client_id": "BIGINT",
         "partner_id": "BIGINT",
         "payment_id": "BIGINT",
