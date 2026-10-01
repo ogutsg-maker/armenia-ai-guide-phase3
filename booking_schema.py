@@ -302,6 +302,7 @@ def _ensure_contact_disclosures(cur) -> None:
         _add_column(cur, "contact_disclosures", column, definition)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_contact_disclosures_client ON contact_disclosures(client_id, created_at DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_contact_disclosures_booking ON contact_disclosures(booking_id, status, created_at DESC)")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_contact_disclosures_active_booking ON contact_disclosures(booking_id) WHERE status='active'")
 
 
 def _ensure_arbitrations(cur) -> None:
