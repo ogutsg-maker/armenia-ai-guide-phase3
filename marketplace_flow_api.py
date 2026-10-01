@@ -589,8 +589,9 @@ async def open_arbitration(request):
             role = 'partner'
     if not booking:
         return web.json_response({'ok': False, 'error': 'booking_not_found'}, status=404)
-    if str(booking.get('status') or '').lower() in {'cancelled','refunded'}:
-        return web.json_response({'ok': False, 'error': 'booking_not_active'}, status=409)
+    booking_status=str(booking.get('status') or '').lower()
+    if booking_status not in {'paid','in_progress','completed'}:
+        return web.json_response({'ok': False, 'error': 'booking_not_arbitrable'}, status=409)
     existing = data_core.one(
         "SELECT * FROM booking_arbitrations WHERE booking_id=%s AND status IN ('open','admin_review') ORDER BY id DESC LIMIT 1",
         (booking_id,),
