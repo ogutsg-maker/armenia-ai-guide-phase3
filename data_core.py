@@ -2381,15 +2381,38 @@ def update_negotiation(negotiation_id: int, state: dict[str, Any],
 
     next_state = dict(state or {})
     if requested_status == "agreed":
-        final_price = next_state.get("final_price", next_state.get("agreed_price"))
-        if final_price is None:
+        # AGREED is a deterministic backend transition: both sides must have
+        # explicitly accepted the current proposal. A mere AI extraction of
+        # "price" is not acceptance.
+        client_accepted = bool(next_state.get("client_accepted"))
+        partner_accepted = bool(next_state.get("partner_accepted"))
+        if not (client_accepted and partner_accepted):
             return None
+
+        agreed_price = next_state.get("agreed_price")
+        agreed_min = next_state.get("agreed_min")
+        agreed_max = next_state.get("agreed_max")
+        if agreed_price is None and (agreed_min is None or agreed_max is None):
+            return None
+
         try:
-            if float(final_price) <= 0:
-                return None
+            if agreed_price is not None:
+                if float(agreed_price) <= 0:
+                    return None
+                next_state["agreed_price"] = float(agreed_price)
+            else:
+                lo = float(agreed_min)
+                hi = float(agreed_max)
+                if lo <= 0 or hi < lo:
+                    return None
+                next_state["agreed_min"] = lo
+                next_state["agreed_max"] = hi
         except (TypeError, ValueError):
             return None
-        next_state["final_price"] = float(final_price)
+
+        # Keep the legacy final_price field only as a compatibility alias.
+        if agreed_price is not None:
+            next_state["final_price"] = float(agreed_price)
 
     if status is not None:
         return execute(
