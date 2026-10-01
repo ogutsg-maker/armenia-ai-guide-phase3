@@ -459,10 +459,10 @@ async def api_partner_document_upload(request):
                 returning=True,
             )
         if direction_id is None:
-        _db_execute(
-            "UPDATE partners SET verification_status=CASE WHEN status='approved' THEN verification_status ELSE 'pending' END, rejection_reason=NULL, status=CASE WHEN status IN ('draft','rejected') THEN 'pending' ELSE status END WHERE id=%s",
-            (partner["id"],),
-        )
+            _db_execute(
+                "UPDATE partners SET verification_status=CASE WHEN status='approved' THEN verification_status ELSE 'pending' END, rejection_reason=NULL, status=CASE WHEN status IN ('draft','rejected') THEN 'pending' ELSE status END WHERE id=%s",
+                (partner["id"],),
+            )
     except Exception as exc:
         # Keep the client response safe but log the real Storage/DB error in Render logs.
         print(f"[partner-verification] document upload failed: partner={partner['id']} error={exc!r}", flush=True)
