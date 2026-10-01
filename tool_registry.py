@@ -135,37 +135,6 @@ class ToolRegistry:
                 contexts=(ContextType.REGISTRATION, ContextType.PARTNER, ContextType.ADMIN),
             ),
             self._spec(
-                "save_completed_application",
-                "Save the completed partner registration after the model has collected company name, Armenian city, phone and at least one service. The model may supply only catalog_slug values returned by catalog_candidates; the backend resolves those slugs to live category IDs and their parent master category. This is the ONLY registration write that the AI may execute automatically; backend validates the authenticated Telegram user. Never call it with invented data and never invent category IDs.",
-                {
-                    "company_name": {"type": "string"},
-                    "marz": _nullable("string"),
-                    "city": {"type": "string"},
-                    "address": _nullable("string"),
-                    "phone": {"type": "string"},
-                    "working_hours": _nullable("string"),
-                    "description": _nullable("string"),
-                    "services": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "catalog_slug": _nullable("string"),
-                                "price": _nullable("number"),
-                                "price_type": {"type": "string", "enum": ["from", "fixed"]},
-                            },
-                            "required": ["name", "price", "price_type"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                required=("company_name", "city", "phone", "services"),
-                tool_type=ToolType.AUTO_COMMIT,
-                contexts=r,
-            ),
-            self._spec(
                 "resolve_current_entity",
                 "Resolve a pronoun/reference such as 'it' only from backend session state. If there is no unique current entity, return a clarification question. Never guess.",
                 {
