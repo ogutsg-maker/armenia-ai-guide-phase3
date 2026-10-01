@@ -1879,6 +1879,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 "direction_id": direction_id,
                 "service_mode": svc.get("service_mode") or payload.get("service_mode"),
                 "service_location": svc.get("service_location") or payload.get("service_location"),
+                "base_location": svc.get("base_location") or payload.get("base_location"),
                 "coverage": svc.get("coverage") or (payload.get("service_contract") or {}).get("coverage"),
                 "address_id": service_object_id,
                 "address_text": svc.get("address_text"),
@@ -2889,9 +2890,10 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
         services=[{"name": name, "price": price, "address_id": address_id,
                    "phone": phone, "category_id": category_id, "description": description,
                    "price_type": price_type,
-                   "coverage": coverage}],
+                   "coverage": coverage, "base_location": base_location}],
         service_mode=service_mode,
         service_location=service_location,
+        base_location=base_location,
         submission_token=submission_token,
     )
 
@@ -2900,6 +2902,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                                      company_id: int, services: list[dict[str, Any]],
                                      service_mode: str | None = None,
                                      service_location: dict[str, Any] | None = None,
+                                     base_location: dict[str, Any] | None = None,
                                      submission_token: str | None = None) -> dict:
     """Create ONE admin-review application containing the whole service batch."""
     pid = int(partner_id)
@@ -3033,6 +3036,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "description": str(raw.get("description") or "").strip(),
             "service_mode": raw.get("service_mode") or service_mode,
             "service_location": raw.get("service_location") or service_location,
+            "base_location": raw.get("base_location") or base_location,
             "coverage": raw.get("coverage") or ((service_location or {}).get("coverage") if isinstance(service_location, dict) else None),
             "object_id": int(service_object["id"]) if service_object else None,
             "object_name": (service_object or {}).get("object_name"),
