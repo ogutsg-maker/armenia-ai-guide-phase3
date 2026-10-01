@@ -1202,7 +1202,7 @@ class ToolRegistry:
                         "description": raw.get("description"),
                         "service_mode": raw.get("service_mode") or service_mode,
                         "service_location": raw.get("service_location") or location,
-                        "coverage": raw.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
+                        "coverage": raw.get("coverage") or args.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
                         "address_text": address_text,
                     })
 
