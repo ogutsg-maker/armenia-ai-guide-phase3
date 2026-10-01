@@ -1211,6 +1211,77 @@ async def api_business_delete(request: web.Request):
 
 
 
+async def api_ai_document_upload(request: web.Request):
+    """Upload a direction-verification document from the partner AI assistant."""
+    uid = _auth_partner(request)
+    pid = _require_partner(uid)
+    bid = _business_id(request, pid)
+    if not bid:
+        return web.json_response({"ok":False,"error":"business_required"},status=400)
+
+    reader = await request.multipart()
+    file_part = None
+    while True:
+        part = await reader.next()
+        if part is None:
+            break
+        if part.name == "file":
+            file_part = part
+            break
+    if file_part is None:
+        return web.json_response({"ok":False,"error":"file_required"},status=400)
+
+    filename = file_part.filename or "document"
+    allowed = {".pdf":"application/pdf",".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".webp":"image/webp"}
+    suffix = "." + filename.rsplit(".",1)[-1].lower() if "." in filename else ""
+    if suffix not in allowed:
+        return web.json_response({"ok":False,"error":"unsupported_file_type"},status=400)
+    data = await file_part.read()
+    if not data:
+        return web.json_response({"ok":False,"error":"empty_file"},status=400)
+    if len(data) > 10 * 1024 * 1024:
+        return web.json_response({"ok":False,"error":"file_too_large"},status=400)
+
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id,partner_id,business_id,partner_direction_id,master_category_id
+                   FROM partner_direction_verification_cases
+                   WHERE partner_id=%s AND business_id=%s
+                     AND status IN ('awaiting_document','rejected')
+                   ORDER BY updated_at DESC,id DESC LIMIT 1""",
+                (pid,bid),
+            )
+            case = cur.fetchone()
+            if not case:
+                return web.json_response({"ok":False,"error":"direction_verification_not_requested"},status=409)
+            direction_id = int(case["partner_direction_id"])
+            cur.execute(
+                """INSERT INTO partner_verification_documents
+                   (partner_id,business_id,partner_direction_id,document_type,original_filename,
+                    file_data,mime_type,file_size,status,is_current)
+                   VALUES(%s,%s,%s,'direction_document',%s,%s,%s,%s,'pending',TRUE)
+                   RETURNING id,status,original_filename""",
+                (pid,bid,direction_id,filename,data,allowed[suffix],len(data)),
+            )
+            doc = cur.fetchone()
+            cur.execute(
+                """UPDATE partner_direction_verification_cases
+                   SET status='pending_review',submitted_at=NOW(),updated_at=NOW()
+                   WHERE id=%s""",
+                (int(case["id"]),),
+            )
+            cur.execute(
+                """UPDATE partner_directions SET status='pending_document',rejection_reason=NULL,updated_at=NOW()
+                   WHERE id=%s AND partner_id=%s AND business_id=%s""",
+                (direction_id,pid,bid),
+            )
+        conn.commit()
+    return web.json_response({"ok":True,"document_id":int(doc["id"]),"status":doc["status"],
+                              "filename":doc["original_filename"],"direction_id":direction_id,
+                              "verification_case_id":int(case["id"])})
+
+
 async def api_applications(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -1324,6 +1395,8 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_delete("/api/master/{id}/businesses/{business_id}", api_business_delete)
     app.router.add_post("/api/master/{id}/businesses/{business_id}", api_business_update)
     app.router.add_post("/api/master/{id}/ai-command", api_ai_command)
+    app.router.add_post("/api/master/{id}/ai-command/document", api_ai_document_upload)
+    app.router.add_post("/api/master/{id}/documents/upload", api_ai_document_upload)
     app.router.add_post("/api/master/{id}/ai-command/confirm", api_ai_command_confirm)
     app.router.add_get("/api/master/{id}/settings", api_settings)
     app.router.add_post("/api/master/{id}/settings", api_settings_update)
