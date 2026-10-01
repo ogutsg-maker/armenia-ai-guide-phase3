@@ -2773,6 +2773,20 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
 
     confirmed = confirm_booking_by_partner(int(booking_id), int(partner_user_id))
     if not confirmed:
+        # Another identical request may have won the conditional state update.
+        # Re-read the booking/payment and return the existing invoice instead of
+        # reporting a spurious failure.
+        current = get_booking(int(booking_id), actor_role="partner", actor_id=int(partner_user_id))
+        if current and str(current.get("status") or "").lower() == "pending_payment":
+            existing = one(
+                "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
+                (int(booking_id),),
+            )
+            data = (existing or {}).get("data_json") or {}
+            if isinstance(data, str):
+                try: data = json.loads(data)
+                except Exception: data = {}
+            return {"booking": current, "payment": existing, "payment_url": (data or {}).get("payment_url")}
         return None
     payment = one(
         "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
