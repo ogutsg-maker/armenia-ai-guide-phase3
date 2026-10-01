@@ -4110,7 +4110,14 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
             cur.execute("SELECT * FROM bookings WHERE id=%s",(bid,)); booking=cur.fetchone()
             cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); payment=cur.fetchone()
             cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s",(bid,)); check=cur.fetchone()
-            return {"booking":booking,"payment":payment,"checkin":check,"already_exists":True}
+            if payment and str(payment.get("status") or "").lower() == "paid":
+            cur.execute(
+                """UPDATE booking_checkins
+                   SET expires_at=COALESCE(expires_at,NOW()+INTERVAL '1 hour')
+                   WHERE booking_id=%s AND (expires_at IS NULL OR expires_at<=NOW())""",
+                (bid,),
+            )
+        return {"booking":booking,"payment":payment,"checkin":check,"already_exists":True}
         cur.execute("""INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,business_id,status,
                          service_name,agreed_price,currency,commission_amount,partner_amount,data_json)
                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
@@ -4137,7 +4144,12 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                        VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
                     (int(partner_id),int(booking["id"]),float(commission),currency,"Test Idram platform commission",
                      int(partner_id),int(booking["id"]),float(partner_amount),currency,"Partner amount after platform commission"))
-        cur.execute("INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",(int(booking["id"]),token))
+        cur.execute(
+            """INSERT INTO booking_checkins(booking_id,token,expires_at,status)
+               VALUES(%s,%s,COALESCE(%s,NOW() + INTERVAL '1 hour'),'active')
+               RETURNING *""",
+            (int(booking["id"]), token, scheduled_at),
+        )
         check=cur.fetchone()
         cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
                     ("booked" if payment_status == "paid" else "pending_payment", int(request_id)))
