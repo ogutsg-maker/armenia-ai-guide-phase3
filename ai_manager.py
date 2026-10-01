@@ -1284,6 +1284,37 @@ class AIManager:
                 "description": None,
             })
 
+        # A mobile/both request can be fully prepared without asking the LLM:
+        # preserve the partner's explicit dispatch base as structured data.
+        mode_match = re.search(
+            r"(?:формат|режим|format|mode)\s*[:\-]?\s*(?:выезд\s+к\s+клиенту|mobile)"
+            r"|\bвыезд\s+к\s+клиенту\b|\bmobile\b",
+            text, flags=re.IGNORECASE,
+        )
+        base_match = re.search(
+            r"(?:база\s+выезда|база\s+для\s+выезда|dispatch\s+base|base\s+location)"
+            r"\s*[:\-]?\s*(?P<base>[^.]+)$",
+            text, flags=re.IGNORECASE,
+        )
+        if mode_match:
+            mode = "mobile"
+            base = (base_match.group("base").strip(" ,;") if base_match else "")
+            if not base:
+                return None
+            # Parse "city, district, marz" conservatively. Coordinates remain optional.
+            pieces = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"\s*,\s*", base) if p.strip()]
+            if len(pieces) < 1:
+                return None
+            location = {
+                "city": pieces[0],
+                "district": pieces[1] if len(pieces) > 1 else None,
+                "marz": pieces[2] if len(pieces) > 2 else None,
+                "address": pieces[3] if len(pieces) > 3 else None,
+            }
+            for item in result:
+                item["service_mode"] = mode
+                item["base_location"] = location
+
         return result or None
 
     @staticmethod
