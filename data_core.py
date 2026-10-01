@@ -3045,8 +3045,15 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                 raise PermissionError("address_not_in_company")
 
         raw_address_text = str(raw.get("address_text") or "").strip()
-        if not service_object and not raw_address_text:
+        effective_mode = str(raw.get("service_mode") or service_mode or "").strip().lower()
+        # Mobile services do not require a fixed service address: the client
+        # location is the service location and the partner's dispatch/base
+        # location is stored separately. at_address/both still require a
+        # concrete service address.
+        if effective_mode not in {"mobile", "both"} and not service_object and not raw_address_text:
             raise ValueError("service_address_required")
+        if effective_mode in {"mobile", "both"} and not raw.get("base_location") and not base_location:
+            raise ValueError("base_location_required")
 
         service_phone = str(
             raw.get("phone")
@@ -3535,11 +3542,12 @@ def marketplace_client_search(
     client_lat: float | None = None,
     client_lng: float | None = None,
 ):
-    """Search approved services with SQL-side geographic filtering.
+    """Search approved services with service-mode-aware geographic filtering.
 
-    Coordinates are optional. When present, radius coverage is evaluated with
-    the Haversine formula in PostgreSQL. When absent, the query degrades to
-    city/marz/text coverage matching.
+    at_address uses service_location; mobile uses base_location (with a
+    backwards-compatible fallback to service_location/object data); both
+    matches either location. Coordinates are optional: radius filtering uses
+    Haversine when coordinates exist, otherwise city/marz matching is used.
     """
     q = str(query or "").strip()
     city = str(city or "").strip()
@@ -3573,10 +3581,9 @@ def marketplace_client_search(
         params.append(float(max_price))
         where.append("(s.price IS NULL OR s.price<=%s)")
 
-    # Resolve service coordinates from the service-specific location first,
-    # then fall back to the linked partner object. Existing records can use
-    # either lat/lng or latitude/longitude naming.
-    coord_sql = """
+    mode_sql = "LOWER(COALESCE(s.data_json->>'service_mode','at_address'))"
+
+    service_lat_sql = """
         CASE
           WHEN COALESCE(s.data_json->'service_location'->>'lat','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
             THEN (s.data_json->'service_location'->>'lat')::numeric
@@ -3589,7 +3596,7 @@ def marketplace_client_search(
           ELSE NULL
         END
     """
-    coord_lng_sql = """
+    service_lng_sql = """
         CASE
           WHEN COALESCE(s.data_json->'service_location'->>'lng','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
             THEN (s.data_json->'service_location'->>'lng')::numeric
@@ -3602,15 +3609,63 @@ def marketplace_client_search(
           ELSE NULL
         END
     """
+    base_lat_sql = """
+        CASE
+          WHEN COALESCE(s.data_json->'base_location'->>'lat','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (s.data_json->'base_location'->>'lat')::numeric
+          WHEN COALESCE(s.data_json->'base_location'->>'latitude','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (s.data_json->'base_location'->>'latitude')::numeric
+          ELSE NULL
+        END
+    """
+    base_lng_sql = """
+        CASE
+          WHEN COALESCE(s.data_json->'base_location'->>'lng','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (s.data_json->'base_location'->>'lng')::numeric
+          WHEN COALESCE(s.data_json->'base_location'->>'longitude','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (s.data_json->'base_location'->>'longitude')::numeric
+          ELSE NULL
+        END
+    """
+
+    # For mobile, old records without base_location fall back to the service
+    # location/object coordinates. For both, either location can satisfy the
+    # request independently.
+    target_lat_sql = f"""
+        CASE
+          WHEN {mode_sql}='mobile'
+            THEN COALESCE(({base_lat_sql}), ({service_lat_sql}))
+          ELSE ({service_lat_sql})
+        END
+    """
+    target_lng_sql = f"""
+        CASE
+          WHEN {mode_sql}='mobile'
+            THEN COALESCE(({base_lng_sql}), ({service_lng_sql}))
+          ELSE ({service_lng_sql})
+        END
+    """
+    service_city_sql = "COALESCE(s.data_json->'service_location'->>'city',po.city,'')"
+    service_district_sql = "COALESCE(s.data_json->'service_location'->>'district','')"
+    service_marz_sql = "COALESCE(s.data_json->'service_location'->>'marz',po.marz,'')"
+    base_city_sql = "COALESCE(s.data_json->'base_location'->>'city',po.city,'')"
+    base_district_sql = "COALESCE(s.data_json->'base_location'->>'district','')"
+    base_marz_sql = "COALESCE(s.data_json->'base_location'->>'marz',po.marz,'')"
 
     coverage_type_sql = """
         CASE
-          WHEN LOWER(COALESCE(s.data_json->'coverage'->>'type',
-                              s.data_json->'service_location'->'coverage'->>'type',
-                              s.data_json->>'coverage','')) IN ('all_armenia','all-armenia','all armenia')
+          WHEN LOWER(COALESCE(
+              s.data_json->'coverage'->>'type',
+              s.data_json->'service_contract'->'coverage'->>'type',
+              s.data_json->'service_location'->'coverage'->>'type',
+              s.data_json->>'coverage',''
+          )) IN ('all_armenia','all-armenia','all armenia')
             THEN 'all_armenia'
-          WHEN COALESCE(s.data_json->'coverage'->>'radius_km',
-                        s.data_json->'service_location'->'coverage'->>'radius_km','') ~ '^[0-9]+(\\.[0-9]+)?$'
+          WHEN COALESCE(
+              s.data_json->'coverage'->>'radius_km',
+              s.data_json->'service_contract'->'coverage'->>'radius_km',
+              s.data_json->'service_location'->'coverage'->>'radius_km',''
+          ) ~ '^[0-9]+(\\.[0-9]+)?$'
             THEN 'radius'
           WHEN COALESCE(s.data_json->>'coverage','') ~* 'radius'
             THEN 'radius'
@@ -3619,10 +3674,15 @@ def marketplace_client_search(
     """
     radius_sql = """
         CASE
-          WHEN COALESCE(s.data_json->'coverage'->>'radius_km',
-                        s.data_json->'service_location'->'coverage'->>'radius_km','') ~ '^[0-9]+(\\.[0-9]+)?$'
-            THEN (COALESCE(s.data_json->'coverage'->>'radius_km',
-                           s.data_json->'service_location'->'coverage'->>'radius_km'))::numeric
+          WHEN COALESCE(
+              s.data_json->'coverage'->>'radius_km',
+              s.data_json->'service_contract'->'coverage'->>'radius_km',
+              s.data_json->'service_location'->'coverage'->>'radius_km',''
+          ) ~ '^[0-9]+(\\.[0-9]+)?$'
+            THEN (COALESCE(
+              s.data_json->'coverage'->>'radius_km',
+              s.data_json->'service_contract'->'coverage'->>'radius_km'
+            ))::numeric
           WHEN COALESCE(s.data_json->>'coverage','') ~* 'radius'
             THEN NULLIF(substring(s.data_json->>'coverage' from '([0-9]+(?:\\.[0-9]+)?)'), '')::numeric
           ELSE NULL
@@ -3631,55 +3691,96 @@ def marketplace_client_search(
 
     distance_sql = f"""
         CASE
-          WHEN {coord_sql} IS NULL OR {coord_lng_sql} IS NULL
-               OR {lat is None} OR {lng is None}
-            THEN NULL
-          ELSE 6371.0 * 2.0 * asin(
-            LEAST(1.0, GREATEST(0.0, sqrt(
-              power(sin(radians(({coord_sql}) - %s) / 2.0), 2) +
-              cos(radians(%s)) * cos(radians(({coord_sql}))) *
-              power(sin(radians(({coord_lng_sql}) - %s) / 2.0), 2)
-            )))
-          )
+          WHEN ({target_lat_sql}) IS NULL OR ({target_lng_sql}) IS NULL
+            OR {lat is None} OR {lng is None}
+          THEN NULL
+          ELSE 6371.0 * 2.0 * asin(LEAST(1.0, GREATEST(0.0, sqrt(
+            power(sin(radians((({target_lat_sql}) - %s) / 2.0)), 2) +
+            cos(radians(%s)) * cos(radians(({target_lat_sql}))) *
+            power(sin(radians((({target_lng_sql}) - %s) / 2.0)), 2)
+          ))))
         END
     """
 
-    # PostgreSQL parameters are intentionally kept in SQL order. The
-    # distance expression is only used when coordinates were supplied.
     if lat is not None and lng is not None:
+        # Each occurrence of distance_sql contains three client parameters.
+        # The SQL text contains it exactly once in this WHERE predicate.
         distance_params = [lat, lat, lng]
-        # Radius services are evaluated by actual distance. Without client
-        # coordinates we deliberately fall back to textual geography.
         where.append(f"""(
-            {coverage_type_sql} = 'all_armenia'
-            OR (
-              {coverage_type_sql} = 'radius'
-              AND {radius_sql} IS NOT NULL
-              AND ({distance_sql}) <= {radius_sql}
-            )
-            OR (
-              {coverage_type_sql} = 'city_marz'
-              AND (
-                LOWER(COALESCE(po.city,''))=LOWER(%s)
-                OR LOWER(COALESCE(po.village,''))=LOWER(%s)
-                OR LOWER(COALESCE(po.marz,''))=LOWER(%s)
+          {coverage_type_sql}='all_armenia'
+          OR (
+            {mode_sql}='both'
+            AND (
+              (
+                {coverage_type_sql}='radius'
+                AND {radius_sql} IS NOT NULL
+                AND ({distance_sql.replace(target_lat_sql, service_lat_sql).replace(target_lng_sql, service_lng_sql)}) <= {radius_sql}
+              )
+              OR (
+                {coverage_type_sql}='city_marz'
+                AND (
+                  LOWER({service_city_sql})=LOWER(%s)
+                  OR LOWER({service_district_sql})=LOWER(%s)
+                  OR LOWER({service_marz_sql})=LOWER(%s)
+                )
+              )
+              OR (
+                {coverage_type_sql}='radius'
+                AND {radius_sql} IS NULL
+                AND (
+                  LOWER({service_city_sql})=LOWER(%s)
+                  OR LOWER({service_district_sql})=LOWER(%s)
+                  OR LOWER({service_marz_sql})=LOWER(%s)
+                )
+              )
+              OR (
+                {coverage_type_sql}='radius'
+                AND {radius_sql} IS NOT NULL
+                AND ({distance_sql.replace(target_lat_sql, base_lat_sql).replace(target_lng_sql, base_lng_sql)}) <= {radius_sql}
               )
             )
+          )
+          OR (
+            {mode_sql}<>'both'
+            AND {coverage_type_sql}='radius'
+            AND {radius_sql} IS NOT NULL
+            AND ({distance_sql}) <= {radius_sql}
+          )
+          OR (
+            {mode_sql}<>'both'
+            AND {coverage_type_sql} IN ('city_marz','radius')
+            AND (
+              LOWER(({base_city_sql} if False else service_city_sql))=LOWER(%s)
+              OR LOWER({service_district_sql})=LOWER(%s)
+              OR LOWER({service_marz_sql})=LOWER(%s)
+            )
+          )
         )""")
-        # distance_sql occurs once in the WHERE expression.
+        # Reconstruct parameter order exactly as the rendered SQL uses it:
+        # both/service distance, three service fallback values, both/base
+        # distance, then non-both target distance, then textual fallback.
+        params.extend(distance_params)
+        params.extend([city, city, city])
+        params.extend(distance_params)
         params.extend(distance_params)
         params.extend([city, city, city])
     elif city:
-        where.append("""(
-            LOWER(COALESCE(po.city,''))=LOWER(%s)
-            OR LOWER(COALESCE(po.village,''))=LOWER(%s)
-            OR LOWER(COALESCE(po.marz,''))=LOWER(%s)
-            OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
-            OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'
-            OR LOWER(COALESCE(s.data_json->>'coverage',''))='all_armenia'
-            OR LOWER(COALESCE(s.data_json->'service_location'->>'coverage',''))='all_armenia'
+        where.append(f"""(
+          {coverage_type_sql}='all_armenia'
+          OR LOWER({service_city_sql})=LOWER(%s)
+          OR LOWER({service_district_sql})=LOWER(%s)
+          OR LOWER({service_marz_sql})=LOWER(%s)
+          OR (
+            {mode_sql}='mobile' AND (
+              LOWER({base_city_sql})=LOWER(%s)
+              OR LOWER({base_district_sql})=LOWER(%s)
+              OR LOWER({base_marz_sql})=LOWER(%s)
+            )
+          )
+          OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
+          OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'
         )""")
-        params.extend([city, city, city])
+        params.extend([city, city, city, city, city, city])
 
     sql = f"""WITH candidate_services AS (
         SELECT
@@ -3687,8 +3788,8 @@ def marketplace_client_search(
           s.description,s.price,s.currency,s.data_json,
           p.business_name,p.business_description,p.contact_share_policy,
           c.name_am AS category_name_am,c.name_ru AS category_name_ru,
-          {coord_sql} AS service_lat,
-          {coord_lng_sql} AS service_lng,
+          {target_lat_sql} AS service_lat,
+          {target_lng_sql} AS service_lng,
           {coverage_type_sql} AS coverage_type,
           {radius_sql} AS coverage_radius_km,
           po.city AS object_city,po.marz AS object_marz
@@ -3698,7 +3799,7 @@ def marketplace_client_search(
         JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id
         LEFT JOIN categories c ON c.id=s.category_id
         LEFT JOIN partner_objects po ON po.id=s.object_id AND po.partner_id=p.id
-        WHERE { " AND ".join(where) }
+        WHERE {" AND ".join(where)}
         GROUP BY s.id,p.id,c.id,p.business_name,p.business_description,
                  p.contact_share_policy,po.city,po.marz
     )
@@ -3706,17 +3807,15 @@ def marketplace_client_search(
            business_name,contact_share_policy,category_name_am,category_name_ru,
            data_json->>'service_mode' AS service_mode,
            data_json->'service_location' AS service_location,
+           data_json->'base_location' AS base_location,
            data_json->'coverage' AS service_coverage,
            service_lat,service_lng,coverage_type,coverage_radius_km,
            COALESCE(object_city,'') AS city,COALESCE(object_marz,'') AS marz
     FROM candidate_services
     ORDER BY CASE WHEN price IS NULL THEN 1 ELSE 0 END, service_id DESC
     LIMIT %s"""
-
     params.append(max(1, min(int(limit or 20), 50)))
 
-    # The Haversine expression uses client coordinates; append those params
-    # immediately before the city fallback params in the SQL order.
     result = rows(sql, tuple(params))
     for item in result:
         item.pop("data_json", None)
