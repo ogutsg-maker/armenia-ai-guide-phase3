@@ -2720,6 +2720,23 @@ def record_payment_provider_fee_for_payment(payment: dict):
          json.dumps({"payment_id":payment.get("id"),"provider":payment.get("provider"),"rate_pct":pct},ensure_ascii=False)),True)
 
 
+
+def confirm_booking_by_partner(booking_id: int, partner_user_id: int):
+    """Confirm a pending booking before payment is initiated."""
+    booking = one(
+        """SELECT b.* FROM bookings b
+           JOIN partners p ON p.id=b.partner_id
+           WHERE b.id=%s AND p.user_id=%s""",
+        (int(booking_id), int(partner_user_id)),
+    )
+    if not booking or str(booking.get("status") or "").lower() != "pending_partner_confirmation":
+        return None
+    return execute(
+        """UPDATE bookings SET status='pending_payment',updated_at=NOW()
+           WHERE id=%s AND status='pending_partner_confirmation' RETURNING *""",
+        (int(booking_id),), True,
+    )
+
 def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
     payment = one("SELECT * FROM payments WHERE id=%s", (int(payment_id),))
     if not payment:
@@ -2739,10 +2756,20 @@ def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
     if booking_id:
         booking = execute(
             """UPDATE bookings SET status='paid',updated_at=NOW()
-               WHERE id=%s AND status IN ('pending_payment','confirmed')
-               RETURNING *""",
+               WHERE id=%s AND status='pending_payment' RETURNING *""",
             (int(booking_id),), True)
         booking = booking or one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
+        if booking:
+            existing_check = one("SELECT id FROM booking_checkins WHERE booking_id=%s",
+                                 (int(booking["id"]),))
+            if not existing_check:
+                import secrets
+                execute(
+                    """INSERT INTO booking_checkins(booking_id,token,expires_at,status)
+                       VALUES(%s,%s,COALESCE(%s,NOW()) + INTERVAL '1 hour','active')""",
+                    (int(booking["id"]), secrets.token_urlsafe(24), booking.get("scheduled_at")),
+                    False,
+                )
         if booking and booking.get("request_id"):
             execute("""UPDATE service_requests SET status='booked',updated_at=NOW()
                        WHERE id=%s AND status<>'booked'""",(int(booking["request_id"]),),False)
