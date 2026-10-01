@@ -339,28 +339,17 @@ async def direct_booking(request):
         return web.json_response({'ok':False,'error':'booking_request_conflict'},status=409)
 
     # --- Charge the platform commission via the Idram provider layer ---
-    idram = IdramProvider()
-    intent = idram.create_invoice(
-        amount=commission, currency=currency,
-        description=f"Platform commission: {service['name']}",
-        order_id=req['id'],
-        metadata={'service_id': service_id, 'request_id': req['id'], 'direct': True},
-    )
-    txn = intent.transaction_id
-
     persisted = data_core.persist_direct_booking(
         client_id=uid, service=service, request_row=req,
         package_id=int(package_id) if package_id else None,
-        status=('paid' if intent.status=='paid' else 'pending_payment'),
+        status='pending_partner_confirmation',
         price=price, currency=currency, commission=commission,
         partner_amount=partner_amount, scheduled_at=scheduled_at,
         client_note=client_note,
-        intent=intent,
+        intent=None,
         metadata={
             'booking_channel':'storefront_direct',
-            'payment_mode':intent.provider,
-            'payment_status':intent.status,
-            'test_transaction':txn,
+            'payment_status':'pending_partner_confirmation',
             'service_price':price,
             'commission_tariff':{'type':_commission(service)[0],'value':_commission(service)[1]},
             'package':({'id':package['id'],'name':package['name'],'price':float(package['price'] or 0)} if package else None),
@@ -372,8 +361,6 @@ async def direct_booking(request):
     booking=persisted['booking']
     payment=persisted['payment']
     check=persisted.get('checkin')
-    if not check:
-        return web.json_response({'ok':False,'error':'booking_checkin_not_created'},status=500)
 
     display = data_core.get_partner_booking_display(partner_id)
     if not display:
@@ -410,10 +397,7 @@ async def direct_booking(request):
     except Exception:
         pass
 
-    try:
-        qr_uri = qr_util.qr_data_uri(check['token'])
-    except Exception:
-        qr_uri = None
+    qr_uri = qr_util.qr_data_uri(check['token']) if check else None
     return web.json_response({
         'ok': True, 'payment': payment, 'booking': booking, 'checkin': check,
         'qr': qr_uri, 'partner': details,
