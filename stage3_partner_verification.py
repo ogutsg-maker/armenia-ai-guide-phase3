@@ -1529,63 +1529,22 @@ async def api_admin_direction_verification_action(request):
     admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     case_id = int(request.match_info["id"])
     action = str(request.match_info["action"] or "").strip().lower()
-    case = _db_fetchone("SELECT * FROM partner_direction_verification_cases WHERE id=%s", (case_id,))
-    if not case:
-        return web.json_response({"ok":False,"error":"verification_case_not_found"},status=404)
-    if action not in {"approve","reject"}:
-        return web.json_response({"ok":False,"error":"unknown_action"},status=400)
     reason = str((await request.json()).get("reason") or "").strip()[:2000] if request.can_read_body else ""
+    try:
+        if action == "approve":
+            result = data_core.admin_approve_direction_verification(
+                case_id=case_id, admin_telegram_id=admin_id,
+            )
+        elif action == "reject":
+            result = data_core.admin_reject_direction_verification(
+                case_id=case_id, reason=reason, admin_telegram_id=admin_id,
+            )
+        else:
+            return web.json_response({"ok":False,"error":"unknown_action"},status=400)
+    except Exception as exc:
+        return web.json_response({"ok":False,"error":str(exc)[:500]},status=400)
 
-    if action == "approve":
-        doc = _db_fetchone(
-            """SELECT id,partner_id,partner_direction_id,status
-               FROM partner_verification_documents
-               WHERE partner_direction_id=%s
-               ORDER BY id DESC LIMIT 1""",
-            (int(case["partner_direction_id"]),),
-        )
-        if not doc:
-            return web.json_response({"ok":False,"error":"document_not_found"},status=409)
-        if str(doc.get("status") or "").lower() != "pending":
-            return web.json_response({"ok":False,"error":"document_not_pending"},status=409)
-        _db_execute(
-            """UPDATE partner_verification_documents
-               SET status='approved',rejection_reason=NULL,reviewed_by=%s,reviewed_at=NOW(),is_current=TRUE
-               WHERE id=%s""",
-            (admin_id,int(doc["id"])),
-        )
-        _db_execute(
-            """UPDATE partner_directions
-               SET status='approved',rejection_reason=NULL,updated_at=NOW()
-               WHERE id=%s""",
-            (int(case["partner_direction_id"]),),
-        )
-        _db_execute(
-            """UPDATE partner_direction_verification_cases
-               SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL,updated_at=NOW()
-               WHERE id=%s""",
-            (admin_id,case_id),
-        )
-        return web.json_response({"ok":True,"status":"approved","case_id":case_id})
-
-    if not reason:
-        reason = "Փաստաթուղթը չի հաստատում տվյալ ուղղությամբ գործունեությունը։"
-    _db_execute(
-        """UPDATE partner_verification_documents
-           SET status='rejected',rejection_reason=%s,reviewed_by=%s,reviewed_at=NOW(),is_current=FALSE
-           WHERE partner_direction_id=%s AND status='pending'""",
-        (reason,admin_id,int(case["partner_direction_id"])),
-    )
-    _db_execute(
-        """UPDATE partner_directions SET status='rejected',rejection_reason=%s,updated_at=NOW()
-           WHERE id=%s""",(reason,int(case["partner_direction_id"])),
-    )
-    _db_execute(
-        """UPDATE partner_direction_verification_cases
-           SET status='rejected',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=%s,updated_at=NOW()
-           WHERE id=%s""",(admin_id,reason,case_id),
-    )
-    return web.json_response({"ok":True,"status":"rejected","case_id":case_id,"reason":reason})
+    return web.json_response({"ok":True,**result})
 
 
 def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=True):
