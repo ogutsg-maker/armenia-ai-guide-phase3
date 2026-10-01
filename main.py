@@ -573,7 +573,7 @@ async def main():
     app.router.add_static("/", path=str(WEB_APPS_DIR), name="web_apps")
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "10000"))
     await web.TCPSite(runner, "0.0.0.0", port).start()
     logger.info("🌐 HTTP-сервер запущен на порту %s", port)
     logger.info("🛠️ Выполняем отложенные startup-мigration после bind порта")
@@ -590,24 +590,19 @@ async def main():
         render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
         if render_url:
             webhook_url = f"{render_url}/telegram/webhook"
-    if webhook_url:
-        try:
-            # drop_pending_updates=True + delete_webhook first clears any stale
-            # getUpdates session so a previous poller stops conflicting.
-            await bot.delete_webhook(drop_pending_updates=True)
-            await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-            logger.info("✅ Telegram webhook configured: %s", webhook_url)
-        except Exception:
-            logger.exception("Could not configure Telegram webhook")
-            raise
-        # In webhook mode nothing blocks the event loop, so we must keep the
-        # process (and the aiohttp server) alive explicitly. Without this the
-        # coroutine returns, asyncio.run() exits and the server dies.
-        logger.info("📡 Webhook mode active; serving updates via /telegram/webhook")
-        await asyncio.Event().wait()
-    else:
-        logger.info("ℹ️ TELEGRAM_WEBHOOK_URL/RENDER_EXTERNAL_URL not set; using polling")
-        await dp.start_polling(bot)
+    if not webhook_url:
+        raise RuntimeError("TELEGRAM_WEBHOOK_URL or RENDER_EXTERNAL_URL is required; polling runtime has been removed")
+    try:
+        # Webhook is the single Render runtime mode. Clear any stale Telegram
+        # getUpdates/poller session before registering the webhook.
+        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+        logger.info("✅ Telegram webhook configured: %s", webhook_url)
+    except Exception:
+        logger.exception("Could not configure Telegram webhook")
+        raise
+    logger.info("📡 Webhook mode active; serving updates via /telegram/webhook")
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
