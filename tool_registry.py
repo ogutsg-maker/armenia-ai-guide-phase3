@@ -154,7 +154,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "search_services",
-                "Search real approved marketplace services. Never invent results.",
+                "Search real ACTIVE marketplace services. Never invent results. Only services whose backend status is active and whose partner/direction checks pass are eligible.",
                 {
                     "query": {"type": "string"},
                     "city": {"type": "string"},
@@ -197,7 +197,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "get_my_services",
-                "List the authenticated partner's services, optionally filtered by company.",
+                "List the authenticated partner's services, optionally filtered by company. Service status is backend-owned; active means available to the client marketplace.",
                 {"company_id": _nullable("integer"), "limit": {"type": "integer"}},
                 contexts=p,
             ),
