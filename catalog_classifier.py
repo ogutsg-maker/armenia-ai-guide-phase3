@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 import data_core
@@ -378,114 +379,194 @@ async def _notify_unclassified_services(
         logger.exception("Failed to create admin catalogue alert.")
 
 
-async def _semantic_resolve_unresolved(
-    *,
-    services: list[str],
-    candidate_rows: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Resolve disputed service phrases through one text-only Groq bridge.
+def _label_similarity(service: str, label: str) -> float:
+    """Return a conservative lexical similarity for one live catalogue label."""
+    service_n = _normalize_text(service)
+    label_n = _normalize_text(label)
+    if not service_n or not label_n:
+        return 0.0
 
-    Groq sees only the disputed service names and live catalogue labels.
-    Database IDs never enter the prompt and are resolved back to DB rows by
-    Python after exact normalized text validation.
+    if service_n == label_n:
+        return 1.0
+
+    service_tokens = _tokens(service_n)
+    label_tokens = _tokens(label_n)
+    if not service_tokens or not label_tokens:
+        return SequenceMatcher(None, service_n, label_n).ratio()
+
+    overlap = _token_overlap_ratio(service_tokens, label_tokens)
+    root = 1.0 if _root_token_match(service_tokens, label_tokens) else 0.0
+    fuzzy = SequenceMatcher(None, service_n, label_n).ratio()
+
+    # Direct multi-token coverage is the strongest signal. Fuzzy similarity
+    # alone is deliberately insufficient for classification.
+    return max(
+        overlap,
+        0.75 * root + 0.25 * fuzzy,
+        fuzzy,
+    )
+
+
+def _classify_one_service(
+    service_name: str,
+    catalog_rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, float, float]:
+    """Two-pass conservative majority vote over the live catalogue.
+
+    Pass 1: deterministic lexical/root evidence across AM/RU/EN labels.
+    Pass 2: sequence similarity as a secondary signal.
+    A category is accepted only when the two passes agree, or when the same
+    category wins a 2-of-3 language-label majority with sufficient confidence.
     """
-    if not services or not candidate_rows:
-        return {}
-
     candidates = []
-    seen = set()
-    for row in candidate_rows:
-        name = str(
-            row.get("category_am")
-            or row.get("category_ru")
-            or row.get("category_en")
-            or ""
-        ).strip()
-        if not name:
+    for row in catalog_rows:
+        labels = [
+            str(row.get("category_am") or "").strip(),
+            str(row.get("category_ru") or "").strip(),
+            str(row.get("category_en") or "").strip(),
+        ]
+        labels = [x for x in labels if x]
+        if not labels:
             continue
-        key = _normalize_text(name)
-        if key in seen:
-            continue
-        seen.add(key)
-        candidates.append(name)
+
+        direct_scores = [_direct_match_score(service_name, x) for x in labels]
+        token_scores = [_token_overlap_ratio(_tokens(service_name), _tokens(x)) for x in labels]
+        fuzzy_scores = [SequenceMatcher(None, _normalize_text(service_name), _normalize_text(x)).ratio() for x in labels]
+
+        lexical = max(direct_scores + token_scores, default=0.0)
+        fuzzy = max(fuzzy_scores, default=0.0)
+        combined = 0.65 * lexical + 0.35 * fuzzy
+
+        # Language-label majority: each available label votes for this
+        # category only when it is independently strong enough.
+        votes = 0
+        for d, t, f in zip(direct_scores, token_scores, fuzzy_scores):
+            if d >= 1.0 or t >= TOKEN_OVERLAP_GATE:
+                votes += 1
+            elif f >= FUZZY_CONFIDENCE_GATE:
+                votes += 1
+
+        candidates.append({
+            "row": row,
+            "lexical": lexical,
+            "fuzzy": fuzzy,
+            "combined": combined,
+            "votes": votes,
+        })
 
     if not candidates:
-        return {}
+        return None, 0.0, 0.0
 
-    try:
-        from groq import AsyncGroq
+    # First pass: lexical/semantic evidence.
+    lexical_rank = sorted(candidates, key=lambda x: (x["lexical"], x["votes"], x["combined"]), reverse=True)
+    first = lexical_rank[0]
 
-        api_key = os.getenv("GROQ_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("GROQ_API_KEY is not configured")
+    # Second pass: fuzzy evidence.
+    fuzzy_rank = sorted(candidates, key=lambda x: (x["fuzzy"], x["combined"]), reverse=True)
+    second_pass = fuzzy_rank[0]
 
-        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
-        prompt = f"""Перед тобой спорные услуги мастера: {json.dumps(services, ensure_ascii=False)}.
-А вот текстовый список доступных подкатегорий нашего живого каталога из БД для вычисленного направления: {json.dumps(candidates, ensure_ascii=False)}.
+    # Prefer an actual majority. Otherwise require both passes to agree.
+    if first["votes"] >= 2:
+        winner = first
+    elif first["row"].get("category_id") == second_pass["row"].get("category_id"):
+        winner = first
+    else:
+        return None, first["combined"], max(0.0, first["combined"] - second_pass["combined"])
 
-Проведи семантический анализ. Верни JSON, где для каждой услуги мастера сопоставлено СТРОГО ТЕКСТОВОЕ название категории из нашего списка, которая на 100% подходит по смыслу.
+    ranked = sorted(candidates, key=lambda x: (x["combined"], x["votes"], x["lexical"]), reverse=True)
+    best = ranked[0]
+    second_score = ranked[1]["combined"] if len(ranked) > 1 else 0.0
+    margin = best["combined"] - second_score
 
-Примеры:
-- "հարդարում" → "Դասավորում"
-- "երեկոյան դիմահարդարում" → "Դիմահարդարում"
+    # Both gates are required. A single close alternative must prevent a
+    # false positive and send the service to Admin classification review.
+    if best["combined"] < FUZZY_CONFIDENCE_GATE or margin < 0.10:
+        return None, best["combined"], margin
 
-Правила:
-- Используй только категории из предоставленного списка.
-- Возвращай название категории ровно так, как оно написано в списке.
-- Не генерируй ID.
-- Не придумывай новые категории.
-- Не выбирай категорию только из-за общего корня или одного общего слова.
-- Если точного смыслового соответствия нет, верни null.
-
-Верни только JSON:
-{{"matches":[{{"service":"исходное название услуги","category":"точное название категории или null"}}]}}"""
-
-        client = AsyncGroq(api_key=api_key)
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            reasoning_effort="low",
-            max_tokens=max(350, min(900, 180 + len(services) * 120)),
-        )
-        raw = (response.choices[0].message.content or "{}").strip()
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return {}
-
-        logger.info(
-            "Catalogue semantic raw result: services=%s result=%s",
-            services,
-            data,
-        )
-
-        allowed = {_normalize_text(x): x for x in candidates}
-        result = {}
-        raw_matches = data.get("matches")
-        if not isinstance(raw_matches, list):
-            raw_matches = []
-
-        for item in raw_matches:
-            if not isinstance(item, dict):
-                continue
-            service = str(item.get("service") or "").strip()
-            category = str(item.get("category") or "").strip()
-            if not service or not category:
-                continue
-
-            canonical = allowed.get(_normalize_text(category))
-            if not canonical:
-                continue
-
-            result[_normalize_text(service)] = {"category_name": canonical}
-
-        logger.info("Catalogue semantic accepted proposals: %s", result)
-        return result
-    except Exception:
-        logger.exception("Semantic catalogue resolution failed.")
-        return {}
+    return best["row"], best["combined"], margin
 
 
+async def classify_services_batch(
+    db,
+    extracted_services: list[dict],
+    telegram_id: int | None = None,
+    application_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve services only against the live DB catalogue.
+
+    AI is not the classifier. The backend owns normalization, token/root
+    matching, sequence similarity, majority vote and confidence gates.
+    """
+    services = []
+    for item in extracted_services or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("service_name") or "").strip()
+        if not name:
+            continue
+        price = item.get("price")
+        price_type = str(item.get("price_type") or "fixed").strip().lower()
+        if price_type not in {"fixed", "from"}:
+            price_type = "fixed"
+        services.append({"name": name, "price": price, "price_type": price_type})
+
+    if not services:
+        return []
+
+    catalog_rows = await get_catalog(db)
+    if not catalog_rows:
+        logger.error("Live catalogue is empty or unavailable.")
+        return [
+            {
+                "service_name": x["name"],
+                "price": x["price"],
+                "price_type": x["price_type"],
+                "subcategory_id": None,
+                "direction_id": None,
+                "catalog_match_status": "needs_admin_review",
+            }
+            for x in services
+        ]
+
+    result = []
+    unresolved = []
+    for item in services:
+        row, score, margin = _classify_one_service(item["name"], catalog_rows)
+        base = {
+            "service_name": item["name"],
+            "price": item["price"],
+            "price_type": item["price_type"],
+            "confidence": round(score, 4),
+            "margin": round(margin, 4),
+        }
+        if row and row.get("category_id") is not None and row.get("master_id") is not None:
+            result.append({
+                **base,
+                "subcategory_id": row["category_id"],
+                "direction_id": row["master_id"],
+                "subcategory_name_am": row.get("category_am"),
+                "subcategory_name_ru": row.get("category_ru"),
+                "subcategory_name_en": row.get("category_en"),
+                "catalog_match_status": "deterministic_confirmed",
+            })
+        else:
+            result.append({
+                **base,
+                "subcategory_id": None,
+                "direction_id": None,
+                "subcategory_name_am": None,
+                "subcategory_name_ru": None,
+                "subcategory_name_en": None,
+                "catalog_match_status": "needs_admin_review",
+            })
+            unresolved.append((item["name"], score))
+
+    await _notify_unclassified_services(
+        services=unresolved,
+        telegram_id=telegram_id,
+        application_id=application_id,
+    )
+    return result
 async def classify_services_batch(
     db,
     extracted_services: list[dict],
