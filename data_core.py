@@ -2880,11 +2880,11 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
 def create_direct_booking_request(client_id: int, summary: str, preferences: dict):
     return execute(
         """INSERT INTO service_requests(client_id,status,language,summary,preferences_json)
-           SELECT %s,'booked','hy',%s,%s::jsonb
+           SELECT %s,'pending_partner_confirmation','hy',%s,%s::jsonb
            WHERE NOT EXISTS (
                SELECT 1 FROM service_requests
                WHERE client_id=%s
-                 AND status IN ('booked','pending_payment')
+                 AND status IN ('booked','pending_payment','pending_partner_confirmation')
                  AND preferences_json->>'direct'='true'
                  AND preferences_json->>'service_id'=%s
                  AND created_at > NOW() - INTERVAL '2 minutes'
