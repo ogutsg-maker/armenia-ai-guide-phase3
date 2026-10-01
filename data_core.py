@@ -2574,6 +2574,7 @@ def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
                VALUES(%s,%s,'refund',%s,'AMD',%s,'booking_cancellation')""",
             (int(booking_id), booking.get("partner_id"), float(refund_amount),
              str(reason or "Booking refund")[:1000]), False)
+        reverse_booking_financial_entries(booking, float(refund_amount))
     return updated
 
 def update_payment_status_for_booking(booking_id: int, status: str):
@@ -2770,6 +2771,13 @@ def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
                     (int(booking["id"]), secrets.token_urlsafe(24), booking.get("scheduled_at")),
                     False,
                 )
+        if booking:
+            add_booking_financial_entries(
+                int(booking["partner_id"]), int(booking["id"]),
+                float(booking.get("commission_amount") or 0),
+                float(booking.get("partner_amount") or 0),
+                booking.get("currency") or "AMD",
+            )
         if booking and booking.get("request_id"):
             execute("""UPDATE service_requests SET status='booked',updated_at=NOW()
                        WHERE id=%s AND status<>'booked'""",(int(booking["request_id"]),),False)
@@ -2895,16 +2903,52 @@ def create_direct_booking_request(client_id: int, summary: str, preferences: dic
 
 def add_booking_financial_entries(partner_id: int, booking_id: int,
                                   commission: float, partner_amount: float, currency: str):
+    # Financial entries are created only after payment is confirmed.
+    existing = one(
+        """SELECT id FROM partner_financial_ledger
+           WHERE booking_id=%s AND entry_type='commission' LIMIT 1""",
+        (int(booking_id),),
+    )
+    if existing:
+        return existing
     execute("""INSERT INTO partner_financial_ledger
                (partner_id,booking_id,entry_type,amount,currency,description)
                VALUES(%s,%s,'commission',%s,%s,%s)""",
             (int(partner_id),int(booking_id),float(commission),currency,
-             'Direct booking platform commission'),False)
+             'Platform commission (payment confirmed)'),False)
     execute("""INSERT INTO partner_financial_ledger
                (partner_id,booking_id,entry_type,amount,currency,description)
                VALUES(%s,%s,'partner_due',%s,%s,%s)""",
             (int(partner_id),int(booking_id),float(partner_amount),currency,
-             'Partner amount after platform commission'),False)
+             'Partner amount after platform commission (payment confirmed)'),False)
+
+def reverse_booking_financial_entries(booking: dict, refund_amount: float):
+    if not booking or float(refund_amount or 0) <= 0:
+        return
+    partner_id=int(booking.get("partner_id") or 0)
+    booking_id=int(booking.get("id") or 0)
+    commission=float(booking.get("commission_amount") or 0)
+    partner_amount=float(booking.get("partner_amount") or 0)
+    currency=booking.get("currency") or "AMD"
+    if not partner_id or not booking_id:
+        return
+    existing=one(
+        "SELECT id FROM partner_financial_ledger WHERE booking_id=%s AND entry_type='commission_refund' LIMIT 1",
+        (booking_id,),
+    )
+    if existing:
+        return
+    # Refund reverses the amounts actually recorded for this booking.
+    ratio=min(1.0, float(refund_amount)/max(float(booking.get("agreed_price") or 0), 1e-9))
+    execute(
+        """INSERT INTO partner_financial_ledger
+           (partner_id,booking_id,entry_type,amount,currency,description)
+           VALUES(%s,%s,'commission_refund',%s,%s,%s),
+                 (%s,%s,'partner_due_refund',%s,%s,%s)""",
+        (partner_id,booking_id,-round(commission*ratio,2),currency,'Refund reversal of platform commission',
+         partner_id,booking_id,-round(partner_amount*ratio,2),currency,'Refund reversal of partner due'),
+        False,
+    )
 
 def create_booking_checkin(booking_id: int, token: str, starts_at=None):
     """Create a one-hour QR window anchored to the service start when known."""
