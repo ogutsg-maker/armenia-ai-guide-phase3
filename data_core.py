@@ -3077,11 +3077,9 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "subcategory_id": raw.get("subcategory_id"),
         })
 
-    # Classification is a backend responsibility and must happen before the
-    # application is written. The AI may provide service names, but it cannot
-    # invent catalogue IDs. Preserve unresolved services for admin review.
-    prepared = resolve_catalog_services(prepared, limit=500)
-
+    # The service application is created before catalogue classification.
+    # Admin classification runs afterwards against the live catalogue. The AI
+    # may provide a service name but never supplies a catalogue ID.
     # Documents are optional service data. If a document exists, keep it
     # attached for admin review; it is not a prerequisite for creating the
     # service application.
