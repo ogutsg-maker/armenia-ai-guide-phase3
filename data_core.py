@@ -2736,6 +2736,63 @@ def confirm_booking_by_partner(booking_id: int, partner_user_id: int):
         (int(booking_id),), True,
     )
 
+def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
+    """Partner confirmation gate plus creation/update of the client's payment invoice."""
+    booking = get_booking(int(booking_id), actor_role="partner", actor_id=int(partner_user_id))
+    if not booking:
+        return None
+    payment = one(
+        "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
+        (int(booking_id),),
+    )
+    if str(booking.get("status") or "").lower() == "pending_payment":
+        data = payment.get("data_json") if payment else {}
+        if isinstance(data, str):
+            try: data = json.loads(data)
+            except Exception: data = {}
+        return {"booking": booking, "payment": payment, "payment_url": (data or {}).get("payment_url")}
+    if str(booking.get("status") or "").lower() != "pending_partner_confirmation":
+        return None
+
+    confirmed = confirm_booking_by_partner(int(booking_id), int(partner_user_id))
+    if not confirmed:
+        return None
+    payment = one(
+        "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
+        (int(booking_id),),
+    )
+    if not payment:
+        return None
+
+    from idram import IdramProvider
+    amount = float(payment.get("amount") or 0)
+    intent = IdramProvider().create_invoice(
+        amount=amount,
+        currency=payment.get("currency") or "AMD",
+        description=f"Armenia AI Guide booking #{booking_id}",
+        order_id=str(booking_id),
+        metadata={"booking_id": int(booking_id), "payment_id": int(payment["id"])},
+    )
+    data = payment.get("data_json") or {}
+    if isinstance(data, str):
+        try: data = json.loads(data)
+        except Exception: data = {}
+    data = dict(data or {})
+    data.update({
+        "mode": intent.mode,
+        "bill_no": intent.bill_no,
+        "payment_url": intent.payment_url,
+        "invoice_created_at": __import__("datetime").datetime.utcnow().isoformat(),
+    })
+    updated = execute(
+        """UPDATE payments
+           SET provider=%s,provider_payment_id=%s,data_json=%s::jsonb,updated_at=NOW()
+           WHERE id=%s RETURNING *""",
+        (intent.provider, intent.transaction_id or None, json.dumps(data, ensure_ascii=False),
+         int(payment["id"])), True,
+    )
+    return {"booking": confirmed, "payment": updated or payment, "payment_url": intent.payment_url}
+
 def reconcile_paid_payment(payment_id:int, transaction_id:str|None=None):
     payment=one("SELECT * FROM payments WHERE id=%s",(int(payment_id),))
     if not payment: return None
