@@ -3507,7 +3507,9 @@ def marketplace_client_search(query="", city="", category_id=0, limit=20):
                 OR LOWER(COALESCE(po.village,''))=LOWER(%s)
                 OR LOWER(COALESCE(po.marz,''))=LOWER(%s)
                 OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
-                OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'))""")
+                OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'
+                OR LOWER(COALESCE(s.data_json->>'coverage',''))='all_armenia'
+                OR LOWER(COALESCE(s.data_json->'service_location'->>'coverage',''))='all_armenia'))""")
         params.extend([city,city])
     if category_id:
         params.append(category_id); where.append("s.category_id=%s")
