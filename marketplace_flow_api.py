@@ -262,13 +262,11 @@ def _parse_scheduled_at(value):
 
 
 async def direct_booking(request):
-    """Book a service straight from the storefront at its listed price.
+    """Create a direct booking request.
 
-    Skips the AI negotiation entirely: the client picks a service (and
-    optionally one package + several add-on options), the price is computed
-    server-side from APPROVED, ACTIVE catalogue rows, the platform commission
-    is charged through the Idram provider (test mode = fictitious settlement),
-    and a paid booking with a check-in QR is issued.
+    The booking waits for explicit partner confirmation. Payment is initiated
+    only after that confirmation, and a QR/check-in is created only after the
+    payment provider confirms settlement.
     """
     uid = _uid(request)
     service_id = int(request.match_info['service_id'])
@@ -446,7 +444,10 @@ async def _cancel_booking(request, actor):
     payment_status=str((payment or {}).get('status') or '').lower()
     paid_total=float((payment or {}).get('amount') or 0) if payment_status=="paid" else 0.0
     refund_amount=round(paid_total*pct/100.0,2) if paid_total>0 else 0.0
-    new_status='refunded' if refund_amount>0 else 'cancelled'
+    # Refund is not settled at cancellation time. The booking stays cancelled
+    # while the payment is refund_pending; provider reconciliation may later
+    # transition it to refunded.
+    new_status='cancelled'
     updated=data_core.cancel_booking(
         booking_id, actor_role=actor, actor_id=uid, new_status=new_status,
         reason=reason, refund_amount=refund_amount
