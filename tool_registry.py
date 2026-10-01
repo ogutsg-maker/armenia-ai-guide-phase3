@@ -254,8 +254,13 @@ class ToolRegistry:
                     "price": _nullable("number"),
                     "category_id": _nullable("integer"),
                     "address_id": _nullable("integer"),
+                    "address_text": _nullable("string"),
                     "phone": _nullable("string"),
                     "description": _nullable("string"),
+                    "price_type": {"type": "string", "enum": ["from", "fixed"]},
+                    "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
+                    "service_location": _nullable("object"),
+                    "coverage": _nullable("string"),
                 },
                 required=("company_id", "name"),
                 tool_type=ToolType.ACTION_CONFIRM,
@@ -266,6 +271,11 @@ class ToolRegistry:
                 "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. Use one item per distinct service. Confirmation is required once for the whole batch.",
                 {
                     "company_id": _nullable("integer"),
+                    "address_id": _nullable("integer"),
+                    "address_text": _nullable("string"),
+                    "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
+                    "service_location": _nullable("object"),
+                    "coverage": _nullable("string"),
                     "services": {
                         "type": "array",
                         "minItems": 1,
@@ -276,6 +286,7 @@ class ToolRegistry:
                                 "price": _nullable("number"),
                                 "price_type": {"type": "string", "enum": ["from", "fixed"]},
                                 "address_id": _nullable("integer"),
+                                "address_text": _nullable("string"),
                                 "phone": _nullable("string"),
                                 "description": _nullable("string"),
                                 "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
@@ -1049,7 +1060,7 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
-                if args.get("address_id") in (None, ""):
+                if args.get("address_id") in (None, "") and not str(args.get("address_text") or "").strip() and not isinstance(args.get("service_location"), dict):
                     company_addresses = [
                         x for x in data_core.get_partner_addresses(
                             pid, actor_user_id=self.telegram_id, limit=200
@@ -1071,6 +1082,11 @@ class ToolRegistry:
                     "address_id": args.get("address_id"),
                     "phone": args.get("phone"),
                     "description": args.get("description"),
+                    "price_type": args.get("price_type") or "fixed",
+                    "service_mode": args.get("service_mode"),
+                    "service_location": args.get("service_location"),
+                    "coverage": args.get("coverage"),
+                    "address_text": args.get("address_text"),
                 }], limit=500)[0]
                 return self._prepare_action(
                     name,
@@ -1084,6 +1100,10 @@ class ToolRegistry:
                         "address_id": resolved.get("address_id"),
                         "phone": resolved.get("phone"),
                         "description": resolved.get("description"),
+                        "address_text": resolved.get("address_text") or args.get("address_text"),
+                        "service_mode": resolved.get("service_mode") or args.get("service_mode"),
+                        "service_location": resolved.get("service_location") or args.get("service_location"),
+                        "coverage": resolved.get("coverage") or args.get("coverage"),
                         "catalog_match_status": resolved.get("catalog_match_status"),
                         "catalog_options": resolved.get("catalog_options") or [],
                         "document_id": int(document["id"]),
@@ -1182,7 +1202,7 @@ class ToolRegistry:
                         "description": raw.get("description"),
                         "service_mode": raw.get("service_mode") or service_mode,
                         "service_location": raw.get("service_location") or location,
-                        "coverage": raw.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
+                        "coverage": raw.get("coverage") or args.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
                         "address_text": address_text,
                     })
 
