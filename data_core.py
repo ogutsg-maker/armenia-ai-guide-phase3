@@ -2985,7 +2985,9 @@ def reverse_booking_financial_entries(booking: dict, refund_amount: float):
     if existing:
         return
     # Refund reverses the amounts actually recorded for this booking.
-    ratio=min(1.0, float(refund_amount)/max(float(booking.get("agreed_price") or 0), 1e-9))
+    payment=one("SELECT amount,status FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+    paid_total=float((payment or {}).get("amount") or 0)
+    ratio=min(1.0, float(refund_amount)/max(paid_total, 1e-9))
     execute(
         """INSERT INTO partner_financial_ledger
            (partner_id,booking_id,entry_type,amount,currency,description)
