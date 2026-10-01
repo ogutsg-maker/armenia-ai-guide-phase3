@@ -170,6 +170,8 @@ class ToolRegistry:
                     "city": {"type": "string"},
                     "category_id": _nullable("integer"),
                     "max_price": _nullable("number"),
+                    "client_lat": _nullable("number"),
+                    "client_lng": _nullable("number"),
                     "limit": {"type": "integer"},
                 },
                 contexts=(ContextType.CLIENT, ContextType.ADMIN),
@@ -733,6 +735,8 @@ class ToolRegistry:
                 category_id=args.get("category_id"),
                 city=str(args.get("city") or ""),
                 max_price=args.get("max_price"),
+                client_lat=args.get("client_lat"),
+                client_lng=args.get("client_lng"),
                 limit=max(1, min(int(args.get("limit") or 20), 100)),
             )}
 
