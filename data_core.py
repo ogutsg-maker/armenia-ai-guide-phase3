@@ -1541,6 +1541,37 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
                 "services": unresolved,
                 "message": "Որոշ ծառայություններ դեռ դասակարգված չեն։"}
 
+    # Use the same catalog/direction integrity rule as the final approval
+    # transaction, so the read-only gate cannot promise an approval that the
+    # execution path will later reject.
+    category_ids = []
+    for svc in services:
+        cid = svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id")
+        try:
+            category_ids.append(int(cid))
+        except (TypeError, ValueError):
+            return {"ok": False, "can_approve": False, "reason_code": "invalid_category_id",
+                    "services": [str(svc.get("name") or "")],
+                    "message": "Ծառայության կատալոգային դասակարգումը անվավեր է։"}
+    if master_id is None:
+        first_cat = get_catalog_category(category_ids[0]) if category_ids else None
+        if first_cat and first_cat.get("master_category_id"):
+            master_id = int(first_cat["master_category_id"])
+    if master_id is None:
+        return {"ok": False, "can_approve": False, "reason_code": "direction_required",
+                "message": "Հայտի համար ուղղությունը չի որոշվել։"}
+    valid_rows = rows(
+        """SELECT id FROM categories
+           WHERE master_category_id=%s AND id=ANY(%s::int[]) AND is_active=TRUE""",
+        (int(master_id), list(set(category_ids))),
+    )
+    valid_ids = {int(x["id"]) for x in valid_rows}
+    invalid = [cid for cid in category_ids if cid not in valid_ids]
+    if invalid:
+        return {"ok": False, "can_approve": False, "reason_code": "invalid_subcategory_for_direction",
+                "invalid_category_ids": invalid,
+                "message": "Որոշ ծառայությունների կատալոգային ուղղությունը չի համապատասխանում հայտի ուղղությանը։"}
+
     return {
         "ok": True,
         "can_approve": True,
