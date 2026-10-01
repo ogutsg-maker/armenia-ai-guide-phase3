@@ -1454,6 +1454,7 @@ class ToolRegistry:
                 price_type=args.get("price_type"),
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
+                coverage=args.get("coverage"),
                 submission_token=args.get("submission_token"),
             )}
 

@@ -2881,13 +2881,15 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
                                       price_type: str | None = None,
                                       service_mode: str | None = None,
                                       service_location: dict[str, Any] | None = None,
+                                      coverage: dict[str, Any] | None = None,
                                       submission_token: str | None = None):
     """Create one admin-review application for a single AI-added service."""
     return create_partner_services_proposal(
         partner_id=partner_id, actor_user_id=actor_user_id, company_id=company_id,
         services=[{"name": name, "price": price, "address_id": address_id,
                    "phone": phone, "category_id": category_id, "description": description,
-                   "price_type": price_type}],
+                   "price_type": price_type,
+                   "coverage": coverage}],
         service_mode=service_mode,
         service_location=service_location,
         submission_token=submission_token,
