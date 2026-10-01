@@ -3045,10 +3045,8 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
 
         raw_address_text = str(raw.get("address_text") or "").strip()
         effective_mode = str(raw.get("service_mode") or service_mode or "").strip().lower()
-        # Mobile services do not require a fixed service address: the client
-        # location is the service location and the partner's dispatch/base
-        # location is stored separately. at_address/both still require a
-        # concrete service address.
+        # Service mode is optional. Work location and territory are configured
+        # separately in the partner cabinet when the partner provides them.
         service_phone = str(
             raw.get("phone")
             or (service_object or {}).get("phone")
@@ -3115,7 +3113,6 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         "service_location": service_location if isinstance(service_location, dict) else None,
         "service_contract": {
             "mode": service_mode if service_mode in {"at_address", "mobile", "both"} else None,
-            "base_location": base_location if isinstance(base_location, dict) else None,
             "coverage": (service_location or {}).get("coverage") if isinstance(service_location, dict) else None,
             "location": service_location if isinstance(service_location, dict) else None,
         },
