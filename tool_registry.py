@@ -297,7 +297,7 @@ class ToolRegistry:
                     "company_id": _nullable("integer"),
                     "address_id": _nullable("integer"),
                     "address_text": _nullable("string"),
-                    "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
+                    "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
                     "service_location": _nullable("object"),
                     "coverage": _nullable("string"),
                     "services": {
@@ -313,7 +313,7 @@ class ToolRegistry:
                                 "address_text": _nullable("string"),
                                 "phone": _nullable("string"),
                                 "description": _nullable("string"),
-                                "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
+                                "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
                                 "service_location": _nullable("object"),
                                 "base_location": _nullable("object"),
                                 "coverage": _nullable("string")
