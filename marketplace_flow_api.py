@@ -47,7 +47,15 @@ async def client_search(request):
     q=str(data.get('query') or data.get('text') or '').strip()
     city=str(data.get('city') or '').strip()
     category_id=int(data.get('category_id') or 0)
-    items=data_core.marketplace_client_search(q,city,category_id)
+    max_price=data.get('max_price')
+    client_lat=data.get('client_lat')
+    client_lng=data.get('client_lng')
+    items=data_core.marketplace_client_search(
+        q, city, category_id,
+        max_price=float(max_price) if max_price not in (None, '') else None,
+        client_lat=float(client_lat) if client_lat not in (None, '') else None,
+        client_lng=float(client_lng) if client_lng not in (None, '') else None,
+    )
     return web.json_response({'ok':True,'items':items,'query':q,'client_id':uid})
 
 async def create_request(request):
