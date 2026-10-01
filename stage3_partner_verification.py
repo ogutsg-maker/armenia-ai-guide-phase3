@@ -418,7 +418,7 @@ async def api_partner_document_upload(request):
     try:
         if direction_id is None:
             row = _db_fetchone(
-                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND status IN ('draft','pending','rejected') ORDER BY id DESC LIMIT 1",
+                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND status IN ('draft','pending','pending_document','rejected') ORDER BY id DESC LIMIT 1",
                 (partner["id"],business_id),
             )
             if row:
