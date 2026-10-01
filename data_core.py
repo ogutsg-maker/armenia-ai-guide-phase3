@@ -2978,16 +2978,19 @@ def reverse_booking_financial_entries(booking: dict, refund_amount: float):
     currency=booking.get("currency") or "AMD"
     if not partner_id or not booking_id:
         return
-    existing=one(
-        "SELECT id FROM partner_financial_ledger WHERE booking_id=%s AND entry_type='commission_refund' LIMIT 1",
-        (booking_id,),
-    )
-    if existing:
-        return
-    # Refund reverses the amounts actually recorded for this booking.
+    # Refund reversals are cumulative so partial refunds can be followed
+    # by a later remainder without double-counting the first refund.
     payment=one("SELECT amount,status FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
     paid_total=float((payment or {}).get("amount") or 0)
-    ratio=min(1.0, float(refund_amount)/max(paid_total, 1e-9))
+    already=one("""SELECT COALESCE(SUM(-amount),0) refunded
+                   FROM partner_financial_ledger
+                   WHERE booking_id=%s AND entry_type='commission_refund'""",(booking_id,))
+    already_refunded=max(0.0,float((already or {}).get("refunded") or 0))
+    target=min(paid_total,max(0.0,float(refund_amount or 0)))
+    delta=max(0.0,target-already_refunded)
+    if delta<=0 or paid_total<=0:
+        return
+    ratio=min(1.0, delta/max(paid_total, 1e-9))
     execute(
         """INSERT INTO partner_financial_ledger
            (partner_id,booking_id,entry_type,amount,currency,description)
@@ -4315,21 +4318,28 @@ def reconcile_refund(booking_id:int, refund_amount:float, provider_refund_id:str
     booking=one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
     if not booking: return None
     payment=one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
-    if not payment or str(payment.get("status") or "").lower() not in {"refund_pending","paid"}:
+    if not payment or str(payment.get("status") or "").lower() not in {"refund_pending","partial_refund","paid"}:
         return None
-    amount=min(max(float(refund_amount or 0),0),float(payment.get("amount") or 0))
-    if amount<=0: return None
+    paid_total=float(payment.get("amount") or 0)
+    existing=one("""SELECT COALESCE((data_json->>'refund_amount')::numeric,0) refund_amount
+                    FROM payments WHERE id=%s""",(int(payment["id"]),))
+    already=max(0.0,float((existing or {}).get("refund_amount") or 0))
+    target=min(paid_total,max(0.0,float(refund_amount or 0)))
+    amount=max(0.0,target-already)
+    if amount<=0:
+        return {"booking":booking,"payment":payment,"refund_amount":0.0,"already_refunded":True}
+    cumulative=already+amount
     data=payment.get("data_json") or {}
     if isinstance(data,str):
         try: data=json.loads(data)
         except Exception: data={}
     data=dict(data or {})
-    data.update({"refund_confirmed":True,"refund_amount":amount,
+    data.update({"refund_confirmed":True,"refund_amount":cumulative,
                  "provider_refund_id":provider_refund_id,
                  "refund_confirmed_at":datetime.utcnow().isoformat()})
     updated=execute("""UPDATE payments SET status=%s,data_json=%s::jsonb,updated_at=NOW()
                        WHERE id=%s RETURNING *""",
-                    ("refunded" if amount>=float(payment.get("amount") or 0) else "partial_refund",
+                    ("refunded" if cumulative>=paid_total else "partial_refund",
                      json.dumps(data,ensure_ascii=False),int(payment["id"])),True)
     if not updated: return None
     if str(updated.get("status"))=="refunded":
