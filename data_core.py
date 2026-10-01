@@ -1859,15 +1859,6 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 (direction_id, int(cid)),
             )
 
-        if doc:
-            cur.execute(
-                """UPDATE partner_verification_documents
-                   SET business_id=%s,partner_direction_id=%s,status='approved',
-                       rejection_reason=NULL,reviewed_by=%s,reviewed_at=NOW()
-                   WHERE id=%s""",
-                (bid, direction_id, int(admin_telegram_id), int(doc["id"])),
-            )
-
         for svc in services:
             name = str(svc.get("name") or svc.get("service_name") or "").strip()[:300]
             if not name:
@@ -1934,25 +1925,8 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 f"expected={len(services)} actual={len(materialized)}"
             )
 
-        # Do not activate company verification as a side effect of service approval.
-        # If the company already has an approved document it remains active;
-        # otherwise it stays pending_document while its services are active.
-        if company_document:
-            cur.execute(
-                """UPDATE partner_businesses SET status='active',updated_at=NOW()
-                   WHERE id=%s AND partner_id=%s""",
-                (bid, partner_id),
-            )
-            cur.execute(
-                """UPDATE partners SET status='approved',verification_status='approved',rejection_reason=NULL
-                   WHERE id=%s""",
-                (partner_id,),
-            )
-            cur.execute(
-                """UPDATE users SET is_verified=TRUE
-                   WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
-                (partner_id,),
-            )
+        # Company verification is a separate lifecycle. Service approval never
+        # promotes or verifies the company.
         cur.execute(
             """UPDATE partner_applications
                SET status='approved',reviewed_by=%s,reviewed_at=NOW(),
