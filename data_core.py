@@ -2864,16 +2864,11 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
              int(service["partner_id"]), int(booking["id"]), float(partner_amount), currency,
              "Partner amount after platform commission"),
         )
-        cur.execute(
-            """INSERT INTO booking_checkins(booking_id,token,expires_at,status)
-               VALUES(%s,%s,COALESCE(%s,NOW()) + INTERVAL '1 hour','active')
-               RETURNING *""",
-            (int(booking["id"]), token, scheduled_at),
-        )
-        checkin = cur.fetchone()
+        checkin = None
+        request_status = "booked" if getattr(intent, "status", booking_status) == "paid" else booking_status
         cur.execute(
             "UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
-            ("booked" if getattr(intent, "status", booking_status) == "paid" else "pending_payment", request_id),
+            (request_status, request_id),
         )
         return {"booking": booking, "payment": payment, "checkin": checkin, "already_exists": False}
 
