@@ -182,6 +182,33 @@ async def negotiation_accept(request):
         'negotiation': result.get('negotiation'),
     })
 
+async def confirm_booking(request):
+    uid=_uid(request); booking_id=int(request.match_info['booking_id'])
+    booking=data_core.confirm_booking_by_partner(booking_id,uid)
+    if not booking:
+        return web.json_response({'ok':False,'error':'booking_not_pending_partner_confirmation'},status=409)
+    payment=data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+    if not payment:
+        return web.json_response({'ok':False,'error':'payment_not_initialized'},status=500)
+    service_currency=payment.get('currency') or 'AMD'
+    try:
+        intent=IdramProvider().create_invoice(
+            amount=float(payment.get('amount') or 0),currency=service_currency,
+            description=f"Platform commission: {booking.get('service_name') or 'Booking'}",
+            order_id=booking_id,
+            metadata={'service_id':booking.get('service_id'),'booking_id':booking_id,'negotiation_id':booking.get('negotiation_id')})
+    except Exception:
+        return web.json_response({'ok':False,'error':'payment_invoice_failed'},status=502)
+    data_core.execute(
+        """UPDATE payments SET provider=%s,provider_payment_id=%s,
+           data_json=COALESCE(data_json,'{}'::jsonb)||%s::jsonb,updated_at=NOW() WHERE id=%s""",
+        (getattr(intent,'provider',None),getattr(intent,'transaction_id',None),
+         json.dumps({'mode':getattr(intent,'mode',None),'bill_no':getattr(intent,'bill_no',None),
+                     'payment_url':getattr(intent,'payment_url',None)},ensure_ascii=False),int(payment['id'])),False)
+    payment=data_core.one("SELECT * FROM payments WHERE id=%s",(int(payment['id']),))
+    return web.json_response({'ok':True,'booking':booking,'payment':payment,
+                              'payment_url':(payment or {}).get('data_json',{}).get('payment_url') if isinstance((payment or {}).get('data_json'),dict) else None})
+
 async def test_payment(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
     n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
@@ -701,6 +728,7 @@ def register_marketplace_flow_routes(app):
     app.router.add_get('/api/market/partner/negotiation/{negotiation_id}',partner_negotiation_messages)
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/reply',partner_reply)
     app.router.add_post('/api/market/client/negotiation/{negotiation_id}/accept',negotiation_accept)
+    app.router.add_post('/api/market/partner/booking/{booking_id}/confirm',confirm_booking)
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/accept',negotiation_accept)
     # Legacy /agree endpoint remains as an alias to the same backend acceptance action.
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/agree',negotiation_accept)
