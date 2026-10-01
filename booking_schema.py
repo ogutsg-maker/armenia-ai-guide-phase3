@@ -301,6 +301,43 @@ def _ensure_contact_disclosures(cur) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_contact_disclosures_client ON contact_disclosures(client_id, created_at DESC)")
 
 
+def _ensure_arbitrations(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS booking_arbitrations (
+            id BIGSERIAL PRIMARY KEY,
+            booking_id BIGINT NOT NULL,
+            opened_by TEXT NOT NULL DEFAULT 'client',
+            opened_by_id BIGINT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            reason TEXT NOT NULL DEFAULT '',
+            resolution TEXT DEFAULT '',
+            resolved_by BIGINT,
+            resolved_at TIMESTAMPTZ,
+            data_json JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+    columns = {
+        "booking_id": "BIGINT",
+        "opened_by": "TEXT NOT NULL DEFAULT 'client'",
+        "opened_by_id": "BIGINT",
+        "status": "TEXT NOT NULL DEFAULT 'open'",
+        "reason": "TEXT NOT NULL DEFAULT ''",
+        "resolution": "TEXT DEFAULT ''",
+        "resolved_by": "BIGINT",
+        "resolved_at": "TIMESTAMPTZ",
+        "data_json": "JSONB DEFAULT '{}'::jsonb",
+        "created_at": "TIMESTAMPTZ DEFAULT NOW()",
+        "updated_at": "TIMESTAMPTZ DEFAULT NOW()",
+    }
+    for column, definition in columns.items():
+        _add_column(cur, "booking_arbitrations", column, definition)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_arbitrations_status ON booking_arbitrations(status, updated_at DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_booking_arbitrations_booking ON booking_arbitrations(booking_id, created_at DESC)")
+
 def _ensure_payouts(cur) -> None:
     cur.execute(
         """
@@ -344,6 +381,7 @@ def ensure_booking_schema() -> None:
             _ensure_payments(cur)
             _ensure_checkins(cur)
             _ensure_cancellations(cur)
+            _ensure_arbitrations(cur)
             _ensure_financial_ledger(cur)
             _ensure_contact_disclosures(cur)
             _ensure_payouts(cur)
