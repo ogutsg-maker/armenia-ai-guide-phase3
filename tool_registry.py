@@ -270,7 +270,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "add_service",
-                "Prepare adding a service to an owned company. For mobile/both, base_location is the partner's dispatch base; do not silently invent it. If only one location was provided for mobile/both, ask for clarification unless that location is explicitly stated to be the dispatch base. Confirmation required.",
+                "Prepare adding a service to an owned company. Extract only the service facts explicitly provided by the partner: name, price, fixed/from, optional service mode, optional service location/territory, optional address/phone. Do not invent missing settings and do not ask about a separate dispatch/base location. Confirmation required.",
                 {
                     "company_id": {"type": "integer"},
                     "name": {"type": "string"},
@@ -283,7 +283,6 @@ class ToolRegistry:
                     "price_type": {"type": "string", "enum": ["from", "fixed"]},
                     "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
                     "service_location": _nullable("object"),
-                    "base_location": _location_schema(),
                     "coverage": _nullable("string"),
                 },
                 required=("company_id", "name"),
@@ -292,7 +291,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "add_services",
-                "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. For mobile/both, collect an explicit base_location; never silently treat a service address as the dispatch base. Use one item per distinct service. Confirmation is required once for the whole batch.",
+                "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. Extract only values explicitly provided: price, fixed/from, optional service mode, optional service location/territory, address or phone. Do not invent missing settings and never ask for a separate dispatch/base location. Use one item per distinct service. Confirmation is required once for the whole batch.",
                 {
                     "company_id": _nullable("integer"),
                     "address_id": _nullable("integer"),
@@ -315,7 +314,6 @@ class ToolRegistry:
                                 "description": _nullable("string"),
                                 "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
                                 "service_location": _nullable("object"),
-                                "base_location": _nullable("object"),
                                 "coverage": _nullable("string")
                             },
                             "required": ["name", "price"],
@@ -1088,21 +1086,6 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
-                if args.get("address_id") in (None, "") and not str(args.get("address_text") or "").strip() and not isinstance(args.get("service_location"), dict):
-                    company_addresses = [
-                        x for x in data_core.get_partner_addresses(
-                            pid, actor_user_id=self.telegram_id, limit=200
-                        )
-                        if int(x.get("business_id") or 0) == company_id
-                        and str(x.get("address") or "").strip()
-                    ]
-                    if not company_addresses:
-                        raise ValueError("service_address_required")
-                document = data_core.get_current_partner_document(
-                    partner_id=pid, company_id=company_id
-                )
-                if not document:
-                    raise ValueError("document_required")
                 resolved = data_core.resolve_catalog_services([{
                     "name": checked["name"],
                     "price": checked["price"],
@@ -1113,7 +1096,6 @@ class ToolRegistry:
                     "price_type": args.get("price_type") or "fixed",
                     "service_mode": args.get("service_mode"),
                     "service_location": args.get("service_location"),
-                    "base_location": args.get("base_location"),
                     "coverage": args.get("coverage"),
                     "address_text": args.get("address_text"),
                 }], limit=500)[0]
@@ -1132,12 +1114,9 @@ class ToolRegistry:
                         "address_text": resolved.get("address_text") or args.get("address_text"),
                         "service_mode": resolved.get("service_mode") or args.get("service_mode"),
                         "service_location": resolved.get("service_location") or args.get("service_location"),
-                        "base_location": resolved.get("base_location") or args.get("base_location"),
-                        "coverage": resolved.get("coverage") or args.get("coverage"),
+                            "coverage": resolved.get("coverage") or args.get("coverage"),
                         "catalog_match_status": resolved.get("catalog_match_status"),
                         "catalog_options": resolved.get("catalog_options") or [],
-                        "document_id": int(document["id"]),
-                        "document_status": document.get("status"),
                     },
                     f'Добавить услугу «{checked["name"]}» в заявку на проверку компании «{company.get("name") or ""}»?',
                 )
@@ -1232,43 +1211,16 @@ class ToolRegistry:
                         "description": raw.get("description"),
                         "service_mode": raw.get("service_mode") or service_mode,
                         "service_location": raw.get("service_location") or location,
-                        "base_location": raw.get("base_location") or (args.get("base_location") if isinstance(args.get("base_location"), dict) else None),
                         "coverage": raw.get("coverage") or args.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
                         "address_text": address_text,
                     })
 
                 prepared = data_core.resolve_catalog_services(prepared, limit=500)
 
+                # Service creation is intentionally sparse. Schedule, work location,
+                # territory, documents and other settings are configured separately
+                # in the partner cabinet and are never clarification blockers here.
                 missing = []
-                if not selected_address_id and not address_text and not location:
-                    missing.append("address")
-                if not phone:
-                    missing.append("phone")
-                has_service_mode = bool(service_mode) or all(
-                    isinstance(s, dict) and str(s.get("service_mode") or "").strip().lower() in {"at_address", "mobile", "both"}
-                    for s in prepared
-                )
-                if not has_service_mode:
-                    missing.append("service_mode")
-
-                effective_modes = {
-                    str(s.get("service_mode") or service_mode or "").strip().lower()
-                    for s in prepared if isinstance(s, dict)
-                }
-                base_location = args.get("base_location") if isinstance(args.get("base_location"), dict) else None
-                has_service_base_location = any(
-                    isinstance(s.get("base_location"), dict) and bool(s.get("base_location"))
-                    for s in prepared if isinstance(s, dict)
-                )
-                if any(m in {"mobile", "both"} for m in effective_modes) and not (base_location or has_service_base_location):
-                    missing.append("base_location")
-                if any(m in {"at_address", "both"} for m in effective_modes) and not (selected_address_id or address_text or location):
-                    if "address" not in missing:
-                        missing.append("address")
-                if not document:
-                    missing.append("document")
-                # Catalog resolution is deliberately NOT a required slot.
-                # Unresolved services stay in the draft with their original name
                 # and price; Data Core may resolve them again on each subsequent
                 # validation and Admin can review the technical flag later.
 
@@ -1281,7 +1233,6 @@ class ToolRegistry:
                     "phone": phone,
                     "service_mode": service_mode,
                     "service_location": location,
-                    "base_location": base_location,
                 }
 
                 if missing:
@@ -1501,7 +1452,6 @@ class ToolRegistry:
                 price_type=args.get("price_type"),
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
-                base_location=args.get("base_location"),
                 coverage=args.get("coverage"),
                 submission_token=args.get("submission_token"),
             )}
@@ -1554,7 +1504,6 @@ class ToolRegistry:
                 services=services,
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
-                base_location=args.get("base_location"),
                 submission_token=args.get("submission_token"),
             )
             return {"ok": True, **result}

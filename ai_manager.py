@@ -1212,18 +1212,21 @@ class AIManager:
 
     @staticmethod
     def _parse_explicit_partner_services(message: str) -> list[dict[str, Any]] | None:
-        import re
+        """Small deterministic fallback for explicit service commands.
 
+        AI remains the semantic extractor. This fallback only protects obvious
+        service+price messages from model variability. It has no dispatch/base
+        location concept and never asks clarification questions.
+        """
+        import re
         text = " ".join(str(message or "").strip().split())
         if not text:
             return None
 
-        # Only activate for an explicit service-creation request.
         command = re.match(
             r"^(?:создай(?:те)?|добавь(?:те)?|создать|добавить)\s+"
             r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)(?:\s*[:,-]?\s*)",
-            text,
-            flags=re.IGNORECASE,
+            text, flags=re.IGNORECASE,
         )
         if not command:
             return None
@@ -1232,108 +1235,63 @@ class AIManager:
         if not body:
             return None
 
-        # Extract delivery mode/location metadata before parsing priced
-        # service items. Otherwise the trailing "Формат ... База ..." becomes
-        # part of the last service name/price and the deterministic parser
-        # rejects the whole command.
-        mode_match = re.search(
-            r"(?:формат|режим|format|mode)\s*[:\-]?\s*(?:выезд\s+к\s+клиенту|mobile)"
-            r"|\bвыезд\s+к\s+клиенту\b|\bmobile\b",
-            body, flags=re.IGNORECASE,
-        )
-        base_match = re.search(
-            r"(?:база\s+выезда|база\s+для\s+выезда|dispatch\s+base|base\s+location)"
-            r"\s*[:\-]?\s*(?P<base>.+?)\s*$",
-            body, flags=re.IGNORECASE,
-        )
-        parsed_mode = "mobile" if mode_match else None
-        parsed_base = base_match.group("base").strip(" ,;.!?") if base_match else ""
-        if parsed_mode and not parsed_base:
-            return None
-        # The phrase "Раздан, Кентрон, Котайк" is one structured location:
-        # city, district, marz — not three alternative dispatch bases.
-        if parsed_mode and parsed_base:
-            parsed_base = re.sub(r"\s*,\s*", ", ", parsed_base)
-        if mode_match:
-            body = body[:mode_match.start()].strip(" ,;.!?")
-        elif base_match:
-            body = body[:base_match.start()].strip(" ,;.!?")
-        if not body:
-            return None
+        mode = None
+        if re.search(r"\b(?:выезд\s+к\s+клиенту|выезжаю|выезд|mobile)\b|հաճախորդի\s+մոտ|մեկնում\s+եմ", body, re.I):
+            mode = "mobile"
+        elif re.search(r"\b(?:по\s+этому\s+адресу|работаю\s+на\s+месте|at\s+address)\b|այս\s+հասցեում|տեղում", body, re.I):
+            mode = "at_address"
 
-        # Split on explicit list separators and on natural-language
-        # conjunctions between two independently priced services.
-        # Example:
-        #   "ремонт кондиционеров от 8000 и ремонт телевизоров от 6000"
-        # must become two services, while keeping "и" inside a service name.
-        conjunction = (
-            r"(?:и|և|ու|and)\s+"
-            r"(?=[^,;]+?\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\s*\d)"
-        )
-        parts = [
-            p.strip(" ,;")
-            for p in re.split(r"\s*[;,]\s*|" + conjunction, body, flags=re.IGNORECASE)
-            if p.strip(" ,;")
+        area = None
+        area_patterns = [
+            r"(?:по|в)\s+([А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})(?:\s|$)",
+            r"(?:քաղաք(?:ում)?|մարզ(?:ում)?|շրջան(?:ում)?)\s+([\u0531-\u058F-]{3,})",
         ]
+        if mode == "mobile":
+            m_area = re.search(r"(?:по|в)\s+([А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})(?=\s|$)", body, re.I)
+            if m_area:
+                area = m_area.group(1)
+            m_area2 = re.search(r"(?:քաղաք(?:ում)?|մարզ(?:ում)?|շրջան(?:ում)?)\s+([\u0531-\u058F-]{3,})", body, re.I)
+            if m_area2:
+                area = m_area2.group(1)
+
+        body = re.sub(
+            r"\b(?:выезд\s+к\s+клиенту|выезжаю|выезд|mobile)\b|հաճախորդի\s+մոտ|մեկնում\s+եմ",
+            " ", body, flags=re.I,
+        )
+        body = re.sub(r"(?:\b(?:по|в)\s+[А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})$", "", body, flags=re.I).strip(" ,;.")
+        body = re.sub(r"(?:\b(?:по|в)\s+[А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})(?=\s*(?:,|;|$))", "", body, flags=re.I)
+        body = re.sub(r"(?:քաղաք(?:ում)?|մարզ(?:ում)?|շրջան(?:ում)?)\s+[\u0531-\u058F-]{3,}", "", body, flags=re.I).strip(" ,;.")
+
+        conjunction = r"(?:и|և|ու|and)\s+(?=[^,;]+?\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\s*\d)"
+        parts = [p.strip(" ,;") for p in re.split(r"\s*[;,]\s*|" + conjunction, body, flags=re.I) if p.strip(" ,;")]
         if not parts:
             return None
 
-        result: list[dict[str, Any]] = []
+        result = []
         for part in parts[:30]:
-            # Supported natural price forms: "от 5000", "за 5000", "5000".
             m = re.match(
                 r"^(?P<name>.+?)\s+(?P<price_type>от|за|по|цена(?: от)?|price(?: from)?|from)?\s*"
                 r"(?P<price>\d[\d\s.,]*)\s*(?:֏|դր(?:ամ)?|amd|₽|руб(?:лей|\.)?)?\s*$",
-                part,
-                flags=re.IGNORECASE,
+                part, flags=re.I,
             )
             if not m:
-                # Do not guess a price-less service in this deterministic path.
                 return None
-
             name = re.sub(r"\s+", " ", m.group("name")).strip(" ,.-")
-            price_raw = m.group("price").replace(" ", "").replace(",", "").replace(".", "")
-            if not name or not price_raw:
+            raw_price = m.group("price").replace(" ", "").replace(",", "").replace(".", "")
+            if not name or not raw_price:
                 return None
             try:
-                price = float(price_raw)
+                price = float(raw_price)
             except ValueError:
                 return None
-            if price < 0:
-                return None
-
-            raw_price_type = str(m.group("price_type") or "").casefold()
-            price_type = "from" if raw_price_type in {"от", "from", "цена от", "price from"} else "fixed"
-            result.append({
-                "name": name,
-                "price": int(price) if price.is_integer() else price,
-                "price_type": price_type,
-                "address_id": None,
-                "phone": None,
-                "description": None,
-            })
-
-        # A mobile/both request can be fully prepared without asking the LLM:
-        # preserve the partner's explicit dispatch base as structured data.
-        if parsed_mode:
-            mode = parsed_mode
-            base = parsed_base
-            if not base:
-                return None
-            # Parse "city, district, marz" conservatively. Coordinates remain optional.
-            pieces = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"\s*,\s*", base) if p.strip()]
-            if len(pieces) < 1:
-                return None
-            location = {
-                "city": pieces[0],
-                "district": pieces[1] if len(pieces) > 1 else None,
-                "marz": pieces[2] if len(pieces) > 2 else None,
-                "address": pieces[3] if len(pieces) > 3 else None,
-            }
-            for item in result:
+            raw_type = str(m.group("price_type") or "").casefold()
+            price_type = "from" if raw_type in {"от","from","цена от","price from"} else "fixed"
+            item = {"name": name, "price": int(price) if price.is_integer() else price, "price_type": price_type}
+            if mode:
                 item["service_mode"] = mode
-                item["base_location"] = location
-
+            if area:
+                item["coverage"] = area
+            result.append(item)
         return result or None
 
     @staticmethod
