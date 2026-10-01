@@ -2555,7 +2555,9 @@ def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
     payment_status=str((payment or {}).get("status") or "").lower()
     paid_amount=float((payment or {}).get("amount") or 0) if payment_status=="paid" else 0.0
     actual_refund=min(max(0.0,float(refund_amount or 0)),paid_amount) if paid_amount>0 else 0.0
-    final_status="refunded" if actual_refund>0 else "cancelled"
+    # A cancellation is a business-state change. "refunded" is reserved for
+    # an actually settled provider refund, never merely a requested refund.
+    final_status="cancelled"
 
     updated=execute("""UPDATE bookings SET status=%s,updated_at=NOW()
                        WHERE id=%s AND status=%s RETURNING *""",
@@ -2569,10 +2571,18 @@ def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
         execute("""INSERT INTO booking_cancellations(booking_id,cancelled_by,reason,refund_amount)
                    VALUES(%s,%s,%s,%s)""",(int(booking_id),str(actor_role),str(reason or "")[:500],actual_refund),False)
     if actual_refund>0:
+        execute("""UPDATE payments
+                   SET status='refund_pending', data_json = COALESCE(data_json,'{}'::jsonb) ||
+                       %s::jsonb, updated_at=NOW()
+                   WHERE id=%s""",
+                (json.dumps({"refund_requested": True,
+                             "refund_amount": actual_refund,
+                             "refund_requested_at": datetime.utcnow().isoformat()},
+                            ensure_ascii=False), int(payment["id"])), False)
         execute("""INSERT INTO project_expenses(booking_id,partner_id,expense_type,amount,currency,description,source)
-                   VALUES(%s,%s,'refund',%s,'AMD',%s,'booking_cancellation')""",
-                (int(booking_id),booking.get("partner_id"),actual_refund,str(reason or "Booking refund")[:1000]),False)
-        reverse_booking_financial_entries(booking,actual_refund)
+                   VALUES(%s,%s,'refund_pending',%s,%s,%s,'booking_cancellation')""",
+                (int(booking_id),booking.get("partner_id"),actual_refund,
+                 booking.get("currency") or "AMD",str(reason or "Booking refund pending provider settlement")[:1000]),False)
     return updated
 
 def update_payment_status_for_booking(booking_id: int, status: str):
@@ -2791,7 +2801,20 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
         (intent.provider, intent.transaction_id or None, json.dumps(data, ensure_ascii=False),
          int(payment["id"])), True,
     )
-    return {"booking": confirmed, "payment": updated or payment, "payment_url": intent.payment_url}
+    saved_payment = updated or payment
+
+    # Test provider is intentionally fictitious, but it must still pass through
+    # the exact same settlement gate as a real Idram callback.
+    if str(intent.status or "").lower() == "paid":
+        settled = reconcile_paid_payment(int(saved_payment["id"]), intent.transaction_id)
+        return {
+            "booking": (settled or {}).get("booking") or confirmed,
+            "payment": (settled or {}).get("payment") or saved_payment,
+            "checkin": (settled or {}).get("checkin"),
+            "payment_url": intent.payment_url,
+        }
+
+    return {"booking": confirmed, "payment": saved_payment, "checkin": None, "payment_url": intent.payment_url}
 
 def reconcile_paid_payment(payment_id:int, transaction_id:str|None=None):
     payment=one("SELECT * FROM payments WHERE id=%s",(int(payment_id),))
@@ -4266,6 +4289,36 @@ def marketplace_cancel_side_effects(partner_id:int,booking_id:int,actor:str,reas
                    VALUES(%s,%s,%s,%s)""",
                 (int(booking_id),str(actor),str(reason or "")[:500],float(refund_amount or 0)),False)
     return True
+
+def reconcile_refund(booking_id:int, refund_amount:float, provider_refund_id:str|None=None):
+    """Finalize a refund only after the provider confirms the money was returned."""
+    booking=one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
+    if not booking: return None
+    payment=one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
+    if not payment or str(payment.get("status") or "").lower() not in {"refund_pending","paid"}:
+        return None
+    amount=min(max(float(refund_amount or 0),0),float(payment.get("amount") or 0))
+    if amount<=0: return None
+    data=payment.get("data_json") or {}
+    if isinstance(data,str):
+        try: data=json.loads(data)
+        except Exception: data={}
+    data=dict(data or {})
+    data.update({"refund_confirmed":True,"refund_amount":amount,
+                 "provider_refund_id":provider_refund_id,
+                 "refund_confirmed_at":datetime.utcnow().isoformat()})
+    updated=execute("""UPDATE payments SET status=%s,data_json=%s::jsonb,updated_at=NOW()
+                       WHERE id=%s RETURNING *""",
+                    ("refunded" if amount>=float(payment.get("amount") or 0) else "partial_refund",
+                     json.dumps(data,ensure_ascii=False),int(payment["id"])),True)
+    if not updated: return None
+    if str(updated.get("status"))=="refunded":
+        execute("UPDATE bookings SET status='refunded',updated_at=NOW() WHERE id=%s AND status='cancelled'",
+                (int(booking_id),),False)
+    reverse_booking_financial_entries(booking,amount)
+    return {"booking":one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),)),
+            "payment":updated,"refund_amount":amount}
+
 
 def marketplace_existing_payment(negotiation_id:int):
     booking=marketplace_booking_by_negotiation(int(negotiation_id))
