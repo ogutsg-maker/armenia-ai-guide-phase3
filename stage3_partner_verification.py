@@ -337,6 +337,18 @@ async def api_partner_documents(request):
            ORDER BY id DESC""",
         (pid, bid),
     )
+    verifications = _db_fetchall(
+        """SELECT vc.id,vc.partner_direction_id,vc.master_category_id,vc.status,
+                  vc.rejection_reason,vc.requested_at,vc.submitted_at,vc.reviewed_at,
+                  m.name_am AS direction_name_am,m.name_ru AS direction_name_ru,m.name_en AS direction_name_en,
+                  pd.status AS direction_status
+           FROM partner_direction_verification_cases vc
+           JOIN master_categories m ON m.id=vc.master_category_id
+           JOIN partner_directions pd ON pd.id=vc.partner_direction_id
+           WHERE vc.partner_id=%s AND vc.business_id=%s
+           ORDER BY vc.updated_at DESC,vc.id DESC""",
+        (pid, bid),
+    )
     return web.json_response({
         "ok": True,
         "partner": {
@@ -345,6 +357,7 @@ async def api_partner_documents(request):
             "verification_status": "approved",
         },
         "documents": docs,
+        "verifications": verifications,
     })
 
 
