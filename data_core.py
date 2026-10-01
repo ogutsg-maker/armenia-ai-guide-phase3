@@ -2887,8 +2887,11 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
     if requested_status not in {"pending_partner_confirmation","pending_payment","paid"}:
         requested_status="pending_partner_confirmation"
     intent_status=str(getattr(intent,"status","") or "").strip().lower()
-    booking_status="paid" if intent_status=="paid" else requested_status
-    payment_status="paid" if intent_status=="paid" else "pending"
+    # A provider intent can never bypass the partner-confirmation gate.
+    # Direct booking requests stay pending until the partner confirms them.
+    auto_settle_allowed = requested_status == "pending_payment"
+    booking_status="paid" if intent_status=="paid" and auto_settle_allowed else requested_status
+    payment_status="paid" if intent_status=="paid" and auto_settle_allowed else "pending"
     payment_amount=round(float(commission)+float(partner_amount),2)
     metadata_json=json.dumps(metadata or {},ensure_ascii=False)
 
@@ -2927,7 +2930,7 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
                  "Direct booking platform commission (payment confirmed)",
                  int(service["partner_id"]),int(booking["id"]),float(partner_amount),currency,
                  "Partner amount after platform commission (payment confirmed)"))
-        request_status="booked" if payment_status=="paid" else booking_status
+        request_status="booked" if payment_status=="paid" else ("pending_partner_confirmation" if booking_status=="pending_partner_confirmation" else booking_status)
         cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",(request_status,request_id))
         checkin=None
         if payment_status=="paid":
