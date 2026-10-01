@@ -51,6 +51,10 @@ def _nullable(kind: str) -> dict[str, Any]:
     return {"anyOf": [{"type": kind}, {"type": "null"}]}
 
 
+def _nullable_enum(values: list[str]) -> dict[str, Any]:
+    return {"anyOf": [{"type": "string", "enum": list(values)}, {"type": "null"}]}
+
+
 def _location_schema() -> dict[str, Any]:
     """Structured partner location; coordinates are optional technical data."""
     return {
@@ -277,7 +281,7 @@ class ToolRegistry:
                     "phone": _nullable("string"),
                     "description": _nullable("string"),
                     "price_type": {"type": "string", "enum": ["from", "fixed"]},
-                    "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
+                    "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
                     "service_location": _nullable("object"),
                     "base_location": _location_schema(),
                     "coverage": _nullable("string"),
