@@ -204,17 +204,15 @@ async def test_payment(request):
     service=data_core.marketplace_service_for_partner(service_id,int(n['partner_id']))
     if not service:return web.json_response({'ok':False,'error':'service_not_available'},status=404)
     commission,customer_total,partner_amount=_price_and_commission(final_price,service)
-    idram=IdramProvider()
-    intent=idram.create_invoice(amount=commission,currency=service['currency'],
-        description=f"Platform commission: {service['name']}",order_id=nid,
-        metadata={'service_id':service_id,'negotiation_id':nid})
+    # Booking is created first. Payment is initiated only after the partner
+    # explicitly confirms the booking.
     persisted=data_core.marketplace_persist_negotiation_booking(
         request_id=int(n['request_id']),negotiation_id=nid,client_id=uid,partner_id=int(n['partner_id']),
-        service=service,status=('paid' if intent.status=='paid' else 'pending_payment'),
+        service=service,status='pending_partner_confirmation',
         price=final_price,currency=service['currency'],commission=commission,
-        partner_amount=partner_amount,intent=intent)
+        partner_amount=partner_amount,intent=None)
     if not persisted:return web.json_response({'ok':False,'error':'booking_creation_conflict'},status=409)
-    booking,payment,check=persisted['booking'],persisted['payment'],persisted['checkin']
+    booking,payment,check=persisted['booking'],persisted['payment'],persisted.get('checkin')
     display=data_core.get_partner_booking_display(int(n['partner_id']))
     if not display:return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
     partner,locations=display['partner'],display['locations']
