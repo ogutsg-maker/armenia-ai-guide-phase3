@@ -55,6 +55,17 @@ WEB_APPS_DIR = BASE_DIR / "web_apps"
 WEBAPP_VERSION = os.getenv("WEBAPP_VERSION", "20260925-4").strip() or "20260925-4"
 
 
+def _ensure_runtime_schema() -> None:
+    """Run blocking schema migrations only after the HTTP listener is bound."""
+    from stage3_partner_verification import ensure_stage3_schema
+    from partner_business_application_api import ensure_business_application_schema
+    from partner_directions_api import ensure_partner_direction_schema
+
+    ensure_stage3_schema()
+    ensure_business_application_schema()
+    ensure_partner_direction_schema()
+
+
 def webapp_url(path: str) -> str:
     base = f"{WEBAPP_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
     separator = "&" if "?" in base else "?"
@@ -546,9 +557,11 @@ async def main():
     app.router.add_post("/api/webapp/partner/register", api_webapp_partner_register)
     app.router.add_post("/api/webapp/partner/message", api_webapp_partner_message)
     app.router.add_get("/api/master/{id}/registration-status", api_partner_registration_status)
-    register_stage3_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID)
-    register_business_application_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID)
-    register_partner_direction_routes(app, db, bot=bot)
+    # Register routes without running blocking PostgreSQL migrations. Render must
+    # see the HTTP listener before startup migrations begin.
+    register_stage3_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID, ensure_schema=False)
+    register_business_application_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID, ensure_schema=False)
+    register_partner_direction_routes(app, db, bot=bot, ensure_schema=False)
     register_admin_stats_routes(app)
     register_admin_ai_routes(app, ai=ai, bot=bot)
     logger.info("✅ Business/application layer registered")
@@ -563,6 +576,9 @@ async def main():
     port = int(os.getenv("PORT", "8000"))
     await web.TCPSite(runner, "0.0.0.0", port).start()
     logger.info("🌐 HTTP-сервер запущен на порту %s", port)
+    logger.info("🛠️ Выполняем отложенные startup-мigration после bind порта")
+    await asyncio.to_thread(_ensure_runtime_schema)
+    logger.info("✅ Startup schema migration завершена")
     try:
         await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Armenia AI Guide", web_app=WebAppInfo(url=webapp_url("welcome.html"))))
         logger.info("✅ Telegram bottom menu button configured")
