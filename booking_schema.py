@@ -90,6 +90,7 @@ def _ensure_bookings_table(cur) -> None:
     columns = {
         "request_id": "BIGINT",
         "negotiation_id": "BIGINT",
+        "booking_id": "BIGINT",
         "client_id": "BIGINT",
         "partner_id": "BIGINT",
         "service_id": "BIGINT",
@@ -273,6 +274,7 @@ def _ensure_contact_disclosures(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS contact_disclosures (
             id BIGSERIAL PRIMARY KEY,
+            booking_id BIGINT,
             client_id BIGINT NOT NULL,
             partner_id BIGINT NOT NULL,
             payment_id BIGINT,
@@ -299,6 +301,7 @@ def _ensure_contact_disclosures(cur) -> None:
     for column, definition in columns.items():
         _add_column(cur, "contact_disclosures", column, definition)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_contact_disclosures_client ON contact_disclosures(client_id, created_at DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_contact_disclosures_booking ON contact_disclosures(booking_id, status, created_at DESC)")
 
 
 def _ensure_arbitrations(cur) -> None:
