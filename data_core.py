@@ -3759,11 +3759,12 @@ def marketplace_client_search(
         # Reconstruct parameter order exactly as the rendered SQL uses it:
         # both/service distance, three service fallback values, both/base
         # distance, then non-both target distance, then textual fallback.
-        params.extend(distance_params)
-        params.extend([city, city, city])
-        params.extend(distance_params)
-        params.extend(distance_params)
-        params.extend([city, city, city])
+        params.extend(distance_params)          # both: service location distance
+        params.extend([city, city, city])     # both: service city/marz fallback
+        params.extend([city, city, city])     # both: radius-without-coordinates fallback
+        params.extend(distance_params)          # both: base location distance
+        params.extend(distance_params)          # non-both target distance
+        params.extend([city, city, city])     # non-both target city/marz fallback
     elif city:
         where.append(f"""(
           {coverage_type_sql}='all_armenia'
