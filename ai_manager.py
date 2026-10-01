@@ -1138,6 +1138,12 @@ class AIManager:
                     pending_args = dict(pending.get("args") or {})
                     if str(pending.get("state") or "awaiting_confirmation") != "awaiting_confirmation":
                         raise PermissionError("invalid_pending_state")
+                    tools = ToolRegistry(
+                        telegram_id=int(telegram_id),
+                        context_type=role,
+                        trusted_context=trusted,
+                        session_state=SessionState.from_dict(await self._session_context(telegram_id, role)).to_dict(),
+                    )
                     result = await tools.execute_confirmed(pending_name, pending_args)
                     await self._clear_pending(telegram_id, role)
                     reply = self._done_text(language)
@@ -1163,6 +1169,13 @@ class AIManager:
                 "Please confirm or cancel the pending change first."
             )
             return {"reply": reply, "confirmation_pending": True}
+
+        if role == ContextType.ADMIN:
+            fast = await self._admin_fast_path(
+                telegram_id, message, await self._session_context(telegram_id, role), language
+            )
+            if fast is not None:
+                return fast
 
         prompt = PromptFactory.build(
             role,
