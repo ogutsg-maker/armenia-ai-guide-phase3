@@ -500,10 +500,11 @@ def _extract_registration_working_hours(payload, description=""):
 
     return hours
 
-def register_business_application_routes(app, bot_token=None, admin_id=None):
+def register_business_application_routes(app, bot_token=None, admin_id=None, ensure_schema=True):
     app["business_bot_token"]=bot_token
     app["business_admin_id"]=admin_id
-    ensure_business_application_schema()
+    if ensure_schema:
+        ensure_business_application_schema()
 
     async def businesses(request):
         uid=_auth(request); p=_partner(uid)
