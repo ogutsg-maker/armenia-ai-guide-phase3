@@ -1250,6 +1250,10 @@ class AIManager:
         parsed_base = base_match.group("base").strip(" ,;.!?") if base_match else ""
         if parsed_mode and not parsed_base:
             return None
+        # The phrase "Раздан, Кентрон, Котайк" is one structured location:
+        # city, district, marz — not three alternative dispatch bases.
+        if parsed_mode and parsed_base:
+            parsed_base = re.sub(r"\s*,\s*", ", ", parsed_base)
         if mode_match:
             body = body[:mode_match.start()].strip(" ,;.!?")
         elif base_match:
