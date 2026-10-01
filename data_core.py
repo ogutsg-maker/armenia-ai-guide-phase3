@@ -2874,6 +2874,31 @@ def get_current_partner_document(*, partner_id: int, company_id: int) -> dict[st
     return row
 
 
+def _normalize_service_location(value: Any) -> dict[str, Any] | None:
+    """Normalize a structured service location without requiring GPS coordinates."""
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in ("city", "district", "marz", "address"):
+        val = value.get(key)
+        if val not in (None, ""):
+            text = str(val).strip()
+            if text:
+                out[key] = text[:300]
+    for key in ("lat", "lng"):
+        val = value.get(key)
+        if val in (None, ""):
+            continue
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+        if key == "lat" and -90 <= num <= 90:
+            out[key] = num
+        elif key == "lng" and -180 <= num <= 180:
+            out[key] = num
+    return out or None
+
 def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, company_id: int, name: str, price: Any = None,
                                       address_id: int | None = None,
                                       phone: str | None = None,
@@ -2982,6 +3007,8 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         if not isinstance(raw, dict):
             raise ValueError("invalid_service_payload")
         service_name = str(raw.get("name") or raw.get("service_name") or "").strip()
+        raw["base_location"] = _normalize_service_location(raw.get("base_location") or base_location)
+        raw["service_location"] = _normalize_service_location(raw.get("service_location") or service_location)
         if not service_name:
             raise ValueError("service_name_required")
 
