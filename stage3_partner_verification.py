@@ -1468,6 +1468,37 @@ async def api_admin_registry(request):
 
     return web.json_response({"ok":False,"error":"unknown_registry_type"},status=400)
 
+async def api_admin_direction_policies(request):
+    _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    rows = _db_fetchall(
+        """SELECT id,name_am,name_ru,name_en,verification_required,verification_document_types
+           FROM master_categories
+           WHERE is_active=TRUE ORDER BY id"""
+    )
+    return web.json_response({"ok":True,"items":rows})
+
+
+async def api_admin_direction_policy_update(request):
+    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    mid = int(request.match_info["master_id"])
+    data = await request.json()
+    required = bool(data.get("verification_required"))
+    types = data.get("verification_document_types") or []
+    if not isinstance(types,list):
+        return web.json_response({"ok":False,"error":"verification_document_types_must_be_array"},status=400)
+    row = _db_execute(
+        """UPDATE master_categories
+           SET verification_required=%s,verification_document_types=%s::jsonb
+           WHERE id=%s AND is_active=TRUE
+           RETURNING id,name_am,name_ru,name_en,verification_required,verification_document_types""",
+        (required,json.dumps(types,ensure_ascii=False),mid),True,
+    )
+    if not row:
+        return web.json_response({"ok":False,"error":"direction_not_found"},status=404)
+    _audit(admin_id,"direction_verification_policy_updated",mid,{"verification_required":required,"document_types":types})
+    return web.json_response({"ok":True,"item":row})
+
+
 async def api_admin_direction_verifications(request):
     admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     rows = _db_fetchall(
@@ -1572,6 +1603,8 @@ def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=Tru
     app.router.add_get("/api/admin/orders", api_admin_orders)
     app.router.add_get("/api/admin/disputes", api_admin_disputes)
     app.router.add_post("/api/admin/dispute/{id}/resolve", api_admin_dispute_resolve)
+    app.router.add_get("/api/admin/direction-policies", api_admin_direction_policies)
+    app.router.add_post("/api/admin/direction-policies/{master_id}", api_admin_direction_policy_update)
     app.router.add_get("/api/admin/direction-verifications", api_admin_direction_verifications)
     app.router.add_post("/api/admin/direction-verifications/{id}/{action}", api_admin_direction_verification_action)
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
