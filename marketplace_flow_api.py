@@ -441,9 +441,11 @@ async def _cancel_booking(request, actor):
     policy=profile.get('cancellation_policy','moderate')
     # Partner-initiated cancellations always fully refund the client.
     pct=100.0 if actor=='partner' else _refund_percent(policy,booking.get('scheduled_at'))
-    price=float(booking.get('agreed_price') or 0)
-    refund_amount=round(price*pct/100.0,2)
     currency=booking.get('currency') or 'AMD'
+    payment=data_core.one("SELECT status,amount FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+    payment_status=str((payment or {}).get('status') or '').lower()
+    paid_total=float((payment or {}).get('amount') or 0) if payment_status=="paid" else 0.0
+    refund_amount=round(paid_total*pct/100.0,2) if paid_total>0 else 0.0
     new_status='refunded' if refund_amount>0 else 'cancelled'
     updated=data_core.cancel_booking(
         booking_id, actor_role=actor, actor_id=uid, new_status=new_status,
