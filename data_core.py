@@ -4125,9 +4125,40 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                                             partner_id:int,service:dict,status:str,price:float,
                                             currency:str,commission:float,partner_amount:float,
                                             intent=None):
+    """Persist a booking only for an already AGREED negotiation.
+
+    Payment remains backend-owned: a newly created booking is pending_payment
+    unless the supplied payment intent is already confirmed as paid.
+    """
     token=__import__("secrets").token_urlsafe(24)
-    payment_status = str(getattr(intent, "status", "") or status or "pending_payment").strip().lower()
+    payment_status = str(getattr(intent, "status", "") or "").strip().lower()
     booking_state = "paid" if payment_status == "paid" else "pending_payment"
+
+    negotiation = one("SELECT id,status,state_json FROM negotiations WHERE id=%s AND request_id=%s",
+                      (int(negotiation_id), int(request_id)))
+    if not negotiation or str(negotiation.get("status") or "").lower() != "agreed":
+        return None
+
+    state_json = negotiation.get("state_json") or {}
+    if isinstance(state_json, str):
+        try:
+            state_json = json.loads(state_json)
+        except Exception:
+            state_json = {}
+    agreed_price = state_json.get("agreed_price")
+    if agreed_price is None:
+        agreed_min = state_json.get("agreed_min")
+        agreed_max = state_json.get("agreed_max")
+        if agreed_min is not None and agreed_max is not None:
+            # Booking may be created only after an explicit concrete amount is
+            # selected from an agreed range.
+            if float(agreed_min) != float(agreed_max):
+                return None
+            agreed_price = float(agreed_min)
+    if agreed_price is None or float(agreed_price) <= 0:
+        return None
+    price = float(agreed_price)
+
     def _tx(cur):
         cur.execute("SELECT id FROM bookings WHERE negotiation_id=%s FOR UPDATE",(int(negotiation_id),))
         existing=cur.fetchone()
@@ -4135,54 +4166,48 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
             bid=int(existing["id"])
             cur.execute("SELECT * FROM bookings WHERE id=%s",(bid,)); booking=cur.fetchone()
             cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); payment=cur.fetchone()
-            cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s",(bid,)); check=cur.fetchone()
-            if payment and str(payment.get("status") or "").lower() == "paid":
-            cur.execute(
-                """UPDATE booking_checkins
-                   SET expires_at=COALESCE(expires_at,NOW()+INTERVAL '1 hour')
-                   WHERE booking_id=%s AND (expires_at IS NULL OR expires_at<=NOW())""",
-                (bid,),
-            )
-        return {"booking":booking,"payment":payment,"checkin":check,"already_exists":True}
+            cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); check=cur.fetchone()
+            return {"booking":booking,"payment":payment,"checkin":check,"already_exists":True}
+
         cur.execute("""INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,business_id,status,
                          service_name,agreed_price,currency,commission_amount,partner_amount,data_json)
                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
                     (int(request_id),int(negotiation_id),int(client_id),int(partner_id),int(service["id"]),
-                     service.get("business_id"),status,service["name"],float(price),currency,float(commission),float(partner_amount),
+                     service.get("business_id"),booking_state,service["name"],price,currency,float(commission),float(partner_amount),
                      json.dumps({"payment_mode":getattr(intent,"provider",None),
-                                 "payment_status":getattr(intent,"status",status),
+                                 "payment_status":payment_status or "pending",
                                  "test_transaction":getattr(intent,"transaction_id",None),
-                                 "service_price":float(price)},ensure_ascii=False)))
+                                 "service_price":price},ensure_ascii=False)))
         booking=cur.fetchone()
-        # Link all AI usage from this negotiation to the concrete booking.
+
         cur.execute("""UPDATE ai_usage_ledger SET order_id=%s
                        WHERE order_id IS NULL AND negotiation_id=%s""",
                     (int(booking["id"]), int(negotiation_id)))
+
         cur.execute("""INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,
                          provider,provider_payment_id,data_json)
                        VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
-                    (int(booking["id"]),int(client_id),int(partner_id),getattr(intent,"status",status),
+                    (int(booking["id"]),int(client_id),int(partner_id),"paid" if payment_status == "paid" else "pending",
                      float(commission),currency,getattr(intent,"provider",None),
                      getattr(intent,"transaction_id",None),json.dumps({"mode":getattr(intent,"mode",None),
                      "bill_no":getattr(intent,"bill_no",None),"payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
         payment=cur.fetchone()
+
         cur.execute("""INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description)
                        VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
-                    (int(partner_id),int(booking["id"]),float(commission),currency,"Test Idram platform commission",
+                    (int(partner_id),int(booking["id"]),float(commission),currency,"Platform commission",
                      int(partner_id),int(booking["id"]),float(partner_amount),currency,"Partner amount after platform commission"))
-        cur.execute(
-            """INSERT INTO booking_checkins(booking_id,token,expires_at,status)
-               VALUES(%s,%s,COALESCE(%s,NOW() + INTERVAL '1 hour'),'active')
-               RETURNING *""",
-            (int(booking["id"]), token, scheduled_at),
-        )
-        check=cur.fetchone()
+
         cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
                     ("booked" if payment_status == "paid" else "pending_payment", int(request_id)))
-        return {"booking":booking,"payment":payment,"checkin":check,"already_exists":False}
-    try: return platform_db.transaction(_tx)
-    except Exception: return None
 
+        return {"booking":booking,"payment":payment,"checkin":None,"already_exists":False}
+
+    try:
+        return platform_db.transaction(_tx)
+    except Exception:
+        logger.exception("Failed to persist marketplace booking")
+        return None
 
 def get_admin_setting(key: str, default: str = "") -> str:
     row = one("SELECT value_json FROM admin_settings WHERE key=%s", (str(key),))
