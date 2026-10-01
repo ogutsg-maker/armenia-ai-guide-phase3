@@ -3621,10 +3621,8 @@ def marketplace_client_search(
             {coverage_type_sql} = 'all_armenia'
             OR (
               {coverage_type_sql} = 'radius'
-              AND (
-                {radius_sql} IS NULL
-                OR ({distance_sql}) <= {radius_sql}
-              )
+              AND {radius_sql} IS NOT NULL
+              AND ({distance_sql}) <= {radius_sql}
             )
             OR (
               {coverage_type_sql} = 'city_marz'
