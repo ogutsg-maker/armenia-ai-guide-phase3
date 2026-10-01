@@ -578,6 +578,118 @@ async def idram_success(request):
 async def idram_fail(request):
     return _idram_return_page('\u041f\u043b\u0430\u0442\u0451\u0436 \u043d\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d','\u041e\u043f\u043b\u0430\u0442\u0430 \u043d\u0435 \u043f\u0440\u043e\u0448\u043b\u0430 \u0438\u043b\u0438 \u0431\u044b\u043b\u0430 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0451 \u0440\u0430\u0437.')
 
+
+async def open_arbitration(request):
+    uid = _uid(request)
+    booking_id = int(request.match_info['booking_id'])
+    data = await request.json()
+    reason = str(data.get('reason') or data.get('message') or '').strip()[:2000]
+    if not reason:
+        return web.json_response({'ok': False, 'error': 'reason_required'}, status=400)
+    booking = data_core.get_booking(booking_id, actor_role='client', actor_id=uid)
+    role = 'client'
+    if not booking:
+        partner = data_core.get_partner_by_user_id(uid)
+        if partner:
+            booking = data_core.get_booking(booking_id, actor_role='partner', actor_id=uid)
+            role = 'partner'
+    if not booking:
+        return web.json_response({'ok': False, 'error': 'booking_not_found'}, status=404)
+    if str(booking.get('status') or '').lower() in {'cancelled','refunded'}:
+        return web.json_response({'ok': False, 'error': 'booking_not_active'}, status=409)
+    existing = data_core.one(
+        "SELECT * FROM booking_arbitrations WHERE booking_id=%s AND status IN ('open','admin_review') ORDER BY id DESC LIMIT 1",
+        (booking_id,),
+    )
+    if existing:
+        return web.json_response({'ok': True, 'arbitration': existing, 'already_open': True})
+    row = data_core.execute(
+        """INSERT INTO booking_arbitrations
+           (booking_id,opened_by,opened_by_id,status,reason,data_json)
+           VALUES(%s,%s,%s,'open',%s,%s::jsonb) RETURNING *""",
+        (booking_id, role, uid, reason, json.dumps({'booking_status_at_open': booking.get('status')}, ensure_ascii=False)),
+        True,
+    )
+    if not row:
+        return web.json_response({'ok': False, 'error': 'arbitration_open_failed'}, status=500)
+    # Arbitration freezes the case for QR cleanup purposes; it does not erase
+    # the check-in record and it does not automatically complete/cancel the booking.
+    try:
+        data_core.execute(
+            "UPDATE booking_checkins SET status='arbitration' WHERE booking_id=%s AND status='active'",
+            (booking_id,), False,
+        )
+    except Exception:
+        pass
+    return web.json_response({'ok': True, 'arbitration': row})
+
+
+async def admin_arbitrations(request):
+    admin_id = int(os.getenv('ADMIN_TELEGRAM_ID') or 0)
+    uid = _uid(request)
+    if not admin_id or uid != admin_id:
+        return web.json_response({'ok': False, 'error': 'admin_required'}, status=403)
+    rows = data_core.rows(
+        "SELECT * FROM booking_arbitrations WHERE status IN ('open','admin_review') ORDER BY created_at ASC LIMIT 100",
+        (),
+    )
+    return web.json_response({'ok': True, 'items': rows})
+
+
+async def resolve_arbitration(request):
+    admin_id = int(os.getenv('ADMIN_TELEGRAM_ID') or 0)
+    uid = _uid(request)
+    if not admin_id or uid != admin_id:
+        return web.json_response({'ok': False, 'error': 'admin_required'}, status=403)
+    arbitration_id = int(request.match_info['arbitration_id'])
+    data = await request.json()
+    resolution = str(data.get('resolution') or data.get('note') or '').strip()[:4000]
+    if not resolution:
+        return web.json_response({'ok': False, 'error': 'resolution_required'}, status=400)
+    row = data_core.one("SELECT * FROM booking_arbitrations WHERE id=%s", (arbitration_id,))
+    if not row or row.get('status') not in ('open','admin_review'):
+        return web.json_response({'ok': False, 'error': 'arbitration_not_open'}, status=409)
+    updated = data_core.execute(
+        """UPDATE booking_arbitrations
+           SET status='resolved',resolution=%s,resolved_by=%s,resolved_at=NOW(),updated_at=NOW()
+           WHERE id=%s AND status IN ('open','admin_review') RETURNING *""",
+        (resolution, uid, arbitration_id), True,
+    )
+    if not updated:
+        return web.json_response({'ok': False, 'error': 'arbitration_state_conflict'}, status=409)
+    booking_id = int(row['booking_id'])
+    # Closing arbitration releases the QR from its special state. Expired QR
+    # remains expired; it is never resurrected implicitly.
+    try:
+        data_core.execute(
+            """UPDATE booking_checkins
+               SET status=CASE WHEN expires_at IS NOT NULL AND expires_at <= NOW()
+                               THEN 'expired' ELSE 'active' END
+               WHERE booking_id=%s AND status='arbitration'""",
+            (booking_id,), False,
+        )
+    except Exception:
+        pass
+    return web.json_response({'ok': True, 'arbitration': updated})
+
+
+async def arbitration_get(request):
+    uid = _uid(request)
+    arbitration_id = int(request.match_info['arbitration_id'])
+    row = data_core.one(
+        """SELECT a.*,b.client_id,b.partner_id,b.status booking_status,b.service_name,b.agreed_price,b.currency
+           FROM booking_arbitrations a JOIN bookings b ON b.id=a.booking_id
+           WHERE a.id=%s""",
+        (arbitration_id,),
+    )
+    if not row:
+        return web.json_response({'ok': False, 'error': 'arbitration_not_found'}, status=404)
+    admin_id = int(os.getenv('ADMIN_TELEGRAM_ID') or 0)
+    partner = data_core.get_partner_by_user_id(uid)
+    if uid != int(row['client_id']) and not (partner and int(row['partner_id']) == int(partner['id'])) and uid != admin_id:
+        return web.json_response({'ok': False, 'error': 'forbidden'}, status=403)
+    return web.json_response({'ok': True, 'arbitration': row})
+
 def register_marketplace_flow_routes(app):
     ensure_booking_schema()
     app.router.add_post('/api/market/client/search',client_search)
@@ -595,6 +707,10 @@ def register_marketplace_flow_routes(app):
     # Legacy /agree endpoint remains as an alias to the same backend acceptance action.
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/agree',negotiation_accept)
     app.router.add_post('/api/market/client/booking/{booking_id}/cancel',cancel_booking_client)
+    app.router.add_post('/api/market/booking/{booking_id}/arbitration',open_arbitration)
+    app.router.add_get('/api/market/arbitration/{arbitration_id}',arbitration_get)
+    app.router.add_get('/api/market/admin/arbitrations',admin_arbitrations)
+    app.router.add_post('/api/market/admin/arbitration/{arbitration_id}/resolve',resolve_arbitration)
     app.router.add_post('/api/market/partner/booking/{booking_id}/cancel',cancel_booking_partner)
     app.router.add_post('/api/market/partner/checkin',partner_checkin)
     # Idram live payment callback (server-to-server) + browser return pages.
