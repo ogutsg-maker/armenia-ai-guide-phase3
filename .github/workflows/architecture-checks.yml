@@ -23,3 +23,42 @@ jobs:
         run: python -m pip install pytest
       - name: Run architecture guardrails
         run: python -m pytest -q tests/test_architecture_boundaries.py
+
+  integration-tests:
+    needs: python-syntax-and-boundary
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Run PostgreSQL 17 integration harness
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          TELEGRAM_BOT_TOKEN: "ci-test-token"
+          ADMIN_TELEGRAM_ID: "0"
+          GROQ_API_KEY: "ci-test-groq-key"
+          OPENAI_API_KEY: ""
+          WEBAPP_BASE_URL: "http://localhost:10000"
+        run: python -m pytest -v tests/integration/test_startup_bootstrap.py

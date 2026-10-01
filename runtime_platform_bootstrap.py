@@ -142,6 +142,11 @@ async def _bootstrap(app):
     main=importlib.import_module("__main__"); db=getattr(main,"db",None); ai=getattr(main,"ai",None); bot=getattr(main,"bot",None)
     if db is None or ai is None:return
     from platform_schema import ensure_platform_schema; ensure_platform_schema()
+    # partner_directions and service_direction_requests reference
+    # partner_businesses, so the business/application base schema must exist
+    # before the direction schema is created during a clean boot.
+    from partner_business_application_api import ensure_business_application_schema
+    ensure_business_application_schema()
     from partner_directions_api import ensure_partner_direction_schema,register_partner_direction_routes
     ensure_partner_direction_schema()
     from partner_lifecycle_schema import ensure_partner_lifecycle_schema; ensure_partner_lifecycle_schema()

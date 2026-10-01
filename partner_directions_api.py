@@ -68,22 +68,25 @@ def _exec(sql, params=(), returning=False):
 
 
 def ensure_partner_direction_schema():
-    """Non-destructive migration. Existing partner/data rows are preserved."""
+    """Create-only runtime bootstrap for partner directions.
+
+    Versioned migrations own ALTERs, backfills, reconciliation and final
+    uniqueness. Runtime startup only guarantees that required tables/indexes
+    exist for a clean installation.
+    """
     _exec("""
-    ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
-    ALTER TABLE master_categories ADD COLUMN IF NOT EXISTS name_en TEXT;
-    ALTER TABLE categories ADD COLUMN IF NOT EXISTS name_en TEXT;
     CREATE TABLE IF NOT EXISTS partner_directions (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+        business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE,
         master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
         status TEXT NOT NULL DEFAULT 'pending'
             CHECK (status IN ('draft','pending','approved','rejected','frozen','deleted')),
         rejection_reason TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(partner_id, master_category_id)
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
     CREATE TABLE IF NOT EXISTS partner_direction_categories (
         id BIGSERIAL PRIMARY KEY,
         partner_direction_id BIGINT NOT NULL REFERENCES partner_directions(id) ON DELETE CASCADE,
@@ -91,10 +94,11 @@ def ensure_partner_direction_schema():
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE(partner_direction_id, category_id)
     );
-    ALTER TABLE partner_verification_documents
-        ADD COLUMN IF NOT EXISTS partner_direction_id BIGINT REFERENCES partner_directions(id) ON DELETE SET NULL;
+
     CREATE INDEX IF NOT EXISTS idx_partner_directions_partner
         ON partner_directions(partner_id, status);
+    CREATE INDEX IF NOT EXISTS idx_partner_directions_business
+        ON partner_directions(business_id, status);
     CREATE INDEX IF NOT EXISTS idx_partner_direction_categories_direction
         ON partner_direction_categories(partner_direction_id);
     CREATE INDEX IF NOT EXISTS idx_partner_verification_documents_direction
@@ -103,6 +107,7 @@ def ensure_partner_direction_schema():
     CREATE TABLE IF NOT EXISTS service_direction_requests (
         id BIGSERIAL PRIMARY KEY,
         partner_id BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+        business_id BIGINT REFERENCES partner_businesses(id) ON DELETE CASCADE,
         requested_master_category_id INT NOT NULL REFERENCES master_categories(id) ON DELETE RESTRICT,
         requested_master_name TEXT,
         requested_service_name TEXT NOT NULL,
@@ -119,57 +124,12 @@ def ensure_partner_direction_schema():
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS proposed_subcategory_name TEXT;
-    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS partner_direction_id BIGINT REFERENCES partner_directions(id) ON DELETE SET NULL;
-    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS document_id BIGINT REFERENCES partner_verification_documents(id) ON DELETE SET NULL;
-    ALTER TABLE service_direction_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE INDEX IF NOT EXISTS idx_service_direction_requests_partner
         ON service_direction_requests(partner_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_service_direction_requests_status
         ON service_direction_requests(status, created_at DESC);
     """)
-
-    # Backfill legacy master_skills without relying on a missing composite
-    # UNIQUE constraint. partner_directions may now contain multiple rows for
-    # the same master across different businesses.
-    _exec("""
-    INSERT INTO partner_directions(partner_id, master_category_id, status)
-    SELECT DISTINCT p.id, c.master_category_id,
-           CASE WHEN p.status='approved' AND p.verification_status='approved'
-                THEN 'approved' ELSE 'pending' END
-    FROM partners p
-    JOIN master_skills ms ON ms.user_id=p.user_id AND ms.is_active=TRUE
-    JOIN categories c ON c.id=ms.category_id
-    WHERE c.master_category_id IS NOT NULL
-      AND NOT EXISTS (
-          SELECT 1 FROM partner_directions pd
-          WHERE pd.partner_id=p.id
-            AND pd.master_category_id=c.master_category_id
-      )
-    """)
-    _exec("""
-    INSERT INTO partner_direction_categories(partner_direction_id, category_id)
-    SELECT pd.id, ms.category_id
-    FROM partner_directions pd
-    JOIN partners p ON p.id=pd.partner_id
-    JOIN master_skills ms ON ms.user_id=p.user_id AND ms.is_active=TRUE
-    JOIN categories c ON c.id=ms.category_id AND c.master_category_id=pd.master_category_id
-    ON CONFLICT(partner_direction_id, category_id) DO NOTHING
-    """)
-    # The current project already has a single verified document for the initial direction.
-    _exec("""
-    UPDATE partner_verification_documents d
-       SET partner_direction_id = x.direction_id
-      FROM (
-        SELECT d2.id AS doc_id, MIN(pd.id) AS direction_id
-        FROM partner_verification_documents d2
-        JOIN partner_directions pd ON pd.partner_id=d2.partner_id
-        WHERE d2.partner_direction_id IS NULL
-        GROUP BY d2.id
-      ) x
-     WHERE d.id=x.doc_id AND d.partner_direction_id IS NULL
-    """)
-
 
 def ensure_initial_partner_direction(partner_id: int, user_id: int):
     """Create the registration direction from the already-selected master_skills."""
@@ -390,8 +350,6 @@ def _admin_guard(request):
 
 def register_partner_direction_routes(app, db=None, bot=None):
     app["partner_direction_bot"] = bot
-    ensure_partner_direction_schema()
-
     async def directions(request):
         # The current cabinet uses route id=0 as a neutral placeholder.
         # Resolve the real Telegram user from validated Mini App initData,
