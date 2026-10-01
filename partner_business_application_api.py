@@ -1462,7 +1462,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                 merged["source"]="partner_service"
                 merged["requires_new_direction"]=True
                 merged["requires_business_name"]=True
-                    merged["services"]=app_services
+                merged["services"]=app_services
                 merged["master_category_id"]=mid
                 merged["ai_master_category_id"]=mid
                 merged["category_id"]=category_ids[0]
