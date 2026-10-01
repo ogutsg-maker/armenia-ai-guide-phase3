@@ -2545,36 +2545,34 @@ def get_booking(booking_id: int, actor_role: str = "admin", actor_id: int | None
 
 def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
                    new_status: str, reason: str = "", refund_amount: float = 0.0):
-    booking = get_booking(booking_id, actor_role=actor_role, actor_id=actor_id)
+    booking=get_booking(booking_id,actor_role=actor_role,actor_id=actor_id)
     if not booking: return None
-    current = str(booking.get("status") or "").lower()
-    if current in {"cancelled", "refunded", "completed"}: return None
-    target = str(new_status or "").lower()
-    if target not in {"cancelled", "refunded"}: return None
-    updated = execute(
-        """UPDATE bookings SET status=%s,updated_at=NOW()
-           WHERE id=%s AND status=%s RETURNING *""",
-        (target, int(booking_id), current), True)
+    current=str(booking.get("status") or "").lower()
+    if current in {"cancelled","refunded","completed"}: return None
+    target=str(new_status or "").lower()
+    if target not in {"cancelled","refunded"}: return None
+    payment=one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
+    payment_status=str((payment or {}).get("status") or "").lower()
+    paid_amount=float((payment or {}).get("amount") or 0) if payment_status=="paid" else 0.0
+    actual_refund=min(max(0.0,float(refund_amount or 0)),paid_amount) if paid_amount>0 else 0.0
+    final_status="refunded" if actual_refund>0 else "cancelled"
+
+    updated=execute("""UPDATE bookings SET status=%s,updated_at=NOW()
+                       WHERE id=%s AND status=%s RETURNING *""",
+                    (final_status,int(booking_id),current),True)
     if not updated: return None
     if booking.get("request_id"):
-        execute("UPDATE service_requests SET status='cancelled',updated_at=NOW() WHERE id=%s",
-                (int(booking["request_id"]),), False)
+        execute("UPDATE service_requests SET status='cancelled',updated_at=NOW() WHERE id=%s",(int(booking["request_id"]),),False)
     if booking.get("negotiation_id"):
-        update_negotiation(int(booking["negotiation_id"]), {}, "cancelled",
-                           actor_role=actor_role, actor_id=actor_id)
-    execute(
-        """INSERT INTO booking_cancellations
-           (booking_id,cancelled_by,reason,refund_amount)
-           VALUES(%s,%s,%s,%s)""",
-        (int(booking_id), str(actor_role), str(reason or "")[:500], float(refund_amount or 0)), False)
-    if float(refund_amount or 0) > 0:
-        execute(
-            """INSERT INTO project_expenses
-               (booking_id,partner_id,expense_type,amount,currency,description,source)
-               VALUES(%s,%s,'refund',%s,'AMD',%s,'booking_cancellation')""",
-            (int(booking_id), booking.get("partner_id"), float(refund_amount),
-             str(reason or "Booking refund")[:1000]), False)
-        reverse_booking_financial_entries(booking, float(refund_amount))
+        update_negotiation(int(booking["negotiation_id"]),{}, "cancelled",actor_role=actor_role,actor_id=actor_id)
+    if not one("SELECT id FROM booking_cancellations WHERE booking_id=%s LIMIT 1",(int(booking_id),)):
+        execute("""INSERT INTO booking_cancellations(booking_id,cancelled_by,reason,refund_amount)
+                   VALUES(%s,%s,%s,%s)""",(int(booking_id),str(actor_role),str(reason or "")[:500],actual_refund),False)
+    if actual_refund>0:
+        execute("""INSERT INTO project_expenses(booking_id,partner_id,expense_type,amount,currency,description,source)
+                   VALUES(%s,%s,'refund',%s,'AMD',%s,'booking_cancellation')""",
+                (int(booking_id),booking.get("partner_id"),actual_refund,str(reason or "Booking refund")[:1000]),False)
+        reverse_booking_financial_entries(booking,actual_refund)
     return updated
 
 def update_payment_status_for_booking(booking_id: int, status: str):
@@ -2738,51 +2736,35 @@ def confirm_booking_by_partner(booking_id: int, partner_user_id: int):
         (int(booking_id),), True,
     )
 
-def reconcile_paid_payment(payment_id: int, transaction_id: str | None = None):
-    payment = one("SELECT * FROM payments WHERE id=%s", (int(payment_id),))
-    if not payment:
-        return None
-    if str(payment.get("status") or "").lower() == "paid":
-        return {"payment": payment, "already_paid": True}
-    updated = execute(
-        """UPDATE payments SET status='paid',provider_payment_id=COALESCE(%s,provider_payment_id),updated_at=NOW()
-           WHERE id=%s AND status<>'paid' RETURNING *""",
-        (transaction_id, int(payment_id)), True)
+def reconcile_paid_payment(payment_id:int, transaction_id:str|None=None):
+    payment=one("SELECT * FROM payments WHERE id=%s",(int(payment_id),))
+    if not payment: return None
+    if str(payment.get("status") or "").lower()=="paid":
+        booking=one("SELECT * FROM bookings WHERE id=%s",(int(payment.get("booking_id") or 0),)) if payment.get("booking_id") else None
+        check=one("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(int(booking["id"]),)) if booking else None
+        return {"payment":payment,"booking":booking,"checkin":check,"already_paid":True}
+    updated=execute("""UPDATE payments SET status='paid',provider_payment_id=COALESCE(%s,provider_payment_id),updated_at=NOW()
+                       WHERE id=%s AND status<>'paid' RETURNING *""",(transaction_id,int(payment_id)),True)
     if not updated:
-        return {"payment": one("SELECT * FROM payments WHERE id=%s",(int(payment_id),)), "already_paid": True}
-    payment = updated
+        return {"payment":one("SELECT * FROM payments WHERE id=%s",(int(payment_id),)),"already_paid":True}
+    payment=updated
     record_payment_provider_fee_for_payment(payment)
-    booking_id = payment.get("booking_id")
-    booking = None
-    if booking_id:
-        booking = execute(
-            """UPDATE bookings SET status='paid',updated_at=NOW()
-               WHERE id=%s AND status='pending_payment' RETURNING *""",
-            (int(booking_id),), True)
-        booking = booking or one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
-        if booking:
-            existing_check = one("SELECT id FROM booking_checkins WHERE booking_id=%s",
-                                 (int(booking["id"]),))
-            if not existing_check:
-                import secrets
-                execute(
-                    """INSERT INTO booking_checkins(booking_id,token,expires_at,status)
-                       VALUES(%s,%s,COALESCE(%s,NOW()) + INTERVAL '1 hour','active')""",
-                    (int(booking["id"]), secrets.token_urlsafe(24), booking.get("scheduled_at")),
-                    False,
-                )
-        if booking:
-            add_booking_financial_entries(
-                int(booking["partner_id"]), int(booking["id"]),
-                float(booking.get("commission_amount") or 0),
-                float(booking.get("partner_amount") or 0),
-                booking.get("currency") or "AMD",
-            )
-        if booking and booking.get("request_id"):
-            execute("""UPDATE service_requests SET status='booked',updated_at=NOW()
-                       WHERE id=%s AND status<>'booked'""",(int(booking["request_id"]),),False)
-    return {"payment": payment, "booking": booking, "already_paid": False}
-
+    booking_id=payment.get("booking_id")
+    if not booking_id: return {"payment":payment,"booking":None,"checkin":None,"already_paid":False}
+    booking=execute("""UPDATE bookings SET status='paid',updated_at=NOW()
+                       WHERE id=%s AND status='pending_payment' RETURNING *""",(int(booking_id),),True)
+    booking=booking or one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
+    if not booking: return {"payment":payment,"booking":None,"checkin":None,"already_paid":False}
+    check=one("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(int(booking["id"]),))
+    if not check:
+        check=create_booking_checkin(int(booking["id"]),__import__("secrets").token_urlsafe(24),booking.get("scheduled_at"))
+    add_booking_financial_entries(int(booking["partner_id"]),int(booking["id"]),
+                                  float(booking.get("commission_amount") or 0),
+                                  float(booking.get("partner_amount") or 0),
+                                  booking.get("currency") or "AMD")
+    if booking.get("request_id"):
+        execute("UPDATE service_requests SET status='booked',updated_at=NOW() WHERE id=%s AND status<>'booked'",(int(booking["request_id"]),),False)
+    return {"payment":payment,"booking":booking,"checkin":check,"already_paid":False}
 
 def get_payment_by_bill_no(bill_no: str):
     """Return the latest payment associated with an external Idram bill number."""
@@ -2810,80 +2792,64 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
                            currency: str, commission: float, partner_amount: float,
                            scheduled_at=None, client_note: str = "",
                            intent=None, metadata: dict | None = None):
-    """Atomically persist a direct booking and its payment/ledger/check-in rows.
-
-    The provider invoice may exist before this DB transaction starts. If any DB
-    step fails, PostgreSQL rolls back all booking-side rows and the caller can
-    safely retry/reconcile using the same service request/external bill number.
-    """
-    if not request_row or not request_row.get("id"):
-        return None
-    request_id = int(request_row["id"])
-    booking_status = str(status or "pending_payment")
-    metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
-    token = __import__("secrets").token_urlsafe(24)
+    """Persist the booking/payment placeholder; settlement side effects happen only after payment."""
+    if not request_row or not request_row.get("id"): return None
+    request_id=int(request_row["id"])
+    requested_status=str(status or "pending_partner_confirmation").strip().lower()
+    if requested_status not in {"pending_partner_confirmation","pending_payment","paid"}:
+        requested_status="pending_partner_confirmation"
+    intent_status=str(getattr(intent,"status","") or "").strip().lower()
+    booking_status="paid" if intent_status=="paid" else requested_status
+    payment_status="paid" if intent_status=="paid" else "pending"
+    payment_amount=round(float(commission)+float(partner_amount),2)
+    metadata_json=json.dumps(metadata or {},ensure_ascii=False)
 
     def _tx(cur):
-        cur.execute(
-            """SELECT id FROM bookings WHERE request_id=%s FOR UPDATE""",
-            (request_id,),
-        )
-        existing = cur.fetchone()
+        cur.execute("SELECT id FROM bookings WHERE request_id=%s FOR UPDATE",(request_id,))
+        existing=cur.fetchone()
         if existing:
-            cur.execute("SELECT * FROM bookings WHERE id=%s", (int(existing["id"]),))
-            booking = cur.fetchone()
-            cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1", (int(existing["id"]),))
-            payment = cur.fetchone()
-            return {"booking": booking, "payment": payment, "checkin": None, "already_exists": True}
-
-        cur.execute(
-            """INSERT INTO bookings(
+            bid=int(existing["id"])
+            cur.execute("SELECT * FROM bookings WHERE id=%s",(bid,)); booking=cur.fetchone()
+            cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); payment=cur.fetchone()
+            cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); checkin=cur.fetchone()
+            return {"booking":booking,"payment":payment,"checkin":checkin,"already_exists":True}
+        cur.execute("""INSERT INTO bookings(
                  request_id,negotiation_id,client_id,partner_id,service_id,package_id,business_id,
                  status,service_name,agreed_price,currency,commission_amount,partner_amount,
                  scheduled_at,client_note,data_json)
-               VALUES(%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
-               RETURNING *""",
-            (request_id, int(client_id), int(service["partner_id"]), int(service["id"]),
-             package_id, service.get("business_id"), booking_status, service["name"], float(price), currency,
-             float(commission), float(partner_amount), scheduled_at, client_note, metadata_json),
-        )
-        booking = cur.fetchone()
-        cur.execute(
-            """INSERT INTO payments(
+               VALUES(%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
+            (request_id,int(client_id),int(service["partner_id"]),int(service["id"]),package_id,
+             service.get("business_id"),booking_status,service["name"],float(price),currency,
+             float(commission),float(partner_amount),scheduled_at,client_note,metadata_json))
+        booking=cur.fetchone()
+        cur.execute("""INSERT INTO payments(
                  booking_id,client_id,partner_id,payment_type,status,amount,currency,
                  provider,provider_payment_id,data_json)
-               VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb)
-               RETURNING *""",
-            (int(booking["id"]), int(client_id), int(service["partner_id"]),
-             getattr(intent, "status", booking_status), float(commission), currency,
-             getattr(intent, "provider", None), getattr(intent, "transaction_id", None),
-             json.dumps({"mode": getattr(intent, "mode", None),
-                         "bill_no": getattr(intent, "bill_no", None),
-                         "payment_url": getattr(intent, "payment_url", None)}, ensure_ascii=False)),
-        )
-        payment = cur.fetchone()
-        cur.execute(
-            """INSERT INTO partner_financial_ledger
-               (partner_id,booking_id,entry_type,amount,currency,description)
-               VALUES(%s,%s,'commission',%s,%s,%s),
-                     (%s,%s,'partner_due',%s,%s,%s)""",
-            (int(service["partner_id"]), int(booking["id"]), float(commission), currency,
-             "Direct booking platform commission",
-             int(service["partner_id"]), int(booking["id"]), float(partner_amount), currency,
-             "Partner amount after platform commission"),
-        )
-        checkin = None
-        request_status = "booked" if getattr(intent, "status", booking_status) == "paid" else booking_status
-        cur.execute(
-            "UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
-            (request_status, request_id),
-        )
-        return {"booking": booking, "payment": payment, "checkin": checkin, "already_exists": False}
-
-    try:
-        return platform_db.transaction(_tx)
-    except Exception:
-        return None
+               VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
+            (int(booking["id"]),int(client_id),int(service["partner_id"]),payment_status,
+             payment_amount,currency,getattr(intent,"provider",None),getattr(intent,"transaction_id",None),
+             json.dumps({"mode":getattr(intent,"mode",None),"bill_no":getattr(intent,"bill_no",None),
+                         "payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
+        payment=cur.fetchone()
+        if payment_status=="paid":
+            cur.execute("""INSERT INTO partner_financial_ledger
+                   (partner_id,booking_id,entry_type,amount,currency,description)
+                   VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
+                (int(service["partner_id"]),int(booking["id"]),float(commission),currency,
+                 "Direct booking platform commission (payment confirmed)",
+                 int(service["partner_id"]),int(booking["id"]),float(partner_amount),currency,
+                 "Partner amount after platform commission (payment confirmed)"))
+        request_status="booked" if payment_status=="paid" else booking_status
+        cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",(request_status,request_id))
+        checkin=None
+        if payment_status=="paid":
+            cur.execute("""INSERT INTO booking_checkins(booking_id,token,expires_at,status)
+                           VALUES(%s,%s,COALESCE(%s,NOW()) + INTERVAL '1 hour','active') RETURNING *""",
+                (int(booking["id"]),__import__("secrets").token_urlsafe(24),scheduled_at))
+            checkin=cur.fetchone()
+        return {"booking":booking,"payment":payment,"checkin":checkin,"already_exists":False}
+    try: return platform_db.transaction(_tx)
+    except Exception: return None
 
 def create_direct_booking_request(client_id: int, summary: str, preferences: dict):
     return execute(
@@ -4207,6 +4173,22 @@ def marketplace_partner_locations(partner_id:int):
                    FROM partner_objects WHERE partner_id=%s ORDER BY id LIMIT 5""",(int(partner_id),))
 
 
+def get_paid_booking_contact(booking_id:int, actor_role:str="client", actor_id:int|None=None) -> dict[str, Any]:
+    """Return contact fields only after a backend-confirmed paid payment."""
+    booking=get_booking(int(booking_id),actor_role=actor_role,actor_id=actor_id)
+    if not booking: return {}
+    payment=one("SELECT status FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
+    if str((payment or {}).get("status") or "").lower()!="paid": return {}
+    partner=marketplace_partner_profile(int(booking["partner_id"])) or {}
+    if not partner.get("contact_sharing_enabled"): return {}
+    profile=partner.get("profile_json") or {}
+    if isinstance(profile,str):
+        try: profile=json.loads(profile)
+        except Exception: profile={}
+    if not isinstance(profile,dict): return {}
+    return {k:profile.get(k) for k in ("phone","website","telegram") if profile.get(k)}
+
+
 def marketplace_partner_owner(partner_id:int):
     return one("SELECT user_id FROM partners WHERE id=%s",(int(partner_id),))
 
@@ -4221,17 +4203,12 @@ def marketplace_payment_bundle_for_booking(booking_id:int):
 
 
 def marketplace_cancel_side_effects(partner_id:int,booking_id:int,actor:str,reason:str,refund_amount:float,currency:str):
-    execute("""INSERT INTO partner_financial_ledger
-               (partner_id,booking_id,entry_type,amount,currency,description)
-               VALUES(%s,%s,'refund',%s,%s,%s)""",
-            (int(partner_id),int(booking_id),-float(refund_amount),currency,
-             f"Refund on cancellation ({actor})"),False)
-    execute("""INSERT INTO booking_cancellations
-               (booking_id,cancelled_by,reason,refund_amount)
-               VALUES(%s,%s,%s,%s)""",
-            (int(booking_id),actor,reason,float(refund_amount)),False)
+    """Cancellation history is idempotent; financial reversals are handled by cancel_booking()."""
+    if not one("SELECT id FROM booking_cancellations WHERE booking_id=%s LIMIT 1",(int(booking_id),)):
+        execute("""INSERT INTO booking_cancellations(booking_id,cancelled_by,reason,refund_amount)
+                   VALUES(%s,%s,%s,%s)""",
+                (int(booking_id),str(actor),str(reason or "")[:500],float(refund_amount or 0)),False)
     return True
-
 
 def marketplace_existing_payment(negotiation_id:int):
     booking=marketplace_booking_by_negotiation(int(negotiation_id))
@@ -4275,38 +4252,34 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                                             partner_id:int,service:dict,status:str,price:float,
                                             currency:str,commission:float,partner_amount:float,
                                             intent=None):
-    """Persist a booking only for an already AGREED negotiation.
+    """Persist an agreed negotiation booking before payment.
 
-    Payment remains backend-owned: a newly created booking is pending_payment
-    unless the supplied payment intent is already confirmed as paid.
+    Partner confirmation moves the booking to pending_payment. Financial
+    ledger rows and QR are created only after payment is actually paid.
     """
-    token=__import__("secrets").token_urlsafe(24)
     payment_status = str(getattr(intent, "status", "") or "").strip().lower()
-    booking_state = "paid" if payment_status == "paid" else "pending_payment"
+    requested_status = str(status or "").strip().lower()
+    if requested_status not in {"pending_partner_confirmation", "pending_payment", "paid"}:
+        requested_status = "pending_partner_confirmation"
+    booking_state = "paid" if payment_status == "paid" else requested_status
+    payment_row_status = "paid" if payment_status == "paid" else "pending"
+    payment_amount = round(float(commission) + float(partner_amount), 2)
 
     negotiation = one("SELECT id,status,state_json FROM negotiations WHERE id=%s AND request_id=%s",
                       (int(negotiation_id), int(request_id)))
     if not negotiation or str(negotiation.get("status") or "").lower() != "agreed":
         return None
-
     state_json = negotiation.get("state_json") or {}
     if isinstance(state_json, str):
-        try:
-            state_json = json.loads(state_json)
-        except Exception:
-            state_json = {}
+        try: state_json = json.loads(state_json)
+        except Exception: state_json = {}
     agreed_price = state_json.get("agreed_price")
     if agreed_price is None:
-        agreed_min = state_json.get("agreed_min")
-        agreed_max = state_json.get("agreed_max")
+        agreed_min, agreed_max = state_json.get("agreed_min"), state_json.get("agreed_max")
         if agreed_min is not None and agreed_max is not None:
-            # Booking may be created only after an explicit concrete amount is
-            # selected from an agreed range.
-            if float(agreed_min) != float(agreed_max):
-                return None
+            if float(agreed_min) != float(agreed_max): return None
             agreed_price = float(agreed_min)
-    if agreed_price is None or float(agreed_price) <= 0:
-        return None
+    if agreed_price is None or float(agreed_price) <= 0: return None
     price = float(agreed_price)
 
     def _tx(cur):
@@ -4325,34 +4298,37 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                     (int(request_id),int(negotiation_id),int(client_id),int(partner_id),int(service["id"]),
                      service.get("business_id"),booking_state,service["name"],price,currency,float(commission),float(partner_amount),
                      json.dumps({"payment_mode":getattr(intent,"provider",None),
-                                 "payment_status":payment_status or "pending",
+                                 "payment_status":payment_row_status,
                                  "test_transaction":getattr(intent,"transaction_id",None),
                                  "service_price":price},ensure_ascii=False)))
         booking=cur.fetchone()
-
-        cur.execute("""UPDATE ai_usage_ledger SET order_id=%s
-                       WHERE order_id IS NULL AND negotiation_id=%s""",
+        cur.execute("UPDATE ai_usage_ledger SET order_id=%s WHERE order_id IS NULL AND negotiation_id=%s",
                     (int(booking["id"]), int(negotiation_id)))
-
         cur.execute("""INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,
                          provider,provider_payment_id,data_json)
                        VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
-                    (int(booking["id"]),int(client_id),int(partner_id),"paid" if payment_status == "paid" else "pending",
-                     float(commission),currency,getattr(intent,"provider",None),
-                     getattr(intent,"transaction_id",None),json.dumps({"mode":getattr(intent,"mode",None),
-                     "bill_no":getattr(intent,"bill_no",None),"payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
+                    (int(booking["id"]),int(client_id),int(partner_id),payment_row_status,
+                     payment_amount,currency,getattr(intent,"provider",None),
+                     getattr(intent,"transaction_id",None),
+                     json.dumps({"mode":getattr(intent,"mode",None),
+                                 "bill_no":getattr(intent,"bill_no",None),
+                                 "payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
         payment=cur.fetchone()
-
-        cur.execute("""INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description)
-                       VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
-                    (int(partner_id),int(booking["id"]),float(commission),currency,"Platform commission",
-                     int(partner_id),int(booking["id"]),float(partner_amount),currency,"Partner amount after platform commission"))
-
+        if payment_row_status == "paid":
+            cur.execute("""INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description)
+                           VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
+                        (int(partner_id),int(booking["id"]),float(commission),currency,"Platform commission (payment confirmed)",
+                         int(partner_id),int(booking["id"]),float(partner_amount),currency,"Partner amount after platform commission (payment confirmed)"))
+        request_status = "booked" if payment_row_status == "paid" else booking_state
         cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
-                    ("booked" if payment_status == "paid" else "pending_payment", int(request_id)))
-
-        return {"booking":booking,"payment":payment,"checkin":None,"already_exists":False}
-
+                    (request_status, int(request_id)))
+        checkin=None
+        if payment_row_status == "paid":
+            cur.execute("""INSERT INTO booking_checkins(booking_id,token,expires_at,status)
+                           VALUES(%s,%s,NOW() + INTERVAL '1 hour','active') RETURNING *""",
+                        (int(booking["id"]), __import__("secrets").token_urlsafe(24)))
+            checkin=cur.fetchone()
+        return {"booking":booking,"payment":payment,"checkin":checkin,"already_exists":False}
     try:
         return platform_db.transaction(_tx)
     except Exception:
