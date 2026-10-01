@@ -170,6 +170,8 @@ class ToolRegistry:
                     "city": {"type": "string"},
                     "category_id": _nullable("integer"),
                     "max_price": _nullable("number"),
+                    "client_lat": _nullable("number"),
+                    "client_lng": _nullable("number"),
                     "limit": {"type": "integer"},
                 },
                 contexts=(ContextType.CLIENT, ContextType.ADMIN),
@@ -729,11 +731,14 @@ class ToolRegistry:
             return {"ok": True, "items": result}
 
         if name == "search_services":
-            return {"ok": True, "items": data_core.search_services(
+            return {"ok": True, "items": data_core.marketplace_client_search(
+                query=str(args.get("query") or ""),
                 category_id=args.get("category_id"),
                 city=str(args.get("city") or ""),
                 max_price=args.get("max_price"),
-                limit=max(1, min(int(args.get("limit") or 20), 100)),
+                client_lat=args.get("client_lat"),
+                client_lng=args.get("client_lng"),
+                limit=max(1, min(int(args.get("limit") or 20), 50)),
             )}
 
         if name == "get_my_orders":
