@@ -3498,6 +3498,7 @@ def marketplace_client_search(
     city: str = "",
     category_id: int = 0,
     limit: int = 20,
+    max_price: float | None = None,
     client_lat: float | None = None,
     client_lng: float | None = None,
 ):
@@ -3535,6 +3536,9 @@ def marketplace_client_search(
     if category_id:
         params.append(category_id)
         where.append("s.category_id=%s")
+    if max_price is not None:
+        params.append(float(max_price))
+        where.append("(s.price IS NULL OR s.price<=%s)")
 
     # Resolve service coordinates from the service-specific location first,
     # then fall back to the linked partner object. Existing records can use
