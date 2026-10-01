@@ -194,6 +194,7 @@ def _ensure_checkins(cur) -> None:
             issued_at TIMESTAMPTZ DEFAULT NOW(),
             checked_in_at TIMESTAMPTZ,
             checked_in_by BIGINT,
+            expires_at TIMESTAMPTZ,
             data_json JSONB DEFAULT '{}'::jsonb
         )
         """
@@ -205,6 +206,7 @@ def _ensure_checkins(cur) -> None:
         "issued_at": "TIMESTAMPTZ DEFAULT NOW()",
         "checked_in_at": "TIMESTAMPTZ",
         "checked_in_by": "BIGINT",
+        "expires_at": "TIMESTAMPTZ",
         "data_json": "JSONB DEFAULT '{}'::jsonb",
     }
     for column, definition in columns.items():
