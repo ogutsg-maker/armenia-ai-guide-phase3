@@ -2938,6 +2938,39 @@ def get_direction_verification(*, partner_id: int, business_id: int, master_cate
     return {"policy": policy, "direction": direction, "case": case, "documents": documents}
 
 
+
+def get_application_direction_verification(*, application_id: int, partner_id: int) -> dict[str, Any] | None:
+    """Resolve direction verification for a partner-owned service application."""
+    app = get_application_full(int(application_id), partner_id=int(partner_id))
+    if not app:
+        return None
+    payload = app.get("payload_json") or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            payload = {}
+    master_id = app.get("master_category_id")
+    if master_id is None and isinstance(payload, dict):
+        master_id = payload.get("master_category_id") or payload.get("ai_master_category_id")
+        if master_id is None:
+            services = payload.get("services") or []
+            if services and isinstance(services[0], dict):
+                master_id = services[0].get("master_category_id")
+                if master_id is None:
+                    cid = services[0].get("matched_subcategory_id") or services[0].get("subcategory_id") or services[0].get("category_id")
+                    if cid not in (None, ""):
+                        cat = get_catalog_category(int(cid))
+                        master_id = cat.get("master_category_id") if cat else None
+    if master_id is None or app.get("business_id") is None:
+        return None
+    return get_direction_verification(
+        partner_id=int(partner_id),
+        business_id=int(app["business_id"]),
+        master_category_id=int(master_id),
+    )
+
+
 def _notify_direction_document_required(*, partner_user_id: int, master_category_id: int, case_id: int | None):
     try:
         policy = get_direction_verification_policy(int(master_category_id))
