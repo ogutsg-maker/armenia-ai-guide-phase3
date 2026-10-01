@@ -1216,6 +1216,14 @@ async def api_applications(request: web.Request):
     pid = _require_partner(uid)
     from data_core import search_applications
     rows = search_applications(partner_id=pid, limit=100)
+    from data_core import get_application_direction_verification
+    for row in rows:
+        try:
+            row["direction_verification"] = get_application_direction_verification(
+                application_id=int(row["id"]), partner_id=pid
+            )
+        except Exception:
+            row["direction_verification"] = None
     return web.json_response({"ok": True, "applications": _json(rows)})
 
 
@@ -1250,7 +1258,7 @@ async def api_application_update(request: web.Request):
 
 
 async def api_application_delete(request: web.Request):
-    """Delete a partner-owned non-approved application and its attached document."""
+    """Delete a partner-owned non-approved application; documents are no longer owned by applications."""
     uid = _auth_partner(request)
     pid = _require_partner(uid)
     application_id = int(request.match_info["application_id"])
