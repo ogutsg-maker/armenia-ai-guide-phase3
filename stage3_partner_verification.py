@@ -418,7 +418,7 @@ async def api_partner_document_upload(request):
     try:
         if direction_id is None:
             row = _db_fetchone(
-                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND status IN ('draft','pending','rejected') ORDER BY id DESC LIMIT 1",
+                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND status IN ('draft','pending','pending_document','rejected') ORDER BY id DESC LIMIT 1",
                 (partner["id"],business_id),
             )
             if row:
@@ -832,12 +832,7 @@ async def _set_partner_decision(request, decision):
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
 
     if decision == "approve":
-        # Partner registration is independent from company/direction verification.
-        # Registration does not require a document.
-        _db_execute(
-            "UPDATE partners SET status='approved', verification_status='approved', rejection_reason=NULL WHERE id=%s",
-            (pid,),
-        )
+        _db_execute("UPDATE partners SET status='approved', verification_status='approved', rejection_reason=NULL WHERE id=%s", (pid,))
         _audit(admin_id, "partner_approved", pid)
         await _notify_partner_decision(request, partner, "approve")
         return web.json_response({"ok": True, "partner_id": pid, "status": "approved", "verification_status": "approved"})
@@ -1529,22 +1524,24 @@ async def api_admin_direction_verification_action(request):
     admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
     case_id = int(request.match_info["id"])
     action = str(request.match_info["action"] or "").strip().lower()
-    reason = str((await request.json()).get("reason") or "").strip()[:2000] if request.can_read_body else ""
     try:
         if action == "approve":
             result = data_core.admin_approve_direction_verification(
-                case_id=case_id, admin_telegram_id=admin_id,
+                case_id=case_id, admin_telegram_id=admin_id
             )
         elif action == "reject":
+            payload = await request.json() if request.can_read_body else {}
             result = data_core.admin_reject_direction_verification(
-                case_id=case_id, reason=reason, admin_telegram_id=admin_id,
+                case_id=case_id,
+                reason=str(payload.get("reason") or "").strip(),
+                admin_telegram_id=admin_id,
             )
         else:
             return web.json_response({"ok":False,"error":"unknown_action"},status=400)
+        return web.json_response(result)
     except Exception as exc:
-        return web.json_response({"ok":False,"error":str(exc)[:500]},status=400)
+        return web.json_response({"ok":False,"error":str(exc)[:1000]},status=400)
 
-    return web.json_response({"ok":True,**result})
 
 
 def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=True):
