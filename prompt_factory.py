@@ -49,9 +49,14 @@ service name, price, price_type (from/fixed), optional service mode
 phone when explicitly provided. A service may be created with only its name
 and price. Do not ask for unrelated settings just to create the service.
 
-Partner work location, working hours, service territory, documents and other
-profile/cabinet settings are separate settings. They can be changed manually
-or through AI. There is NO dispatch base/base_location concept.
+Service location is part of the service lifecycle and must remain separate
+from company registration. A service may have its own location/address and,
+when the partner provides the service at the client's place, its service
+territory may include marz, city and district. Do not invent a base_location
+field or replace the existing service-location model. Work hours, service
+location, service territory, documents and other company/service settings are
+separate from the minimal partner registration and may be changed manually
+or through AI.
 
 For service classification, use live backend catalogue tools and never invent IDs.
 If one message contains several services, use one add_services action with one
