@@ -1024,65 +1024,6 @@ class AIManager:
                 logger.exception("Admin deterministic approval fast path failed")
                 return {"reply": self._error_text(language), "error": str(exc)}
 
-        document_approval_intent = re.search(
-            r"(?:հաստատիր|հաստատել|հաստատի|approve|одобр|утверд|հաստատե՞լ).*?"
-            r"(?:փաստաթուղթ|документ|document)",
-            str(message or "").casefold(),
-        )
-        if document_approval_intent:
-            try:
-                app = data_core.get_application_full(app_id)
-                if not app:
-                    raise ValueError("application_not_found")
-                action = {
-                    "name": "admin_approve_application_document",
-                    "args": {"application_id": app_id},
-                    "state": "awaiting_confirmation",
-                }
-                await self._set_pending(telegram_id, ContextType.ADMIN, action)
-                summary = (
-                    f"Հաստատե՞լ հայտ #{app_id}-ի կցված փաստաթուղթը?"
-                    if language == "hy" else
-                    f"Подтвердить документ, прикреплённый к заявке #{app_id}?"
-                    if language == "ru" else
-                    f"Approve the document attached to application #{app_id}?"
-                )
-                return {"reply": summary, "confirmation_pending": True, "fast_path": True,
-                        "application_id": app_id}
-            except Exception as exc:
-                logger.exception("Admin deterministic document approval fast path failed")
-                return {"reply": self._error_text(language), "error": str(exc)}
-        
-        document_correction_intent = re.search(
-            r"(?:հայտ|заяв|application)\s*(?:#|№)?\s*\d*.*?"
-            r"(?:փաստաթուղթ|документ|document).*?"
-            r"(?:ուղարկ|ուղղարկ|отправ|попрос|замен|нов|новый|նոր|ճշտ|исправ|replace|resubmit)",
-            str(message or "").casefold(),
-        )
-        if document_correction_intent:
-            reason = (
-                "Խնդրում ենք ուղարկել նոր փաստաթուղթ։ Նախորդ փաստաթուղթը չի բավարարել ստուգման պահանջներին։"
-                if language == "hy" else
-                "Пожалуйста, отправьте новый документ. Предыдущий документ не прошёл проверку."
-                if language == "ru" else
-                "Please send a new verification document. The previous document did not pass verification."
-            )
-            action = {
-                "name": "admin_request_document_correction",
-                "args": {"application_id": app_id, "reason": reason},
-                "state": "awaiting_confirmation",
-            }
-            await self._set_pending(telegram_id, ContextType.ADMIN, action)
-            summary = (
-                f"Հայտ #{app_id}-ի գործընկերոջը խնդրել նոր փաստաթուղթ ուղարկել։ Հաստատե՞լ։"
-                if language == "hy" else
-                f"Попросить партнёра по заявке #{app_id} отправить новый документ. Подтвердить?"
-                if language == "ru" else
-                f"Ask the partner for application #{app_id} to send a new document. Confirm?"
-            )
-            return {"reply": summary, "confirmation_pending": True, "fast_path": True,
-                    "application_id": app_id}
-
         # All ordinary admin edits, including price changes, go through Groq
         # -> ToolRegistry -> pending_action. Fast Path handles only deterministic
         # button selections and confirmation/cancellation.
@@ -1713,14 +1654,6 @@ class AIManager:
                                 if language == "ru"
                                 else "⏳ The application was sent for review."
                             )
-                        elif pending_name == "admin_approve_application_document":
-                            reply = (
-                                "✅ Փաստաթուղթը հաստատվեց։ Հայտը դեռ սպասում է վերջնական ադմինիստրատիվ հաստատմանը։"
-                                if language == "hy"
-                                else "✅ Документ подтверждён. Заявка остаётся в ожидании окончательного решения администратора."
-                                if language == "ru"
-                                else "✅ The document was approved. The application remains pending final administrator approval."
-                            )
                         elif pending_name == "admin_approve_application":
                             # The backend result is the only source of truth.
                             # Never report approval merely because the mutation
@@ -1752,14 +1685,6 @@ class AIManager:
                                 else "✅ Заявка отклонена."
                                 if language == "ru"
                                 else "✅ The application was rejected."
-                            )
-                        elif pending_name == "admin_request_document_correction":
-                            reply = (
-                                "✅ Գործընկերոջը ուղարկվել է փաստաթուղթը փոխարինելու պահանջը։"
-                                if language == "hy"
-                                else "✅ Партнёру отправлен запрос на замену документа."
-                                if language == "ru"
-                                else "✅ The partner was asked to replace the document."
                             )
                         elif pending_name == "admin_apply_catalog_resolution":
                             reply = (
