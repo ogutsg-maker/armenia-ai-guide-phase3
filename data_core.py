@@ -3750,9 +3750,9 @@ def marketplace_client_search(
             {mode_sql}<>'both'
             AND {coverage_type_sql} IN ('city_marz','radius')
             AND (
-              LOWER(({base_city_sql} if False else service_city_sql))=LOWER(%s)
-              OR LOWER({service_district_sql})=LOWER(%s)
-              OR LOWER({service_marz_sql})=LOWER(%s)
+              LOWER(CASE WHEN {mode_sql}='mobile' THEN {base_city_sql} ELSE {service_city_sql} END)=LOWER(%s)
+              OR LOWER(CASE WHEN {mode_sql}='mobile' THEN {base_district_sql} ELSE {service_district_sql} END)=LOWER(%s)
+              OR LOWER(CASE WHEN {mode_sql}='mobile' THEN {base_marz_sql} ELSE {service_marz_sql} END)=LOWER(%s)
             )
           )
         )""")
@@ -3767,9 +3767,13 @@ def marketplace_client_search(
     elif city:
         where.append(f"""(
           {coverage_type_sql}='all_armenia'
-          OR LOWER({service_city_sql})=LOWER(%s)
-          OR LOWER({service_district_sql})=LOWER(%s)
-          OR LOWER({service_marz_sql})=LOWER(%s)
+          OR (
+            {mode_sql}<>'mobile' AND (
+              LOWER({service_city_sql})=LOWER(%s)
+              OR LOWER({service_district_sql})=LOWER(%s)
+              OR LOWER({service_marz_sql})=LOWER(%s)
+            )
+          )
           OR (
             {mode_sql}='mobile' AND (
               LOWER({base_city_sql})=LOWER(%s)
