@@ -1607,7 +1607,7 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
             "name": "admin_approve_application",
             "args": {"application_id": int(application_id)},
         },
-        "summary": f"Հաստատել հայտ #{int(application_id)}{'՝ փաստաթուղթը ստուգված է' if document_required else '՝ գործող հաստատված ուղղության ներքո, նոր փաստաթուղթ պետք չէ'}?",
+        "summary": f"Ակտիվացնել հայտ #{int(application_id)}-ի ծառայությունները։ Ընկերության փաստաթուղթը առանձին է և այս ծառայության ակտիվացման համար պետք չէ։ Հաստատո՞ւմ եք?",
     }
 
 
