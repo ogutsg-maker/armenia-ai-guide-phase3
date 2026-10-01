@@ -1514,44 +1514,28 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     except (TypeError, ValueError):
         master_id = None
 
-    # Company documents are verified separately from service applications.
-    document_required = False
-    approved_direction = None
+    # Service applications never own documents. Direction verification is
+    # evaluated against the live policy for the classified direction.
+    direction_verification_required = False
+    direction_verification = None
     if source == "partner_service" and business_id and master_id:
-        approved_direction = one(
-            """SELECT id FROM partner_directions
-               WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
-                 AND status='approved' LIMIT 1""",
-            (int(app["partner_id"]), int(business_id), int(master_id)),
+        direction_verification = ensure_direction_verification_case(
+            partner_id=int(app["partner_id"]),
+            business_id=int(business_id),
+            master_category_id=int(master_id),
         )
-
-    document = None
-    if document_required:
-        if not app.get("document_id"):
-            return {
-                "ok": False, "can_approve": False,
-                "reason_code": "document_required",
-                "message": "Հայտը չի կարելի հաստատել․ պարտադիր փաստաթուղթը կցված չէ։",
-            }
-        document = one(
-            """SELECT id,original_filename,status,rejection_reason
-               FROM partner_verification_documents
-               WHERE id=%s AND partner_id=%s LIMIT 1""",
-            (int(app["document_id"]), int(app["partner_id"])),
+        direction_verification_required = bool(
+            direction_verification.get("required") and not direction_verification.get("verified")
         )
-        if not document:
-            return {
-                "ok": False, "can_approve": False,
-                "reason_code": "document_not_found",
-                "message": "Հայտի փաստաթուղթը չի գտնվել։",
-            }
-        if str(document.get("status") or "").lower() != "approved":
-            return {
-                "ok": False, "can_approve": False,
-                "reason_code": "document_not_approved",
-                "document_status": document.get("status"),
-                "message": "Հայտը չի կարելի հաստատել․ փաստաթուղթը դեռ հաստատված չէ։",
-            }
+        if direction_verification_required:
+            case = direction_verification.get("case") or {}
+            partner = get_partner_by_id(int(app["partner_id"]))
+            if partner:
+                _notify_direction_document_required(
+                    partner_user_id=int(partner.get("user_id") or 0),
+                    master_category_id=int(master_id),
+                    case_id=case.get("id"),
+                )
 
     services = application_service_items(int(application_id))
     if not services:
@@ -1585,6 +1569,20 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     if master_id is None:
         return {"ok": False, "can_approve": False, "reason_code": "direction_required",
                 "message": "Հայտի համար ուղղությունը չի որոշվել։"}
+    if direction_verification_required:
+        policy = (direction_verification or {}).get("policy") or {}
+        case = (direction_verification or {}).get("case") or {}
+        return {
+            "ok": True,
+            "can_approve": False,
+            "reason_code": "direction_verification_required",
+            "verification_required": True,
+            "verification_status": (direction_verification.get("direction") or {}).get("status"),
+            "verification_case_id": case.get("id"),
+            "direction_name": policy.get("name_am") or policy.get("name_ru") or policy.get("name_en"),
+            "message": f"Հայտ #{int(application_id)} սպասում է ուղղության փաստաթղթի ստուգմանը։",
+        }
+
     valid_rows = rows(
         """SELECT id FROM categories
            WHERE master_category_id=%s AND id=ANY(%s::int[]) AND is_active=TRUE""",
@@ -1600,8 +1598,9 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     return {
         "ok": True,
         "can_approve": True,
-        "document_required": document_required,
-        "document": document,
+        "document_required": False,
+        "document": None,
+        "verification_required": False,
         "approved_direction_id": int(approved_direction["id"]) if approved_direction else None,
         "action": {
             "name": "admin_approve_application",
@@ -1688,35 +1687,29 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         except (TypeError, ValueError):
             master_id = None
 
-        # A service application never requires a document. Company verification
-        # is a separate business-level workflow.
-        document_required = False
-        approved_direction = None
-        if source == "partner_service" and business_id and master_id:
-            cur.execute(
-                """SELECT id FROM partner_directions
-                   WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
-                     AND status='approved' LIMIT 1""",
-                (int(row["partner_id"]), int(business_id), int(master_id)),
-            )
-            approved_direction = cur.fetchone()
-
-        doc = None
-        if document_required:
-            doc_id = row.get("document_id")
-            if not doc_id:
-                raise ValueError("document_required")
-            cur.execute(
-                """SELECT id,status FROM partner_verification_documents
-                   WHERE id=%s AND partner_id=%s
-                   LIMIT 1 FOR UPDATE""",
-                (int(doc_id), int(row["partner_id"])),
-            )
-            doc = cur.fetchone()
-            if not doc:
-                raise ValueError("document_not_found")
-            if str(doc.get("status") or "").lower() != "approved":
-                raise ValueError("document_not_approved")
+        # Documents belong to direction verification, never to a service application.
+        direction_required = False
+        direction_verified = True
+        if source == "partner_service" and business_id:
+            # master_id is resolved again below if the legacy application header is empty.
+            if master_id is not None:
+                cur.execute(
+                    """SELECT verification_required FROM master_categories
+                       WHERE id=%s AND is_active=TRUE LIMIT 1""",
+                    (int(master_id),),
+                )
+                policy_row = cur.fetchone()
+                direction_required = bool(policy_row and policy_row.get("verification_required"))
+                cur.execute(
+                    """SELECT id,status FROM partner_directions
+                       WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
+                       ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+                    (int(row["partner_id"]), int(business_id), int(master_id)),
+                )
+                direction_row = cur.fetchone()
+                direction_verified = bool(direction_row and str(direction_row.get("status") or "").lower() in {"approved","frozen"})
+                if direction_required and not direction_verified:
+                    raise ValueError("direction_verification_required")
 
         raw_services = payload.get("services") or []
         services = [dict(x) for x in raw_services if isinstance(x, dict)]
@@ -1788,18 +1781,10 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 business = cur.fetchone()
                 bid = int(business["id"])
 
-        cur.execute(
-            """SELECT id,status FROM partner_verification_documents
-               WHERE partner_id=%s AND business_id=%s
-                 AND COALESCE(is_current,TRUE)=TRUE AND status='approved'
-               ORDER BY created_at DESC,id DESC LIMIT 1""",
-            (partner_id, int(bid)),
-        )
-        company_document = cur.fetchone()
+        company_document = None
         current_business_status = str(business.get("status") or "").lower()
         next_business_status = (
-            "active" if company_document or current_business_status == "active"
-            else "pending_document"
+            "active" if current_business_status == "active" else "pending_document"
         )
         cur.execute(
             """UPDATE partner_businesses
