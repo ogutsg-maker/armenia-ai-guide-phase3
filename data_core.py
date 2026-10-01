@@ -1412,6 +1412,7 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
             business_id=int(business_id),
             master_category_id=int(master_id),
         )
+        approved_direction = direction_verification.get("direction") if direction_verification.get("verified") else None
         direction_verification_required = bool(
             direction_verification.get("required") and not direction_verification.get("verified")
         )
