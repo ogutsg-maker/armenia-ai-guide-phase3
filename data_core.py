@@ -1523,6 +1523,98 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     }
 
 
+def admin_approve_direction_verification(*, case_id: int, admin_telegram_id: int) -> dict[str, Any]:
+    """Atomically approve one direction verification case and its current document."""
+    if not is_admin(int(admin_telegram_id)):
+        raise PermissionError("admin_required")
+
+    def _approve(cur):
+        cur.execute(
+            """SELECT * FROM partner_direction_verification_cases
+               WHERE id=%s FOR UPDATE""",
+            (int(case_id),),
+        )
+        case = cur.fetchone()
+        if not case:
+            raise ValueError("verification_case_not_found")
+        if str(case.get("status") or "").lower() == "approved":
+            return {"ok": True, "already_approved": True, "case_id": int(case_id)}
+
+        cur.execute(
+            """SELECT id,status FROM partner_verification_documents
+               WHERE partner_direction_id=%s
+               ORDER BY id DESC LIMIT 1 FOR UPDATE""",
+            (int(case["partner_direction_id"]),),
+        )
+        doc = cur.fetchone()
+        if not doc:
+            raise ValueError("verification_document_not_found")
+        if str(doc.get("status") or "").lower() != "pending":
+            raise ValueError("verification_document_not_pending")
+
+        cur.execute(
+            """UPDATE partner_verification_documents
+               SET status='approved',rejection_reason=NULL,reviewed_by=%s,reviewed_at=NOW(),is_current=TRUE
+               WHERE id=%s AND status='pending'""",
+            (int(admin_telegram_id),int(doc["id"])),
+        )
+        cur.execute(
+            """UPDATE partner_directions
+               SET status='approved',rejection_reason=NULL,updated_at=NOW()
+               WHERE id=%s""",
+            (int(case["partner_direction_id"]),),
+        )
+        cur.execute(
+            """UPDATE partner_direction_verification_cases
+               SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL,updated_at=NOW()
+               WHERE id=%s""",
+            (int(admin_telegram_id),int(case_id)),
+        )
+        return {"ok": True, "case_id": int(case_id), "document_id": int(doc["id"]),
+                "direction_id": int(case["partner_direction_id"]), "status": "approved"}
+
+    return platform_db.transaction(_approve)
+
+
+def admin_reject_direction_verification(*, case_id: int, reason: str, admin_telegram_id: int) -> dict[str, Any]:
+    """Atomically reject the current direction verification document."""
+    if not is_admin(int(admin_telegram_id)):
+        raise PermissionError("admin_required")
+    reason = str(reason or "").strip()
+    if not reason:
+        raise ValueError("reason_required")
+
+    def _reject(cur):
+        cur.execute(
+            """SELECT * FROM partner_direction_verification_cases
+               WHERE id=%s FOR UPDATE""",
+            (int(case_id),),
+        )
+        case = cur.fetchone()
+        if not case:
+            raise ValueError("verification_case_not_found")
+        cur.execute(
+            """UPDATE partner_verification_documents
+               SET status='rejected',rejection_reason=%s,reviewed_by=%s,reviewed_at=NOW(),is_current=FALSE
+               WHERE partner_direction_id=%s AND status='pending'""",
+            (reason[:2000],int(admin_telegram_id),int(case["partner_direction_id"])),
+        )
+        cur.execute(
+            """UPDATE partner_directions SET status='rejected',rejection_reason=%s,updated_at=NOW()
+               WHERE id=%s""",
+            (reason[:2000],int(case["partner_direction_id"])),
+        )
+        cur.execute(
+            """UPDATE partner_direction_verification_cases
+               SET status='rejected',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=%s,updated_at=NOW()
+               WHERE id=%s""",
+            (int(admin_telegram_id),reason[:2000],int(case_id)),
+        )
+        return {"ok": True, "case_id": int(case_id), "status": "rejected", "reason": reason[:2000]}
+
+    return platform_db.transaction(_reject)
+
+
 def admin_approve_application(application_id: int, admin_telegram_id: int):
     """Atomically approve and materialize one application using one DB cursor."""
     if not is_admin(int(admin_telegram_id)):
