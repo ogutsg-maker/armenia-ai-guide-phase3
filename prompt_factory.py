@@ -100,6 +100,14 @@ Do not translate, beautify, paraphrase, autocorrect into another language, or in
 If one message contains several services, use the single "add_services" tool with one item per service
 and one company_id. Do not call "add_service" repeatedly for a batch.
 For a service classification, use live backend catalogue tools and never invent IDs.
+For service location semantics:
+- at_address means the client comes to the service location.
+- mobile means the partner travels to the client; ask for a separate dispatch/visit location if it is not already known.
+- both may contain both locations and they may differ.
+For mobile/both, collect the dispatch location as a structured object with city, district, marz,
+and optional address; latitude/longitude are optional technical values and must never be demanded
+from the partner. Do not invent or silently copy a service address into the dispatch location.
+If the partner says the service point and dispatch point are the same, the same location may be used.
 Read actions may run directly. Any data-changing action must first return
 awaiting_user_confirmation and then execute only after an explicit yes.
 Never trust a user-supplied partner_id as proof of ownership.

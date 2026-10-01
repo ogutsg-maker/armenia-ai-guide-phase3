@@ -51,6 +51,23 @@ def _nullable(kind: str) -> dict[str, Any]:
     return {"anyOf": [{"type": kind}, {"type": "null"}]}
 
 
+def _location_schema() -> dict[str, Any]:
+    """Structured partner location; coordinates are optional technical data."""
+    return {
+        "anyOf": [
+            {"type": "object", "properties": {
+                "city": _nullable("string"),
+                "district": _nullable("string"),
+                "marz": _nullable("string"),
+                "address": _nullable("string"),
+                "lat": _nullable("number"),
+                "lng": _nullable("number"),
+            }, "additionalProperties": False},
+            {"type": "null"},
+        ]
+    }
+
+
 class ToolRegistry:
     def __init__(
         self,
@@ -249,7 +266,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "add_service",
-                "Prepare adding a service to an owned company. Confirmation required.",
+                "Prepare adding a service to an owned company. For mobile/both, base_location is the partner's dispatch base; do not silently invent it. If only one location was provided for mobile/both, ask for clarification unless that location is explicitly stated to be the dispatch base. Confirmation required.",
                 {
                     "company_id": {"type": "integer"},
                     "name": {"type": "string"},
@@ -262,6 +279,7 @@ class ToolRegistry:
                     "price_type": {"type": "string", "enum": ["from", "fixed"]},
                     "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
                     "service_location": _nullable("object"),
+                    "base_location": _location_schema(),
                     "coverage": _nullable("string"),
                 },
                 required=("company_id", "name"),
@@ -270,7 +288,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "add_services",
-                "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. Use one item per distinct service. Confirmation is required once for the whole batch.",
+                "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. For mobile/both, collect an explicit base_location; never silently treat a service address as the dispatch base. Use one item per distinct service. Confirmation is required once for the whole batch.",
                 {
                     "company_id": _nullable("integer"),
                     "address_id": _nullable("integer"),
@@ -293,6 +311,7 @@ class ToolRegistry:
                                 "description": _nullable("string"),
                                 "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
                                 "service_location": _nullable("object"),
+                                "base_location": _nullable("object"),
                                 "coverage": _nullable("string")
                             },
                             "required": ["name", "price"],
@@ -1090,6 +1109,7 @@ class ToolRegistry:
                     "price_type": args.get("price_type") or "fixed",
                     "service_mode": args.get("service_mode"),
                     "service_location": args.get("service_location"),
+                    "base_location": args.get("base_location"),
                     "coverage": args.get("coverage"),
                     "address_text": args.get("address_text"),
                 }], limit=500)[0]
@@ -1108,6 +1128,7 @@ class ToolRegistry:
                         "address_text": resolved.get("address_text") or args.get("address_text"),
                         "service_mode": resolved.get("service_mode") or args.get("service_mode"),
                         "service_location": resolved.get("service_location") or args.get("service_location"),
+                        "base_location": resolved.get("base_location") or args.get("base_location"),
                         "coverage": resolved.get("coverage") or args.get("coverage"),
                         "catalog_match_status": resolved.get("catalog_match_status"),
                         "catalog_options": resolved.get("catalog_options") or [],
@@ -1207,6 +1228,7 @@ class ToolRegistry:
                         "description": raw.get("description"),
                         "service_mode": raw.get("service_mode") or service_mode,
                         "service_location": raw.get("service_location") or location,
+                        "base_location": raw.get("base_location") or (args.get("base_location") if isinstance(args.get("base_location"), dict) else None),
                         "coverage": raw.get("coverage") or args.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
                         "address_text": address_text,
                     })
@@ -1224,6 +1246,21 @@ class ToolRegistry:
                 )
                 if not has_service_mode:
                     missing.append("service_mode")
+
+                effective_modes = {
+                    str(s.get("service_mode") or service_mode or "").strip().lower()
+                    for s in prepared if isinstance(s, dict)
+                }
+                base_location = args.get("base_location") if isinstance(args.get("base_location"), dict) else None
+                has_service_base_location = any(
+                    isinstance(s.get("base_location"), dict) and bool(s.get("base_location"))
+                    for s in prepared if isinstance(s, dict)
+                )
+                if any(m in {"mobile", "both"} for m in effective_modes) and not (base_location or has_service_base_location):
+                    missing.append("base_location")
+                if any(m in {"at_address", "both"} for m in effective_modes) and not (selected_address_id or address_text or location):
+                    if "address" not in missing:
+                        missing.append("address")
                 if not document:
                     missing.append("document")
                 # Catalog resolution is deliberately NOT a required slot.
@@ -1240,6 +1277,7 @@ class ToolRegistry:
                     "phone": phone,
                     "service_mode": service_mode,
                     "service_location": location,
+                    "base_location": base_location,
                 }
 
                 if missing:
@@ -1459,6 +1497,7 @@ class ToolRegistry:
                 price_type=args.get("price_type"),
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
+                base_location=args.get("base_location"),
                 coverage=args.get("coverage"),
                 submission_token=args.get("submission_token"),
             )}
@@ -1503,6 +1542,7 @@ class ToolRegistry:
                 services=services,
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
+                base_location=args.get("base_location"),
                 submission_token=args.get("submission_token"),
             )
             return {"ok": True, **result}
