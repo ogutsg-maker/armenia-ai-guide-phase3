@@ -2595,6 +2595,19 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
     )
     if not row: return None
     if row.get("status") == "checked_in": return {"already_checked_in": True, "checkin": row}
+    if row.get("status") != "active":
+        return {"error": "qr_not_active", "checkin_status": row.get("status")}
+    if row.get("expires_at") is not None:
+        expired = one(
+            "SELECT (expires_at <= NOW()) AS expired FROM booking_checkins WHERE id=%s",
+            (int(row["id"]),),
+        )
+        if expired and expired.get("expired"):
+            execute(
+                "UPDATE booking_checkins SET status='expired' WHERE id=%s AND status='active'",
+                (int(row["id"]),), False,
+            )
+            return {"error": "qr_expired", "expires_at": row.get("expires_at")}
     if row.get("booking_status") not in ("paid", "confirmed"):
         return {"error": "booking_not_paid", "booking_status": row.get("booking_status")}
     check = execute(
