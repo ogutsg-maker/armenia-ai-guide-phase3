@@ -367,6 +367,9 @@ async def api_partner_document_upload(request):
     reader = await request.multipart()
     document_type = "business_document"
     direction_id = None
+    path_direction = str(request.match_info.get("direction_id") or "").strip()
+    if path_direction.isdigit():
+        direction_id = int(path_direction)
     file_part = None
     async for part in reader:
         if part.name == "document_type":
