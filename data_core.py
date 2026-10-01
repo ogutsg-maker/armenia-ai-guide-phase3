@@ -4256,11 +4256,22 @@ def marketplace_partner_locations(partner_id:int):
 
 
 def get_paid_booking_contact(booking_id:int, actor_role:str="client", actor_id:int|None=None) -> dict[str, Any]:
-    """Return contact fields only after a backend-confirmed paid payment."""
+    """Return persisted limited contact disclosure only after confirmed payment."""
     booking=get_booking(int(booking_id),actor_role=actor_role,actor_id=actor_id)
     if not booking: return {}
-    payment=one("SELECT status FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
+    payment=one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
     if str((payment or {}).get("status") or "").lower()!="paid": return {}
+
+    existing=one("""SELECT * FROM contact_disclosures
+                    WHERE booking_id=%s AND status='active'
+                    ORDER BY id DESC LIMIT 1""",(int(booking_id),))
+    if existing:
+        data=existing.get("data_json") or {}
+        if isinstance(data,str):
+            try: data=json.loads(data)
+            except Exception: data={}
+        return data if isinstance(data,dict) else {}
+
     partner=marketplace_partner_profile(int(booking["partner_id"])) or {}
     if not partner.get("contact_sharing_enabled"): return {}
     profile=partner.get("profile_json") or {}
@@ -4268,7 +4279,14 @@ def get_paid_booking_contact(booking_id:int, actor_role:str="client", actor_id:i
         try: profile=json.loads(profile)
         except Exception: profile={}
     if not isinstance(profile,dict): return {}
-    return {k:profile.get(k) for k in ("phone","website","telegram") if profile.get(k)}
+    data={k:profile.get(k) for k in ("phone","website","telegram") if profile.get(k)}
+    execute("""INSERT INTO contact_disclosures
+               (booking_id,client_id,partner_id,payment_id,status,disclosure_scope,data_json)
+               VALUES(%s,%s,%s,%s,'active','limited',%s::jsonb)
+               ON CONFLICT DO NOTHING""",
+            (int(booking_id),booking.get("client_id"),booking.get("partner_id"),
+             payment.get("id"),json.dumps(data,ensure_ascii=False)),False)
+    return data
 
 
 def marketplace_partner_owner(partner_id:int):
