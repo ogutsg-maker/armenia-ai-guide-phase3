@@ -589,7 +589,7 @@ async def open_arbitration(request):
     booking = data_core.get_booking(booking_id, actor_role='client', actor_id=uid)
     role = 'client'
     if not booking:
-        partner = data_core.get_partner_by_user_id(uid)
+        partner = data_core.one("SELECT id FROM partners WHERE user_id=%s", (uid,))
         if partner:
             booking = data_core.get_booking(booking_id, actor_role='partner', actor_id=uid)
             role = 'partner'
@@ -685,7 +685,7 @@ async def arbitration_get(request):
     if not row:
         return web.json_response({'ok': False, 'error': 'arbitration_not_found'}, status=404)
     admin_id = int(os.getenv('ADMIN_TELEGRAM_ID') or 0)
-    partner = data_core.get_partner_by_user_id(uid)
+    partner = data_core.one("SELECT id FROM partners WHERE user_id=%s", (uid,))
     if uid != int(row['client_id']) and not (partner and int(row['partner_id']) == int(partner['id'])) and uid != admin_id:
         return web.json_response({'ok': False, 'error': 'forbidden'}, status=403)
     return web.json_response({'ok': True, 'arbitration': row})
