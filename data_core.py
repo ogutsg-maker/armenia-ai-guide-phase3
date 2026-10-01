@@ -2806,7 +2806,7 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
     # Test provider is intentionally fictitious, but it must still pass through
     # the exact same settlement gate as a real Idram callback.
     if str(intent.status or "").lower() == "paid":
-        settled = reconcile_paid_payment(int(saved_payment["id"]), intent.transaction_id)
+        settled = reconcile_paid_payment(int(saved_payment["id"]), intent.transaction_id, intent.amount, intent.provider)
         return {
             "booking": (settled or {}).get("booking") or confirmed,
             "payment": (settled or {}).get("payment") or saved_payment,
@@ -2816,13 +2816,21 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
 
     return {"booking": confirmed, "payment": saved_payment, "checkin": None, "payment_url": intent.payment_url}
 
-def reconcile_paid_payment(payment_id:int, transaction_id:str|None=None):
+def reconcile_paid_payment(payment_id:int, transaction_id:str|None=None, provider_amount:float|None=None, provider:str|None=None):
     payment=one("SELECT * FROM payments WHERE id=%s",(int(payment_id),))
     if not payment: return None
+    booking=one("SELECT * FROM bookings WHERE id=%s",(int(payment.get("booking_id") or 0),)) if payment.get("booking_id") else None
     if str(payment.get("status") or "").lower()=="paid":
-        booking=one("SELECT * FROM bookings WHERE id=%s",(int(payment.get("booking_id") or 0),)) if payment.get("booking_id") else None
         check=one("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(int(booking["id"]),)) if booking else None
         return {"payment":payment,"booking":booking,"checkin":check,"already_paid":True}
+    if not booking or str(booking.get("status") or "").lower() != "pending_payment":
+        return {"payment":payment,"booking":booking,"checkin":None,"already_paid":False,"rejected":"booking_not_pending_payment"}
+    expected=float(payment.get("amount") or 0)
+    if provider_amount is not None and round(float(provider_amount),2) != round(expected,2):
+        logger.warning("Payment amount mismatch: payment=%s provider=%s", expected, provider_amount)
+        return {"payment":payment,"booking":booking,"checkin":None,"already_paid":False,"rejected":"amount_mismatch"}
+    if provider and str(payment.get("provider") or "").upper() not in {"",str(provider).upper()}:
+        return {"payment":payment,"booking":booking,"checkin":None,"already_paid":False,"rejected":"provider_mismatch"}
     updated=execute("""UPDATE payments SET status='paid',provider_payment_id=COALESCE(%s,provider_payment_id),updated_at=NOW()
                        WHERE id=%s AND status<>'paid' RETURNING *""",(transaction_id,int(payment_id)),True)
     if not updated:
