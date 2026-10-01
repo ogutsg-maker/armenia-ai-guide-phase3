@@ -99,8 +99,20 @@ def test_boundary_g_application_approval_is_transactional_and_has_no_direct_db_w
     assert not direct_wrappers, "approval transaction must use only the callback cursor for DB access"
 
 
-def test_boundary_h_document_approval_is_transactional():
-    fn = _function(_tree("data_core.py"), "admin_approve_application_document")
+def test_boundary_h_direction_verification_approval_is_transactional():
+    fn = _function(_tree("data_core.py"), "admin_approve_direction_verification")
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "transaction"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "platform_db"
+        for node in ast.walk(fn)
+    )
+
+
+def test_boundary_i_direction_verification_rejection_is_transactional():
+    fn = _function(_tree("data_core.py"), "admin_reject_direction_verification")
     assert any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
