@@ -15,6 +15,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Порт для aiohttp Web App сервера
-EXPOSE 8000
+EXPOSE 10000
 
 CMD ["python", "main.py"]
