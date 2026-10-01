@@ -1541,6 +1541,37 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
                 "services": unresolved,
                 "message": "Որոշ ծառայություններ դեռ դասակարգված չեն։"}
 
+    # Use the same catalog/direction integrity rule as the final approval
+    # transaction, so the read-only gate cannot promise an approval that the
+    # execution path will later reject.
+    category_ids = []
+    for svc in services:
+        cid = svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id")
+        try:
+            category_ids.append(int(cid))
+        except (TypeError, ValueError):
+            return {"ok": False, "can_approve": False, "reason_code": "invalid_category_id",
+                    "services": [str(svc.get("name") or "")],
+                    "message": "Ծառայության կատալոգային դասակարգումը անվավեր է։"}
+    if master_id is None:
+        first_cat = get_catalog_category(category_ids[0]) if category_ids else None
+        if first_cat and first_cat.get("master_category_id"):
+            master_id = int(first_cat["master_category_id"])
+    if master_id is None:
+        return {"ok": False, "can_approve": False, "reason_code": "direction_required",
+                "message": "Հայտի համար ուղղությունը չի որոշվել։"}
+    valid_rows = rows(
+        """SELECT id FROM categories
+           WHERE master_category_id=%s AND id=ANY(%s::int[]) AND is_active=TRUE""",
+        (int(master_id), list(set(category_ids))),
+    )
+    valid_ids = {int(x["id"]) for x in valid_rows}
+    invalid = [cid for cid in category_ids if cid not in valid_ids]
+    if invalid:
+        return {"ok": False, "can_approve": False, "reason_code": "invalid_subcategory_for_direction",
+                "invalid_category_ids": invalid,
+                "message": "Որոշ ծառայությունների կատալոգային ուղղությունը չի համապատասխանում հայտի ուղղությանը։"}
+
     return {
         "ok": True,
         "can_approve": True,
@@ -1846,6 +1877,11 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 "price_type": svc.get("price_type") or "fixed",
                 "matched_subcategory_id": cid,
                 "direction_id": direction_id,
+                "service_mode": svc.get("service_mode") or payload.get("service_mode"),
+                "service_location": svc.get("service_location") or payload.get("service_location"),
+                "coverage": svc.get("coverage") or (payload.get("service_contract") or {}).get("coverage"),
+                "address_id": service_object_id,
+                "address_text": svc.get("address_text"),
             })
             if existing:
                 cur.execute(
@@ -1911,6 +1947,8 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
     return platform_db.transaction(_approve)
 
 def admin_reject_application(application_id: int, reason: str, admin_telegram_id: int):
+    if not is_admin(int(admin_telegram_id)):
+        raise PermissionError("admin_required")
     reason = str(reason or "").strip()
     if not reason:
         raise ValueError("reason_required")
@@ -1927,6 +1965,8 @@ def admin_reject_application(application_id: int, reason: str, admin_telegram_id
 
 
 def admin_suspend_partner(partner_id: int, reason: str, admin_telegram_id: int):
+    if not is_admin(int(admin_telegram_id)):
+        raise PermissionError("admin_required")
     reason = str(reason or "").strip()
     if not reason:
         raise ValueError("reason_required")
@@ -2950,6 +2990,16 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
 
         service_object = company_object
         requested_object_id = raw.get("address_id")
+        requested_address_text = str(raw.get("address_text") or "").strip()
+        if requested_object_id in (None, "") and requested_address_text:
+            service_object = one(
+                """SELECT id,partner_id,business_id,object_name,address,city,marz,phone
+                   FROM partner_objects
+                   WHERE partner_id=%s AND business_id=%s AND address=%s
+                     AND COALESCE(is_active,TRUE)=TRUE
+                   ORDER BY id LIMIT 1""",
+                (pid, cid, requested_address_text),
+            )
         if requested_object_id not in (None, ""):
             service_object = one(
                 """SELECT id,partner_id,business_id,object_name,address,city,marz,phone
@@ -2961,7 +3011,8 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             if not service_object:
                 raise PermissionError("address_not_in_company")
 
-        if not service_object or not str(service_object.get("address") or "").strip():
+        raw_address_text = str(raw.get("address_text") or "").strip()
+        if not service_object and not raw_address_text:
             raise ValueError("service_address_required")
 
         service_phone = str(
@@ -2978,12 +3029,16 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "price": checked["price"],
             "price_type": raw.get("price_type") or "fixed",
             "description": str(raw.get("description") or "").strip(),
+            "service_mode": raw.get("service_mode") or service_mode,
+            "service_location": raw.get("service_location") or service_location,
+            "coverage": raw.get("coverage") or ((service_location or {}).get("coverage") if isinstance(service_location, dict) else None),
             "object_id": int(service_object["id"]) if service_object else None,
             "object_name": (service_object or {}).get("object_name"),
+            "address_text": raw_address_text or (service_object or {}).get("address"),
             "location": {
                 "marz": (service_object or {}).get("marz"),
                 "city": (service_object or {}).get("city"),
-                "address": (service_object or {}).get("address"),
+                "address": raw_address_text or (service_object or {}).get("address"),
             },
             "contact_phone": service_phone,
             "category_id": raw.get("category_id"),
@@ -3007,15 +3062,21 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         raise ValueError("document_replacement_required")
 
     first = prepared[0]
+    first_location = first.get("location") if isinstance(first.get("location"), dict) else {}
+    header_address = str(first.get("address_text") or first_location.get("address") or (company_object or {}).get("address") or "").strip() or None
+    header_city = first_location.get("city") or (company_object or {}).get("city")
+    header_marz = first_location.get("marz") or (company_object or {}).get("marz")
+    header_phone = first.get("contact_phone") or company_phone
+    header_object_id = first.get("object_id")
     payload = {
         "source": "partner_service",
         "company_id": cid,
         "company": {
             "name": company.get("name"),
-            "address": (company_object or {}).get("address"),
-            "city": (company_object or {}).get("city"),
-            "marz": (company_object or {}).get("marz"),
-            "phone": company_phone,
+            "address": header_address,
+            "city": header_city,
+            "marz": header_marz,
+            "phone": header_phone,
             "document_id": int(document["id"]) if document else None,
             "document_status": document.get("status") if document else None,
             "document_filename": document.get("original_filename") if document else None,
@@ -3024,8 +3085,13 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                 "catalog_classification": "backend_live_catalog",
             },
         },
-        "service_mode": service_mode if service_mode in {"at_address", "mobile"} else None,
+        "service_mode": service_mode if service_mode in {"at_address", "mobile", "both"} else None,
         "service_location": service_location if isinstance(service_location, dict) else None,
+        "service_contract": {
+            "mode": service_mode if service_mode in {"at_address", "mobile", "both"} else None,
+            "coverage": (service_location or {}).get("coverage") if isinstance(service_location, dict) else None,
+            "location": service_location if isinstance(service_location, dict) else None,
+        },
         "services": prepared,
         "submission_token": token or None,
     }
@@ -3054,12 +3120,12 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             cid,
             "pending_admin" if document_status == "approved" else "document_under_review",
             company.get("name") or "",
-            (company_object or {}).get("marz"),
-            (company_object or {}).get("city"),
-            (company_object or {}).get("address"),
+            header_marz,
+            header_city,
+            header_address,
             (company_object or {}).get("object_name"),
-            int(company_object["id"]) if company_object else None,
-            company_phone,
+            int(header_object_id) if header_object_id not in (None, "") else None,
+            header_phone,
             first_category.get("master_name_am") if first_category else None,
             int(first_master_id) if first_master_id not in (None, "") else (
                 int(first_category["master_category_id"]) if first_category and first_category.get("master_category_id") else None
@@ -3433,18 +3499,26 @@ def marketplace_client_search(query="", city="", category_id=0, limit=20):
         where.append("(LOWER(s.name) LIKE LOWER(%s) OR LOWER(s.description) LIKE LOWER(%s) OR LOWER(p.business_name) LIKE LOWER(%s) OR LOWER(c.name_am) LIKE LOWER(%s) OR LOWER(c.name_ru) LIKE LOWER(%s))")
     if city:
         params.append(city)
-        where.append("""EXISTS(SELECT 1 FROM partner_objects po WHERE po.partner_id=p.id
-                         AND (LOWER(COALESCE(po.city,''))=LOWER(%s)
-                           OR LOWER(COALESCE(po.village,''))=LOWER(%s)
-                           OR LOWER(COALESCE(po.marz,''))=LOWER(%s)
-                           OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
-                           OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'))""")
+        where.append("""EXISTS(
+            SELECT 1 FROM partner_objects po
+            WHERE po.id=s.object_id
+              AND po.partner_id=p.id
+              AND (LOWER(COALESCE(po.city,''))=LOWER(%s)
+                OR LOWER(COALESCE(po.village,''))=LOWER(%s)
+                OR LOWER(COALESCE(po.marz,''))=LOWER(%s)
+                OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
+                OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'
+                OR LOWER(COALESCE(s.data_json->>'coverage',''))='all_armenia'
+                OR LOWER(COALESCE(s.data_json->'service_location'->>'coverage',''))='all_armenia'))""")
         params.extend([city,city])
     if category_id:
         params.append(category_id); where.append("s.category_id=%s")
     sql="""SELECT s.id service_id,s.partner_id,s.category_id,s.name service_name,s.description,s.price,
                   s.currency,s.data_json,p.business_name,p.business_description,p.contact_share_policy,
                   c.name_am category_name_am,c.name_ru category_name_ru,
+                  s.data_json->>'service_mode' service_mode,
+                  s.data_json->'service_location' service_location,
+                  s.data_json->>'coverage' service_coverage,
                   COALESCE((SELECT po.city FROM partner_objects po WHERE po.partner_id=p.id ORDER BY po.id LIMIT 1),'') city,
                   COALESCE((SELECT po.marz FROM partner_objects po WHERE po.partner_id=p.id ORDER BY po.id LIMIT 1),'') marz
            FROM services s JOIN partners p ON p.id=s.partner_id

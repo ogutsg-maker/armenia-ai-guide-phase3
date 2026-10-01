@@ -277,7 +277,10 @@ class ToolRegistry:
                                 "price_type": {"type": "string", "enum": ["from", "fixed"]},
                                 "address_id": _nullable("integer"),
                                 "phone": _nullable("string"),
-                                "description": _nullable("string")
+                                "description": _nullable("string"),
+                                "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
+                                "service_location": _nullable("object"),
+                                "coverage": _nullable("string")
                             },
                             "required": ["name", "price"],
                             "additionalProperties": False
@@ -1163,13 +1166,24 @@ class ToolRegistry:
                         company_id=company_id, name=service_name,
                         price=raw.get("price"), category_id=None,
                     )
+                    item_address_id = raw.get("address_id")
+                    if item_address_id not in (None, ""):
+                        item_address_id = int(item_address_id)
+                        if not any(int(x.get("id") or 0) == item_address_id for x in company_addresses):
+                            raise PermissionError("address_not_in_company")
+                    else:
+                        item_address_id = selected_address_id
                     prepared.append({
                         "name": checked["name"],
                         "price": checked["price"],
                         "price_type": raw.get("price_type") or "from",
-                        "address_id": selected_address_id,
+                        "address_id": item_address_id,
                         "phone": phone,
                         "description": raw.get("description"),
+                        "service_mode": raw.get("service_mode") or service_mode,
+                        "service_location": raw.get("service_location") or location,
+                        "coverage": raw.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
+                        "address_text": address_text,
                     })
 
                 prepared = data_core.resolve_catalog_services(prepared, limit=500)
@@ -1179,7 +1193,11 @@ class ToolRegistry:
                     missing.append("address")
                 if not phone:
                     missing.append("phone")
-                if not service_mode:
+                has_service_mode = bool(service_mode) or all(
+                    isinstance(s, dict) and str(s.get("service_mode") or "").strip().lower() in {"at_address", "mobile", "both"}
+                    for s in prepared
+                )
+                if not has_service_mode:
                     missing.append("service_mode")
                 if not document:
                     missing.append("document")
