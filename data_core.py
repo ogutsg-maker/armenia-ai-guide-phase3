@@ -4100,6 +4100,8 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                                             currency:str,commission:float,partner_amount:float,
                                             intent=None):
     token=__import__("secrets").token_urlsafe(24)
+    payment_status = str(getattr(intent, "status", "") or status or "pending_payment").strip().lower()
+    booking_state = "paid" if payment_status == "paid" else "pending_payment"
     def _tx(cur):
         cur.execute("SELECT id FROM bookings WHERE negotiation_id=%s FOR UPDATE",(int(negotiation_id),))
         existing=cur.fetchone()
@@ -4137,7 +4139,8 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                      int(partner_id),int(booking["id"]),float(partner_amount),currency,"Partner amount after platform commission"))
         cur.execute("INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",(int(booking["id"]),token))
         check=cur.fetchone()
-        cur.execute("UPDATE service_requests SET status='booked',updated_at=NOW() WHERE id=%s",(int(request_id),))
+        cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
+                    ("booked" if payment_status == "paid" else "pending_payment", int(request_id)))
         return {"booking":booking,"payment":payment,"checkin":check,"already_exists":False}
     try: return platform_db.transaction(_tx)
     except Exception: return None
