@@ -249,7 +249,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "add_service",
-                "Prepare adding a service to an owned company. Confirmation required.",
+                "Prepare adding a service to an owned company. For mobile/both, base_location is the partner's dispatch base; do not silently invent it. If only one location was provided for mobile/both, ask for clarification unless that location is explicitly stated to be the dispatch base. Confirmation required.",
                 {
                     "company_id": {"type": "integer"},
                     "name": {"type": "string"},
@@ -271,7 +271,7 @@ class ToolRegistry:
             ),
             self._spec(
                 "add_services",
-                "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. Use one item per distinct service. Confirmation is required once for the whole batch.",
+                "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. For mobile/both, collect an explicit base_location; never silently treat a service address as the dispatch base. Use one item per distinct service. Confirmation is required once for the whole batch.",
                 {
                     "company_id": _nullable("integer"),
                     "address_id": _nullable("integer"),
@@ -1228,6 +1228,17 @@ class ToolRegistry:
                 )
                 if not has_service_mode:
                     missing.append("service_mode")
+
+                effective_modes = {
+                    str(s.get("service_mode") or service_mode or "").strip().lower()
+                    for s in prepared if isinstance(s, dict)
+                }
+                base_location = args.get("base_location") if isinstance(args.get("base_location"), dict) else None
+                if any(m in {"mobile", "both"} for m in effective_modes) and not base_location:
+                    missing.append("base_location")
+                if any(m in {"at_address", "both"} for m in effective_modes) and not (selected_address_id or address_text or location):
+                    if "address" not in missing:
+                        missing.append("address")
                 if not document:
                     missing.append("document")
                 # Catalog resolution is deliberately NOT a required slot.
@@ -1244,6 +1255,7 @@ class ToolRegistry:
                     "phone": phone,
                     "service_mode": service_mode,
                     "service_location": location,
+                    "base_location": base_location,
                 }
 
                 if missing:
