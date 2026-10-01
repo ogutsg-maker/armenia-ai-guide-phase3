@@ -563,6 +563,31 @@ def admin_approve_application_document(*, application_id: int, actor_user_id: in
         if not updated:
             raise RuntimeError("document_approval_update_failed")
 
+        # Company document approval is the explicit activation event for the
+        # company itself, independent of service applications.
+        company_id = int(doc.get("business_id") or app.get("business_id") or 0)
+        if company_id:
+            cur.execute(
+                """UPDATE partner_businesses
+                   SET status='active',updated_at=NOW()
+                   WHERE id=%s AND partner_id=%s
+                   RETURNING id,status""",
+                (company_id, int(app.get("partner_id") or 0)),
+            )
+            activated_company = cur.fetchone()
+            if activated_company:
+                cur.execute(
+                    """UPDATE partners
+                       SET status='approved',verification_status='approved',rejection_reason=NULL
+                       WHERE id=%s""",
+                    (int(app.get("partner_id") or 0),),
+                )
+                cur.execute(
+                    """UPDATE users SET is_verified=TRUE
+                       WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
+                    (int(app.get("partner_id") or 0),),
+                )
+
         if status == "document_under_review":
             cur.execute(
                 """UPDATE partner_applications
@@ -1489,7 +1514,8 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     except (TypeError, ValueError):
         master_id = None
 
-    document_required = source != "partner_service"
+    # Company documents are verified separately from service applications.
+    document_required = False
     approved_direction = None
     if source == "partner_service" and business_id and master_id:
         approved_direction = one(
@@ -1498,7 +1524,6 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
                  AND status='approved' LIMIT 1""",
             (int(app["partner_id"]), int(business_id), int(master_id)),
         )
-        document_required = not bool(approved_direction)
 
     document = None
     if document_required:
@@ -1663,7 +1688,9 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         except (TypeError, ValueError):
             master_id = None
 
-        document_required = source != "partner_service"
+        # A service application never requires a document. Company verification
+        # is a separate business-level workflow.
+        document_required = False
         approved_direction = None
         if source == "partner_service" and business_id and master_id:
             cur.execute(
@@ -1673,14 +1700,6 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 (int(row["partner_id"]), int(business_id), int(master_id)),
             )
             approved_direction = cur.fetchone()
-            cur.execute(
-                """SELECT id,status FROM partner_verification_documents
-                   WHERE partner_id=%s AND business_id=%s
-                     AND COALESCE(is_current,TRUE)=TRUE AND status='approved'
-                   ORDER BY created_at DESC,id DESC LIMIT 1""",
-                (int(row["partner_id"]), int(business_id)),
-            )
-            document_required = not bool(cur.fetchone())
 
         doc = None
         if document_required:
@@ -1770,12 +1789,26 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 bid = int(business["id"])
 
         cur.execute(
+            """SELECT id,status FROM partner_verification_documents
+               WHERE partner_id=%s AND business_id=%s
+                 AND COALESCE(is_current,TRUE)=TRUE AND status='approved'
+               ORDER BY created_at DESC,id DESC LIMIT 1""",
+            (partner_id, int(bid)),
+        )
+        company_document = cur.fetchone()
+        current_business_status = str(business.get("status") or "").lower()
+        next_business_status = (
+            "active" if company_document or current_business_status == "active"
+            else "pending_document"
+        )
+        cur.execute(
             """UPDATE partner_businesses
-               SET name=%s,description=%s,phone=%s,status='active',updated_at=NOW()
+               SET name=%s,description=%s,phone=%s,status=%s,updated_at=NOW()
                WHERE id=%s AND partner_id=%s""",
             (str(row.get("business_name") or "").strip() or (business.get("name") or "Իմ բիզնեսը"),
              str(row.get("description") or "").strip() or None,
-             str(row.get("phone") or "").strip() or None, int(bid), partner_id),
+             str(row.get("phone") or "").strip() or None, next_business_status,
+             int(bid), partner_id),
         )
 
         app_address = str(row.get("address") or "").strip()
@@ -1879,7 +1912,6 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 "direction_id": direction_id,
                 "service_mode": svc.get("service_mode") or payload.get("service_mode"),
                 "service_location": svc.get("service_location") or payload.get("service_location"),
-                "base_location": svc.get("base_location") or payload.get("base_location"),
                 "coverage": svc.get("coverage") or (payload.get("service_contract") or {}).get("coverage"),
                 "address_id": service_object_id,
                 "address_text": svc.get("address_text"),
@@ -1917,21 +1949,25 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 f"expected={len(services)} actual={len(materialized)}"
             )
 
-        cur.execute(
-            """UPDATE partner_businesses SET status='active',updated_at=NOW()
-               WHERE id=%s AND partner_id=%s""",
-            (bid, partner_id),
-        )
-        cur.execute(
-            """UPDATE partners SET status='approved',verification_status='approved',rejection_reason=NULL
-               WHERE id=%s""",
-            (partner_id,),
-        )
-        cur.execute(
-            """UPDATE users SET is_verified=TRUE
-               WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
-            (partner_id,),
-        )
+        # Do not activate company verification as a side effect of service approval.
+        # If the company already has an approved document it remains active;
+        # otherwise it stays pending_document while its services are active.
+        if company_document:
+            cur.execute(
+                """UPDATE partner_businesses SET status='active',updated_at=NOW()
+                   WHERE id=%s AND partner_id=%s""",
+                (bid, partner_id),
+            )
+            cur.execute(
+                """UPDATE partners SET status='approved',verification_status='approved',rejection_reason=NULL
+                   WHERE id=%s""",
+                (partner_id,),
+            )
+            cur.execute(
+                """UPDATE users SET is_verified=TRUE
+                   WHERE telegram_id=(SELECT user_id FROM partners WHERE id=%s)""",
+                (partner_id,),
+            )
         cur.execute(
             """UPDATE partner_applications
                SET status='approved',reviewed_by=%s,reviewed_at=NOW(),
@@ -2130,15 +2166,10 @@ def submit_partner_application(application_id: int, *, partner_id: int, actor_us
     if not str(app.get("service_name") or "").strip() and not services:
         raise ValueError("service_required")
 
-    # Initial partner registration is a verification workflow. Never allow a
-    # partner application without a document to become visible to Admin as
-    # pending_admin. The document upload endpoint attaches document_id first;
-    # only then may the application enter document_under_review.
-    partner = get_partner_by_user(int(actor_user_id)) or {}
-    if str(partner.get("status") or "").lower() != "approved" and not app.get("document_id"):
-        raise ValueError("document_required")
-
-    new_status = "document_under_review" if app.get("document_id") else "pending_admin"
+    # Service applications are independent from company verification.
+    # A service can be submitted and reviewed without a document. The company
+    # document is a separate business-level verification workflow.
+    new_status = "pending_admin"
     return execute(
         "UPDATE partner_applications SET status=%s,updated_at=NOW() WHERE id=%s AND partner_id=%s RETURNING *",
         (new_status, int(application_id), int(partner_id)), returning=True,
