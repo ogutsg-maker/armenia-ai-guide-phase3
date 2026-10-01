@@ -3007,7 +3007,6 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         if not isinstance(raw, dict):
             raise ValueError("invalid_service_payload")
         service_name = str(raw.get("name") or raw.get("service_name") or "").strip()
-        raw["base_location"] = _normalize_service_location(raw.get("base_location") or base_location)
         raw["service_location"] = _normalize_service_location(raw.get("service_location") or service_location)
         if not service_name:
             raise ValueError("service_name_required")
@@ -3050,19 +3049,12 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         # location is the service location and the partner's dispatch/base
         # location is stored separately. at_address/both still require a
         # concrete service address.
-        if effective_mode not in {"mobile", "both"} and not service_object and not raw_address_text:
-            raise ValueError("service_address_required")
-        if effective_mode in {"mobile", "both"} and not raw.get("base_location") and not base_location:
-            raise ValueError("base_location_required")
-
         service_phone = str(
             raw.get("phone")
             or (service_object or {}).get("phone")
             or company_phone
             or ""
         ).strip() or None
-        if not service_phone:
-            raise ValueError("service_phone_required")
 
         prepared.append({
             "name": checked["name"],
@@ -3071,7 +3063,6 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "description": str(raw.get("description") or "").strip(),
             "service_mode": raw.get("service_mode") or service_mode,
             "service_location": raw.get("service_location") or service_location,
-            "base_location": raw.get("base_location") or base_location,
             "coverage": raw.get("coverage") or ((service_location or {}).get("coverage") if isinstance(service_location, dict) else None),
             "object_id": int(service_object["id"]) if service_object else None,
             "object_name": (service_object or {}).get("object_name"),
@@ -3093,15 +3084,9 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     # invent catalogue IDs. Preserve unresolved services for admin review.
     prepared = resolve_catalog_services(prepared, limit=500)
 
-    # A service proposal must never reach Admin without an attached document.
-    # Existing approved partners reuse their current company verification
-    # document; a new document is not required when an approved one exists.
-    if not document:
-        raise ValueError("document_required")
-    document_status = str(document.get("status") or "").strip().lower()
-    if document_status in {"rejected", "expired", "cancelled", "canceled"}:
-        raise ValueError("document_replacement_required")
-
+    # Documents are optional service data. If a document exists, keep it
+    # attached for admin review; it is not a prerequisite for creating the
+    # service application.
     first = prepared[0]
     first_location = first.get("location") if isinstance(first.get("location"), dict) else {}
     header_address = str(first.get("address_text") or first_location.get("address") or (company_object or {}).get("address") or "").strip() or None
@@ -3122,7 +3107,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "document_status": document.get("status") if document else None,
             "document_filename": document.get("original_filename") if document else None,
             "required_checks": {
-                "document_present": True,
+                "document_present": bool(document),
                 "catalog_classification": "backend_live_catalog",
             },
         },
@@ -3160,7 +3145,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         (
             pid,
             cid,
-            "pending_admin" if document_status == "approved" else "document_under_review",
+            "pending_admin",
             company.get("name") or "",
             header_marz,
             header_city,
@@ -3177,7 +3162,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             first["name"],
             first.get("price"),
             first.get("description") or "",
-            int(document["id"]),
+            int(document["id"]) if document else None,
             json_dump(payload),
         ),
     )
