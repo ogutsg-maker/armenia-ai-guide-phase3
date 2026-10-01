@@ -828,23 +828,12 @@ async def _set_partner_decision(request, decision):
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
 
     if decision == "approve":
-        # Partner/company activation is independent from service/direction approval.
-        # Require the separate company-level verification document only here.
-        approved_doc = _db_fetchone(
-            """SELECT id,business_id FROM partner_verification_documents
-               WHERE partner_id=%s AND status='approved'
-                 AND business_id IS NOT NULL
-               ORDER BY reviewed_at DESC NULLS LAST, created_at DESC LIMIT 1""",
+        # Partner registration is independent from company/direction verification.
+        # Registration does not require a document.
+        _db_execute(
+            "UPDATE partners SET status='approved', verification_status='approved', rejection_reason=NULL WHERE id=%s",
             (pid,),
         )
-        if not approved_doc:
-            return web.json_response({
-                "ok": False,
-                "error": "company_verification_document_required",
-                "message": "Сначала проверьте и одобрите документ компании.",
-            }, status=400)
-        _db_execute("UPDATE partners SET status='approved', verification_status='approved', rejection_reason=NULL WHERE id=%s", (pid,))
-        _db_execute("UPDATE partner_verification_documents SET status='approved', rejection_reason=NULL, reviewed_by=%s, reviewed_at=NOW() WHERE partner_id=%s AND status='pending'", (admin_id, pid))
         _audit(admin_id, "partner_approved", pid)
         await _notify_partner_decision(request, partner, "approve")
         return web.json_response({"ok": True, "partner_id": pid, "status": "approved", "verification_status": "approved"})
