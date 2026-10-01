@@ -51,6 +51,23 @@ def _nullable(kind: str) -> dict[str, Any]:
     return {"anyOf": [{"type": kind}, {"type": "null"}]}
 
 
+def _location_schema() -> dict[str, Any]:
+    """Structured partner location; coordinates are optional technical data."""
+    return {
+        "anyOf": [
+            {"type": "object", "properties": {
+                "city": _nullable("string"),
+                "district": _nullable("string"),
+                "marz": _nullable("string"),
+                "address": _nullable("string"),
+                "lat": _nullable("number"),
+                "lng": _nullable("number"),
+            }, "additionalProperties": False},
+            {"type": "null"},
+        ]
+    }
+
+
 class ToolRegistry:
     def __init__(
         self,
@@ -262,7 +279,7 @@ class ToolRegistry:
                     "price_type": {"type": "string", "enum": ["from", "fixed"]},
                     "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
                     "service_location": _nullable("object"),
-                    "base_location": _nullable("object"),
+                    "base_location": _location_schema(),
                     "coverage": _nullable("string"),
                 },
                 required=("company_id", "name"),
@@ -1235,7 +1252,11 @@ class ToolRegistry:
                     for s in prepared if isinstance(s, dict)
                 }
                 base_location = args.get("base_location") if isinstance(args.get("base_location"), dict) else None
-                if any(m in {"mobile", "both"} for m in effective_modes) and not base_location:
+                has_service_base_location = any(
+                    isinstance(s.get("base_location"), dict) and bool(s.get("base_location"))
+                    for s in prepared if isinstance(s, dict)
+                )
+                if any(m in {"mobile", "both"} for m in effective_modes) and not (base_location or has_service_base_location):
                     missing.append("base_location")
                 if any(m in {"at_address", "both"} for m in effective_modes) and not (selected_address_id or address_text or location):
                     if "address" not in missing:
@@ -1521,6 +1542,7 @@ class ToolRegistry:
                 services=services,
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
+                base_location=args.get("base_location"),
                 submission_token=args.get("submission_token"),
             )
             return {"ok": True, **result}
