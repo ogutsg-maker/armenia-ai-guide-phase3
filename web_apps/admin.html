@@ -546,7 +546,8 @@ async function loadApplications(){
    (!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':'')+
    (x.status!=='approved'?'<button class="btn danger" onclick="deleteAdminApplication('+x.id+')">🗑 Ջնջել</button>':'')+
    '</div></div>';
-  }).join(''):'<div class="empty">Սպասող հայտեր չկան</div>';
+  }).join('')+'</div>':'<div class="empty">Սպասող հայտեր չկան</div></div>';
+  await loadDirectionVerificationQueue();
  }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
 }
 
