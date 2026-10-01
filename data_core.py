@@ -2514,8 +2514,10 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
     if not check:
         current = one("SELECT * FROM booking_checkins WHERE id=%s", (int(row["id"]),))
         return {"already_checked_in": True, "checkin": current}
+    # QR scan is check-in, not service completion. Completion is a separate
+    # backend transition after the service has actually been performed.
     booking = execute(
-        """UPDATE bookings SET status='completed',updated_at=NOW()
+        """UPDATE bookings SET status='in_progress',updated_at=NOW()
            WHERE id=%s AND status IN ('paid','confirmed') RETURNING *""",
         (int(booking_id),), True,
     )
@@ -2523,6 +2525,47 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
             "booking": booking, "service_name": row["service_name"],
             "agreed_price": row["agreed_price"], "currency": row["currency"],
             "business_name": row["business_name"]}
+
+
+def complete_booking(booking_id: int, actor_role: str, actor_id: int,
+                     note: str = ""):
+    """Complete a service only after it has reached IN_PROGRESS via check-in."""
+    booking = get_booking(int(booking_id), actor_role=actor_role, actor_id=actor_id)
+    if not booking:
+        return None
+    if str(booking.get("status") or "").lower() != "in_progress":
+        return None
+    checkin = one(
+        "SELECT id,status,checked_in_at FROM booking_checkins WHERE booking_id=%s AND status='checked_in' ORDER BY id DESC LIMIT 1",
+        (int(booking_id),),
+    )
+    if not checkin:
+        return None
+    metadata = booking.get("data_json") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata["completion_note"] = str(note or "").strip()[:2000]
+    metadata["completed_by_role"] = str(actor_role or "").strip().lower()
+    metadata["completed_by"] = int(actor_id)
+    updated = execute(
+        """UPDATE bookings
+           SET status='completed',data_json=%s::jsonb,updated_at=NOW()
+           WHERE id=%s AND status='in_progress' RETURNING *""",
+        (json.dumps(metadata, ensure_ascii=False), int(booking_id)), True,
+    )
+    if updated and updated.get("request_id"):
+        execute(
+            """UPDATE service_requests SET status='completed',updated_at=NOW()
+               WHERE id=%s AND status='booked'""",
+            (int(updated["request_id"]),),
+            False,
+        )
+    return updated
 
 
 def record_payment_provider_fee(booking_id: int, amount_amd: float, provider: str = ""):
