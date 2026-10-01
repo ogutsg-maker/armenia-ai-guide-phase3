@@ -539,8 +539,14 @@ async def idram_result(request):
         return web.Response(text='OK')
     # Idempotent reconciliation is centralized in Data Core.
     reconciled=data_core.reconcile_paid_payment(
-        int(payment['id']), result.transaction_id or payment.get('provider_payment_id')
+        int(payment['id']),
+        result.transaction_id or payment.get('provider_payment_id'),
+        result.amount,
+        idram.provider_tag,
     )
+    if reconciled and reconciled.get('rejected'):
+        logging.warning('Idram settlement rejected: %s (bill=%s)', reconciled.get('rejected'), bill_no)
+        return web.Response(text='ERR')
     if reconciled and not reconciled.get('already_paid'):
         booking=reconciled.get('booking')
         booking_id=payment.get('booking_id')
