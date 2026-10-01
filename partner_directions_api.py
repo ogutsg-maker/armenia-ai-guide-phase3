@@ -388,9 +388,10 @@ def _admin_guard(request):
     return int(user["id"])
 
 
-def register_partner_direction_routes(app, db=None, bot=None):
+def register_partner_direction_routes(app, db=None, bot=None, ensure_schema=True):
     app["partner_direction_bot"] = bot
-    ensure_partner_direction_schema()
+    if ensure_schema:
+        ensure_partner_direction_schema()
 
     async def directions(request):
         # The current cabinet uses route id=0 as a neutral placeholder.
