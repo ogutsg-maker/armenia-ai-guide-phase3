@@ -1885,7 +1885,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                     """INSERT INTO services
                        (partner_id,business_id,category_id,subcategory_id,name,description,
                         price,currency,status,data_json,object_id,contact_phone)
-                       VALUES(%s,%s,%s,NULL,%s,%s,%s,'AMD','approved',%s::jsonb,%s,%s)""",
+                       VALUES(%s,%s,%s,NULL,%s,%s,%s,'AMD','active',%s::jsonb,%s,%s)""",
                     (partner_id, bid, cid, name, str(svc.get("description") or "").strip(),
                      price, data_json, service_object_id,
                      str(svc.get("contact_phone") or app_phone or "").strip() or None),
@@ -1894,7 +1894,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         cur.execute(
             """SELECT id,name,price,status,category_id,business_id
                FROM services
-               WHERE partner_id=%s AND business_id=%s AND status='approved'
+               WHERE partner_id=%s AND business_id=%s AND status='active'
                  AND data_json->>'application_id'=%s ORDER BY id""",
             (partner_id, int(bid), str(int(application_id))),
         )
