@@ -337,6 +337,18 @@ async def api_partner_documents(request):
            ORDER BY id DESC""",
         (pid, bid),
     )
+    verifications = _db_fetchall(
+        """SELECT vc.id,vc.partner_direction_id,vc.master_category_id,vc.status,
+                  vc.rejection_reason,vc.requested_at,vc.submitted_at,vc.reviewed_at,
+                  m.name_am AS direction_name_am,m.name_ru AS direction_name_ru,m.name_en AS direction_name_en,
+                  pd.status AS direction_status
+           FROM partner_direction_verification_cases vc
+           JOIN master_categories m ON m.id=vc.master_category_id
+           JOIN partner_directions pd ON pd.id=vc.partner_direction_id
+           WHERE vc.partner_id=%s AND vc.business_id=%s
+           ORDER BY vc.updated_at DESC,vc.id DESC""",
+        (pid, bid),
+    )
     return web.json_response({
         "ok": True,
         "partner": {
@@ -345,6 +357,7 @@ async def api_partner_documents(request):
             "verification_status": "approved",
         },
         "documents": docs,
+        "verifications": verifications,
     })
 
 
@@ -367,6 +380,9 @@ async def api_partner_document_upload(request):
     reader = await request.multipart()
     document_type = "business_document"
     direction_id = None
+    path_direction = str(request.match_info.get("direction_id") or "").strip()
+    if path_direction.isdigit():
+        direction_id = int(path_direction)
     file_part = None
     async for part in reader:
         if part.name == "document_type":
@@ -442,42 +458,30 @@ async def api_partner_document_upload(request):
                 (partner["id"], business_id, direction_id, document_type, original, bytes(data), mime, len(data)),
                 returning=True,
             )
-        _db_execute("UPDATE partners SET verification_status=CASE WHEN status='approved' THEN verification_status ELSE 'pending' END, rejection_reason=NULL, status=CASE WHEN status IN ('draft','rejected') THEN 'pending' ELSE status END WHERE id=%s", (partner["id"],))
+        if direction_id is None:
+            _db_execute(
+                "UPDATE partners SET verification_status=CASE WHEN status='approved' THEN verification_status ELSE 'pending' END, rejection_reason=NULL, status=CASE WHEN status IN ('draft','rejected') THEN 'pending' ELSE status END WHERE id=%s",
+                (partner["id"],),
+            )
     except Exception as exc:
         # Keep the client response safe but log the real Storage/DB error in Render logs.
         print(f"[partner-verification] document upload failed: partner={partner['id']} error={exc!r}", flush=True)
         return web.json_response({"ok": False, "error": "document_upload_failed", "details": str(exc)[:1000]}, status=500)
 
-    # The AI registration page uploads through this legacy verification endpoint.
-    # Attach that document to the same universal application created by AI.
-    # This prevents the admin from seeing one half under Partners and another
-    # half under Applications.
-    try:
-        linked = _db_execute(
-            """UPDATE partner_applications a
-               SET document_id=%s,
-                   status='pending_admin',
-                   updated_at=NOW()
-               WHERE a.id=(
-                   SELECT id FROM partner_applications
-                   WHERE partner_id=%s
-                     AND status='document_pending'
-                     AND business_id=%s
-                     AND document_id IS NULL
-                   ORDER BY created_at DESC,id DESC
-                   LIMIT 1
-               )
-               RETURNING id,business_id""",
-            (doc["id"], partner["id"], business_id),
-            returning=True,
+    # Direction documents are independent from service applications.
+    if direction_id is not None:
+        _db_execute(
+            """UPDATE partner_direction_verification_cases
+               SET status='pending_review',submitted_at=NOW(),updated_at=NOW()
+               WHERE partner_direction_id=%s
+                 AND status IN ('awaiting_document','rejected')""",
+            (int(direction_id),),
         )
-        if linked:
-            _db_execute(
-                "UPDATE partner_verification_documents SET business_id=%s WHERE id=%s",
-                (linked.get("business_id"), doc["id"]),
-            )
-    except Exception as exc:
-        print(f"[partner-verification] application/document link failed: partner={partner['id']} document={doc.get('id')} error={exc!r}", flush=True)
+        _db_execute(
+            """UPDATE partner_directions SET status='pending_document',rejection_reason=NULL,updated_at=NOW()
+               WHERE id=%s AND partner_id=%s AND business_id=%s""",
+            (int(direction_id), int(partner["id"]), int(business_id)),
+        )
 
     return web.json_response({"ok": True, "document": doc, "verification_status": "pending"})
 
@@ -828,23 +832,12 @@ async def _set_partner_decision(request, decision):
         return web.json_response({"ok": False, "error": "partner_not_found"}, status=404)
 
     if decision == "approve":
-        # Partner/company activation is independent from service/direction approval.
-        # Require the separate company-level verification document only here.
-        approved_doc = _db_fetchone(
-            """SELECT id,business_id FROM partner_verification_documents
-               WHERE partner_id=%s AND status='approved'
-                 AND business_id IS NOT NULL
-               ORDER BY reviewed_at DESC NULLS LAST, created_at DESC LIMIT 1""",
+        # Partner registration is independent from company/direction verification.
+        # Registration does not require a document.
+        _db_execute(
+            "UPDATE partners SET status='approved', verification_status='approved', rejection_reason=NULL WHERE id=%s",
             (pid,),
         )
-        if not approved_doc:
-            return web.json_response({
-                "ok": False,
-                "error": "company_verification_document_required",
-                "message": "Сначала проверьте и одобрите документ компании.",
-            }, status=400)
-        _db_execute("UPDATE partners SET status='approved', verification_status='approved', rejection_reason=NULL WHERE id=%s", (pid,))
-        _db_execute("UPDATE partner_verification_documents SET status='approved', rejection_reason=NULL, reviewed_by=%s, reviewed_at=NOW() WHERE partner_id=%s AND status='pending'", (admin_id, pid))
         _audit(admin_id, "partner_approved", pid)
         await _notify_partner_decision(request, partner, "approve")
         return web.json_response({"ok": True, "partner_id": pid, "status": "approved", "verification_status": "approved"})
@@ -1475,6 +1468,85 @@ async def api_admin_registry(request):
 
     return web.json_response({"ok":False,"error":"unknown_registry_type"},status=400)
 
+async def api_admin_direction_policies(request):
+    _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    rows = _db_fetchall(
+        """SELECT id,name_am,name_ru,name_en,verification_required,verification_document_types
+           FROM master_categories
+           WHERE is_active=TRUE ORDER BY id"""
+    )
+    return web.json_response({"ok":True,"items":rows})
+
+
+async def api_admin_direction_policy_update(request):
+    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    mid = int(request.match_info["master_id"])
+    data = await request.json()
+    required = bool(data.get("verification_required"))
+    types = data.get("verification_document_types") or []
+    if not isinstance(types,list):
+        return web.json_response({"ok":False,"error":"verification_document_types_must_be_array"},status=400)
+    row = _db_execute(
+        """UPDATE master_categories
+           SET verification_required=%s,verification_document_types=%s::jsonb
+           WHERE id=%s AND is_active=TRUE
+           RETURNING id,name_am,name_ru,name_en,verification_required,verification_document_types""",
+        (required,json.dumps(types,ensure_ascii=False),mid),True,
+    )
+    if not row:
+        return web.json_response({"ok":False,"error":"direction_not_found"},status=404)
+    _audit(admin_id,"direction_verification_policy_updated",mid,{"verification_required":required,"document_types":types})
+    return web.json_response({"ok":True,"item":row})
+
+
+async def api_admin_direction_verifications(request):
+    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    rows = _db_fetchall(
+        """SELECT vc.id,vc.partner_id,vc.business_id,vc.partner_direction_id,
+                  vc.master_category_id,vc.status,vc.requested_at,vc.submitted_at,
+                  vc.reviewed_at,vc.reviewed_by,vc.rejection_reason,
+                  p.business_name AS partner_name,p.user_id,
+                  pb.name AS company_name,
+                  m.name_am AS direction_name_am,m.name_ru AS direction_name_ru,m.name_en AS direction_name_en,
+                  d.id AS document_id,d.original_filename,d.mime_type,d.file_size,d.status AS document_status
+           FROM partner_direction_verification_cases vc
+           JOIN partners p ON p.id=vc.partner_id
+           JOIN partner_businesses pb ON pb.id=vc.business_id
+           JOIN master_categories m ON m.id=vc.master_category_id
+           LEFT JOIN LATERAL (
+               SELECT id,original_filename,mime_type,file_size,status
+               FROM partner_verification_documents
+               WHERE partner_direction_id=vc.partner_direction_id
+               ORDER BY id DESC LIMIT 1
+           ) d ON TRUE
+           WHERE vc.status IN ('awaiting_document','pending_review','rejected')
+           ORDER BY vc.updated_at DESC,vc.id DESC"""
+    )
+    return web.json_response({"ok":True,"admin_id":admin_id,"items":rows})
+
+
+async def api_admin_direction_verification_action(request):
+    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    case_id = int(request.match_info["id"])
+    action = str(request.match_info["action"] or "").strip().lower()
+    reason = str((await request.json()).get("reason") or "").strip()[:2000] if request.can_read_body else ""
+    try:
+        if action == "approve":
+            result = data_core.admin_approve_direction_verification(
+                case_id=case_id, admin_telegram_id=admin_id,
+            )
+        elif action == "reject":
+            result = data_core.admin_reject_direction_verification(
+                case_id=case_id, reason=reason, admin_telegram_id=admin_id,
+            )
+        else:
+            return web.json_response({"ok":False,"error":"unknown_action"},status=400)
+    except Exception as exc:
+        return web.json_response({"ok":False,"error":str(exc)[:500]},status=400)
+
+    return web.json_response({"ok":True,**result})
+
+
 def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=True):
     if ensure_schema:
         ensure_stage3_schema()
@@ -1482,6 +1554,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=Tru
     app["stage3_admin_id"] = admin_id
     app.router.add_get("/api/master/{id}/documents", api_partner_documents)
     app.router.add_post("/api/master/{id}/documents/upload", api_partner_document_upload)
+    app.router.add_post("/api/master/{id}/directions/{direction_id}/verification-document", api_partner_document_upload)
     app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
     app.router.add_get("/api/admin/registry-search", api_admin_registry)
@@ -1489,8 +1562,10 @@ def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=Tru
     app.router.add_get("/api/admin/orders", api_admin_orders)
     app.router.add_get("/api/admin/disputes", api_admin_disputes)
     app.router.add_post("/api/admin/dispute/{id}/resolve", api_admin_dispute_resolve)
-    app.router.add_get("/api/admin/service-direction-requests", api_admin_service_direction_requests)
-    app.router.add_post("/api/admin/service-direction-requests/{id}/action", api_admin_service_direction_request_action)
+    app.router.add_get("/api/admin/direction-policies", api_admin_direction_policies)
+    app.router.add_post("/api/admin/direction-policies/{master_id}", api_admin_direction_policy_update)
+    app.router.add_get("/api/admin/direction-verifications", api_admin_direction_verifications)
+    app.router.add_post("/api/admin/direction-verifications/{id}/{action}", api_admin_direction_verification_action)
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/url", api_admin_partner_document_url)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/download", api_admin_partner_document_download)
