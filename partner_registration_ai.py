@@ -589,10 +589,18 @@ async def classify_profile_catalog(
     if not services:
         return {"services": [], "master_category_id": None, "confidence": 0.0, "needs_review": False, "ambiguities": []}
 
-    names = [_norm(x.get("name") or x.get("service_name")) for x in services]
+    # The live classifier consumes structured service objects so it can
+    # preserve price and price_type while resolving the real catalogue IDs.
     classified = await classify_services_batch(
         db,
-        names,
+        [
+            {
+                "name": _norm(x.get("name") or x.get("service_name")),
+                "price": x.get("price"),
+                "price_type": x.get("price_type") or "fixed",
+            }
+            for x in services
+        ],
         telegram_id=telegram_id,
         application_id=application_id,
     )
@@ -634,6 +642,8 @@ async def classify_profile_catalog(
     return {
         "services": merged,
         "master_category_id": master_id,
+        # The classifier is authoritative for resolution. Do not manufacture
+        # a numeric confidence from the mere presence of an ID.
         "confidence": 1.0 if merged and not unresolved else 0.0,
         "needs_review": bool(unresolved),
         "ambiguities": unresolved,
