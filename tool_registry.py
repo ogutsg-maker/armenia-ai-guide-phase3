@@ -1166,11 +1166,18 @@ class ToolRegistry:
                         company_id=company_id, name=service_name,
                         price=raw.get("price"), category_id=None,
                     )
+                    item_address_id = raw.get("address_id")
+                    if item_address_id not in (None, ""):
+                        item_address_id = int(item_address_id)
+                        if not any(int(x.get("id") or 0) == item_address_id for x in company_addresses):
+                            raise PermissionError("address_not_in_company")
+                    else:
+                        item_address_id = selected_address_id
                     prepared.append({
                         "name": checked["name"],
                         "price": checked["price"],
                         "price_type": raw.get("price_type") or "from",
-                        "address_id": selected_address_id,
+                        "address_id": item_address_id,
                         "phone": phone,
                         "description": raw.get("description"),
                         "service_mode": raw.get("service_mode") or service_mode,
