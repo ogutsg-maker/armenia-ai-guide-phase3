@@ -1086,21 +1086,6 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
-                if args.get("address_id") in (None, "") and not str(args.get("address_text") or "").strip() and not isinstance(args.get("service_location"), dict):
-                    company_addresses = [
-                        x for x in data_core.get_partner_addresses(
-                            pid, actor_user_id=self.telegram_id, limit=200
-                        )
-                        if int(x.get("business_id") or 0) == company_id
-                        and str(x.get("address") or "").strip()
-                    ]
-                    if not company_addresses:
-                        raise ValueError("service_address_required")
-                document = data_core.get_current_partner_document(
-                    partner_id=pid, company_id=company_id
-                )
-                if not document:
-                    raise ValueError("document_required")
                 resolved = data_core.resolve_catalog_services([{
                     "name": checked["name"],
                     "price": checked["price"],
@@ -1111,7 +1096,6 @@ class ToolRegistry:
                     "price_type": args.get("price_type") or "fixed",
                     "service_mode": args.get("service_mode"),
                     "service_location": args.get("service_location"),
-                    "base_location": args.get("base_location"),
                     "coverage": args.get("coverage"),
                     "address_text": args.get("address_text"),
                 }], limit=500)[0]
@@ -1130,12 +1114,9 @@ class ToolRegistry:
                         "address_text": resolved.get("address_text") or args.get("address_text"),
                         "service_mode": resolved.get("service_mode") or args.get("service_mode"),
                         "service_location": resolved.get("service_location") or args.get("service_location"),
-                        "base_location": resolved.get("base_location") or args.get("base_location"),
-                        "coverage": resolved.get("coverage") or args.get("coverage"),
+                            "coverage": resolved.get("coverage") or args.get("coverage"),
                         "catalog_match_status": resolved.get("catalog_match_status"),
                         "catalog_options": resolved.get("catalog_options") or [],
-                        "document_id": int(document["id"]),
-                        "document_status": document.get("status"),
                     },
                     f'Добавить услугу «{checked["name"]}» в заявку на проверку компании «{company.get("name") or ""}»?',
                 )
