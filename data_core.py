@@ -2882,6 +2882,7 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
                                       price_type: str | None = None,
                                       service_mode: str | None = None,
                                       service_location: dict[str, Any] | None = None,
+                                      base_location: dict[str, Any] | None = None,
                                       coverage: dict[str, Any] | None = None,
                                       submission_token: str | None = None):
     """Create one admin-review application for a single AI-added service."""
