@@ -266,6 +266,11 @@ class ToolRegistry:
                 "Prepare adding multiple services to one owned company as ONE confirmed action. Copy every service name from the user's message without translating, inventing, shortening or rewriting it. Use one item per distinct service. Confirmation is required once for the whole batch.",
                 {
                     "company_id": _nullable("integer"),
+                    "address_id": _nullable("integer"),
+                    "address_text": _nullable("string"),
+                    "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
+                    "service_location": _nullable("object"),
+                    "coverage": _nullable("string"),
                     "services": {
                         "type": "array",
                         "minItems": 1,
@@ -276,6 +281,7 @@ class ToolRegistry:
                                 "price": _nullable("number"),
                                 "price_type": {"type": "string", "enum": ["from", "fixed"]},
                                 "address_id": _nullable("integer"),
+                                "address_text": _nullable("string"),
                                 "phone": _nullable("string"),
                                 "description": _nullable("string"),
                                 "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
