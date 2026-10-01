@@ -262,6 +262,7 @@ class ToolRegistry:
                     "price_type": {"type": "string", "enum": ["from", "fixed"]},
                     "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
                     "service_location": _nullable("object"),
+                    "base_location": _nullable("object"),
                     "coverage": _nullable("string"),
                 },
                 required=("company_id", "name"),
@@ -293,6 +294,7 @@ class ToolRegistry:
                                 "description": _nullable("string"),
                                 "service_mode": {"type": ["string", "null"], "enum": ["at_address", "mobile", "both", null]},
                                 "service_location": _nullable("object"),
+                                "base_location": _nullable("object"),
                                 "coverage": _nullable("string")
                             },
                             "required": ["name", "price"],
@@ -1090,6 +1092,7 @@ class ToolRegistry:
                     "price_type": args.get("price_type") or "fixed",
                     "service_mode": args.get("service_mode"),
                     "service_location": args.get("service_location"),
+                    "base_location": args.get("base_location"),
                     "coverage": args.get("coverage"),
                     "address_text": args.get("address_text"),
                 }], limit=500)[0]
@@ -1108,6 +1111,7 @@ class ToolRegistry:
                         "address_text": resolved.get("address_text") or args.get("address_text"),
                         "service_mode": resolved.get("service_mode") or args.get("service_mode"),
                         "service_location": resolved.get("service_location") or args.get("service_location"),
+                        "base_location": resolved.get("base_location") or args.get("base_location"),
                         "coverage": resolved.get("coverage") or args.get("coverage"),
                         "catalog_match_status": resolved.get("catalog_match_status"),
                         "catalog_options": resolved.get("catalog_options") or [],
@@ -1459,6 +1463,7 @@ class ToolRegistry:
                 price_type=args.get("price_type"),
                 service_mode=args.get("service_mode"),
                 service_location=args.get("service_location"),
+                base_location=args.get("base_location"),
                 coverage=args.get("coverage"),
                 submission_token=args.get("submission_token"),
             )}
