@@ -3722,6 +3722,9 @@ def marketplace_client_search(
                   LOWER({service_city_sql})=LOWER(%s)
                   OR LOWER({service_district_sql})=LOWER(%s)
                   OR LOWER({service_marz_sql})=LOWER(%s)
+                  OR LOWER({base_city_sql})=LOWER(%s)
+                  OR LOWER({base_district_sql})=LOWER(%s)
+                  OR LOWER({base_marz_sql})=LOWER(%s)
                 )
               )
               OR (
@@ -3731,6 +3734,9 @@ def marketplace_client_search(
                   LOWER({service_city_sql})=LOWER(%s)
                   OR LOWER({service_district_sql})=LOWER(%s)
                   OR LOWER({service_marz_sql})=LOWER(%s)
+                  OR LOWER({base_city_sql})=LOWER(%s)
+                  OR LOWER({base_district_sql})=LOWER(%s)
+                  OR LOWER({base_marz_sql})=LOWER(%s)
                 )
               )
               OR (
@@ -3760,8 +3766,8 @@ def marketplace_client_search(
         # both/service distance, three service fallback values, both/base
         # distance, then non-both target distance, then textual fallback.
         params.extend(distance_params)          # both: service location distance
-        params.extend([city, city, city])     # both: service city/marz fallback
-        params.extend([city, city, city])     # both: radius-without-coordinates fallback
+        params.extend([city, city, city, city, city, city]) # both: either location fallback
+        params.extend([city, city, city, city, city, city]) # both: radius without coords fallback
         params.extend(distance_params)          # both: base location distance
         params.extend(distance_params)          # non-both target distance
         params.extend([city, city, city])     # non-both target city/marz fallback
@@ -3773,6 +3779,11 @@ def marketplace_client_search(
               LOWER({service_city_sql})=LOWER(%s)
               OR LOWER({service_district_sql})=LOWER(%s)
               OR LOWER({service_marz_sql})=LOWER(%s)
+              OR ({mode_sql}='both' AND (
+                LOWER({base_city_sql})=LOWER(%s)
+                OR LOWER({base_district_sql})=LOWER(%s)
+                OR LOWER({base_marz_sql})=LOWER(%s)
+              ))
             )
           )
           OR (
@@ -3785,7 +3796,7 @@ def marketplace_client_search(
           OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
           OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'
         )""")
-        params.extend([city, city, city, city, city, city])
+        params.extend([city, city, city, city, city, city, city, city, city])
 
     sql = f"""WITH candidate_services AS (
         SELECT
