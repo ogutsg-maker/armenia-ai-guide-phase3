@@ -4419,8 +4419,12 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
     requested_status = str(status or "").strip().lower()
     if requested_status not in {"pending_partner_confirmation", "pending_payment", "paid"}:
         requested_status = "pending_partner_confirmation"
-    booking_state = "paid" if payment_status == "paid" else requested_status
-    payment_row_status = "paid" if payment_status == "paid" else "pending"
+    # Negotiation bookings also require the same partner-confirmation gate
+    # as direct bookings. A provider/test intent must never turn an agreed
+    # negotiation directly into a paid booking.
+    auto_settle_allowed = requested_status == "pending_payment"
+    booking_state = "paid" if payment_status == "paid" and auto_settle_allowed else requested_status
+    payment_row_status = "paid" if payment_status == "paid" and auto_settle_allowed else "pending"
     payment_amount = round(float(commission) + float(partner_amount), 2)
 
     negotiation = one("SELECT id,status,state_json FROM negotiations WHERE id=%s AND request_id=%s",
@@ -4483,8 +4487,8 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
         checkin=None
         if payment_row_status == "paid":
             cur.execute("""INSERT INTO booking_checkins(booking_id,token,expires_at,status)
-                           VALUES(%s,%s,NOW() + INTERVAL '1 hour','active') RETURNING *""",
-                        (int(booking["id"]), __import__("secrets").token_urlsafe(24)))
+                           VALUES(%s,%s,COALESCE(%s,NOW()) + INTERVAL '1 hour','active') RETURNING *""",
+                        (int(booking["id"]), __import__("secrets").token_urlsafe(24), booking.get("scheduled_at")))
             checkin=cur.fetchone()
         return {"booking":booking,"payment":payment,"checkin":checkin,"already_exists":False}
     try:
