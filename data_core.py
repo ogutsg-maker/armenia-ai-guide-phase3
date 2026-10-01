@@ -964,7 +964,7 @@ def search_services(
     max_price: float | None = None,
     limit: int = 100,
 ):
-    where = ["s.status='approved'", "p.status='approved'", "EXISTS (SELECT 1 FROM partner_direction_categories pdc JOIN partner_directions pd ON pd.id=pdc.partner_direction_id WHERE pdc.category_id=s.category_id AND pd.partner_id=s.partner_id AND pd.status='approved')"]
+    where = ["s.status='active'", "p.status='approved'", "EXISTS (SELECT 1 FROM partner_direction_categories pdc JOIN partner_directions pd ON pd.id=pdc.partner_direction_id WHERE pdc.category_id=s.category_id AND pd.partner_id=s.partner_id AND pd.status='approved')"]
     params: list[Any] = []
     if partner_id is not None:
         where.append("s.partner_id=%s")
@@ -976,16 +976,27 @@ def search_services(
         where.append("(s.price IS NULL OR s.price<=%s)")
         params.append(float(max_price))
     if city:
-        where.append("""EXISTS (
-            SELECT 1 FROM partner_objects pl
-            WHERE pl.partner_id=p.id
-              AND (LOWER(COALESCE(pl.city,''))=LOWER(%s)
-                OR LOWER(COALESCE(pl.village,''))=LOWER(%s)
-                OR LOWER(COALESCE(pl.marz,''))=LOWER(%s)
-                OR LOWER(COALESCE(pl.data_json->>'coverage',''))='all_armenia'
-                OR LOWER(COALESCE(pl.data_json->>'service_area',''))='all_armenia')
+        where.append("""(
+            EXISTS (
+                SELECT 1 FROM partner_objects pl
+                WHERE pl.partner_id=p.id
+                  AND COALESCE(pl.is_active,TRUE)=TRUE
+                  AND (
+                    LOWER(COALESCE(pl.city,''))=LOWER(%s)
+                    OR LOWER(COALESCE(pl.village,''))=LOWER(%s)
+                    OR LOWER(COALESCE(pl.marz,''))=LOWER(%s)
+                    OR LOWER(COALESCE(pl.data_json->>'coverage',''))='all_armenia'
+                    OR LOWER(COALESCE(pl.data_json->>'service_area',''))='all_armenia'
+                  )
+            )
+            OR LOWER(COALESCE(s.data_json->'service_location'->>'city',''))=LOWER(%s)
+            OR LOWER(COALESCE(s.data_json->'service_location'->>'district',''))=LOWER(%s)
+            OR LOWER(COALESCE(s.data_json->'service_location'->>'marz',''))=LOWER(%s)
+            OR LOWER(COALESCE(s.data_json->'service_location'->>'coverage',''))='all_armenia'
+            OR LOWER(COALESCE(s.data_json->>'coverage',''))='all_armenia'
+            OR LOWER(COALESCE(s.data_json->>'service_area',''))='all_armenia'
         )""")
-        params.extend([city, city, city])
+        params.extend([city, city, city, city, city, city])
     params.append(max(1, min(int(limit or 100), 200)))
     return rows(
         """SELECT DISTINCT s.id,s.partner_id,s.business_id,s.name,s.category_id,
@@ -1864,7 +1875,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
             if existing:
                 cur.execute(
                     """UPDATE services
-                       SET category_id=%s,name=%s,price=%s,status='approved',
+                       SET category_id=%s,name=%s,price=%s,status='active',
                            data_json=%s::jsonb,object_id=%s,updated_at=NOW()
                        WHERE id=%s""",
                     (cid, name, price, data_json, service_object_id, int(existing["id"])),
