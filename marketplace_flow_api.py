@@ -452,9 +452,14 @@ async def _cancel_booking(request, actor):
     if not updated:
         return web.json_response({'ok':False,'error':'booking_cancelled_or_state_conflict'},status=409)
     if refund_amount>0:
-        payment = data_core.one("SELECT status FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+        payment = data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
         if str((payment or {}).get('status') or '').lower() == 'paid':
-            data_core.update_payment_status_for_booking(booking_id,'refunded' if pct>=100 else 'partial_refund')
+            provider=IdramProvider()
+            # The test provider can settle a fictitious refund immediately.
+            # Live mode deliberately does not claim a refund until the provider
+            # confirms it through the reconciliation layer.
+            if not provider.is_live:
+                data_core.reconcile_refund(booking_id, refund_amount, "TEST-REFUND-"+str(booking_id))
     data_core.marketplace_cancel_side_effects(
         int(booking['partner_id']),booking_id,actor,reason,refund_amount,currency
     )
