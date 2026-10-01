@@ -2604,8 +2604,15 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
     )
     if not row: return None
     if row.get("status") == "checked_in": return {"already_checked_in": True, "checkin": row}
+    if row.get("status") == "arbitration":
+        return {"error": "arbitration_open", "checkin_status": "arbitration"}
     if row.get("status") != "active":
         return {"error": "qr_not_active", "checkin_status": row.get("status")}
+    if row.get("scheduled_at") is not None:
+        not_started = one("SELECT (scheduled_at > NOW()) AS not_started FROM bookings WHERE id=%s",
+                           (int(booking_id),))
+        if not_started and not_started.get("not_started"):
+            return {"error": "service_not_started", "scheduled_at": row.get("scheduled_at")}
     if row.get("expires_at") is not None:
         expired = one(
             "SELECT (expires_at <= NOW()) AS expired FROM booking_checkins WHERE id=%s",
