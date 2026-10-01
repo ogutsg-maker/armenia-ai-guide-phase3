@@ -140,36 +140,47 @@ async def partner_reply(request):
     await negotiator.handle(n,'partner',uid,text,**_negotiator_hooks())
     return web.json_response({'ok':True,'messages':data_core.get_negotiation_messages(nid, actor_role='partner', actor_id=uid)})
 
-async def partner_agree(request):
-    uid=_uid(request); nid=int(request.match_info['negotiation_id'])
-    n=data_core.get_negotiation(nid, actor_role='partner', actor_id=uid)
-    if not n or n.get('status') != 'active':
-        return web.json_response({'ok':False,'error':'negotiation_not_active'},status=400)
+async def negotiation_accept(request):
+    """Explicit client/partner acceptance; backend owns AGREED transition."""
+    uid = _uid(request)
+    nid = int(request.match_info['negotiation_id'])
+    role = 'client' if request.path.startswith('/api/market/client/') else 'partner'
 
-    st=_state(n)
-    st['partner_agreed']=True
-    if st.get('client_agreed'):
-        updated=data_core.update_negotiation(
-            nid,st,'agreed',actor_role='partner',actor_id=uid
+    result = data_core.accept_negotiation(
+        nid,
+        actor_role=role,
+        actor_id=uid,
+    )
+    if not result:
+        return web.json_response(
+            {'ok': False, 'error': 'negotiation_acceptance_failed'},
+            status=400,
         )
-        if not updated:
-            return web.json_response({'ok':False,'error':'agreement_requires_final_price'},status=400)
+
+    status = 'agreed' if result.get('agreed') else 'waiting_other_party'
+    if result.get('agreed'):
+        # The request becomes confirmed only after the backend has established
+        # that both parties explicitly accepted the same negotiation.
+        n = result.get('negotiation') or {}
         data_core.update_request_status(
-            n['request_id'],'confirmed',actor_role='partner',actor_id=uid
+            int(n['request_id']),
+            'confirmed',
+            actor_role=role,
+            actor_id=uid,
         )
-        message='Համաձայն եմ։ Երկու կողմն էլ համաձայն են։ Կարող ենք ամրագրել։'
-        status='agreed'
-    else:
-        updated=data_core.update_negotiation(
-            nid,st,None,actor_role='partner',actor_id=uid
-        )
-        if not updated:
-            return web.json_response({'ok':False,'error':'negotiation_update_failed'},status=400)
-        message='Համաձայն եմ պայմաններին։ Սպասում ենք հաճախորդի վերջնական համաձայնությանը։'
-        status='waiting_client'
 
-    data_core.append_negotiation_message(nid,'partner',uid,message)
-    return web.json_response({'ok':True,'status':status})
+    message = (
+        'Համաձայն եմ։ Երկու կողմն էլ համաձայն են։ Կարող ենք ամրագրել։'
+        if result.get('agreed')
+        else 'Համաձայն եմ պայմաններին։ Սպասում ենք մյուս կողմի վերջնական համաձայնությանը։'
+    )
+    data_core.append_negotiation_message(nid, role, uid, message)
+    return web.json_response({
+        'ok': True,
+        'status': status,
+        'agreed': bool(result.get('agreed')),
+        'negotiation': result.get('negotiation'),
+    })
 
 async def test_payment(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
@@ -576,7 +587,10 @@ def register_marketplace_flow_routes(app):
     app.router.add_get('/api/market/partner/negotiations',partner_negotiations)
     app.router.add_get('/api/market/partner/negotiation/{negotiation_id}',partner_negotiation_messages)
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/reply',partner_reply)
-    app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/agree',partner_agree)
+    app.router.add_post('/api/market/client/negotiation/{negotiation_id}/accept',negotiation_accept)
+    app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/accept',negotiation_accept)
+    # Legacy /agree endpoint remains as an alias to the same backend acceptance action.
+    app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/agree',negotiation_accept)
     app.router.add_post('/api/market/client/booking/{booking_id}/cancel',cancel_booking_client)
     app.router.add_post('/api/market/partner/booking/{booking_id}/cancel',cancel_booking_partner)
     app.router.add_post('/api/market/partner/checkin',partner_checkin)
