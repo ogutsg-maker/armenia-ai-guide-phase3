@@ -1570,8 +1570,6 @@ def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=Tru
     app.router.add_post("/api/admin/dispute/{id}/resolve", api_admin_dispute_resolve)
     app.router.add_get("/api/admin/direction-verifications", api_admin_direction_verifications)
     app.router.add_post("/api/admin/direction-verifications/{id}/{action}", api_admin_direction_verification_action)
-    app.router.add_get("/api/admin/service-direction-requests", api_admin_service_direction_requests)
-    app.router.add_post("/api/admin/service-direction-requests/{id}/action", api_admin_service_direction_request_action)
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/url", api_admin_partner_document_url)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/download", api_admin_partner_document_download)
