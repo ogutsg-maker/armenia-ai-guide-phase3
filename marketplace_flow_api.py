@@ -184,10 +184,26 @@ async def negotiation_accept(request):
 
 async def confirm_booking(request):
     uid=_uid(request); booking_id=int(request.match_info['booking_id'])
+    current=data_core.get_booking(booking_id,actor_role='partner',actor_id=uid)
+    if not current:
+        return web.json_response({'ok':False,'error':'booking_not_found'},status=404)
+    payment=data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+    if str(current.get('status') or '').lower()=='pending_payment':
+        data_json=(payment or {}).get('data_json') or {}
+        payment_url=data_json.get('payment_url') if isinstance(data_json,dict) else None
+        if payment_url or str((payment or {}).get('status') or '').lower()=='paid':
+            return web.json_response({'ok':True,'booking':current,'payment':payment,'payment_url':payment_url})
+    if str(current.get('status') or '').lower()!='pending_partner_confirmation':
+        return web.json_response({'ok':False,'error':'booking_not_pending_partner_confirmation'},status=409)
     booking=data_core.confirm_booking_by_partner(booking_id,uid)
     if not booking:
-        return web.json_response({'ok':False,'error':'booking_not_pending_partner_confirmation'},status=409)
-    payment=data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+        current=data_core.get_booking(booking_id,actor_role='partner',actor_id=uid)
+        payment=data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+        data_json=(payment or {}).get('data_json') or {}
+        payment_url=data_json.get('payment_url') if isinstance(data_json,dict) else None
+        if current and str(current.get('status') or '').lower()=='pending_payment' and payment_url:
+            return web.json_response({'ok':True,'booking':current,'payment':payment,'payment_url':payment_url})
+        return web.json_response({'ok':False,'error':'booking_confirmation_conflict'},status=409)
     if not payment:
         return web.json_response({'ok':False,'error':'payment_not_initialized'},status=500)
     service_currency=payment.get('currency') or 'AMD'
@@ -243,13 +259,7 @@ async def test_payment(request):
     display=data_core.get_partner_booking_display(int(n['partner_id']))
     if not display:return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
     partner,locations=display['partner'],display['locations']
-    profile=partner.get('profile_json') or {}
-    if isinstance(profile,str):
-        try: profile=json.loads(profile)
-        except Exception: profile={}
-    payment_confirmed = str((payment or {}).get('status') or '').lower() == 'paid'
-    contact={k:profile.get(k) for k in ('phone','website','telegram')
-             if payment_confirmed and partner.get('contact_sharing_enabled') and profile.get(k)}
+    contact=data_core.get_paid_booking_contact(int(booking['id']), actor_role='client', actor_id=uid)
     try:
         from notify import notify
         owner=data_core.marketplace_partner_owner(int(n['partner_id']))
@@ -367,16 +377,7 @@ async def direct_booking(request):
         return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
     partner = display['partner']
     locations = display['locations']
-    profile = partner.get('profile_json') or {}
-    if isinstance(profile, str):
-        try:
-            profile = json.loads(profile)
-        except Exception:
-            profile = {}
-    payment_confirmed = str((payment or {}).get('status') or '').lower() == 'paid'
-    contact = {}
-    if payment_confirmed and partner.get('contact_sharing_enabled'):
-        contact = {k: profile.get(k) for k in ('phone', 'website', 'telegram') if profile.get(k)}
+    contact = data_core.get_paid_booking_contact(int(booking['id']), actor_role='client', actor_id=uid)
     details = {
         'business_name': partner['business_name'], 'locations': locations, 'contact': contact,
         'service': service['name'], 'price': customer_total, 'base_price': price, 'currency': currency, 'booking_id': booking['id'],
@@ -475,9 +476,9 @@ async def _cancel_booking(request, actor):
     if not updated:
         return web.json_response({'ok':False,'error':'booking_cancelled_or_state_conflict'},status=409)
     if refund_amount>0:
-        data_core.update_payment_status_for_booking(
-            booking_id, 'refunded' if pct>=100 else 'partial_refund'
-        )
+        payment = data_core.one("SELECT status FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
+        if str((payment or {}).get('status') or '').lower() == 'paid':
+            data_core.update_payment_status_for_booking(booking_id,'refunded' if pct>=100 else 'partial_refund')
     data_core.marketplace_cancel_side_effects(
         int(booking['partner_id']),booking_id,actor,reason,refund_amount,currency
     )
