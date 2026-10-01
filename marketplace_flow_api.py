@@ -222,7 +222,9 @@ async def test_payment(request):
     if isinstance(profile,str):
         try: profile=json.loads(profile)
         except Exception: profile={}
-    contact={k:profile.get(k) for k in ('phone','website','telegram') if partner.get('contact_sharing_enabled') and profile.get(k)}
+    payment_confirmed = str((payment or {}).get('status') or '').lower() == 'paid'
+    contact={k:profile.get(k) for k in ('phone','website','telegram')
+             if payment_confirmed and partner.get('contact_sharing_enabled') and profile.get(k)}
     try:
         from notify import notify
         owner=data_core.marketplace_partner_owner(int(n['partner_id']))
@@ -359,8 +361,9 @@ async def direct_booking(request):
             profile = json.loads(profile)
         except Exception:
             profile = {}
+    payment_confirmed = str((payment or {}).get('status') or '').lower() == 'paid'
     contact = {}
-    if partner.get('contact_sharing_enabled'):
+    if payment_confirmed and partner.get('contact_sharing_enabled'):
         contact = {k: profile.get(k) for k in ('phone', 'website', 'telegram') if profile.get(k)}
     details = {
         'business_name': partner['business_name'], 'locations': locations, 'contact': contact,
