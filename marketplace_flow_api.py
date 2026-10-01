@@ -187,43 +187,19 @@ async def confirm_booking(request):
     current=data_core.get_booking(booking_id,actor_role='partner',actor_id=uid)
     if not current:
         return web.json_response({'ok':False,'error':'booking_not_found'},status=404)
-    payment=data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
-    if str(current.get('status') or '').lower()=='pending_payment':
-        data_json=(payment or {}).get('data_json') or {}
-        payment_url=data_json.get('payment_url') if isinstance(data_json,dict) else None
-        if payment_url or str((payment or {}).get('status') or '').lower()=='paid':
-            return web.json_response({'ok':True,'booking':current,'payment':payment,'payment_url':payment_url})
-    if str(current.get('status') or '').lower()!='pending_partner_confirmation':
-        return web.json_response({'ok':False,'error':'booking_not_pending_partner_confirmation'},status=409)
-    booking=data_core.confirm_booking_by_partner(booking_id,uid)
-    if not booking:
-        current=data_core.get_booking(booking_id,actor_role='partner',actor_id=uid)
-        payment=data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
-        data_json=(payment or {}).get('data_json') or {}
-        payment_url=data_json.get('payment_url') if isinstance(data_json,dict) else None
-        if current and str(current.get('status') or '').lower()=='pending_payment' and payment_url:
-            return web.json_response({'ok':True,'booking':current,'payment':payment,'payment_url':payment_url})
-        return web.json_response({'ok':False,'error':'booking_confirmation_conflict'},status=409)
-    if not payment:
-        return web.json_response({'ok':False,'error':'payment_not_initialized'},status=500)
-    service_currency=payment.get('currency') or 'AMD'
     try:
-        intent=IdramProvider().create_invoice(
-            amount=float(payment.get('amount') or 0),currency=service_currency,
-            description=f"Platform commission: {booking.get('service_name') or 'Booking'}",
-            order_id=booking_id,
-            metadata={'service_id':booking.get('service_id'),'booking_id':booking_id,'negotiation_id':booking.get('negotiation_id')})
+        result=data_core.confirm_booking_and_prepare_payment(booking_id,uid)
     except Exception:
+        logging.exception("Booking payment preparation failed for %s", booking_id)
         return web.json_response({'ok':False,'error':'payment_invoice_failed'},status=502)
-    data_core.execute(
-        """UPDATE payments SET provider=%s,provider_payment_id=%s,
-           data_json=COALESCE(data_json,'{}'::jsonb)||%s::jsonb,updated_at=NOW() WHERE id=%s""",
-        (getattr(intent,'provider',None),getattr(intent,'transaction_id',None),
-         json.dumps({'mode':getattr(intent,'mode',None),'bill_no':getattr(intent,'bill_no',None),
-                     'payment_url':getattr(intent,'payment_url',None)},ensure_ascii=False),int(payment['id'])),False)
-    payment=data_core.one("SELECT * FROM payments WHERE id=%s",(int(payment['id']),))
-    return web.json_response({'ok':True,'booking':booking,'payment':payment,
-                              'payment_url':(payment or {}).get('data_json',{}).get('payment_url') if isinstance((payment or {}).get('data_json'),dict) else None})
+    if not result:
+        return web.json_response({'ok':False,'error':'booking_confirmation_conflict'},status=409)
+    return web.json_response({
+        'ok':True,
+        'booking':result.get('booking'),
+        'payment':result.get('payment'),
+        'payment_url':result.get('payment_url'),
+    })
 
 async def test_payment(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
