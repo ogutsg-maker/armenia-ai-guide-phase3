@@ -545,16 +545,15 @@ function startServiceVoice(){
   serviceRecognition=r;
   r.start();
 }
-async function uploadApplicationDocument(applicationId,file){
-  if(!applicationId||!file)return;
-  const fd=new FormData();
-  fd.append('file',file);
-  fd.append('document_type','business_document');
-  const r=await fetch('/api/master/0/applications/'+applicationId+'/document',{method:'POST',headers:headers(),body:fd});
+async function uploadDirectionVerificationDocument(directionId,file){
+  if(!directionId||!file)return;
+  const fd=new FormData(); fd.append('file',file); fd.append('direction_id',String(directionId));
+  const r=await fetch('/api/master/0/documents/upload',{method:'POST',headers:headers(),body:fd});
   const d=await r.json().catch(()=>({ok:false,error:'bad_json'}));
   if(!r.ok||d.ok===false)throw new Error(d.error||d.message||('HTTP '+r.status));
   return d;
 }
+
 async function submitNewService(){
   const businessValue=document.getElementById('svcBusiness')?.value||'';
   const newBusiness=businessValue==='__new__';
@@ -644,28 +643,45 @@ async function submitNewService(){
 }
 async function loadNotifications(){const d=await api('/api/master/0/notifications');state.notifications=d.notifications||[]}async function markNotificationRead(id){try{await api('/api/master/0/notifications/'+id+'/read',{method:'POST'});await loadNotifications();renderNotifications()}catch(e){toast(e.message)}}async function markAllNotificationsRead(){try{await api('/api/master/0/notifications/read-all',{method:'POST'});await loadNotifications();renderNotifications()}catch(e){toast(e.message)}}function renderNotifications(){document.getElementById('notifications').innerHTML='<div class="heading"><div><h1>🔔 '+tr('notifications')+'</h1><p>'+((state.notifications||[]).filter(n=>!n.is_read).length)+' unread</p></div><button class="btn secondary" onclick="markAllNotificationsRead()">✓ '+(state.lang==='hy'?'Բոլորը կարդացված':state.lang==='ru'?'Прочитать всё':'Mark all read')+'</button></div><div class="list">'+((state.notifications||[]).length?(state.notifications||[]).map(n=>'<div class="item"><div class="row"><b>'+esc(n.title||n.type||'Notification')+'</b>'+(n.is_read?'':'<span class="chip warn">new</span>')+'</div><div class="muted">'+esc(n.message||n.body||'')+'</div>'+(n.is_read?'':'<div class="actions" style="margin-top:9px"><button class="btn secondary smallbtn" onclick="markNotificationRead('+n.id+')">✓ '+(state.lang==='hy'?'Կարդացված':state.lang==='ru'?'Прочитано':'Mark read')+'</button></div>')+'</div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>'}
 function renderApplications(){
-  document.getElementById('applications').innerHTML='<div class="heading"><div><h1>📨 '+tr('applications')+'</h1><p>Այստեղ ընթացիկ հայտերն են։ Նոր ընկերության առաջին ծառայության հայտը պահպանում է ամբողջ ընկերության կոնտեքստը։</p></div><div class="actions"><button class="btn secondary" onclick="openMain(\'businesses\')">← '+tr('businesses')+'</button><button class="btn secondary" onclick="loadApplications().then(renderApplications)">↻</button></div></div><div class="list">'+
+  document.getElementById('applications').innerHTML='<div class="heading"><div><h1>📨 '+tr('applications')+'</h1><p>Ընթացիկ ծառայության հայտեր և ուղղությունների վերիֆիկացիա։</p></div><div class="actions"><button class="btn secondary" onclick="openMain(\'businesses\')">← '+tr('businesses')+'</button><button class="btn secondary" onclick="loadApplications().then(renderApplications)">↻</button></div></div><div class="list">'+
   (applicationRows().length?applicationRows().map(a=>{
-    const documentRequired=a.document_required!==false && ['pending_admin','document_pending','document_under_review'].includes(String(a.status||''));
-    const needsDoc=documentRequired && !a.document_id;
-    const doc=a.document_id
-      ?'<span class="chip ok">📄 '+tr('document')+'</span>'
-      :documentRequired
-        ?'<span class="chip warn">📄 '+(state.lang==='ru'?'Документ не загружен':state.lang==='en'?'Document not uploaded':'Փաստաթուղթ չկա')+'</span>'
-        :'<span class="chip ok">📄 '+(state.lang==='ru'?'Документ не требуется':state.lang==='en'?'Document not required':'Փաստաթուղթ պետք չէ')+'</span>';
+    const v=a.direction_verification||null;
+    const policy=v?.policy||{};
+    const direction=v?.direction||{};
+    const caseRow=v?.case||{};
+    const docs=v?.documents||[];
+    const required=policy.verification_required===true;
+    const verified=['approved','frozen'].includes(String(direction.status||'').toLowerCase());
+    const pendingDoc=!verified && required;
+    const latestDoc=docs[0]||null;
+    const verificationChip=verified
+      ? '<span class="chip ok">✓ '+(state.lang==='ru'?'Направление подтверждено':state.lang==='en'?'Direction verified':'Ուղղությունը հաստատված է')+'</span>'
+      : pendingDoc
+        ? '<span class="chip warn">📄 '+(state.lang==='ru'?'Требуется документ':state.lang==='en'?'Document required':'Պահանջվում է փաստաթուղթ')+'</span>'
+        : '<span class="chip ok">✓ '+(state.lang==='ru'?'Документ не требуется':state.lang==='en'?'No document required':'Փաստաթուղթ պետք չէ')+'</span>';
+    const upload=pendingDoc && caseRow.id
+      ? '<div class="section"><label class="muted small">📄 '+(state.lang==='ru'?'Документ для направления':state.lang==='en'?'Direction verification document':'Փաստաթուղթ ուղղության վերիֆիկացիայի համար')+'</label><input id="dirDoc'+a.id+'" type="file" accept=".pdf,image/jpeg,image/png,image/webp" onchange="uploadDirectionVerificationFromInput('+a.id+','+caseRow.id+',this)"></div>'
+      : '';
     return '<div class="item"><div class="row"><b>#'+a.id+' · '+esc(a.service_name||a.business_name||'Հայտ')+'</b>'+status(a.status)+'</div>'+
-      '<div class="muted">'+esc(a.business_name_db||a.business_name||'')+' · '+esc(a.direction_name||a.master_name_am||'')+'</div>'+
-      '<div class="chips">'+doc+'</div>'+
-      (a.document_id?'<div class="muted small">Փաստաթուղթը կցված է այս հայտին։</div>':'')+
-      (needsDoc?'<div class="section"><label class="muted small">📄 '+(state.lang==='ru'?'Добавить документ к этой заявке':state.lang==='en'?'Add document to this application':'Ավելացնել փաստաթուղթ այս հայտին')+'</label><input id="appDoc'+a.id+'" type="file" accept=".pdf,image/jpeg,image/png,image/webp" onchange="uploadApplicationDocumentFromInput('+a.id+',this)"></div>':'')+
+      '<div class="muted">'+esc(a.business_name_db||a.business_name||'')+' · '+esc(policy.name_am||policy.name_ru||a.direction_name||a.master_name_am||'')+'</div>'+
+      '<div class="chips">'+verificationChip+(latestDoc?'<span class="chip">📄 '+esc(latestDoc.original_filename||'document')+' · '+esc(latestDoc.status||'pending')+'</span>':'')+'</div>'+
+      (upload)+
       '<div class="actions" style="margin-top:9px"><button class="btn secondary" onclick="openApplication('+a.id+')">'+tr('open')+' →</button>'+(['approved'].includes(String(a.status||''))?'':'<button class="btn danger" onclick="deletePartnerApplication('+a.id+')">🗑 '+(state.lang==='hy'?'Ջնջել':state.lang==='ru'?'Удалить':'Delete')+'</button>')+'</div></div>';
   }).join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>';
 }
-async function uploadApplicationDocumentFromInput(id,input){
-  const file=input?.files?.[0]; if(!file)return;
-  try{input.disabled=true;await uploadApplicationDocument(id,file);await loadApplications();renderApplications();toast('✓ '+(state.lang==='ru'?'Документ загружен':state.lang==='en'?'Document uploaded':'Փաստաթուղթը բեռնվեց'))}
-  catch(e){input.disabled=false;toast(e.message)}
+async function uploadDirectionVerificationFromInput(applicationId,caseId,input){
+ const file=input?.files?.[0]; if(!file)return;
+ try{
+   input.disabled=true;
+   const a=(state.applications||[]).find(x=>Number(x.id)===Number(applicationId));
+   const directionId=a?.direction_verification?.direction?.id;
+   if(!directionId)throw new Error('direction_not_found');
+   await uploadDirectionVerificationDocument(directionId,file);
+   await loadApplications();renderApplications();
+   toast('✓ '+(state.lang==='ru'?'Документ отправлен на проверку':state.lang==='en'?'Document sent for verification':'Փաստաթուղթը ուղարկվեց ստուգման'));
+ }catch(e){input.disabled=false;toast(e.message)}
 }
+
 async function deletePartnerApplication(id){
  const a=(state.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
  const title='#'+id+' · '+(a.service_name||a.business_name||'Հայտ');
