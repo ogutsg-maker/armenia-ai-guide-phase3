@@ -3862,7 +3862,7 @@ def marketplace_client_search(
         raise ValueError("client_coordinates_incomplete")
 
     params: list[Any] = []
-    where = ["s.status='active'", "p.status='approved'", "pd.status='approved']
+    where = ["s.status='active'", "p.status='approved'", "pd.status='approved'"]
 
     if q:
         like = f"%{q}%"
