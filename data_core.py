@@ -1406,6 +1406,7 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     # evaluated against the live policy for the classified direction.
     direction_verification_required = False
     direction_verification = None
+    approved_direction = None
     if source == "partner_service" and business_id and master_id:
         direction_verification = ensure_direction_verification_case(
             partner_id=int(app["partner_id"]),
@@ -1458,6 +1459,29 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
     if master_id is None:
         return {"ok": False, "can_approve": False, "reason_code": "direction_required",
                 "message": "Հայտի համար ուղղությունը չի որոշվել։"}
+
+    # Classification may have filled master_category_id inside the service payload
+    # after the application header was created. Resolve verification at this point too.
+    if source == "partner_service" and business_id and master_id and direction_verification is None:
+        direction_verification = ensure_direction_verification_case(
+            partner_id=int(app["partner_id"]),
+            business_id=int(business_id),
+            master_category_id=int(master_id),
+        )
+        approved_direction = direction_verification.get("direction") if direction_verification.get("verified") else None
+        direction_verification_required = bool(
+            direction_verification.get("required") and not direction_verification.get("verified")
+        )
+        if direction_verification_required:
+            case = direction_verification.get("case") or {}
+            partner = get_partner_by_id(int(app["partner_id"]))
+            if partner:
+                _notify_direction_document_required(
+                    partner_user_id=int(partner.get("user_id") or 0),
+                    master_category_id=int(master_id),
+                    case_id=case.get("id"),
+                )
+
     if direction_verification_required:
         policy = (direction_verification or {}).get("policy") or {}
         case = (direction_verification or {}).get("case") or {}
