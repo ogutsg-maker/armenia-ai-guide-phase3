@@ -1211,178 +1211,6 @@ async def api_business_delete(request: web.Request):
 
 
 
-async def api_ai_document_upload(request: web.Request):
-    """Upload a verification document and bind it to the AI Manager draft.
-
-    The file upload is deterministic. It must update the persisted partner
-    pending_action directly; a second AI turn is only needed by the UI when
-    the draft is still collecting data. Once the action is SUBMITTED, the
-    upload is informational and must never trigger a second submission.
-    """
-    uid = _auth_partner(request)
-    pid = _require_partner(uid)
-    bid = _business_id(request, pid)
-
-    if not bid:
-        raw_bid = str(request.headers.get("X-Business-Id") or "").strip()
-        with _connect() as conn:
-            with conn.cursor() as cur:
-                if raw_bid.isdigit():
-                    cur.execute(
-                        "SELECT id FROM partner_businesses WHERE id=%s AND partner_id=%s LIMIT 1",
-                        (int(raw_bid), pid),
-                    )
-                else:
-                    cur.execute(
-                        "SELECT id FROM partner_businesses WHERE partner_id=%s ORDER BY is_default DESC, id DESC LIMIT 1",
-                        (pid,),
-                    )
-                row = cur.fetchone()
-                bid = int(row["id"]) if row else None
-    if not bid:
-        return web.json_response({"ok": False, "error": "business_required"}, status=400)
-
-    reader = await request.multipart()
-    file_part = None
-    while True:
-        part = await reader.next()
-        if part is None:
-            break
-        if part.name == "file":
-            file_part = part
-            break
-    if file_part is None:
-        return web.json_response({"ok": False, "error": "file_required"}, status=400)
-
-    filename = file_part.filename or "document"
-    allowed = {
-        ".pdf": "application/pdf",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-    }
-    suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if suffix not in allowed:
-        return web.json_response({"ok": False, "error": "unsupported_file_type"}, status=400)
-
-    data = await file_part.read()
-    if len(data) > 10 * 1024 * 1024:
-        return web.json_response({"ok": False, "error": "file_too_large"}, status=400)
-    if not data:
-        return web.json_response({"ok": False, "error": "empty_file"}, status=400)
-
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO partner_verification_documents
-                   (partner_id, business_id, document_type, original_filename,
-                    file_data, mime_type, file_size, status, is_current)
-                   VALUES(%s,%s,'business_document',%s,%s,%s,%s,'pending',TRUE)
-                   RETURNING id,status,original_filename""",
-                (pid, bid, filename, data, allowed[suffix], len(data)),
-            )
-            doc = cur.fetchone()
-        conn.commit()
-
-    # Bind the uploaded document to the persisted AI Manager draft. This is
-    # backend state, not an AI decision, and therefore must happen without Groq.
-    pending_status = None
-    pending_ready = False
-    try:
-        import platform_db
-        session = platform_db.active_session(int(uid), "partner", "ai_manager")
-        if session:
-            context = session.get("context_json") or {}
-            if isinstance(context, str):
-                context = json.loads(context or "{}")
-            pending = context.get("pending_action") if isinstance(context, dict) else None
-            if isinstance(pending, dict):
-                pending_status = str(pending.get("status") or "").upper()
-                if pending_status != "SUBMITTED":
-                    args = dict(pending.get("args") or {})
-                    document = {
-                        "document_id": int(doc["id"]),
-                        "file_id": str(doc["id"]),
-                        "filename": str(doc["original_filename"] or filename),
-                        "mime_type": allowed[suffix],
-                        "size": len(data),
-                    }
-                    args["document"] = document
-                    pending["args"] = args
-                    missing = [str(x) for x in (pending.get("missing_fields") or [])]
-                    pending["missing_fields"] = [x for x in missing if x != "document"]
-                    pending_status = str(pending.get("status") or "COLLECTING_DATA").upper()
-                    pending_ready = pending_status == "COLLECTING_DATA" and not pending["missing_fields"]
-                    platform_db.update_session(
-                        int(session["id"]),
-                        {**context, "pending_action": pending},
-                    )
-    except Exception:
-        logger.exception("Could not bind uploaded document to AI pending_action")
-
-    return web.json_response({
-        "ok": True,
-        "document_id": int(doc["id"]),
-        "status": doc["status"],
-        "filename": doc["original_filename"],
-        "pending_status": pending_status,
-        "pending_ready_for_confirmation": pending_ready,
-    })
-
-
-async def api_application_document_upload(request: web.Request):
-    uid = _auth_partner(request)
-    pid = _require_partner(uid)
-    application_id = int(request.match_info["application_id"])
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, partner_id, document_id, status FROM partner_applications WHERE id=%s AND partner_id=%s",
-                (application_id, pid),
-            )
-            app_row = cur.fetchone()
-            if not app_row:
-                raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "application_not_found"}), content_type="application/json")
-            reader = await request.multipart()
-            file_part = None
-            while True:
-                part = await reader.next()
-                if part is None:
-                    break
-                if part.name == "file":
-                    file_part = part
-                    break
-            if file_part is None:
-                return web.json_response({"ok": False, "error": "file_required"}, status=400)
-            filename = file_part.filename or "document"
-            allowed = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
-            suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            if suffix not in allowed:
-                return web.json_response({"ok": False, "error": "unsupported_file_type"}, status=400)
-            data = await file_part.read()
-            if len(data) > 10 * 1024 * 1024:
-                return web.json_response({"ok": False, "error": "file_too_large"}, status=400)
-            cur.execute(
-                """INSERT INTO partner_verification_documents
-                   (partner_id, business_id, document_type, original_filename, file_data, mime_type, file_size, status)
-                   SELECT partner_id, business_id, 'business_document', %s, %s, %s, %s, 'pending'
-                   FROM partner_applications WHERE id=%s
-                   RETURNING id""",
-                (filename, data, allowed[suffix], len(data), application_id),
-            )
-            doc = cur.fetchone()
-            if not doc:
-                return web.json_response({"ok": False, "error": "document_create_failed"}, status=500)
-            cur.execute(
-                "UPDATE partner_applications SET document_id=%s, status=CASE WHEN status='document_under_review' THEN status ELSE 'document_pending' END, updated_at=NOW() WHERE id=%s",
-                (doc["id"], application_id),
-            )
-        conn.commit()
-    return web.json_response({"ok": True, "document_id": int(doc["id"]), "status": "document_pending"})
-
-
-
 async def api_applications(request: web.Request):
     uid = _auth_partner(request)
     pid = _require_partner(uid)
@@ -1488,9 +1316,6 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_delete("/api/master/{id}/businesses/{business_id}", api_business_delete)
     app.router.add_post("/api/master/{id}/businesses/{business_id}", api_business_update)
     app.router.add_post("/api/master/{id}/ai-command", api_ai_command)
-    app.router.add_post("/api/master/{id}/ai-command/document", api_ai_document_upload)
-    # Backward-compatible alias for cached Mini App clients that still use the old URL.
-    app.router.add_post("/api/master/{id}/documents/upload", api_ai_document_upload)
     app.router.add_post("/api/master/{id}/ai-command/confirm", api_ai_command_confirm)
     app.router.add_get("/api/master/{id}/settings", api_settings)
     app.router.add_post("/api/master/{id}/settings", api_settings_update)
@@ -1520,7 +1345,6 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_put("/api/master/{id}/applications/{application_id}", api_application_update)
     app.router.add_post("/api/master/{id}/applications/{application_id}/submit", api_application_submit)
     app.router.add_delete("/api/master/{id}/applications/{application_id}", api_application_delete)
-    app.router.add_post("/api/master/{id}/applications/{application_id}/document", api_application_document_upload)
     app.router.add_get("/api/master/{id}/locations", api_locations)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
     # NOTE: GET /api/master/{id}/documents is already registered by
