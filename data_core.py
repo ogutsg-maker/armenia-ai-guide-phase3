@@ -2618,7 +2618,7 @@ def get_approved_service_for_booking(service_id: int):
            JOIN partners p ON p.id=s.partner_id
            JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id
            JOIN partner_directions pd ON pd.id=pdc.partner_direction_id AND pd.partner_id=p.id
-           WHERE s.id=%s AND s.status='approved' AND p.status='approved' AND pd.status='approved'""",
+           WHERE s.id=%s AND s.status='active' AND p.status='approved' AND pd.status='approved'""",
         (int(service_id),),
     )
 
@@ -3473,7 +3473,7 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
         if full:
             out["services"]=rows(
                 """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
-                   FROM services WHERE partner_id=%s AND status='approved'
+                   FROM services WHERE partner_id=%s AND status='active'
                    ORDER BY id DESC LIMIT 100""",(eid,)) if role == "client" else rows(
                 """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
                    FROM services WHERE partner_id=%s AND (status IS NULL OR status<>'deleted')
@@ -3505,7 +3505,7 @@ def get_ai_entity(entity_type: str, entity_id: int, full: bool = False,
                    ORDER BY id LIMIT 50""",(eid,))
         out["services"]=rows(
             """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
-               FROM services WHERE business_id=%s AND status='approved'
+               FROM services WHERE business_id=%s AND status='active'
                ORDER BY id DESC LIMIT 100""",(eid,)) if role == "client" else rows(
             """SELECT id,business_id,name,description,price,status,category_id,created_at,updated_at
                FROM services WHERE business_id=%s AND (status IS NULL OR status<>'deleted')
@@ -3993,7 +3993,7 @@ def marketplace_partner_owner(partner_id:int):
 
 
 def marketplace_service_for_partner(service_id:int,partner_id:int):
-    return one("SELECT * FROM services WHERE id=%s AND partner_id=%s AND status='approved'",
+    return one("SELECT * FROM services WHERE id=%s AND partner_id=%s AND status='active'",
                (int(service_id),int(partner_id)))
 
 
@@ -4030,7 +4030,7 @@ def marketplace_create_negotiation_selection(request_id:int,client_id:int,servic
                        s.price,s.currency,p.business_name,p.contact_share_policy
                 FROM service_requests sr JOIN services s ON s.id=%s
                 JOIN partners p ON p.id=s.partner_id
-                WHERE sr.id=%s AND sr.client_id=%s AND s.status='approved' AND p.status='approved'""",
+                WHERE sr.id=%s AND sr.client_id=%s AND s.status='active' AND p.status='approved'""",
              (int(service_id),int(request_id),int(client_id)))
     if not item: return None
     execute("""INSERT INTO request_candidates(request_id,partner_id,service_id,rank_score,status)
