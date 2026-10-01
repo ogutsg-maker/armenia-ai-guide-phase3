@@ -2431,6 +2431,75 @@ def update_negotiation(negotiation_id: int, state: dict[str, Any],
     )
 
 
+
+def accept_negotiation(
+    negotiation_id: int,
+    actor_role: str,
+    actor_id: int,
+) -> dict[str, Any] | None:
+    """Record an explicit acceptance and atomically promote to AGREED when both sides accepted.
+
+    This is a backend action, not an AI inference. The caller must be the
+    actual client or partner attached to this negotiation.
+    """
+    role = str(actor_role or "").strip().lower()
+    if role not in {"client", "partner"}:
+        return None
+
+    current = get_negotiation(
+        int(negotiation_id),
+        actor_role=role,
+        actor_id=int(actor_id),
+    )
+    if not current or str(current.get("status") or "").lower() != "active":
+        return None
+
+    state = current.get("state_json") or {}
+    if isinstance(state, str):
+        try:
+            state = json.loads(state)
+        except Exception:
+            state = {}
+    if not isinstance(state, dict):
+        state = {}
+
+    state = dict(state)
+    if role == "client":
+        state["client_accepted"] = True
+    else:
+        state["partner_accepted"] = True
+
+    # Preserve the proposal's agreed terms; acceptance never invents a price.
+    if state.get("agreed_price") is None and state.get("final_price") is not None:
+        try:
+            state["agreed_price"] = float(state["final_price"])
+        except (TypeError, ValueError):
+            pass
+
+    both_accepted = bool(state.get("client_accepted")) and bool(state.get("partner_accepted"))
+    if both_accepted:
+        updated = update_negotiation(
+            int(negotiation_id),
+            state,
+            status="agreed",
+            actor_role=role,
+            actor_id=int(actor_id),
+        )
+        if not updated:
+            return None
+        return {"negotiation": updated, "accepted": True, "agreed": True}
+
+    updated = update_negotiation(
+        int(negotiation_id),
+        state,
+        status="active",
+        actor_role=role,
+        actor_id=int(actor_id),
+    )
+    if not updated:
+        return None
+    return {"negotiation": updated, "accepted": True, "agreed": False}
+
 def update_request_status(request_id: int, status: str,
                          actor_role: str = "admin", actor_id: int | None = None):
     role = str(actor_role or "admin").strip().lower()
