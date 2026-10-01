@@ -104,8 +104,10 @@ async def partner_reply(request):
                   (review_id, partner_id))
     if not review:
         return web.json_response({"ok": False, "error": "review_not_found"}, status=404)
+    if review.get("partner_reply"):
+        return web.json_response({"ok": False, "error": "already_replied"}, status=409)
     updated = _exec(
-        "UPDATE reviews SET partner_reply=%s,updated_at=NOW() WHERE id=%s RETURNING *",
+        "UPDATE reviews SET partner_reply=%s,updated_at=NOW() WHERE id=%s AND partner_reply IS NULL RETURNING *",
         (reply, review_id), True)
     return web.json_response({"ok": True, "review_id": review_id,
                               "partner_reply": updated.get("partner_reply") if updated else reply})
