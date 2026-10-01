@@ -490,20 +490,16 @@ def register_partner_direction_routes(app, db=None, bot=None, ensure_schema=True
         pd=_fetchone("SELECT * FROM partner_directions WHERE id=%s",(did,))
         if not pd: return web.json_response({"ok":False,"error":"direction_not_found"},status=404)
         if action=="approve":
-            pending=_fetchone("SELECT id FROM partner_verification_documents WHERE partner_direction_id=%s AND status='pending' ORDER BY created_at DESC LIMIT 1",(did,))
-            if not pending: return web.json_response({"ok":False,"error":"direction_document_required"},status=400)
+            # Direction approval is catalogue/business configuration, not company
+            # verification. No direction document is required.
             _exec("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(did))
-            _exec("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE partner_direction_id=%s AND status='pending'",(admin_id,did))
-            # Services created by the AI onboarding stay pending until their direction and document are approved.
-            # Once the direction is approved, publish only services belonging to this approved direction.
-            _exec("""UPDATE services SET status='approved',updated_at=NOW()
-                     WHERE partner_id=%s AND category_id IN
+            _exec("""UPDATE services SET status='active',updated_at=NOW()
+                     WHERE partner_id=%s AND business_id=%s AND category_id IN
                        (SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s)
-                       AND status='pending'""",(pd["partner_id"],did))
+                       AND status IN ('pending','approved')""",(pd["partner_id"],pd.get("business_id"),did))
         elif action=="reject":
             reason=str(data.get("reason") or "Մերժվել է ադմինիստրատորի կողմից")[:1000]
             _exec("UPDATE partner_directions SET status='rejected',rejection_reason=%s,updated_at=NOW() WHERE id=%s",(reason,did))
-            _exec("UPDATE partner_verification_documents SET status='rejected',rejection_reason=%s,reviewed_by=%s,reviewed_at=NOW() WHERE partner_direction_id=%s AND status='pending'",(reason,admin_id,did))
         elif action=="freeze":
             _exec("UPDATE partner_directions SET status='frozen',updated_at=NOW() WHERE id=%s",(did))
         elif action=="activate":

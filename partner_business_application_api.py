@@ -1042,53 +1042,18 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                 or payload.get("ai_master_category_id")
             )
 
-            # Initial partner registration requires verification. A normal
-            # service addition under an already approved direction does NOT.
+            # Service proposals are independent from company verification.
+            # Creating/submitting a service never requires a document.
             source_payload = payload.get("source") if isinstance(payload, dict) else None
             is_service_proposal = source_payload == "partner_service"
-            # Only an already-approved partner may use the lightweight service
-            # proposal flow. A new partner registration must ALWAYS provide a
-            # verification document, even if an AI/client payload happens to
-            # contain source=partner_service.
-            is_approved_partner = str(p.get("status") or "").lower() == "approved"
-            document_required = True
+            document_required = False
 
-            if is_service_proposal and is_approved_partner:
-                business_id = _safe_int(a.get("business_id") or payload.get("business_id"))
-                master_id = _safe_int(
-                    a.get("master_category_id")
-                    or payload.get("master_category_id")
-                    or payload.get("ai_master_category_id")
-                )
-                if business_id and master_id:
-                    approved_direction = _one(
-                        """SELECT id FROM partner_directions
-                           WHERE partner_id=%s AND business_id=%s
-                             AND master_category_id=%s AND status='approved'
-                           LIMIT 1""",
-                        (a["partner_id"], business_id, master_id),
-                    )
-                    if approved_direction:
-                        document_required = False
-
-                # A genuinely new company/direction still goes through
-                # verification. This rule is intentionally narrow so an
-                # existing approved direction never asks for a document.
-                if payload.get("new_business") is True or not business_id or not master_id:
-                    document_required = True
-
-            if document_required:
+            # Only non-service registration flows may explicitly opt into a
+            # registration document requirement.
+            if not is_service_proposal and payload.get("requires_registration_document"):
+                document_required = True
                 if not a.get("document_id"):
                     return web.json_response({"ok":False,"error":"document_required"}, status=409)
-
-                doc = _one(
-                    "SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",
-                    (a["document_id"], p["id"])
-                )
-                if not doc:
-                    return web.json_response({"ok":False,"error":"document_not_found"}, status=404)
-                if doc["status"] not in ("pending","approved"):
-                    return web.json_response({"ok":False,"error":"document_not_ready"}, status=409)
 
             # Keep legacy first-service columns synchronized while payload_json
             # remains the authoritative multi-service record.
@@ -1124,23 +1089,8 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                     )
                 )
 
-            # HARD SAFETY GATE:
-            # A new/unverified partner registration can NEVER enter pending_admin
-            # without a verification document. Keep this check immediately before
-            # the status transition so no other branch can bypass document validation.
-            partner_status = str(p.get("status") or "").lower()
-            is_initial_registration = partner_status != "approved" and not is_service_proposal
-            if is_initial_registration and not a.get("document_id"):
-                return web.json_response(
-                    {"ok":False,"error":"document_required","message":"A verification document is required before submitting this application."},
-                    status=409
-                )
-
-            # A new-service proposal that was already approved by Admin as a
-            # new direction and is now waiting for the partner's document must
-            # stay in the document workflow. The partner is allowed to correct
-            # the same application and upload the document; submitting the form
-            # must not send it backwards to a fresh admin classification cycle.
+            # Service applications are allowed into admin review without
+            # a company document. Company verification is separate.
             current_status=str(a.get("status") or "")
             source_payload=payload.get("source") if isinstance(payload,dict) else None
             if current_status == "document_under_review" or (source_payload == "partner_service" and current_status in ("document_pending","document_under_review")):
@@ -1439,77 +1389,33 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                 return web.json_response({"ok":False,"error":"business_required"},status=409)
 
             business=_one(
-                "SELECT * FROM partner_businesses WHERE id=%s AND partner_id=%s AND status IN ('active','pending')",
+                "SELECT * FROM partner_businesses WHERE id=%s AND partner_id=%s AND status IN ('active','pending','pending_document')",
                 (bid,a["partner_id"])
             )
             if not business:
                 return web.json_response({"ok":False,"error":"business_required"},status=409)
 
-            # A pending company becomes active together with its first
-            # approved service. It was created only to hold this proposal.
-            if str(business.get("status") or "") == "pending":
-                # A new company is reviewed together with its first service.
-                # If a verification document was uploaded by the partner, the
-                # admin's single approval action also approves that document.
-                # The partner is never sent through a separate request loop.
-                if not a.get("document_id"):
-                    _exec("""UPDATE partner_applications
-                             SET status='document_pending',updated_at=NOW(),
-                                 admin_note=%s
-                             WHERE id=%s""",
-                          ("Նոր ընկերության համար փաստաթուղթը դեռ չի կցվել։ Գործընկերը կարող է ավելացնել այն прямо в заявке.",aid))
-                    return web.json_response({"ok":True,"status":"document_pending","document_required":True,"application_id":aid})
-                doc=_one("""SELECT id,status FROM partner_verification_documents
-                            WHERE id=%s AND partner_id=%s""",(a["document_id"],a["partner_id"]))
-                if not doc:
-                    return web.json_response({"ok":False,"error":"document_not_found"},status=404)
-                if doc.get("status") not in ("pending","approved"):
-                    return web.json_response({"ok":False,"error":"document_not_ready"},status=409)
-                if doc.get("status")=="pending":
-                    _exec("""UPDATE partner_verification_documents
-                             SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL
-                             WHERE id=%s""",(_admin(request),doc["id"]))
-                _exec("""UPDATE partner_businesses
-                         SET status='active', updated_at=NOW()
-                         WHERE id=%s AND partner_id=%s""",(bid,a["partner_id"]))
-                business["status"]="active"
-
-            # Even under an already approved direction, the company itself
-            # must have an approved verification document before a service
-            # proposal can become live. A missing document keeps this
-            # application in the admin queue instead of activating the service.
-            verified_company_document=_one(
+            # Service approval is independent from company verification.
+            # Services can become active while the company waits for its
+            # separate business-level document.
+            company_document=_one(
                 """SELECT id,status FROM partner_verification_documents
                    WHERE partner_id=%s AND business_id=%s
-                     AND COALESCE(is_current,TRUE)=TRUE
-                     AND status='approved'
+                     AND COALESCE(is_current,TRUE)=TRUE AND status='approved'
                    ORDER BY created_at DESC,id DESC LIMIT 1""",
                 (a["partner_id"],bid),
             )
-            if not verified_company_document:
+            if str(business.get("status") or "").lower() != "active" and not company_document:
                 _exec(
-                    """UPDATE partner_applications
-                       SET status='document_pending',
-                           admin_note=%s,
-                           reviewed_by=%s,
-                           reviewed_at=NOW(),
-                           updated_at=NOW()
-                       WHERE id=%s""",
-                    (
-                        "Ընկերության հաստատման փաստաթուղթը բացակայում է կամ դեռ հաստատված չէ։",
-                        _admin(request), aid,
-                    ),
+                    """UPDATE partner_businesses
+                       SET status='pending_document',updated_at=NOW()
+                       WHERE id=%s AND partner_id=%s""",
+                    (bid,a["partner_id"]),
                 )
-                return web.json_response({
-                    "ok": True,
-                    "status": "document_pending",
-                    "application_id": aid,
-                    "document_required": True,
-                    "activated": False,
-                })
+                business["status"]="pending_document"
 
             # Existing approved direction: one Admin approval is enough for a
-            # new service after the company verification gate above.
+            # new service. No company document is required at service level.
             approved_direction=_one(
                 "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND master_category_id=%s AND status='approved' LIMIT 1",
                 (a["partner_id"],bid,mid)
@@ -1556,8 +1462,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                 merged["source"]="partner_service"
                 merged["requires_new_direction"]=True
                 merged["requires_business_name"]=True
-                merged["required_document_type"]="business_document"
-                merged["services"]=app_services
+                    merged["services"]=app_services
                 merged["master_category_id"]=mid
                 merged["ai_master_category_id"]=mid
                 merged["category_id"]=category_ids[0]
@@ -1594,12 +1499,12 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                     "status":"pending_partner",
                     "application_id":aid,
                     "business_name_required":True,
-                    "document_required":True,
+                    "document_required":False,
                 })
 
             # The existing business already has its identity. Store it in the
-            # application, but still require the verification document for the
-            # genuinely new direction before creating the live direction/service.
+            # application and let Admin approve the new direction/service without
+            # requiring a company document.
             merged=dict(payload)
             merged["source"]="partner_service"
             merged["requires_new_direction"]=True
@@ -1620,7 +1525,7 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                        direction_name=COALESCE(NULLIF(direction_name,''),%s),
                        subcategory_name=COALESCE(NULLIF(subcategory_name,''),%s),
                        payload_json=%s::jsonb,
-                       status='document_pending',
+                       status='pending_admin',
                        admin_note=%s,
                        reviewed_by=%s,
                        reviewed_at=NOW(),
@@ -1641,36 +1546,53 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
             )
             return web.json_response({
                 "ok":True,
-                "status":"document_pending",
+                "status":"pending_admin",
                 "application_id":aid,
                 "business_name_required":False,
-                "document_required":True,
+                "document_required":False,
             })
 
         if action=="approve_document":
+            # Company document verification is independent from service approval.
+            # Approving it activates the company; services were already approved
+            # separately and must not be recreated or gated here.
             if not a.get("document_id"):
                 return web.json_response({"ok":False,"error":"document_required"},status=409)
-            doc=_one("SELECT id,status FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(a["document_id"],a["partner_id"]))
-            if not doc: return web.json_response({"ok":False,"error":"document_not_found"},status=404)
-            if doc["status"] not in ("pending","approved"):
+            doc=_one(
+                """SELECT * FROM partner_verification_documents
+                   WHERE id=%s AND partner_id=%s""",
+                (a["document_id"],a["partner_id"])
+            )
+            if not doc:
+                return web.json_response({"ok":False,"error":"document_not_found"},status=404)
+            if doc.get("status") not in ("pending","approved"):
                 return web.json_response({"ok":False,"error":"document_not_ready"},status=409)
             admin_id=_admin(request)
-            if doc["status"]=="pending":
-                _exec("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE id=%s",(admin_id,doc["id"]))
-            # The document may already be approved while the application is
-            # still document_under_review. In that case this button is the
-            # final approval/activation action and must not fail with
-            # document_not_pending.
-            # This is an admin approval action. Once the document is
-            # approved here, continue through the same activation gate below.
-            # Do not stop at document_under_review: that status means the
-            # document is awaiting review, not that review has already passed.
-
-        if not a.get("document_id"):
-            return web.json_response({"ok":False,"error":"document_required"},status=409)
-        doc=_one("SELECT * FROM partner_verification_documents WHERE id=%s AND partner_id=%s",(a["document_id"],a["partner_id"]))
-        if not doc or doc.get("status")!="approved":
-            return web.json_response({"ok":False,"error":"document_not_approved"},status=409)
+            if doc.get("status")=="pending":
+                _exec(
+                    """UPDATE partner_verification_documents
+                       SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL
+                       WHERE id=%s""",
+                    (admin_id,doc["id"])
+                )
+            business_id=_safe_int(doc.get("business_id") or a.get("business_id"))
+            if business_id:
+                _exec(
+                    """UPDATE partner_businesses
+                       SET status='active',updated_at=NOW()
+                       WHERE id=%s AND partner_id=%s""",
+                    (business_id,a["partner_id"])
+                )
+                _exec(
+                    """UPDATE partners
+                       SET status='approved',verification_status='approved',rejection_reason=NULL
+                       WHERE id=%s""",
+                    (a["partner_id"],)
+                )
+            return web.json_response({
+                "ok":True,"status":"approved","document":doc,
+                "business_id":business_id,"company_activated":bool(business_id),
+            })
 
         payload=a.get("payload_json") or {}
         if isinstance(payload,str):
@@ -1820,19 +1742,23 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                 break
         if not approved_description:
             approved_description = raw_description.split(".",1)[0].strip()[:500] or None
+        company_status = str(business.get("status") or "").lower()
+        if company_status != "active":
+            company_status = "pending_document"
         _exec("""UPDATE partner_businesses
                  SET name=%s,
                      description=%s,
                      phone=COALESCE(NULLIF(%s,''),phone),
+                     status=%s,
                      updated_at=NOW()
-                 WHERE id=%s""",(approved_name or "Նոր բիզնես",approved_description,approved_phone,bid))
+                 WHERE id=%s""",
+              (approved_name or "Նոր բիզնես",approved_description,approved_phone,company_status,bid))
+        # Service approval does not verify the partner/company.
+        # Company verification is completed separately by approve_document.
         _exec(
             """UPDATE partners
                SET business_name=%s,
                    business_description=COALESCE(%s,business_description),
-                   status='approved',
-                   verification_status='approved',
-                   rejection_reason=NULL,
                    updated_at=NOW()
                WHERE id=%s""",
             (approved_name, approved_description, a["partner_id"])
