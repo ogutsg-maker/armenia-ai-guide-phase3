@@ -1232,6 +1232,31 @@ class AIManager:
         if not body:
             return None
 
+        # Extract delivery mode/location metadata before parsing priced
+        # service items. Otherwise the trailing "Формат ... База ..." becomes
+        # part of the last service name/price and the deterministic parser
+        # rejects the whole command.
+        mode_match = re.search(
+            r"(?:формат|режим|format|mode)\s*[:\-]?\s*(?:выезд\s+к\s+клиенту|mobile)"
+            r"|\bвыезд\s+к\s+клиенту\b|\bmobile\b",
+            body, flags=re.IGNORECASE,
+        )
+        base_match = re.search(
+            r"(?:база\s+выезда|база\s+для\s+выезда|dispatch\s+base|base\s+location)"
+            r"\s*[:\-]?\s*(?P<base>.+?)\s*$",
+            body, flags=re.IGNORECASE,
+        )
+        parsed_mode = "mobile" if mode_match else None
+        parsed_base = base_match.group("base").strip(" ,;.!?") if base_match else ""
+        if parsed_mode and not parsed_base:
+            return None
+        if mode_match:
+            body = body[:mode_match.start()].strip(" ,;.!?")
+        elif base_match:
+            body = body[:base_match.start()].strip(" ,;.!?")
+        if not body:
+            return None
+
         # Split on explicit list separators and on natural-language
         # conjunctions between two independently priced services.
         # Example:
@@ -1286,19 +1311,9 @@ class AIManager:
 
         # A mobile/both request can be fully prepared without asking the LLM:
         # preserve the partner's explicit dispatch base as structured data.
-        mode_match = re.search(
-            r"(?:формат|режим|format|mode)\s*[:\-]?\s*(?:выезд\s+к\s+клиенту|mobile)"
-            r"|\bвыезд\s+к\s+клиенту\b|\bmobile\b",
-            text, flags=re.IGNORECASE,
-        )
-        base_match = re.search(
-            r"(?:база\s+выезда|база\s+для\s+выезда|dispatch\s+base|base\s+location)"
-            r"\s*[:\-]?\s*(?P<base>[^.]+)$",
-            text, flags=re.IGNORECASE,
-        )
-        if mode_match:
-            mode = "mobile"
-            base = (base_match.group("base").strip(" ,;") if base_match else "")
+        if parsed_mode:
+            mode = parsed_mode
+            base = parsed_base
             if not base:
                 return None
             # Parse "city, district, marz" conservatively. Coordinates remain optional.
