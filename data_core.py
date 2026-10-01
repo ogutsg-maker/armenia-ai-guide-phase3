@@ -2777,10 +2777,13 @@ def add_booking_financial_entries(partner_id: int, booking_id: int,
             (int(partner_id),int(booking_id),float(partner_amount),currency,
              'Partner amount after platform commission'),False)
 
-def create_booking_checkin(booking_id: int, token: str):
+def create_booking_checkin(booking_id: int, token: str, starts_at=None):
+    """Create a one-hour QR window anchored to the service start when known."""
+    expiry_expr = "COALESCE(%s,NOW()) + INTERVAL '1 hour'"
     return execute(
-        "INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",
-        (int(booking_id),str(token)),True)
+        f"""INSERT INTO booking_checkins(booking_id,token,expires_at,status)
+            VALUES(%s,%s,{expiry_expr},'active') RETURNING *""",
+        (int(booking_id), str(token), starts_at), True)
 
 
 def get_partner_booking_display(partner_id: int):
