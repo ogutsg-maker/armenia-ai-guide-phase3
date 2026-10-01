@@ -1060,7 +1060,7 @@ class ToolRegistry:
                     company_id=company_id, name=args["name"],
                     price=args.get("price"), category_id=args.get("category_id"),
                 )
-                if args.get("address_id") in (None, ""):
+                if args.get("address_id") in (None, "") and not str(args.get("address_text") or "").strip() and not isinstance(args.get("service_location"), dict):
                     company_addresses = [
                         x for x in data_core.get_partner_addresses(
                             pid, actor_user_id=self.telegram_id, limit=200
