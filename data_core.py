@@ -2825,8 +2825,10 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
              "Partner amount after platform commission"),
         )
         cur.execute(
-            "INSERT INTO booking_checkins(booking_id,token) VALUES(%s,%s) RETURNING *",
-            (int(booking["id"]), token),
+            """INSERT INTO booking_checkins(booking_id,token,expires_at,status)
+               VALUES(%s,%s,COALESCE(%s,NOW()) + INTERVAL '1 hour','active')
+               RETURNING *""",
+            (int(booking["id"]), token, scheduled_at),
         )
         checkin = cur.fetchone()
         cur.execute(
