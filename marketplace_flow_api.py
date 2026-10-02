@@ -202,59 +202,6 @@ async def confirm_booking(request):
         'payment_url':result.get('payment_url'),
     })
 
-async def test_payment(request):
-    uid=_uid(request); nid=int(request.match_info['negotiation_id'])
-    n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
-    if not n or n.get('status') != 'agreed':
-        return web.json_response({'ok':False,'error':'negotiation_not_agreed'},status=400)
-    existing=data_core.marketplace_existing_payment(nid)
-    if existing:
-        check=existing.get('checkin')
-        display=data_core.get_partner_booking_display(existing['booking']['partner_id'])
-        partner=display['partner'] if display else {}
-        existing_payment=existing.get('payment') or {}
-        locations=display['locations'] if display and str(existing_payment.get('status') or '').lower()=='paid' else []
-        return web.json_response({'ok':True,'payment':existing_payment,'booking':existing['booking'],
-                                  'checkin':check,'qr':qr_util.qr_data_uri(check['token']) if check else None,
-                                  'partner':{'business_name':partner.get('business_name'),'locations':locations,'contact':{}}})
-    st=_state(n)
-    try: final_price=float(st.get('final_price',st.get('agreed_price')))
-    except (TypeError,ValueError): return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
-    if final_price<=0:return web.json_response({'ok':False,'error':'negotiation_final_price_invalid'},status=400)
-    service_id=int(st.get('service_id') or 0)
-    service=data_core.marketplace_service_for_partner(service_id,int(n['partner_id']))
-    if not service:return web.json_response({'ok':False,'error':'service_not_available'},status=404)
-    commission,customer_total,partner_amount=_price_and_commission(final_price,service)
-    # Booking is created first. Payment is initiated only after the partner
-    # explicitly confirms the booking.
-    persisted=data_core.marketplace_persist_negotiation_booking(
-        request_id=int(n['request_id']),negotiation_id=nid,client_id=uid,partner_id=int(n['partner_id']),
-        service=service,status='pending_partner_confirmation',
-        price=final_price,currency=service['currency'],commission=commission,
-        partner_amount=partner_amount,intent=None)
-    if not persisted:return web.json_response({'ok':False,'error':'booking_creation_conflict'},status=409)
-    booking,payment,check=persisted['booking'],persisted['payment'],persisted.get('checkin')
-    display=data_core.get_partner_booking_display(int(n['partner_id']))
-    if not display:return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
-    partner=display['partner']
-    payment_confirmed=str((payment or {}).get('status') or '').lower()=='paid'
-    locations=display['locations'] if payment_confirmed else []
-    contact=data_core.get_paid_booking_contact(int(booking['id']), actor_role='client', actor_id=uid)
-    try:
-        from notify import notify
-        owner=data_core.marketplace_partner_owner(int(n['partner_id']))
-        if owner and owner.get('user_id'):
-            await notify(request.app,int(owner['user_id']),title='🛒 Новая бронь',
-                         body=f"«{service['name']}» — {final_price:.0f} {service['currency']} (№{booking['id']}).",
-                         kind='booking_new',audience='partner',data={'booking_id':booking['id'],'service_id':service_id})
-    except Exception: pass
-    try: qr_uri=qr_util.qr_data_uri(check['token'])
-    except Exception: qr_uri=None
-    return web.json_response({'ok':True,'payment':payment,'booking':booking,'checkin':check,'qr':qr_uri,
-                              'partner':{'business_name':partner['business_name'],'locations':locations,
-                                         'contact':contact,'service':service['name'],'price':customer_total,
-                                         'currency':service['currency'],'booking_id':booking['id']}})
-
 def _parse_scheduled_at(value):
     """Accept an ISO-8601 string; return it normalised or None on any problem."""
     if not value:
@@ -463,11 +410,7 @@ async def _cancel_booking(request, actor):
         payment = data_core.one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
         if str((payment or {}).get('status') or '').lower() == 'paid':
             provider=IdramProvider()
-            # The test provider can settle a fictitious refund immediately.
-            # Live mode deliberately does not claim a refund until the provider
-            # confirms it through the reconciliation layer.
-            if not provider.is_live:
-                data_core.reconcile_refund(booking_id, refund_amount, "TEST-REFUND-"+str(booking_id))
+            # Refund settlement is provider-confirmed only; never auto-settle in-app.
     data_core.marketplace_cancel_side_effects(
         int(booking['partner_id']),booking_id,actor,reason,refund_amount,currency
     )
@@ -704,8 +647,6 @@ def register_marketplace_flow_routes(app):
     app.router.add_get('/api/market/client/negotiation/{negotiation_id}',negotiation_get)
     app.router.add_post('/api/market/client/negotiation/{negotiation_id}/message',negotiation_client_message)
     # Test-payment endpoint is disabled by default in production. It is kept only for explicit local/staging settlement tests.
-    if os.getenv('ENABLE_TEST_PAYMENT', '').strip().lower() in {'1', 'true', 'yes', 'on'}:
-        app.router.add_post('/api/market/client/negotiation/{negotiation_id}/pay-test', test_payment)
     app.router.add_post('/api/market/client/service/{service_id}/book',direct_booking)
     app.router.add_get('/api/market/partner/negotiations',partner_negotiations)
     app.router.add_get('/api/market/partner/negotiation/{negotiation_id}',partner_negotiation_messages)
