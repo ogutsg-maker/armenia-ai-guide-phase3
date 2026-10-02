@@ -2631,7 +2631,7 @@ def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
         execute("""INSERT INTO booking_cancellations(booking_id,cancelled_by,reason,refund_amount)
                    VALUES(%s,%s,%s,%s)""",(int(booking_id),str(actor_role),str(reason or "")[:500],actual_refund),False)
     execute("""UPDATE booking_checkins SET status='cancelled'
-               WHERE booking_id=%s AND status='active'""",(int(booking_id),),False)
+               WHERE booking_id=%s AND status IN ('active','checked_in')""",(int(booking_id),),False)
     if actual_refund>0:
         execute("""UPDATE payments
                    SET status='refund_pending', data_json = COALESCE(data_json,'{}'::jsonb) ||
@@ -3236,12 +3236,19 @@ def create_booking_checkin(booking_id: int, token: str, starts_at=None):
     if existing:
         return existing
     expiry_expr = "COALESCE(%s,NOW()) + INTERVAL '1 hour'"
-    return execute(
+    created = execute(
         f"""INSERT INTO booking_checkins(booking_id,token,expires_at,status)
             SELECT %s,%s,{expiry_expr}
             WHERE EXISTS (SELECT 1 FROM bookings WHERE id=%s AND status='paid')
+            ON CONFLICT (booking_id) WHERE status IN ('active','checked_in') DO NOTHING
             RETURNING *""",
         (int(booking_id), str(token), starts_at, int(booking_id)), True)
+    return created or one(
+        """SELECT * FROM booking_checkins
+           WHERE booking_id=%s AND status IN ('active','checked_in')
+           ORDER BY id DESC LIMIT 1""",
+        (int(booking_id),),
+    )
 
 def get_partner_booking_display(partner_id: int):
     partner = one("""SELECT id,business_name,business_description,contact_share_policy,
@@ -4626,6 +4633,14 @@ def reconcile_refund(booking_id:int, refund_amount:float, provider_refund_id:str
         execute(
             "UPDATE bookings SET status='refunded',updated_at=NOW() "
             "WHERE id=%s AND status='cancelled'",
+            (int(booking_id),),
+            False,
+        )
+        execute(
+            """UPDATE booking_checkins
+               SET status='cancelled'
+               WHERE booking_id=%s
+                 AND status IN ('active','checked_in','expired')""",
             (int(booking_id),),
             False,
         )

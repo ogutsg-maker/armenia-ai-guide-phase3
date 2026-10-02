@@ -66,3 +66,12 @@ def test_qr_creation_requires_paid_booking_and_is_idempotent():
     block = src[src.index("def create_booking_checkin"):src.index("def get_partner_booking_display",src.index("def create_booking_checkin"))]
     assert "status IN ('active','checked_in')" in block
     assert "status='paid'" in block
+
+def test_qr_creation_uses_database_uniqueness_for_concurrent_callbacks():
+    src = read("data_core.py")
+    block = src[src.index("def create_booking_checkin"):src.index("def get_partner_booking_display",src.index("def create_booking_checkin"))]
+    assert "ON CONFLICT (booking_id) WHERE status IN ('active','checked_in') DO NOTHING" in block
+def test_refund_settlement_closes_qr():
+    src = read("data_core.py")
+    block = src[src.index("def reconcile_refund"):src.index("def marketplace_existing_payment",src.index("def reconcile_refund"))]
+    assert "status IN ('active','checked_in','expired')" in block
