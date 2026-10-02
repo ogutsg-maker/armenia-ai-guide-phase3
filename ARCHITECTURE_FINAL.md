@@ -1,126 +1,499 @@
-# Armenia AI Guide — Final AI/Data Architecture
+# Armenia AI Guide — Final Architecture & Lifecycle Contract
 
-## Principle
+## 1. Source of truth
 
-The real business database is the only source of truth.
+The real PostgreSQL/Supabase database and deterministic backend rules are the only source of truth.
 
-There is no AI database, platform index, duplicated entity cache, or large prebuilt business context between AI and PostgreSQL.
-
-## Runtime path
+Runtime path:
 
 ```
-Client ────┐
-Partner ───┼──> Groq AI
-Admin ─────┘       ↓
-                Python
-                   ↓
-                Data Core
-                   ↓
-          Supabase / PostgreSQL
-                   ↓
-                Data Core
-                   ↓
-                Python
-                   ↓
-                Groq AI
-                   ↓
-          Client / Partner / Admin
+TELEGRAM
+   │
+   ├── Client
+   ├── Partner
+   └── Admin
+          │
+       Direct UI ─────┐
+          │           │
+          └──────► AI Core
+                     │
+                 AI Context
+                     │
+                  Data Core
+                     │
+                 Supabase
 ```
 
-## Responsibilities
+Golden rule:
 
-### Groq AI
-- understands natural language;
-- extracts intent, entities and user-provided values;
-- chooses the appropriate Python operation when a planner is used;
-- never invents database facts or IDs;
-- never receives SQL credentials.
+**AI understands. Python validates. Data Core reads/writes. PostgreSQL stores the fact.**
 
-### Python
-- authenticates the caller;
-- determines role: client, partner or admin;
-- validates arguments;
-- resolves named entities against live database data;
-- applies business rules and permissions;
-- asks for confirmation before protected mutations;
-- formats the verified result for AI/user.
+AI never receives SQL credentials, invents database IDs, or declares a business state that the backend has not confirmed.
 
-### Data Core
-Data Core is the single application-owned gateway to the real database.
+---
 
-It performs:
-- reads and searches;
-- counts;
-- entity resolution;
-- ownership/permission checks;
-- writes and validation;
-- persistence and history.
+## 2. Partner registration lifecycle
 
-No second business-data representation is created for AI.
+Registration is intentionally minimal.
 
-### Supabase / PostgreSQL
-Stores the actual business facts:
-- users;
-- partners;
-- companies;
-- addresses;
+```
+Я партнёр
+   ↓
+🏢 Register your business
+   ↓
+Business name *
+Phone *
+   ↓
+✓ Register
+   ↓
+partner
+   ↓
+company
+   ↓
+partner cabinet
+```
+
+Registration does **not** collect or require:
+
+- directions/categories;
 - services;
-- applications;
-- catalog;
-- orders;
-- negotiations;
+- prices;
+- addresses;
+- working hours;
 - documents;
-- AI usage ledger.
+- classification;
+- service applications.
 
-Existing schema and data are preserved. This architecture does not reset or recreate the database.
+The registration write is deterministic and atomic. It creates the partner and first company only.
 
-## AI usage statistics
+All operational data is added later from the partner cabinet.
 
-AI accounting remains independent from business-data context:
+---
+
+## 3. Partner cabinet
+
+The cabinet contains:
+
+- AI Assistant;
+- My Companies;
+- Orders;
+- Negotiations;
+- Applications;
+- Notifications;
+- Settings.
+
+AI is the universal operator for business changes, but ordinary reads/buttons may remain deterministic.
+
+Example:
+
+> Создай ремонт холодильников от 5000.
+
+AI extracts the requested structure, resolves the service against the live catalogue, prepares a preview, and asks for confirmation.
+
+Before confirmation there is no active service mutation.
+
+---
+
+## 4. Service lifecycle
 
 ```
-Groq → Python → ai_cost_center → ai_usage_ledger → Admin statistics
+Partner request
+    ↓
+AI semantic understanding
+    ↓
+structured service proposal
+    ↓
+preview
+    ↓
+partner confirmation
+    ↓
+service application
+    ↓
+admin review
+    ↓
+live-catalog classification
+    ↓
+admin approval / direction verification
+    ↓
+activation
+    ↓
+ACTIVE marketplace service
 ```
 
-Every model call may be recorded with provider, model, operation, token usage and cost. Accounting failures must not break the user request.
+The service model is intentionally compact:
 
-## Client
+- name;
+- price;
+- fixed/from;
+- working hours;
+- service location;
+- customer-visit coverage;
+- address when applicable;
+- internal phone when applicable;
+- document only when a direction requires verification.
 
-Client requests use live catalog/service data.
+AI never chooses a category ID from memory.
 
-Only the smallest verified records required for the current request may be sent to Groq. The complete catalog is never copied into a persistent AI context.
+Classification uses the live catalogue and deterministic backend matching:
 
-## Partner
+- normalization;
+- token/root matching;
+- SequenceMatcher / lexical scoring;
+- dynamic majority evidence;
+- confidence gate;
+- margin gate.
 
-Partner onboarding collects the partner's own business information.
+Uncertain classification becomes **Չդասակարգված** and produces an admin classification alert instead of a false category.
 
-During registration the partner does not select direction/subcategory/catalog IDs. Catalog classification is an admin/application concern after submission.
+---
 
-Company, address and service changes use Python/Data Core operations and are protected by ownership and confirmation rules.
+## 5. Potential partner lifecycle
 
-## Admin
+Potential partners are separate from registered partners.
+
+```
+Client demand
+   ↓
+no/insufficient active marketplace supply
+   ↓
+AI research
+   ↓
+potential_partners
+   ↓
+admin review/contact/invite
+   ↓
+real registration
+   ↓
+partners
+```
+
+`potential_partners` and `potential_partner_sources` are not substitutes for the real partner tables.
+
+A potential partner becomes a real partner only through actual registration.
+
+---
+
+## 6. Client lifecycle
+
+Client speaks naturally:
+
+> Хочу мастера для ремонта холодильника в Раздане.
+
+AI extracts the request. Data Core searches only real active services, partners, locations and availability.
+
+The client may receive a small set of verified candidates.
+
+No fictional partner/service may be generated as a marketplace result.
+
+---
+
+## 7. Fixed vs From pricing
+
+### FIXED
+
+A fixed service price is a concrete price.
+
+Example:
+
+`10,000 AMD`
+
+When all conditions permit, the system may proceed toward booking without price negotiation.
+
+### FROM
+
+A from-price is only a starting price.
+
+Example:
+
+`от 5,000 AMD`
+
+It is not the order price.
+
+The system may notify suitable partners and open separate client↔partner negotiations.
+
+---
+
+## 8. Partner interest and negotiations
+
+For FROM requests, suitable partners can receive a client-demand notification.
+
+A non-response timeout is deterministic backend logic (currently the agreed three-minute window). A timed-out candidate remains in history; it is not deleted.
+
+If multiple partners respond, negotiations are separate:
+
+```
+Client ↔ Partner 1
+Client ↔ Partner 2
+Client ↔ Partner 3
+```
+
+There is no group negotiation.
+
+---
+
+## 9. AI during negotiation
+
+AI is a background extractor, not a third participant.
+
+Client and partner communicate directly.
+
+AI may extract:
+
+- service;
+- place;
+- city/district/marz;
+- date/time;
+- proposed price;
+- price range;
+- other proposed conditions.
+
+A proposal is not an agreement.
+
+```
+PROPOSAL
+   ↓
+client accepts the relevant conditions
+   ↓
+AGREED
+```
+
+The backend stores the agreed state.
+
+A range such as 12,000–18,000 remains a range:
+
+- agreed_min = 12000;
+- agreed_max = 18000;
+- commission base = deterministic backend value (e.g. midpoint when the agreed range remains a range).
+
+If the parties later agree on 15,500, the backend stores 15,500 as the agreed price and uses that value for commission calculation.
+
+AI does not calculate or invent the final commission.
+
+---
+
+## 10. Booking lifecycle
+
+Booking is a backend state transition, not an AI declaration.
+
+```
+AGREED TERMS
+   ↓
+Booking
+   ↓
+PARTNER_CONFIRMED
+   ↓
+Payment
+   ↓
+PAYMENT_CONFIRMED
+   ↓
+Contact disclosure
+   ↓
+QR
+   ↓
+Check-in
+   ↓
+SERVICE_COMPLETED
+   ↓
+Review
+```
+
+Buttons and provider webhooks perform deterministic transitions.
+
+AI cannot claim that payment succeeded unless the payment provider/backend confirms it.
+
+---
+
+## 11. Contact disclosure
+
+Before payment, protected contact data remains hidden.
+
+Examples:
+
+- phone;
+- Telegram;
+- WhatsApp;
+- email;
+- unnecessary personal data;
+- exact client address.
+
+After `PAYMENT_CONFIRMED`, backend policy decides what necessary contact data may be disclosed.
+
+---
+
+## 12. QR and service execution
+
+A QR is created only for an eligible paid booking.
+
+QR validity is deterministic and expires after the agreed one-hour window from service start.
+
+If arbitration is open, automatic expiry must not silently close the arbitration-controlled case.
+
+Partner QR scan creates the backend check-in record.
+
+Service completion is a backend state:
+
+`SERVICE_COMPLETED`
+
+It is not an AI-generated status.
+
+---
+
+## 13. Payment and commission
+
+Payment provider/backend state is authoritative.
+
+Commission is calculated by Data Core using the configured existing commission modes:
+
+- `inside`;
+- `on_top`;
+- `fixed`.
+
+AI only extracts user-provided commercial terms.
+
+Test/fake settlement paths are not part of production.
+
+---
+
+## 14. Arbitration
+
+```
+Order
+  ↓
+Problem
+  ↓
+Arbitration
+  ↓
+Admin
+  ↓
+Resolution
+```
+
+AI may summarize context and conversation history.
+
+AI does not make the arbitration decision.
+
+Backend/admin rules remain authoritative.
+
+---
+
+## 15. Notifications
+
+Notifications are deterministic events where possible:
+
+- registration;
+- service approved/rejected;
+- new client demand;
+- partner interest;
+- negotiation;
+- booking;
+- partner confirmation;
+- payment;
+- QR;
+- service completion;
+- review;
+- arbitration.
+
+AI may explain a complex notification, but simple system events do not need AI.
+
+---
+
+## 16. Admin
 
 Admin AI is a natural-language database assistant.
 
 Examples:
-- "քանի հայտ ունենք" → live COUNT;
-- "ինչ ուղղություններով կան հայտեր" → live application-direction query;
-- "ինչ ծառայություններ ունի BYUTI-ն" → resolve BYUTI → live company/service query;
-- "ամբողջական հայտը ցույց տուր" → use the current application/entity reference → live application + documents query.
 
-A read operation executes immediately. A protected mutation requires confirmation.
+- how many applications are pending;
+- which services are unclassified;
+- what services a company has;
+- what happened to an order;
+- which potential partners exist in a city;
+- how many AI operations ran today;
+- what AI cost was generated.
 
-## Removed architecture
+Reads execute immediately.
 
-The following are not part of the runtime data path:
-- AI Context database/index;
-- duplicated platform index;
-- prebuilt entity snapshots used as a substitute for database reads;
-- large persistent AI business-data context;
-- LangChain/CrewAI/AutoGen orchestration.
+Protected mutations require confirmation and backend authorization.
 
-Legacy AI Context / AI Tools modules have been removed from the runtime. There is no compatibility data layer between AI and Data Core.
+---
 
-## Golden rule
+## 17. AI accounting
 
-**AI understands. Python validates. Data Core reads/writes. PostgreSQL stores the fact.**
+```
+AI provider
+   ↓
+Python
+   ↓
+ai_cost_center
+   ↓
+ai_usage_ledger
+   ↓
+Admin statistics
+```
+
+Accounting failures must never break the user's business request.
+
+---
+
+## 18. Architecture boundaries
+
+### AI
+
+Responsible for:
+
+- natural-language understanding;
+- intent/entity extraction;
+- proposal/meaning extraction;
+- background negotiation understanding;
+- natural-language admin queries.
+
+### Python/backend
+
+Responsible for:
+
+- authentication;
+- role resolution;
+- validation;
+- permissions;
+- state transitions;
+- timers;
+- provider callbacks;
+- contact disclosure;
+- QR lifecycle.
+
+### Data Core
+
+Responsible for:
+
+- live reads/searches;
+- entity resolution;
+- ownership checks;
+- writes;
+- transaction boundaries;
+- business rules;
+- persistence;
+- history.
+
+### PostgreSQL/Supabase
+
+Stores the real facts.
+
+No duplicate AI business database is allowed.
+
+---
+
+## 19. Removed architecture
+
+The following are not part of the final runtime path:
+
+- AI database/index;
+- duplicated business-data cache used as truth;
+- hardcoded catalogue IDs in AI prompts;
+- direct SQL from AI;
+- direct partner/admin mutation UI bypasses where the final contract requires AI;
+- legacy storefront paths;
+- fake payment settlement;
+- old partner registration questionnaire/application flow;
+- command-only AI interfaces.
+
+The final system is one connected set of lifecycles, not a collection of unrelated features.
