@@ -320,8 +320,21 @@ async def potential_invite(request):
     if not row:
         return web.json_response({'ok':False,'error':'potential_partner_not_found'},status=404)
     invite=PotentialPartnerAI(request.app['ai']).generate_personalized_invite(row)
-    updated=data_core.update_potential(pid,status='invited',admin_comment=str(invite.get('invite_text') or '')[:4000])
-    return web.json_response({'ok':True,'item':updated,'invite':invite})
+    try:
+        invitation=data_core.create_potential_partner_invitation(pid, _admin_id(request))
+    except Exception as exc:
+        return web.json_response({'ok':False,'error':str(exc)},status=409)
+    updated=data_core.update_potential(
+        pid,
+        status='invited',
+        admin_comment=str(invite.get('invite_text') or '')[:4000],
+    )
+    return web.json_response({
+        'ok':True,
+        'item':updated,
+        'invitation':invitation,
+        'invite':invite,
+    })
 
 async def potential_research(request):
     _admin(request); data=await request.json(); query=str(data.get('query') or '').strip()
