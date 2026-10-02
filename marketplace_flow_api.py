@@ -654,8 +654,6 @@ def register_marketplace_flow_routes(app):
     app.router.add_post('/api/market/client/negotiation/{negotiation_id}/accept',negotiation_accept)
     app.router.add_post('/api/market/partner/booking/{booking_id}/confirm',confirm_booking)
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/accept',negotiation_accept)
-    # Legacy /agree endpoint remains as an alias to the same backend acceptance action.
-    app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/agree',negotiation_accept)
     app.router.add_post('/api/market/client/booking/{booking_id}/cancel',cancel_booking_client)
     app.router.add_post('/api/market/booking/{booking_id}/arbitration',open_arbitration)
     app.router.add_get('/api/market/arbitration/{arbitration_id}',arbitration_get)

@@ -94,3 +94,7 @@ def test_direct_booking_contract_waits_for_partner_confirmation():
     block = src[src.index("async def direct_booking"):src.index("# --- Phase 3: cancellations", src.index("async def direct_booking"))]
     assert "status='pending_partner_confirmation'" in block
     assert "checkin" in block
+
+def test_legacy_partner_agree_route_is_removed():
+    src = read("marketplace_flow_api.py")
+    assert "/api/market/partner/negotiation/{negotiation_id}/agree" not in src
