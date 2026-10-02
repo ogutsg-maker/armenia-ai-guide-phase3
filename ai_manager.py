@@ -1753,6 +1753,29 @@ class AIManager:
                 pending = None
 
             pending_state = str(pending.get("state") or "awaiting_confirmation")
+
+            # A confirmation must never be re-parsed as new service data.
+            # Older sessions could contain a COLLECTING_DATA marker even though
+            # the UI had already rendered the final preview. If the partner now
+            # answers "yes", promote that prepared payload directly to the normal
+            # atomic confirmation path instead of rebuilding a second preview.
+            if (
+                role == ContextType.PARTNER
+                and pending_state == "collecting_data"
+                and self._is_confirmation(message)
+                and isinstance(pending.get("args"), dict)
+                and isinstance(pending.get("args", {}).get("services"), list)
+                and pending.get("args", {}).get("services")
+                and not pending.get("missing_fields")
+            ):
+                pending = dict(pending)
+                pending["state"] = "awaiting_confirmation"
+                pending["status"] = "AWAITING_CONFIRMATION"
+                pending_state = "awaiting_confirmation"
+                await self._update_session_context(
+                    telegram_id, role, {"pending_action": pending}
+                )
+
             if self._is_cancel(message):
                 await self._clear_pending(telegram_id, role)
                 reply = self._cancel_text(language)
@@ -1816,12 +1839,27 @@ class AIManager:
                         await self._clear_pending(telegram_id, role)
 
                         if is_partner_submission:
-                            reply = (
-                                "⏳ Հայտը ուղարկվեց ստուգման։" if language == "hy"
-                                else "⏳ Заявка отправлена на проверку."
-                                if language == "ru"
-                                else "⏳ The application was sent for review."
+                            requires_document = bool(
+                                isinstance(result, dict) and result.get("document_required")
                             )
+                            if requires_document:
+                                reply = (
+                                    "⏳ Հայտը ստեղծվեց և ուղարկվեց ստուգման։ "
+                                    "Ուղղության հաստատման համար անհրաժեշտ է կցել փաստաթուղթ։"
+                                    if language == "hy"
+                                    else "⏳ Заявка создана и отправлена на проверку. "
+                                         "Для подтверждения направления нужно прикрепить документ."
+                                    if language == "ru"
+                                    else "⏳ The application was created and sent for review. "
+                                         "A document is required to verify the direction."
+                                )
+                            else:
+                                reply = (
+                                    "⏳ Հայտը ուղարկվեց ստուգման։" if language == "hy"
+                                    else "⏳ Заявка отправлена на проверку."
+                                    if language == "ru"
+                                    else "⏳ The application was sent for review."
+                                )
                         elif pending_name == "admin_approve_application":
                             import data_core
                             application_id = int(pending_args.get("application_id") or 0)
