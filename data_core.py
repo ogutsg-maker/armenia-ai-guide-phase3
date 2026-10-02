@@ -3610,6 +3610,27 @@ def ensure_direction_verification_case(
         assert_partner_owns_partner(int(partner_id), int(actor_user_id))
     policy = get_direction_verification_policy(int(master_category_id))
 
+    # Not every direction requires verification. Keep the direction in the
+    # normal lifecycle, but do not create a document case or block the service
+    # application when the live catalog policy says verification is not required.
+    if not bool(policy.get("verification_required")):
+        direction = one(
+            """SELECT id,partner_id,business_id,master_category_id,status,rejection_reason
+               FROM partner_directions
+               WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
+               ORDER BY id DESC LIMIT 1""",
+            (int(partner_id), int(business_id), int(master_category_id)),
+        )
+        if not direction:
+            direction = one(
+                """INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
+                   VALUES(%s,%s,%s,'pending')
+                   RETURNING id,partner_id,business_id,master_category_id,status,rejection_reason""",
+                (int(partner_id),int(business_id),int(master_category_id)),
+            )
+        return {"required": False, "verified": True, "policy": policy,
+                "case": None, "direction": direction}
+
     # A verification document is scoped to partner + company + direction.
     # It is not scoped to an individual service and is not controlled by a
     # service-level document flag. The first service in a direction therefore
@@ -3976,6 +3997,8 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     # services under that partner/company/direction.
     verification = []
     direction_document_required = False
+    seen_directions: set[int] = set()
+    notified_directions: set[int] = set()
     for svc in prepared:
         mid = svc.get("master_category_id")
         try:
@@ -3990,20 +4013,26 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             except (TypeError, ValueError):
                 mid = None
         if mid:
+            direction_key = int(mid)
+            if direction_key in seen_directions:
+                continue
+            seen_directions.add(direction_key)
             gate = ensure_direction_verification_case(
                 partner_id=pid, business_id=cid, master_category_id=mid, actor_user_id=actor_user_id
             )
             verification.append(gate)
             if gate.get("required") and not gate.get("verified"):
                 direction_document_required = True
-                case = gate.get("case") or {}
-                partner = get_partner(pid)
-                if partner:
-                    _notify_direction_document_required(
-                        partner_user_id=int(partner.get("user_id") or actor_user_id),
-                        master_category_id=mid,
-                        case_id=case.get("id"),
-                    )
+                if direction_key not in notified_directions:
+                    case = gate.get("case") or {}
+                    partner = get_partner(pid)
+                    if partner:
+                        _notify_direction_document_required(
+                            partner_user_id=int(partner.get("user_id") or actor_user_id),
+                            master_category_id=mid,
+                            case_id=case.get("id"),
+                        )
+                    notified_directions.add(direction_key)
 
     application_status = "pending_partner" if direction_document_required else "pending_admin"
 
@@ -4019,7 +4048,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         (
             pid,
             cid,
-            "pending_admin",
+            application_status,
             company.get("name") or "",
             header_marz,
             header_city,
