@@ -321,7 +321,7 @@ async def potential_invite(request):
         return web.json_response({'ok':False,'error':'potential_partner_not_found'},status=404)
     invite=PotentialPartnerAI(request.app['ai']).generate_personalized_invite(row)
     try:
-        invitation=data_core.create_potential_partner_invitation(pid, _admin_id(request))
+        invitation=data_core.create_potential_partner_invitation(pid, int(request.app.get('stage3_admin_id') or 0))
     except Exception as exc:
         return web.json_response({'ok':False,'error':str(exc)},status=409)
     updated=data_core.update_potential(
