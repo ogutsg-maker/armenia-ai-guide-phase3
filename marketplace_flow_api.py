@@ -162,11 +162,12 @@ async def negotiation_accept(request):
         # The request becomes confirmed only after the backend has established
         # that both parties explicitly accepted the same negotiation.
         n = result.get('negotiation') or {}
-        data_core.update_request_status(
-            int(n['request_id']),
-            'confirmed',
-            actor_role=role,
-            actor_id=uid,
+        data_core.execute(
+            """UPDATE service_requests
+               SET status='confirmed',updated_at=NOW()
+               WHERE id=%s AND status='negotiating' RETURNING *""",
+            (int(n['request_id']),),
+            True,
         )
 
     message = (
