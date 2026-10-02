@@ -168,6 +168,19 @@ def test_client_negotiation_exposes_booking_payment_state_without_mutation():
     assert "'booking': booking" in block
     assert "'payment_url': payment_url" in block
 
+def test_negotiation_ai_is_background_only():
+    src = read("ai_negotiator.py")
+    assert "AI is never a third participant" in src
+    assert 'insert_ai_msg(negotiation["id"], "ai"' not in src
+    assert "reply_text" not in src[src.index("async def handle"):src.index("def reply_to_client")]
+
+
+def test_partner_cabinet_has_direct_negotiation_reply_without_ai_as_participant():
+    src = read("web_apps/master_cabinet.html")
+    assert "/api/market/partner/negotiation/'" in src
+    assert "sendPartnerNegotiation(" in src
+    assert "AI-ն այստեղ միայն ֆոնային" in src
+
 def test_client_ui_shows_payment_only_after_partner_confirmation():
     src = read("web_apps/client.html")
     assert "r.booking.status" in src
