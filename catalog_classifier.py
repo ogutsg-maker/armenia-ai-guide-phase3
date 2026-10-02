@@ -28,7 +28,7 @@ TOKEN_OVERLAP_GATE = 0.80
 STOP_WORDS = {
     # Armenian
     "և", "ու", "կամ", "համար", "մեջ", "վրա", "հետ", "առանց", "ըստ",
-    "է", "են", "էին", "լինելու",
+    "է", "են", "էին", "լինելու", "ծառայություն", "ծառայություններ", "ծառայության",
     # Russian
     "и", "или", "для", "по", "на", "в", "во", "с", "со", "без", "из",
     # English
@@ -50,6 +50,8 @@ ARMENIAN_SUFFIXES = (
     "ներ",
     "եր",
     "ի",
+    "ման",
+    "ում",
 )
 
 
@@ -127,6 +129,28 @@ def _token_overlap_ratio(service_tokens: set[str], category_tokens: set[str]) ->
 
     intersection = service_tokens & category_tokens
     return len(intersection) / len(service_tokens)
+
+
+def _soft_token_overlap_ratio(service_tokens: set[str], category_tokens: set[str]) -> float:
+    """Morphology-tolerant token coverage without a hardcoded synonym list.
+
+    Each service token is matched to its closest catalogue token. This catches
+    normal Armenian inflection/word-form differences such as «տան» vs «տն» and
+    «մաքրման» vs «մաքրում», while requiring every meaningful service token to
+    have at least moderate lexical evidence.
+    """
+    if not service_tokens or not category_tokens:
+        return 0.0
+    best_scores = []
+    for service_token in service_tokens:
+        best = max(
+            SequenceMatcher(None, service_token, category_token).ratio()
+            for category_token in category_tokens
+        )
+        if best < 0.55:
+            return 0.0
+        best_scores.append(best)
+    return sum(best_scores) / len(best_scores)
 
 
 def _direct_match_score(service: Any, category: Any) -> float:
@@ -395,13 +419,15 @@ def _label_similarity(service: str, label: str) -> float:
         return SequenceMatcher(None, service_n, label_n).ratio()
 
     overlap = _token_overlap_ratio(service_tokens, label_tokens)
+    soft_overlap = _soft_token_overlap_ratio(service_tokens, label_tokens)
     root = 1.0 if _root_token_match(service_tokens, label_tokens) else 0.0
     fuzzy = SequenceMatcher(None, service_n, label_n).ratio()
 
-    # Direct multi-token coverage is the strongest signal. Fuzzy similarity
-    # alone is deliberately insufficient for classification.
+    # Direct token coverage is strongest. Soft token coverage handles ordinary
+    # inflectional variation without embedding business-specific synonyms.
     return max(
         overlap,
+        soft_overlap,
         0.75 * root + 0.25 * fuzzy,
         fuzzy,
     )
