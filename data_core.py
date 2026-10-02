@@ -3130,23 +3130,36 @@ def create_direct_booking_request(client_id: int, summary: str, preferences: dic
 def add_booking_financial_entries(partner_id: int, booking_id: int,
                                   commission: float, partner_amount: float, currency: str):
     # Financial entries are created only after payment is confirmed.
-    existing = one(
-        """SELECT id FROM partner_financial_ledger
-           WHERE booking_id=%s AND entry_type='commission' LIMIT 1""",
-        (int(booking_id),),
-    )
-    if existing:
-        return existing
-    execute("""INSERT INTO partner_financial_ledger
+    # Keep the pair atomic so a transient DB failure cannot leave only the
+    # commission or only the partner_due row behind.
+    def _tx(cur):
+        cur.execute(
+            """SELECT id FROM partner_financial_ledger
+               WHERE booking_id=%s AND entry_type='commission' LIMIT 1
+               FOR UPDATE""",
+            (int(booking_id),),
+        )
+        existing = cur.fetchone()
+        if existing:
+            return existing
+        cur.execute(
+            """INSERT INTO partner_financial_ledger
                (partner_id,booking_id,entry_type,amount,currency,description)
-               VALUES(%s,%s,'commission',%s,%s,%s)""",
+               VALUES(%s,%s,'commission',%s,%s,%s) RETURNING *""",
             (int(partner_id),int(booking_id),float(commission),currency,
-             'Platform commission (payment confirmed)'),False)
-    execute("""INSERT INTO partner_financial_ledger
+             'Platform commission (payment confirmed)'),
+        )
+        commission_row = cur.fetchone()
+        cur.execute(
+            """INSERT INTO partner_financial_ledger
                (partner_id,booking_id,entry_type,amount,currency,description)
-               VALUES(%s,%s,'partner_due',%s,%s,%s)""",
+               VALUES(%s,%s,'partner_due',%s,%s,%s) RETURNING *""",
             (int(partner_id),int(booking_id),float(partner_amount),currency,
-             'Partner amount after platform commission (payment confirmed)'),False)
+             'Partner amount after platform commission (payment confirmed)'),
+        )
+        cur.fetchone()
+        return commission_row
+    return platform_db.transaction(_tx)
 
 def reverse_booking_financial_entries(booking: dict, refund_amount: float):
     if not booking or float(refund_amount or 0) <= 0:
