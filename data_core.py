@@ -4105,14 +4105,12 @@ def marketplace_client_search(
           WHEN LOWER(COALESCE(
               s.data_json->'coverage'->>'type',
               s.data_json->'service_contract'->'coverage'->>'type',
-              s.data_json->'service_location'->'coverage'->>'type',
               s.data_json->>'coverage',''
           )) IN ('all_armenia','all-armenia','all armenia')
             THEN 'all_armenia'
           WHEN COALESCE(
               s.data_json->'coverage'->>'radius_km',
-              s.data_json->'service_contract'->'coverage'->>'radius_km',
-              s.data_json->'service_location'->'coverage'->>'radius_km',''
+              s.data_json->'service_contract'->'coverage'->>'radius_km',''
           ) ~ '^[0-9]+(\\.[0-9]+)?$'
             THEN 'radius'
           WHEN COALESCE(s.data_json->>'coverage','') ~* 'radius'
@@ -4241,8 +4239,7 @@ def marketplace_client_search(
               OR LOWER({base_marz_sql})=LOWER(%s)
             )
           )
-          OR LOWER(COALESCE(po.data_json->>'coverage',''))='all_armenia'
-          OR LOWER(COALESCE(po.data_json->>'service_area',''))='all_armenia'
+
         )""")
         params.extend([city, city, city, city, city, city, city, city, city])
 
