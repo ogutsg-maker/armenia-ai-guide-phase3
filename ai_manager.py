@@ -1990,15 +1990,45 @@ class AIManager:
                     }
                     await self._set_pending(telegram_id, role, new_pending)
                     summary = self._partner_action_summary(language, new_pending, new_pending["summary"])
-                    # Add the operational context to the final preview.
+                    # Add only facts actually present in the pending action.
+                    # Mobile services use coverage, not a fabricated company address.
                     args = new_pending["args"]
-                    location = args.get("address_text") or "геолокация"
-                    mode = args.get("service_mode")
+                    services_preview = args.get("services") or []
+                    first_service = services_preview[0] if services_preview and isinstance(services_preview[0], dict) else {}
+                    coverage = (
+                        args.get("coverage")
+                        or first_service.get("coverage")
+                        or first_service.get("service_location")
+                    )
+                    address = args.get("address_text")
+                    mode = args.get("service_mode") or first_service.get("service_mode")
+                    mode_label_hy = (
+                        "մեկնում հաճախորդի մոտ" if mode == "mobile"
+                        else "այս հասցեում" if mode == "at_address"
+                        else "երկու եղանակով" if mode == "both"
+                        else "չնշված"
+                    )
                     if language == "hy":
-                        mode_label = "մեկնում հաճախորդի մոտ" if mode == "mobile" else "այս հասցեում"
-                        summary = "Պատրաստ է ստուգման ուղարկելու համար:\n\n" + summary.split("\n\n")[0] + f"\n📍 Տեղը՝ {location}\n🚗 Ռեժիմ՝ {mode_label}\n📎 Փաստաթուղթը կցված է։\n\nՀաստատո՞ւմ եք։"
+                        context_lines = [f"🚗 Ռեժիմ՝ {mode_label_hy}"]
+                        if isinstance(coverage, dict):
+                            city = coverage.get("city")
+                            marz = coverage.get("marz")
+                            district = coverage.get("district")
+                            parts = [str(x) for x in (city, district, marz) if x]
+                            if parts:
+                                context_lines.insert(0, "📍 Տարածք՝ " + ", ".join(parts))
+                        elif address:
+                            context_lines.insert(0, f"📍 Հասցե՝ {address}")
+                        summary = "Պատրաստ է ստուգման ուղարկելու համար:\n\n" + summary.split("\n\n")[0] + "\n" + "\n".join(context_lines) + "\n\nՀաստատո՞ւմ եք։"
                     elif language == "ru":
-                        summary = summary.split("\n\n")[0] + f"\n📍 Место: {location}\n🚗 Режим: {mode}\n📎 Документ прикреплён.\n\nПодтверждаете?"
+                        context_lines = [f"🚗 Режим: {mode or 'не указан'}"]
+                        if isinstance(coverage, dict):
+                            parts = [str(x) for x in (coverage.get("city"), coverage.get("district"), coverage.get("marz")) if x]
+                            if parts:
+                                context_lines.insert(0, "📍 Территория: " + ", ".join(parts))
+                        elif address:
+                            context_lines.insert(0, f"📍 Адрес: {address}")
+                        summary = summary.split("\n\n")[0] + "\n" + "\n".join(context_lines) + "\n\nПодтверждаете?"
                     new_pending["summary"] = summary
                     await self._update_session_context(
                         telegram_id, role, {"pending_action": new_pending}
@@ -2113,6 +2143,46 @@ class AIManager:
                         summary = self._partner_action_summary(
                             language, pending_action, pending_action["summary"]
                         )
+                        args = pending_action["args"]
+                        services_preview = args.get("services") or []
+                        first_service = services_preview[0] if services_preview and isinstance(services_preview[0], dict) else {}
+                        coverage = (
+                            args.get("coverage")
+                            or first_service.get("coverage")
+                            or first_service.get("service_location")
+                        )
+                        mode = args.get("service_mode") or first_service.get("service_mode")
+                        if language == "hy":
+                            context_lines = []
+                            if isinstance(coverage, dict):
+                                parts = [str(x) for x in (coverage.get("city"), coverage.get("district"), coverage.get("marz")) if x]
+                                if parts:
+                                    context_lines.append("📍 Տարածք՝ " + ", ".join(parts))
+                            if args.get("address_text"):
+                                context_lines.append(f"📍 Հասցե՝ {args['address_text']}")
+                            if mode:
+                                context_lines.append(
+                                    "🚗 Ռեժիմ՝ " + (
+                                        "մեկնում հաճախորդի մոտ" if mode == "mobile"
+                                        else "այս հասցեում" if mode == "at_address"
+                                        else "երկու եղանակով" if mode == "both"
+                                        else str(mode)
+                                    )
+                                )
+                            if context_lines:
+                                summary = summary.split("\n\n")[0] + "\n" + "\n".join(context_lines) + "\n\nՀաստատո՞ւմ եք։"
+                        elif language == "ru":
+                            context_lines = []
+                            if isinstance(coverage, dict):
+                                parts = [str(x) for x in (coverage.get("city"), coverage.get("district"), coverage.get("marz")) if x]
+                                if parts:
+                                    context_lines.append("📍 Территория: " + ", ".join(parts))
+                            if args.get("address_text"):
+                                context_lines.append(f"📍 Адрес: {args['address_text']}")
+                            if mode:
+                                context_lines.append(f"🚗 Режим: {mode}")
+                            if context_lines:
+                                summary = summary.split("\n\n")[0] + "\n" + "\n".join(context_lines) + "\n\nПодтверждаете?"
                         pending_action["summary"] = summary
                         await self._save_history(
                             telegram_id, role, "ai", summary,
