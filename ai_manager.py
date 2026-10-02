@@ -2288,7 +2288,7 @@ class AIManager:
                         # Do not also return the same summary as chat text, otherwise
                         # partners see the confirmation preview twice.
                         return {
-                            "reply": "",
+                            "reply": str(pending_action.get("summary") or ""),
                             "confirmation_required": True,
                             "pending_action": pending_action,
                         }
