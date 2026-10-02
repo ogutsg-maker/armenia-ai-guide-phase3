@@ -2901,42 +2901,137 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
     return {"booking": confirmed, "payment": saved_payment, "checkin": None, "payment_url": intent.payment_url}
 
 def reconcile_paid_payment(payment_id:int, transaction_id:str|None=None, provider_amount:float|None=None, provider:str|None=None):
+    """Idempotently settle a provider-confirmed payment and its booking.
+
+    A duplicate/late provider callback must not leave a paid payment attached
+    to a pending booking. Payment settlement is the source of truth; booking,
+    QR and financial ledger are downstream idempotent side effects.
+    """
     payment=one("SELECT * FROM payments WHERE id=%s",(int(payment_id),))
-    if not payment: return None
-    booking=one("SELECT * FROM bookings WHERE id=%s",(int(payment.get("booking_id") or 0),)) if payment.get("booking_id") else None
-    if str(payment.get("status") or "").lower()=="paid":
-        check=one("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(int(booking["id"]),)) if booking else None
-        return {"payment":payment,"booking":booking,"checkin":check,"already_paid":True}
-    if not booking or str(booking.get("status") or "").lower() != "pending_payment":
-        return {"payment":payment,"booking":booking,"checkin":None,"already_paid":False,"rejected":"booking_not_pending_payment"}
-    expected=float(payment.get("amount") or 0)
-    if provider_amount is not None and round(float(provider_amount),2) != round(expected,2):
-        logger.warning("Payment amount mismatch: payment=%s provider=%s", expected, provider_amount)
-        return {"payment":payment,"booking":booking,"checkin":None,"already_paid":False,"rejected":"amount_mismatch"}
-    if provider and str(payment.get("provider") or "").upper() not in {"",str(provider).upper()}:
-        return {"payment":payment,"booking":booking,"checkin":None,"already_paid":False,"rejected":"provider_mismatch"}
-    updated=execute("""UPDATE payments SET status='paid',provider_payment_id=COALESCE(%s,provider_payment_id),updated_at=NOW()
-                       WHERE id=%s AND status<>'paid' RETURNING *""",(transaction_id,int(payment_id)),True)
-    if not updated:
-        return {"payment":one("SELECT * FROM payments WHERE id=%s",(int(payment_id),)),"already_paid":True}
-    payment=updated
-    record_payment_provider_fee_for_payment(payment)
+    if not payment:
+        return None
+
     booking_id=payment.get("booking_id")
-    if not booking_id: return {"payment":payment,"booking":None,"checkin":None,"already_paid":False}
-    booking=execute("""UPDATE bookings SET status='paid',updated_at=NOW()
-                       WHERE id=%s AND status='pending_payment' RETURNING *""",(int(booking_id),),True)
-    booking=booking or one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
-    if not booking: return {"payment":payment,"booking":None,"checkin":None,"already_paid":False}
-    check=one("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(int(booking["id"]),))
+    booking=one(
+        "SELECT * FROM bookings WHERE id=%s",(int(booking_id),)
+    ) if booking_id else None
+
+    payment_status=str(payment.get("status") or "").lower()
+
+    if payment_status=="paid":
+        # If a previous callback marked payment paid but crashed before the
+        # downstream booking update, finish that work instead of returning
+        # early. Never resurrect a cancelled/completed booking.
+        if not booking:
+            return {"payment":payment,"booking":None,"checkin":None,"already_paid":True}
+        booking_status=str(booking.get("status") or "").lower()
+        if booking_status=="pending_payment":
+            booking=execute(
+                """UPDATE bookings SET status='paid',updated_at=NOW()
+                   WHERE id=%s AND status='pending_payment' RETURNING *""",
+                (int(booking_id),), True,
+            ) or one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
+        if not booking or str(booking.get("status") or "").lower()!="paid":
+            check=one(
+                "SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",
+                (int(booking_id),),
+            )
+            return {"payment":payment,"booking":booking,"checkin":check,"already_paid":True}
+    else:
+        if not booking or str(booking.get("status") or "").lower() != "pending_payment":
+            return {
+                "payment":payment,
+                "booking":booking,
+                "checkin":None,
+                "already_paid":False,
+                "rejected":"booking_not_pending_payment",
+            }
+
+        expected=float(payment.get("amount") or 0)
+        if provider_amount is not None and round(float(provider_amount),2) != round(expected,2):
+            logger.warning("Payment amount mismatch: payment=%s provider=%s", expected, provider_amount)
+            return {
+                "payment":payment,"booking":booking,"checkin":None,
+                "already_paid":False,"rejected":"amount_mismatch",
+            }
+        if provider and str(payment.get("provider") or "").upper() not in {"",str(provider).upper()}:
+            return {
+                "payment":payment,"booking":booking,"checkin":None,
+                "already_paid":False,"rejected":"provider_mismatch",
+            }
+
+        updated=execute(
+            """UPDATE payments
+               SET status='paid',
+                   provider_payment_id=COALESCE(%s,provider_payment_id),
+                   updated_at=NOW()
+               WHERE id=%s AND status<>'paid' RETURNING *""",
+            (transaction_id,int(payment_id)),True,
+        )
+        if not updated:
+            payment=one("SELECT * FROM payments WHERE id=%s",(int(payment_id),))
+            if str((payment or {}).get("status") or "").lower()!="paid":
+                return {
+                    "payment":payment,"booking":booking,"checkin":None,
+                    "already_paid":False,"rejected":"payment_state_conflict",
+                }
+        else:
+            payment=updated
+
+        record_payment_provider_fee_for_payment(payment)
+        booking=execute(
+            """UPDATE bookings SET status='paid',updated_at=NOW()
+               WHERE id=%s AND status='pending_payment' RETURNING *""",
+            (int(booking_id),),True,
+        ) or one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
+
+    if not booking:
+        return {"payment":payment,"booking":None,"checkin":None,"already_paid":payment_status=="paid"}
+
+    # A cancelled/refunded/completed booking must never be resurrected by a
+    # duplicate or late payment callback.
+    if str(booking.get("status") or "").lower()!="paid":
+        return {
+            "payment":payment,
+            "booking":booking,
+            "checkin":None,
+            "already_paid":payment_status=="paid",
+            "rejected":"booking_not_settleable",
+        }
+
+    record_payment_provider_fee_for_payment(payment)
+
+    check=one(
+        "SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",
+        (int(booking["id"]),),
+    )
     if not check:
-        check=create_booking_checkin(int(booking["id"]),__import__("secrets").token_urlsafe(24),booking.get("scheduled_at"))
-    add_booking_financial_entries(int(booking["partner_id"]),int(booking["id"]),
-                                  float(booking.get("commission_amount") or 0),
-                                  float(booking.get("partner_amount") or 0),
-                                  booking.get("currency") or "AMD")
+        check=create_booking_checkin(
+            int(booking["id"]),
+            __import__("secrets").token_urlsafe(24),
+            booking.get("scheduled_at"),
+        )
+
+    add_booking_financial_entries(
+        int(booking["partner_id"]),int(booking["id"]),
+        float(booking.get("commission_amount") or 0),
+        float(booking.get("partner_amount") or 0),
+        booking.get("currency") or "AMD",
+    )
+
     if booking.get("request_id"):
-        execute("UPDATE service_requests SET status='booked',updated_at=NOW() WHERE id=%s AND status<>'booked'",(int(booking["request_id"]),),False)
-    return {"payment":payment,"booking":booking,"checkin":check,"already_paid":False}
+        execute(
+            """UPDATE service_requests SET status='booked',updated_at=NOW()
+               WHERE id=%s AND status<>'booked'""",
+            (int(booking["request_id"]),),False,
+        )
+
+    return {
+        "payment":payment,
+        "booking":booking,
+        "checkin":check,
+        "already_paid":payment_status=="paid",
+    }
 
 def get_payment_by_bill_no(bill_no: str):
     """Return the latest payment associated with an external Idram bill number."""
