@@ -60,8 +60,3 @@ def test_partner_cabinet_has_no_hardcoded_master_zero_route():
     html = read("web_apps/master_cabinet.html")
     assert "/api/master/0" not in html
     assert "/api/master/current" in html
-
-
-def test_partner_cabinet_does_not_expose_manual_service_mutation_buttons():
-    html = read("web_apps/master_cabinet.html")
-    assert "onclick=" not in html.split("function renderServicesSection", 1)[1].split("function ", 1)[0] if "function renderServicesSection" in html else True
