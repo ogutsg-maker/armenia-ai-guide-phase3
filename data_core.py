@@ -3997,7 +3997,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             if gate.get("required") and not gate.get("verified"):
                 direction_document_required = True
                 case = gate.get("case") or {}
-                partner = get_partner_by_id(pid)
+                partner = get_partner(pid)
                 if partner:
                     _notify_direction_document_required(
                         partner_user_id=int(partner.get("user_id") or actor_user_id),
