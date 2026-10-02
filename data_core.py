@@ -1027,7 +1027,14 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
     where = ["s.status <> 'deleted'"]
     params: list[Any] = []
     if approved_only:
-        where += ["s.status='approved'", "p.status='approved'"]
+        where += ["s.status='active'", "p.status='approved'",
+                  """EXISTS (
+                      SELECT 1 FROM partner_direction_categories pdc
+                      JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
+                      WHERE pdc.category_id=s.category_id
+                        AND pd.partner_id=s.partner_id
+                        AND pd.status='approved'
+                  )"""]
     if partner_id is not None:
         where.append("s.partner_id=%s"); params.append(int(partner_id))
     if category_id is not None:
@@ -4421,9 +4428,20 @@ def marketplace_partner_search_context(partner_id:int):
 def marketplace_create_negotiation_selection(request_id:int,client_id:int,service_id:int):
     item=one("""SELECT sr.id request_id,sr.status,s.id service_id,s.partner_id,s.name service_name,
                        s.price,s.currency,p.business_name,p.contact_share_policy
-                FROM service_requests sr JOIN services s ON s.id=%s
+                FROM service_requests sr
+                JOIN services s ON s.id=%s
                 JOIN partners p ON p.id=s.partner_id
-                WHERE sr.id=%s AND sr.client_id=%s AND s.status='active' AND p.status='approved'""",
+                WHERE sr.id=%s AND sr.client_id=%s
+                  AND s.status='active'
+                  AND p.status='approved'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM partner_direction_categories pdc
+                      JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
+                      WHERE pdc.category_id=s.category_id
+                        AND pd.partner_id=s.partner_id
+                        AND pd.status='approved'
+                  )""",
              (int(service_id),int(request_id),int(client_id)))
     if not item: return None
     execute("""INSERT INTO request_candidates(request_id,partner_id,service_id,rank_score,status)
