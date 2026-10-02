@@ -6,7 +6,7 @@ import time
 import uuid
 import platform_db
 from aiohttp import web
-from platform_db import proposals, review_proposal, edit_proposal, add_clarification, potential_partners, update_potential, create_potential
+from platform_db import proposals, review_proposal, edit_proposal, add_clarification
 from potential_partner_ai import PotentialPartnerAI
 from research_provider import search_web
 from telegram_webapp_auth import validate_telegram_webapp_init_data, TelegramWebAppAuthError
@@ -296,14 +296,14 @@ async def catalog_action(request):
     raise web.HTTPBadRequest(text=json.dumps({'ok':False,'error':'unknown_action'}),content_type='application/json')
 
 async def potential_list(request):
-    _admin(request); return web.json_response({'ok':True,'items':potential_partners(request.query.get('status'),request.query.get('q'))})
+    _admin(request); return web.json_response({'ok':True,'items':data_core.potential_partners(request.query.get('status'),request.query.get('q'))})
 
 async def potential_structure(request):
     _admin(request); data=await request.json(); raw=str(data.get('raw_text') or '').strip()
     if len(raw)<10: raise web.HTTPBadRequest(text=json.dumps({'ok':False,'error':'raw_text_required'}),content_type='application/json')
     structured=await PotentialPartnerAI(request.app['ai']).structure_candidate(raw,data.get('source','manual_research'))
     if not structured: return web.json_response({'ok':False,'error':'potential_partner_not_found'},status=422)
-    item=data_core.create_potential(structured)
+    item=data_core.data_core.create_potential(structured)
     return web.json_response({'ok':True,'item':item})
 
 async def potential_status(request):
@@ -311,16 +311,16 @@ async def potential_status(request):
     allowed={'new','researched','ready_for_review','contacted','interested','invited','registered','approved','active','rejected','archived'}
     status=str(data.get('status') or '')
     if status not in allowed: raise web.HTTPBadRequest(text=json.dumps({'ok':False,'error':'invalid_status'}),content_type='application/json')
-    return web.json_response({'ok':True,'item':update_potential(pid,status=status,admin_comment=str(data.get('comment') or '')[:2000])})
+    return web.json_response({'ok':True,'item':data_core.update_potential(pid,status=status,admin_comment=str(data.get('comment') or '')[:2000])})
 
 async def potential_invite(request):
     _admin(request)
     pid=int(request.match_info['id'])
-    row=next((x for x in potential_partners(None,None) if int(x.get('id') or 0)==pid),None)
+    row=next((x for x in data_core.potential_partners(None,None) if int(x.get('id') or 0)==pid),None)
     if not row:
         return web.json_response({'ok':False,'error':'potential_partner_not_found'},status=404)
     invite=PotentialPartnerAI(request.app['ai']).generate_personalized_invite(row)
-    updated=update_potential(pid,status='invited',admin_comment=str(invite.get('invite_text') or '')[:4000])
+    updated=data_core.update_potential(pid,status='invited',admin_comment=str(invite.get('invite_text') or '')[:4000])
     return web.json_response({'ok':True,'item':updated,'invite':invite})
 
 async def potential_research(request):
@@ -336,7 +336,7 @@ async def potential_research(request):
         if structured:
             structured['source_urls']=[r.get('url')] if r.get('url') else structured.get('source_urls') or []
             structured['status']='researched'
-            item=data_core.create_potential(structured)
+            item=data_core.data_core.create_potential(structured)
             created.append(item)
     return web.json_response({'ok':True,'results':created,'source_count':len(results)})
 
