@@ -132,6 +132,22 @@ def _negotiator_hooks(actor_role, actor_id):
         return data_core.append_negotiation_message(nid,role,None,text,data)
     return dict(insert_msg=insert_msg,update_neg=update_neg,update_request=update_request,insert_ai_msg=insert_ai_msg)
 
+async def client_book_negotiation(request):
+    uid = _uid(request)
+    nid = int(request.match_info['negotiation_id'])
+    negotiation = data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
+    if not negotiation:
+        return web.json_response({'ok': False, 'error': 'negotiation_not_found'}, status=404)
+    if str(negotiation.get('status') or '').lower() != 'agreed':
+        return web.json_response({'ok': False, 'error': 'negotiation_not_agreed'}, status=409)
+    result = data_core.create_marketplace_booking_from_agreed_negotiation(
+        negotiation_id=nid,
+        client_id=uid,
+    )
+    if not result:
+        return web.json_response({'ok': False, 'error': 'booking_creation_failed'}, status=409)
+    return web.json_response({'ok': True, **result})
+
 async def negotiation_client_message(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id']); data=await request.json(); text=str(data.get('message') or '').strip()
     if not text:return web.json_response({'ok':False,'error':'message_required'},status=400)
@@ -479,6 +495,7 @@ def register_marketplace_flow_routes(app, *, ensure_schema: bool = True):
     app.router.add_post('/api/market/client/request/{request_id}/select',select_candidate)
     app.router.add_get('/api/market/client/negotiation/{negotiation_id}',negotiation_get)
     app.router.add_post('/api/market/client/negotiation/{negotiation_id}/message',negotiation_client_message)
+    app.router.add_post('/api/market/client/negotiation/{negotiation_id}/book',client_book_negotiation)
     # Direct booking always waits for partner confirmation; payment is live-only.
     app.router.add_get('/api/market/partner/negotiations',partner_negotiations)
     app.router.add_get('/api/market/partner/negotiation/{negotiation_id}',partner_negotiation_messages)
