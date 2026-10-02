@@ -60,3 +60,9 @@ def test_partner_cabinet_has_no_hardcoded_master_zero_route():
     html = read("web_apps/master_cabinet.html")
     assert "/api/master/0" not in html
     assert "/api/master/current" in html
+
+def test_qr_creation_requires_paid_booking_and_is_idempotent():
+    src = read("data_core.py")
+    block = src[src.index("def create_booking_checkin"):src.index("def get_partner_booking_display",src.index("def create_booking_checkin"))]
+    assert "status IN ('active','checked_in')" in block
+    assert "status='paid'" in block

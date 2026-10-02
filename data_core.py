@@ -2630,6 +2630,8 @@ def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
     if not one("SELECT id FROM booking_cancellations WHERE booking_id=%s LIMIT 1",(int(booking_id),)):
         execute("""INSERT INTO booking_cancellations(booking_id,cancelled_by,reason,refund_amount)
                    VALUES(%s,%s,%s,%s)""",(int(booking_id),str(actor_role),str(reason or "")[:500],actual_refund),False)
+    execute("""UPDATE booking_checkins SET status='cancelled'
+               WHERE booking_id=%s AND status='active'""",(int(booking_id),),False)
     if actual_refund>0:
         execute("""UPDATE payments
                    SET status='refund_pending', data_json = COALESCE(data_json,'{}'::jsonb) ||
@@ -3221,13 +3223,25 @@ def reverse_booking_financial_entries(booking: dict, refund_amount: float):
     return platform_db.transaction(_tx)
 
 def create_booking_checkin(booking_id: int, token: str, starts_at=None):
-    """Create a one-hour QR window anchored to the service start when known."""
+    """Create a QR window only for a provider-paid booking."""
+    booking = one("SELECT id,status FROM bookings WHERE id=%s LIMIT 1", (int(booking_id),))
+    if not booking or str(booking.get("status") or "").lower() != "paid":
+        return None
+    existing = one(
+        """SELECT * FROM booking_checkins
+           WHERE booking_id=%s AND status IN ('active','checked_in')
+           ORDER BY id DESC LIMIT 1""",
+        (int(booking_id),),
+    )
+    if existing:
+        return existing
     expiry_expr = "COALESCE(%s,NOW()) + INTERVAL '1 hour'"
     return execute(
         f"""INSERT INTO booking_checkins(booking_id,token,expires_at,status)
-            VALUES(%s,%s,{expiry_expr},'active') RETURNING *""",
-        (int(booking_id), str(token), starts_at), True)
-
+            SELECT %s,%s,{expiry_expr}
+            WHERE EXISTS (SELECT 1 FROM bookings WHERE id=%s AND status='paid')
+            RETURNING *""",
+        (int(booking_id), str(token), starts_at, int(booking_id)), True)
 
 def get_partner_booking_display(partner_id: int):
     partner = one("""SELECT id,business_name,business_description,contact_share_policy,
