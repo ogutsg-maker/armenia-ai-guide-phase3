@@ -471,8 +471,9 @@ async def arbitration_get(request):
         return web.json_response({'ok': False, 'error': 'forbidden'}, status=403)
     return web.json_response({'ok': True, 'arbitration': row})
 
-def register_marketplace_flow_routes(app):
-    ensure_booking_schema()
+def register_marketplace_flow_routes(app, *, ensure_schema: bool = True):
+    if ensure_schema:
+        ensure_booking_schema()
     app.router.add_post('/api/market/client/search',client_search)
     app.router.add_post('/api/market/client/request',create_request)
     app.router.add_post('/api/market/client/request/{request_id}/select',select_candidate)
