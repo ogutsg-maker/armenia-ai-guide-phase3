@@ -97,6 +97,82 @@ def _partner_keyboard():
     return _keyboard("partner.html?entry=welcome", "🏢 Բացել գործընկերոջ AI բաժինը")
 
 
+def _telegram_user_from_request(request: web.Request) -> tuple[int, dict]:
+    """Validate Telegram Mini App initData and return (telegram_id, user)."""
+    raw = request.headers.get("X-Telegram-Init-Data", "").strip()
+    if not raw:
+        raise TelegramWebAppAuthError("telegram_init_data_required")
+    tg_user = validate_telegram_webapp_init_data(raw, BOT_TOKEN)
+    uid = int(tg_user["id"])
+    db.register_user(
+        uid,
+        str(tg_user.get("username") or f"user_{uid}"),
+        str(tg_user.get("first_name") or "") + (
+            f" {tg_user.get('last_name')}" if tg_user.get("last_name") else ""
+        ),
+    )
+    user = db.get_user(uid) or {"telegram_id": uid, "role": None, "lang": "hy"}
+    return uid, user
+
+
+async def _partner_auth(request: web.Request) -> tuple[int, dict]:
+    """Authenticate a partner WebApp request and return its local user."""
+    try:
+        uid, user = _telegram_user_from_request(request)
+    except TelegramWebAppAuthError as exc:
+        return_error = str(exc) or "invalid_telegram_init_data"
+        raise web.HTTPUnauthorized(
+            text=json.dumps({"ok": False, "error": return_error}),
+            content_type="application/json",
+        )
+    partner = db.get_partner_by_user(uid)
+    if partner:
+        return uid, user
+    # Registration is allowed to proceed for a new authenticated Telegram user.
+    return uid, user
+
+
+async def api_webapp_session(request: web.Request):
+    """Return the authenticated Mini App session without exposing auth errors to UI."""
+    try:
+        uid, user = _telegram_user_from_request(request)
+    except TelegramWebAppAuthError as exc:
+        return web.json_response(
+            {"ok": False, "authenticated": False, "error": str(exc) or "invalid_telegram_init_data"},
+            status=401,
+        )
+    role = user.get("role")
+    destination = "master_cabinet.html" if role == "partner" else "client.html"
+    return web.json_response({
+        "ok": True,
+        "authenticated": True,
+        "telegram_id": uid,
+        "role": role,
+        "destination": destination,
+        "lang": user.get("lang") or "hy",
+    })
+
+
+async def api_webapp_role(request: web.Request):
+    """Persist only the two public WebApp roles selected by the user."""
+    try:
+        uid, _ = _telegram_user_from_request(request)
+    except TelegramWebAppAuthError as exc:
+        return web.json_response(
+            {"ok": False, "error": str(exc) or "invalid_telegram_init_data"},
+            status=401,
+        )
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    role = str(payload.get("role") or "").strip().lower()
+    if role not in {"client", "partner"}:
+        return web.json_response({"ok": False, "error": "invalid_role"}, status=400)
+    db.update_user_field(uid, "role", role)
+    return web.json_response({"ok": True, "role": role})
+
+
 def _partner_registration_error(lang: str, code: str) -> str:
     messages = {
         "business_name_required": t(lang, "Գրեք բիզնեսի անունը։", "Укажите название бизнеса.", "Enter the business name."),
