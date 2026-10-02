@@ -3961,7 +3961,7 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                address,object_name,object_id,phone,direction_name,master_category_id,
                subcategory_name,category_id,service_name,price,description,
                payload_json)
-           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
            RETURNING id AS application_id,id,status,business_id,document_id,
                      service_name,price,category_id,master_category_id,created_at""",
         (
