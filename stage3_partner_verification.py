@@ -1037,6 +1037,30 @@ async def api_admin_service_direction_request_action(request):
     return web.json_response({"ok":False,"error":"unknown_action"},status=400)
 
 
+async def api_admin_partner_application_get(request):
+    """Return one partner application for the admin verification editor."""
+    admin_id = _admin_telegram_id(request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id"))
+    application_id = int(request.match_info["id"])
+    row = _db_fetchone(
+        """SELECT a.id, a.partner_id, a.business_id, a.status,
+                  a.business_name, a.location_marz, a.location_city,
+                  a.location_village, a.address, a.phone,
+                  a.direction_name, a.master_category_id,
+                  a.subcategory_name, a.category_id,
+                  a.service_name, a.price, a.description,
+                  a.object_name, a.object_id, a.document_id,
+                  a.ai_reason, a.admin_note, a.created_at, a.updated_at,
+                  p.user_id
+           FROM partner_applications a
+           JOIN partners p ON p.id=a.partner_id
+           WHERE a.id=%s LIMIT 1""",
+        (application_id,),
+    )
+    if not row:
+        return web.json_response({"ok": False, "error": "application_not_found"}, status=404)
+    return web.json_response({"ok": True, "admin_id": admin_id, "application": row})
+
+
 async def api_admin_partner_application_edit(request):
     admin_id = _admin_telegram_id(
         request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id")
