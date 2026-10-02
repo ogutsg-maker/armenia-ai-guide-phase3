@@ -2491,7 +2491,7 @@ class AIManager:
                         pending_action["summary"] = summary
                         # Confirmation UI is the single visible preview.
                         return {
-                            "reply": "",
+                            "reply": str(pending_action.get("summary") or ""),
                             "confirmation_required": True,
                             "pending_action": pending_action,
                             "tool_calls": tool_log,
