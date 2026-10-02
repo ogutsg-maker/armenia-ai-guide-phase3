@@ -4419,16 +4419,12 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
     Partner confirmation moves the booking to pending_payment. Financial
     ledger rows and QR are created only after payment is actually paid.
     """
-    payment_status = str(getattr(intent, "status", "") or "").strip().lower()
-    requested_status = str(status or "").strip().lower()
-    if requested_status not in {"pending_partner_confirmation", "pending_payment", "paid"}:
-        requested_status = "pending_partner_confirmation"
-    # Negotiation bookings also require the same partner-confirmation gate
-    # as direct bookings. A provider/test intent must never turn an agreed
-    # negotiation directly into a paid booking.
-    auto_settle_allowed = requested_status == "pending_payment"
-    booking_state = "paid" if payment_status == "paid" and auto_settle_allowed else requested_status
-    payment_row_status = "paid" if payment_status == "paid" and auto_settle_allowed else "pending"
+    # New negotiation bookings are always persisted as a request awaiting
+    # partner confirmation. The caller cannot select pending_payment/paid.
+    # Payment settlement is performed only by the partner-confirmation/payment
+    # Data Core gates.
+    booking_state = "pending_partner_confirmation"
+    payment_row_status = "pending"
     payment_amount = round(float(commission) + float(partner_amount), 2)
 
     negotiation = one("SELECT id,status,state_json FROM negotiations WHERE id=%s AND request_id=%s",
@@ -4480,11 +4476,7 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                                  "bill_no":getattr(intent,"bill_no",None),
                                  "payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
         payment=cur.fetchone()
-        if payment_row_status == "paid":
-            cur.execute("""INSERT INTO partner_financial_ledger(partner_id,booking_id,entry_type,amount,currency,description)
-                           VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
-                        (int(partner_id),int(booking["id"]),float(commission),currency,"Platform commission (payment confirmed)",
-                         int(partner_id),int(booking["id"]),float(partner_amount),currency,"Partner amount after platform commission (payment confirmed)"))
+        # Financial ledger and QR are created only after verified payment.
         request_status = "booked" if payment_row_status == "paid" else booking_state
         cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
                     (request_status, int(request_id)))
