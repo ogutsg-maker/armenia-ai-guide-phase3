@@ -1684,6 +1684,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=Tru
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/url", api_admin_partner_document_url)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/download", api_admin_partner_document_download)
+    app.router.add_get("/api/admin/partner-applications/{id}/edit", api_admin_partner_application_get)
     app.router.add_post("/api/admin/partner-applications/{id}/edit", api_admin_partner_application_edit)
     app.router.add_post("/api/admin/partner-applications/{id}/approve", api_admin_partner_approve)
     app.router.add_post("/api/admin/partner-applications/{id}/reject", api_admin_partner_reject)
