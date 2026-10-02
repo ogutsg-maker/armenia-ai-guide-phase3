@@ -493,7 +493,7 @@ async def api_ai_document_upload(request: web.Request):
                 (int(case["id"]),),
             )
             cur.execute(
-                """UPDATE partner_directions SET status='pending_document',rejection_reason=NULL,updated_at=NOW()
+                """UPDATE partner_directions SET status='pending',rejection_reason=NULL,updated_at=NOW()
                    WHERE id=%s AND partner_id=%s AND business_id=%s""",
                 (direction_id,pid,bid),
             )
