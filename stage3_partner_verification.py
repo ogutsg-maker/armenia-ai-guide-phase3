@@ -985,10 +985,39 @@ async def api_admin_service_direction_request_action(request):
             return web.json_response({"ok":False,"error":"pending_document_not_found"},status=404)
         _db_execute("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE id=%s",(admin_id,doc["id"]))
         _db_execute("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(req["partner_direction_id"],))
-        _db_execute("""UPDATE services SET status='approved',updated_at=NOW()
-                       WHERE partner_id=%s AND business_id=%s AND category_id IN
-                         (SELECT category_id FROM partner_direction_categories WHERE partner_direction_id=%s)
-                         AND status='pending'""",(req["partner_id"],req.get("business_id"),req["partner_direction_id"]))
+        # Direction approval is the final service-activation gate for this
+        # path. A service becomes ACTIVE only when partner, company, direction
+        # and document are all currently approved.
+        _db_execute("""UPDATE services s
+                       SET status='active',updated_at=NOW()
+                       WHERE s.partner_id=%s
+                         AND s.business_id=%s
+                         AND s.category_id IN (
+                             SELECT category_id
+                             FROM partner_direction_categories
+                             WHERE partner_direction_id=%s
+                         )
+                         AND s.status IN ('pending','approved')
+                         AND EXISTS (
+                             SELECT 1 FROM partners p
+                             WHERE p.id=s.partner_id AND p.status='approved'
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM partner_businesses b
+                             WHERE b.id=s.business_id AND b.partner_id=s.partner_id
+                               AND b.status='active'
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM partner_directions pd
+                             WHERE pd.id=%s AND pd.status='approved'
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM partner_verification_documents d
+                             WHERE d.id=%s AND d.partner_direction_id=%s
+                               AND d.status='approved'
+                         )""",
+                    (req["partner_id"],req.get("business_id"),req["partner_direction_id"],
+                     req["partner_direction_id"],doc["id"],req["partner_direction_id"]))
         _db_execute("UPDATE service_direction_requests SET status='approved',admin_note=NULL,reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW() WHERE id=%s",(admin_id,rid))
         try:
             bot=request.app.get("partner_direction_bot")
