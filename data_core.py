@@ -3342,6 +3342,29 @@ def get_active_package(service_id: int, package_id: int):
 # Client request / candidate persistence
 # ---------------------------------------------------------------------------
 
+def get_request_candidates(request_id: int, limit: int = 3) -> list[dict[str, Any]]:
+    """Return live candidate services stored for a client request."""
+    return rows(
+        """SELECT rc.request_id,rc.service_id,rc.rank_score,rc.status,
+                  s.partner_id,s.business_id,s.name AS service_name,s.price,s.currency,
+                  p.business_name AS partner_name,
+                  b.name AS company_name,
+                  COALESCE(s.data_json->'service_location'->>'city',
+                           s.data_json->'coverage'->>'city',
+                           '') AS city
+           FROM request_candidates rc
+           JOIN services s ON s.id=rc.service_id
+           JOIN partners p ON p.id=s.partner_id
+           LEFT JOIN partner_businesses b ON b.id=s.business_id
+           WHERE rc.request_id=%s
+             AND rc.status <> 'rejected'
+             AND s.status='active'
+           ORDER BY rc.rank_score DESC NULLS LAST, s.id DESC
+           LIMIT %s""",
+        (int(request_id), max(1, min(int(limit or 3), 10))),
+    )
+
+
 def create_service_request(client_id: int, category_id: int | None, status: str,
                            language: str, city: str | None, summary: str,
                            preferences: dict[str, Any]):
