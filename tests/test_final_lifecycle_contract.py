@@ -161,3 +161,9 @@ def test_client_ui_shows_payment_only_after_partner_confirmation():
     assert "r.booking.status" in src
     assert "pending_payment" in src
     assert "Վճարել Idram-ով" in src
+
+def test_client_ui_represents_full_booking_lifecycle():
+    src = read("web_apps/client.html")
+    for state in ("paid","in_progress","completed","cancelled","refunded"):
+        assert state in src
+    assert "provider-ի հաստատումը" in src
