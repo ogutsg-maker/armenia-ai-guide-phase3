@@ -78,7 +78,27 @@ async def negotiation_get(request):
     uid=_uid(request); nid=int(request.match_info['negotiation_id'])
     n=data_core.get_negotiation(nid, actor_role='client', actor_id=uid)
     if not n:return web.json_response({'ok':False,'error':'negotiation_not_found'},status=404)
-    return web.json_response({'ok':True,'negotiation':n,'messages':data_core.get_negotiation_messages(nid, actor_role='client', actor_id=uid)})
+    booking = data_core.marketplace_booking_by_negotiation(nid)
+    payment = None
+    payment_url = None
+    if booking:
+        payment = data_core.one(
+            "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
+            (int(booking['id']),),
+        )
+        pdata = (payment or {}).get('data_json') or {}
+        if isinstance(pdata, str):
+            try: pdata = json.loads(pdata)
+            except Exception: pdata = {}
+        payment_url = (pdata or {}).get('payment_url')
+    return web.json_response({
+        'ok':True,
+        'negotiation':n,
+        'messages':data_core.get_negotiation_messages(nid, actor_role='client', actor_id=uid),
+        'booking': booking,
+        'payment': payment,
+        'payment_url': payment_url,
+    })
 
 def _state(n):
     s=n.get('state_json') or {}

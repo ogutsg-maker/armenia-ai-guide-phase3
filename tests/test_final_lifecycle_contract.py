@@ -149,3 +149,15 @@ def test_partner_cabinet_ui_does_not_offer_closed_mutation_actions():
     assert "onclick=\"agreeNegotiation(" not in src
     assert "saveGeneralSetting(&quot;contact_sharing_enabled&quot;" not in src
     assert "saveGeneralSetting(&quot;premium_contact_sharing_enabled&quot;" not in src
+
+def test_client_negotiation_exposes_booking_payment_state_without_mutation():
+    src = read("marketplace_flow_api.py")
+    block = src[src.index("async def negotiation_get"):src.index("def _state",src.index("async def negotiation_get"))]
+    assert "'booking': booking" in block
+    assert "'payment_url': payment_url" in block
+
+def test_client_ui_shows_payment_only_after_partner_confirmation():
+    src = read("web_apps/client.html")
+    assert "r.booking.status" in src
+    assert "pending_payment" in src
+    assert "Վճարել Idram-ով" in src

@@ -2895,8 +2895,6 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
     )
     saved_payment = updated or payment
 
-    # Test provider is intentionally fictitious, but it must still pass through
-    # the exact same settlement gate as a real Idram callback.
     if str(intent.status or "").lower() == "paid":
         settled = reconcile_paid_payment(int(saved_payment["id"]), intent.transaction_id, intent.amount, intent.provider)
         return {
@@ -4755,7 +4753,6 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                      service.get("business_id"),booking_state,service["name"],price,currency,float(commission),float(partner_amount),
                      json.dumps({"payment_mode":getattr(intent,"provider",None),
                                  "payment_status":payment_row_status,
-                                 "test_transaction":getattr(intent,"transaction_id",None),
                                  "service_price":price},ensure_ascii=False)))
         booking=cur.fetchone()
         cur.execute("UPDATE ai_usage_ledger SET order_id=%s WHERE order_id IS NULL AND negotiation_id=%s",
