@@ -232,7 +232,7 @@ function renderApplications(){
       '<div class="chips">'+doc+'</div>'+
       (a.document_id?'<div class="muted small">Փաստաթուղթը կցված է այս հայտին։</div>':'')+
       (needsDoc?'<div class="section"><label class="muted small">📄 '+(state.lang==='ru'?'Добавить документ к этой заявке':state.lang==='en'?'Add document to this application':'Ավելացնել փաստաթուղթ այս հայտին')+'</label><input id="appDoc'+a.id+'" type="file" accept=".pdf,image/jpeg,image/png,image/webp" onchange="uploadApplicationDocumentFromInput('+a.id+',this)"></div>':'')+
-      '<div class="actions" style="margin-top:9px"><button class="btn secondary" onclick="openApplication('+a.id+')">'+tr('open')+' →</button>'</div></div>';
+      '<div class="actions" style="margin-top:9px"><button class="btn secondary" onclick="openApplication('+a.id+')">'+tr('open')+' →</button></div></div>';
   }).join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>';
 }
 async function uploadApplicationDocumentFromInput(id,input){
