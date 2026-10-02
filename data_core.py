@@ -2684,7 +2684,10 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
                 (int(row["id"]),), False,
             )
             return {"error": "qr_expired", "expires_at": row.get("expires_at")}
-    if row.get("booking_status") not in ("paid", "confirmed"):
+    # Check-in is available only after the payment provider has confirmed
+    # the commission payment. A legacy/negotiation "confirmed" booking state
+    # must never be enough to unlock QR check-in.
+    if row.get("booking_status") != "paid":
         return {"error": "booking_not_paid", "booking_status": row.get("booking_status")}
     check = execute(
         """UPDATE booking_checkins
@@ -2699,7 +2702,7 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
     # backend transition after the service has actually been performed.
     booking = execute(
         """UPDATE bookings SET status='in_progress',updated_at=NOW()
-           WHERE id=%s AND status IN ('paid','confirmed') RETURNING *""",
+           WHERE id=%s AND status='paid' RETURNING *""",
         (int(booking_id),), True,
     )
     return {"already_checked_in": False, "checkin": check,
