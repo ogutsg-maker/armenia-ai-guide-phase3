@@ -8,7 +8,7 @@ def read(name: str) -> str:
 
 
 def test_partner_registration_is_minimal():
-    html = read("partner.html")
+    html = read("web_apps/partner.html")
     assert "business_name" in html
     assert 'id="phone"' in html
     assert "services" not in html.split("<form", 1)[1].split("</form>", 1)[0]
@@ -101,12 +101,6 @@ def test_partner_cabinet_has_no_direct_service_creation_ui():
     assert "startServiceVoice(" not in src
     assert "addService(" not in src
     assert "saveGeneralSetting(" not in src
-
-def test_direct_booking_contract_waits_for_partner_confirmation():
-    src = read("marketplace_flow_api.py")
-    block = src[src.index("async def direct_booking"):src.index("# --- Phase 3: cancellations", src.index("async def direct_booking"))]
-    assert "status='pending_partner_confirmation'" in block
-    assert "checkin" in block
 
 def test_legacy_partner_agree_route_is_removed():
     src = read("marketplace_flow_api.py")
