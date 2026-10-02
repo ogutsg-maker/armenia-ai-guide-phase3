@@ -52,8 +52,7 @@ and price. Do not ask for unrelated settings just to create the service.
 Service location is part of the service lifecycle and must remain separate
 from company registration. A service may have its own location/address and,
 when the partner provides the service at the client's place, its service
-territory may include marz, city and district. Do not invent a base_location
-field or replace the existing service-location model. Work hours, service
+territory may include marz, city and district. Keep service location and service territory separate. Work hours, service
 location, service territory, documents and other company/service settings are
 separate from the minimal partner registration and may be changed manually
 or through AI.
