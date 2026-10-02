@@ -203,3 +203,19 @@ def test_no_public_refund_settlement_endpoint():
     src = read("marketplace_flow_api.py")
     assert "/refund/settle" not in src
     assert "/refund/confirm" not in src
+
+
+def test_marketplace_has_no_direct_booking_or_accept_routes():
+    src = read("marketplace_flow_api.py")
+    assert "async def direct_booking" not in src
+    assert "async def negotiation_accept" not in src
+    assert "async def confirm_booking" not in src
+    assert "/api/market/client/service/{service_id}/book" not in src
+    assert "/api/market/client/negotiation/{negotiation_id}/accept" not in src
+    assert "/api/market/partner/booking/{booking_id}/confirm" not in src
+    assert "/api/market/partner/negotiation/{negotiation_id}/accept" not in src
+
+def test_partner_orders_use_ai_operator_for_confirmation():
+    src = read("web_apps/master_cabinet.html")
+    assert "confirmBooking(" not in src
+    assert "AI-օպերատորի" in src or "AI-оператора" in src

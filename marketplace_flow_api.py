@@ -160,68 +160,6 @@ async def partner_reply(request):
     await negotiator.handle(n,'partner',uid,text,**_negotiator_hooks())
     return web.json_response({'ok':True,'messages':data_core.get_negotiation_messages(nid, actor_role='partner', actor_id=uid)})
 
-async def negotiation_accept(request):
-    """Explicit client/partner acceptance; backend owns AGREED transition."""
-    uid = _uid(request)
-    nid = int(request.match_info['negotiation_id'])
-    role = 'client' if request.path.startswith('/api/market/client/') else 'partner'
-
-    result = data_core.accept_negotiation(
-        nid,
-        actor_role=role,
-        actor_id=uid,
-    )
-    if not result:
-        return web.json_response(
-            {'ok': False, 'error': 'negotiation_acceptance_failed'},
-            status=400,
-        )
-
-    status = 'agreed' if result.get('agreed') else 'waiting_other_party'
-    if result.get('agreed'):
-        # The request becomes confirmed only after the backend has established
-        # that both parties explicitly accepted the same negotiation.
-        n = result.get('negotiation') or {}
-        data_core.execute(
-            """UPDATE service_requests
-               SET status='confirmed',updated_at=NOW()
-               WHERE id=%s AND status='negotiating' RETURNING *""",
-            (int(n['request_id']),),
-            True,
-        )
-
-    message = (
-        'Համաձայն եմ։ Երկու կողմն էլ համաձայն են։ Կարող ենք ամրագրել։'
-        if result.get('agreed')
-        else 'Համաձայն եմ պայմաններին։ Սպասում ենք մյուս կողմի վերջնական համաձայնությանը։'
-    )
-    data_core.append_negotiation_message(nid, role, uid, message)
-    return web.json_response({
-        'ok': True,
-        'status': status,
-        'agreed': bool(result.get('agreed')),
-        'negotiation': result.get('negotiation'),
-    })
-
-async def confirm_booking(request):
-    uid=_uid(request); booking_id=int(request.match_info['booking_id'])
-    current=data_core.get_booking(booking_id,actor_role='partner',actor_id=uid)
-    if not current:
-        return web.json_response({'ok':False,'error':'booking_not_found'},status=404)
-    try:
-        result=data_core.confirm_booking_and_prepare_payment(booking_id,uid)
-    except Exception:
-        logging.exception("Booking payment preparation failed for %s", booking_id)
-        return web.json_response({'ok':False,'error':'payment_invoice_failed'},status=502)
-    if not result:
-        return web.json_response({'ok':False,'error':'booking_confirmation_conflict'},status=409)
-    return web.json_response({
-        'ok':True,
-        'booking':result.get('booking'),
-        'payment':result.get('payment'),
-        'payment_url':result.get('payment_url'),
-    })
-
 def _parse_scheduled_at(value):
     """Accept an ISO-8601 string; return it normalised or None on any problem."""
     if not value:
@@ -230,125 +168,6 @@ def _parse_scheduled_at(value):
         return datetime.fromisoformat(str(value).replace('Z', '+00:00')).isoformat()
     except (ValueError, TypeError):
         return None
-
-
-async def direct_booking(request):
-    """Create a direct booking request.
-
-    The booking waits for explicit partner confirmation. Payment is initiated
-    only after that confirmation, and a QR/check-in is created only after the
-    payment provider confirms settlement.
-    """
-    uid = _uid(request)
-    service_id = int(request.match_info['service_id'])
-    data = await request.json()
-
-    service = data_core.get_approved_service_for_booking(service_id)
-    if not service:
-        return web.json_response({'ok': False, 'error': 'service_not_available'}, status=404)
-    partner_id = service['partner_id']
-
-    # --- Resolve the base price (service price or a chosen package) ---
-    package = None
-    package_id = data.get('package_id')
-    if package_id:
-        package = data_core.get_active_package(service_id, int(package_id))
-        if not package:
-            return web.json_response({'ok': False, 'error': 'package_not_available'}, status=404)
-
-    currency = (package or service).get('currency') or service.get('currency') or 'AMD'
-    base = package['price'] if package else service.get('price')
-    if base is None:
-        # Negotiable / by-request services have no fixed price and cannot be
-        # booked directly; the client should use the AI concierge instead.
-        return web.json_response({'ok': False, 'error': 'price_on_request'}, status=400)
-    base = float(base)
-
-    # --- Add-on options ---
-    option_ids = data.get('option_ids') or []
-    if not isinstance(option_ids, list):
-        option_ids = []
-    option_ids = [int(x) for x in option_ids if str(x).strip().isdigit()]
-    chosen_options = []
-    options_total = 0.0
-    if option_ids:
-        chosen_options = data_core.get_approved_service_options(service_id, option_ids)
-        if len(chosen_options) != len(set(option_ids)):
-            return web.json_response({'ok': False, 'error': 'option_not_available'}, status=404)
-        options_total = sum(float(o.get('price_delta') or 0) for o in chosen_options)
-
-    price = round(base + options_total, 2)
-    if price <= 0:
-        return web.json_response({'ok': False, 'error': 'invalid_total_price'}, status=400)
-
-    commission, customer_total, partner_amount = _price_and_commission(price, service)
-    scheduled_at = _parse_scheduled_at(data.get('scheduled_at'))
-    client_note = str(data.get('client_note') or data.get('note') or '').strip()[:1000]
-
-    # --- Request row (keeps analytics/history consistent with the AI path) ---
-    summary = f"Direct booking: {service['name']}"
-    req = data_core.create_direct_booking_request(
-        uid, summary, {'direct': True, 'service_id': service_id}
-    )
-    if not req or not req.get('id'):
-        return web.json_response({'ok':False,'error':'booking_request_conflict'},status=409)
-
-    # --- Charge the platform commission via the Idram provider layer ---
-    persisted = data_core.persist_direct_booking(
-        client_id=uid, service=service, request_row=req,
-        package_id=int(package_id) if package_id else None,
-        status='pending_partner_confirmation',
-        price=price, currency=currency, commission=commission,
-        partner_amount=partner_amount, scheduled_at=scheduled_at,
-        client_note=client_note,
-        intent=None,
-        metadata={
-            'booking_channel':'storefront_direct',
-            'payment_status':'pending_partner_confirmation',
-            'service_price':price,
-            'commission_tariff':{'type':_commission(service)[0],'value':_commission(service)[1]},
-            'package':({'id':package['id'],'name':package['name'],'price':float(package['price'] or 0)} if package else None),
-            'options':[{'id':o['id'],'name':o['name'],'price_delta':float(o.get('price_delta') or 0)} for o in chosen_options],
-        },
-    )
-    if not persisted:
-        return web.json_response({'ok':False,'error':'booking_creation_conflict'},status=409)
-    booking=persisted['booking']
-    payment=persisted['payment']
-    check=persisted.get('checkin')
-
-    display = data_core.get_partner_booking_display(partner_id)
-    if not display:
-        return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
-    partner = display['partner']
-    payment_confirmed = str((payment or {}).get('status') or '').lower() == 'paid'
-    locations = display['locations'] if payment_confirmed else []
-    contact = data_core.get_paid_booking_contact(int(booking['id']), actor_role='client', actor_id=uid)
-    details = {
-        'business_name': partner['business_name'], 'locations': locations, 'contact': contact,
-        'service': service['name'], 'price': customer_total, 'base_price': price, 'currency': currency, 'booking_id': booking['id'],
-    }
-
-    # Best-effort partner notification (never fail the booking on notify errors).
-    try:
-        from notify import notify
-        owner = data_core.get_partner(partner_id)
-        if owner and owner.get('user_id'):
-            await notify(
-                request.app, int(owner['user_id']),
-                title='🛒 Новое бронирование с витрины',
-                body=f"«{service['name']}» — {price:.0f} {currency} (№{booking['id']}).",
-                kind='booking_new', audience='partner',
-                data={'booking_id': booking['id'], 'service_id': service_id},
-            )
-    except Exception:
-        pass
-
-    qr_uri = qr_util.qr_data_uri(check['token']) if check else None
-    return web.json_response({
-        'ok': True, 'payment': payment, 'booking': booking, 'checkin': check,
-        'qr': qr_uri, 'partner': details,
-    })
 
 
 # --- Phase 3: cancellations ------------------------------------------------
@@ -667,13 +486,9 @@ def register_marketplace_flow_routes(app):
     app.router.add_get('/api/market/client/negotiation/{negotiation_id}',negotiation_get)
     app.router.add_post('/api/market/client/negotiation/{negotiation_id}/message',negotiation_client_message)
     # Direct booking always waits for partner confirmation; payment is live-only.
-    app.router.add_post('/api/market/client/service/{service_id}/book',direct_booking)
     app.router.add_get('/api/market/partner/negotiations',partner_negotiations)
     app.router.add_get('/api/market/partner/negotiation/{negotiation_id}',partner_negotiation_messages)
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/reply',partner_reply)
-    app.router.add_post('/api/market/client/negotiation/{negotiation_id}/accept',negotiation_accept)
-    app.router.add_post('/api/market/partner/booking/{booking_id}/confirm',confirm_booking)
-    app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/accept',negotiation_accept)
     app.router.add_post('/api/market/client/booking/{booking_id}/cancel',cancel_booking_client)
     app.router.add_post('/api/market/booking/{booking_id}/arbitration',open_arbitration)
     app.router.add_get('/api/market/arbitration/{arbitration_id}',arbitration_get)
