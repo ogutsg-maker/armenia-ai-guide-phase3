@@ -1489,9 +1489,9 @@ def prepare_application_approval(*, application_id: int, actor_user_id: int) -> 
         return {
             "ok": True,
             "can_approve": False,
-            "already_active": True,
-            "reason_code": "application_already_active",
-            "message": f"Հայտ #{int(application_id)}-ն արդեն հաստատված և ակտիվ է։ Կրկին ակտիվացում պետք չէ։",
+            "already_approved": True,
+            "reason_code": "application_already_approved",
+            "message": f"Հայտ #{int(application_id)}-ն արդեն հաստատված է։ Ծառայությունների ակտիվացումը առանձին քայլ է։/g",
         }
     if current_status == "rejected":
         raise ValueError("application_already_final")
@@ -1744,7 +1744,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
 
         status = str(row.get("status") or "").lower()
         if status == "approved":
-            return {"ok": True, "already_active": True, "application_id": int(application_id),
+            return {"ok": True, "already_approved": True, "application_id": int(application_id),
                     "status": "approved",
                     "message": f"Հայտ #{int(application_id)}-ն արդեն հաստատված և ակտիվ է։"}
         if status == "rejected":
