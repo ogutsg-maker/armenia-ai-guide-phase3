@@ -11,9 +11,9 @@
 <body>
 <div id="auth" class="auth"><div class="authbox"><h2>👑 Armenia AI Guide</h2><p id="authText">Ստուգում ենք մուտքը… / Проверяем доступ…</p><div id="authError" class="error" style="display:none"></div><button id="retry" class="btn" style="display:none">🔄 Կրկնել</button></div></div>
 <div id="app" style="display:none">
-<header><b>👑 Armenia AI Guide — Ադմինիստրացիա</b><small>Գործընկերներ · ուղղություններ · պատվերներ · AI · ֆինանսներ</small></header>
+<header><b>👑 Armenia AI Guide — AI-սեկретар</b><small>Ադմինիստրացիա · հայտեր · գործընկերներ · պատվերներ · ֆինանսներ</small></header>
 <nav>
-<button data-page="partners">🔎 Ռեեստր</button><button data-page="cats">📂 Ուղղություններ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="applications">📨 Հայտեր</button><button data-page="ai">🤖 AI</button><button data-page="aiCosts">💳 AI ծախսեր</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Կարգավորումներ</button>
+<button data-page="ai" class="active">🤖 AI-սեկретար</button><button data-page="applications">📨 Հայտեր</button><button data-page="partners">🔎 Ռեեստր</button><button data-page="cats">📂 Կատալոգ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="aiCosts">💳 AI ծախսեր</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Կարգավորումներ</button>
 </nav>
 <main>
 
@@ -604,5 +604,5 @@ async function loadAiPartnerCost(partnerId){
  }catch(e){alert(e.message||'AI usage error')}
 }
 async function loadPage(p){if(p==='partners'){renderRegistryFilters();await registrySearch();}else if(p==='cats')await loadCats();else if(p==='orders')await loadOrders();else if(p==='disputes')await loadDisputes();else if(p==='potential')await loadPotential();else if(p==='proposals'){await loadProposals();await loadSubcategoryProposals();await loadServiceDirectionRequests()}else if(p==='applications')await loadApplications();else if(p==='aiCosts'){await loadAiCosts();await loadProjectEconomics()}else if(p==='ai'){const el=$('adminAiInput');if(el&&!el.dataset.bound){el.dataset.bound='1';el.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendAdminAI()}})}}}
-(async()=>{if(await auth())await loadPage('partners').catch(showError)})();
+(async()=>{if(await auth())await loadPage('ai').catch(showError)})();
 </script></body></html>
