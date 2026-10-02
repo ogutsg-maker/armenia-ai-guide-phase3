@@ -234,12 +234,7 @@ async function uploadApplicationDocumentFromInput(id,input){
   try{input.disabled=true;await uploadApplicationDocument(id,file);await loadApplications();renderApplications();toast('✓ '+(state.lang==='ru'?'Документ загружен':state.lang==='en'?'Document uploaded':'Փաստաթուղթը բեռնվեց'))}
   catch(e){input.disabled=false;toast(e.message)}
 }
-async function deletePartnerApplication(id){
- const a=(state.applications||[]).find(x=>Number(x.id)===Number(id)); if(!a)return;
- const title='#'+id+' · '+(a.service_name||a.business_name||'Հայտ');
- if(!confirm('Ջնջե՞լ հայտը '+title+'?'))return;
- try{await api('/api/master/current/applications/'+id,{method:'DELETE'});await loadApplications();renderApplications();toast('✓ '+(state.lang==='hy'?'Հայտը ջնջվեց':state.lang==='ru'?'Заявка удалена':'Application deleted'));}catch(e){toast(e.message||'delete_failed')}
-}
+
 function openApplication(id){const a=state.applications.find(x=>x.id===id);if(!a)return;const p=a.payload_json||{};const sv=a.services||p.services||[];document.getElementById('application').innerHTML='<button class="back" onclick="openMain(\'applications\')">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h1>📨 #'+a.id+'</h1><p>'+esc(a.business_name_db||a.business_name||'')+'</p></div>'+status(a.status)+'</div><div class="section"><h3>'+tr('applicationInfo')+'</h3><div class="grid2"><div><b>'+tr('direction')+'</b><div>'+esc(a.master_name_am||a.master_name_ru||a.direction_name||'—')+'</div></div><div><b>'+tr('subcategory')+'</b><div>'+esc(a.category_name_am||a.category_name_ru||a.subcategory_name||'—')+'</div></div><div><b>'+tr('price')+'</b><div>'+esc(a.price??'—')+'</div></div><div><b>'+tr('document')+'</b><div>'+ (a.document_id?status(a.document_status||'pending'):'—')+'</div></div></div></div><div class="section"><h3>'+tr('services')+'</h3><div class="list">'+(sv.length?sv.map(x=>'<div class="item"><div class="row"><b>'+esc(x.name||x.service_name)+'</b><span>'+esc(x.price??'')+' AMD</span></div><div class="muted">'+esc(x.direction_name||'')+' · '+esc(x.subcategory_name||'')+'</div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div></div><div class="section"><div class="notice">Եթե գործընթացը ավարտվի հաստատմամբ, արդյունքը դառնում է իրական ընկերություն / ուղղություն / ծառայություն և այլևս չի խառնվում ակտիվ հայտերի հետ։</div></div></div>';setView('application',false)}
 
 function openOrder(id){
