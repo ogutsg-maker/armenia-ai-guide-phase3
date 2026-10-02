@@ -2830,27 +2830,28 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
         if isinstance(data, str):
             try: data = json.loads(data)
             except Exception: data = {}
-        return {"booking": booking, "payment": payment, "payment_url": (data or {}).get("payment_url")}
-    if str(booking.get("status") or "").lower() != "pending_partner_confirmation":
+        if (data or {}).get("payment_url"):
+            return {"booking": booking, "payment": payment, "payment_url": (data or {}).get("payment_url")}
+        # Previous invoice creation may have failed. Keep the booking pending
+        # and retry the provider invoice idempotently on the next confirmation request.
+    elif str(booking.get("status") or "").lower() != "pending_partner_confirmation":
         return None
 
-    confirmed = confirm_booking_by_partner(int(booking_id), int(partner_user_id))
-    if not confirmed:
-        # Another identical request may have won the conditional state update.
-        # Re-read the booking/payment and return the existing invoice instead of
-        # reporting a spurious failure.
-        current = get_booking(int(booking_id), actor_role="partner", actor_id=int(partner_user_id))
-        if current and str(current.get("status") or "").lower() == "pending_payment":
-            existing = one(
-                "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
-                (int(booking_id),),
-            )
-            data = (existing or {}).get("data_json") or {}
-            if isinstance(data, str):
-                try: data = json.loads(data)
-                except Exception: data = {}
-            return {"booking": current, "payment": existing, "payment_url": (data or {}).get("payment_url")}
-        return None
+    if str(booking.get("status") or "").lower() == "pending_partner_confirmation":
+        confirmed = confirm_booking_by_partner(int(booking_id), int(partner_user_id))
+        if not confirmed:
+            current = get_booking(int(booking_id), actor_role="partner", actor_id=int(partner_user_id))
+            if current and str(current.get("status") or "").lower() == "pending_payment":
+                existing = one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
+                data = (existing or {}).get("data_json") or {}
+                if isinstance(data, str):
+                    try: data = json.loads(data)
+                    except Exception: data = {}
+                if (data or {}).get("payment_url"):
+                    return {"booking": current, "payment": existing, "payment_url": (data or {}).get("payment_url")}
+            return None
+        booking = confirmed
+
     payment = one(
         "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
         (int(booking_id),),
@@ -2860,13 +2861,18 @@ def confirm_booking_and_prepare_payment(booking_id: int, partner_user_id: int):
 
     from idram import IdramProvider
     amount = float(payment.get("amount") or 0)
-    intent = IdramProvider().create_invoice(
-        amount=amount,
-        currency=payment.get("currency") or "AMD",
-        description=f"Armenia AI Guide booking #{booking_id}",
-        order_id=str(booking_id),
-        metadata={"booking_id": int(booking_id), "payment_id": int(payment["id"])},
-    )
+    try:
+        intent = IdramProvider().create_invoice(
+            amount=amount,
+            currency=payment.get("currency") or "AMD",
+            description=f"Armenia AI Guide booking #{booking_id}",
+            order_id=str(booking_id),
+            metadata={"booking_id": int(booking_id), "payment_id": int(payment["id"])},
+        )
+    except Exception as exc:
+        logger.warning("Idram invoice creation failed for booking %s: %s", booking_id, exc)
+        return {"booking": booking, "payment": payment, "checkin": None, "payment_url": None,
+                "payment_error": "invoice_creation_failed"}
     data = payment.get("data_json") or {}
     if isinstance(data, str):
         try: data = json.loads(data)
