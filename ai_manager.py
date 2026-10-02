@@ -2253,15 +2253,13 @@ class AIManager:
                             {"confirmation_required": True, "action": pending_action,
                              "deterministic_parser": True},
                         )
+                        # The deterministic parser is an internal implementation detail.
+                        # Do not expose its tool-call payload to the partner UI: the UI must
+                        # render exactly one human confirmation preview.
                         return {
                             "reply": summary,
                             "confirmation_required": True,
                             "pending_action": pending_action,
-                            "tool_calls": [{
-                                "name": "add_services",
-                                "arguments": parsed_service_action,
-                                "deterministic": True,
-                            }],
                         }
                     return result
                 except Exception as exc:
