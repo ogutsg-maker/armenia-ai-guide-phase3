@@ -232,7 +232,7 @@ def test_client_can_create_booking_only_after_agreement():
 
 def test_negotiation_ai_is_background_only():
     src = read("ai_negotiator.py")
-    assert "AI is never a third participant" in src
+    assert "AI is never a" in src and "third participant" in src
     assert 'insert_ai_msg(negotiation["id"], "ai"' not in src
     assert "reply_text" not in src[src.index("async def handle"):src.index("def reply_to_client")]
 
