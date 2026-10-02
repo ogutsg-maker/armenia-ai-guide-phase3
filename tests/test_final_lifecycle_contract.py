@@ -18,6 +18,11 @@ def test_partner_registration_is_minimal():
     assert "/api/webapp/partner/start" in html
     assert "/api/webapp/partner/message" not in html
 
+def test_potential_ai_does_not_persist_directly():
+    src = read("potential_partner_ai.py")
+    assert "platform_db" not in src
+    assert "data_core" not in src
+
 def test_admin_ai_can_read_potential_partners():
     src = read("tool_registry.py")
     assert "admin_get_potential_partners" in src
