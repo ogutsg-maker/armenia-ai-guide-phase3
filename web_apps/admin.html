@@ -451,7 +451,7 @@ async function loadDirectionVerificationQueue(){
      const pending=x.status==='pending_review';
      return '<div class="item" style="margin-top:8px"><div class="row"><div><b>'+esc(x.partner_name||'—')+' · '+esc(x.company_name||'—')+'</b><div class="muted">🧭 '+esc(name)+' · case #'+esc(x.id)+'</div></div>'+badge(x.status)+'</div>'+
        '<div class="muted">📄 '+doc+'</div>'+
-       (pending?'<div class="actions" style="margin-top:8px"><button class="btn ok" onclick="directionVerificationAction('+x.id+',\\'approve\\')">✓ Հաստատել</button><button class="btn danger" onclick="directionVerificationAction('+x.id+',\\'reject\\')">✕ Մերժել</button></div>':'')+
+       (pending?'<div class="actions" style="margin-top:8px"><button class="btn ok" onclick="directionVerificationAction('+x.id+',\'approve\')">✓ Հաստատել</button><button class="btn danger" onclick="directionVerificationAction('+x.id+',\'reject\')">✕ Մերժել</button></div>':'')+
        '</div>';
    }).join(''):'<div class="empty" style="margin-top:8px">Վերիֆիկացիայի հերթում փաստաթղթեր չկան</div>')+
    '</div>';
