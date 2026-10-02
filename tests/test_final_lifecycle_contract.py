@@ -219,3 +219,10 @@ def test_partner_orders_use_ai_operator_for_confirmation():
     src = read("web_apps/master_cabinet.html")
     assert "confirmBooking(" not in src
     assert "AI-օպերատորի" in src or "AI-оператора" in src
+
+
+def test_partner_cabinet_has_no_direct_company_service_address_mutations():
+    src = read("web_apps/master_cabinet.html")
+    for marker in ("createBusiness(", "deleteBusiness(", "addAddress(", "deleteAddress(", "saveCompanyEdit(", "editCompany(", "editObject(", "saveObjectEdit(", "editService(", "saveServiceEdit(", "deleteService(", "deleteApplication("):
+        assert marker not in src
+    assert "AI-օպերատոր" in src

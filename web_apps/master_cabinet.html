@@ -149,9 +149,7 @@ function aiCommandHtml(d){
 }
 async function confirmAiCommand(){try{const d=await api('/api/master/current/ai-command/confirm',{method:'POST',body:{}});const p=document.getElementById('aiPreview');if(p)p.innerHTML='<div class="notice">✓ '+esc(d.reply||'Կատարված է')+'</div>';await loadBusinesses();if(state.current)await loadBusinessData();}catch(e){toast(e.message)}}
 async function cancelAiCommand(){try{const i=document.getElementById('aiInput');if(i)i.value='ոչ';await sendAiCommand();}catch(e){toast(e.message)}}
-function renderBusinesses(){document.getElementById('businesses').innerHTML='<div class="heading"><div><h1>'+tr('businesses')+'</h1><p>Յուրաքանչյուր ընկերություն ունի իր առանձին աշխատանքային սենյակը։</p></div><button class="btn" onclick="createBusiness()">'+tr('newCompany')+'</button></div><div class="grid">'+(state.businesses.length?state.businesses.map(b=>'<div class="card click" onclick="openBusiness('+b.id+')"><div class="row"><div class="name">🏢 '+esc(b.name)+'</div>'+status(b.status)+'</div><p class="muted">'+esc(cleanCompanyDescription(b.description||''))+'</p><div class="actions"><button class="btn smallbtn" onclick="event.stopPropagation();openBusiness('+b.id+')">'+tr('open')+' →</button></div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>'}
-async function createBusiness(){const name=prompt(tr('name'));if(!name)return;try{await api('/api/master/current/businesses',{method:'POST',body:{name}});await loadBusinesses();renderBusinesses();toast('✓')}catch(e){toast(e.message)}}
-async function deleteBusiness(id){const b=state.businesses.find(x=>String(x.id)===String(id));if(!b)return;const label=b.name||'';const msg=state.lang==='hy'?'Ջնջե՞լ ընկերությունը՝ '+label+'։\nՀին պատվերների պատմությունը չի ջնջվի։':state.lang==='ru'?'Удалить компанию «'+label+'»?\nИстория старых заказов не будет удалена.':'Delete company “'+label+'”?\nOld order history will not be deleted.';if(!confirm(msg))return;try{await api('/api/master/current/businesses/'+id,{method:'DELETE'});state.current=null;await loadBusinesses();renderBusinesses();setView('businesses',false);toast('✓')}catch(e){toast(e.message)}}
+function renderBusinesses(){document.getElementById('businesses').innerHTML='<div class="heading"><div><h1>'+tr('businesses')+'</h1><p>Յուրաքանչյուր ընկերություն ունի իր առանձին աշխատանքային սենյակը։</p></div><span class="notice small">AI-օպերատոր՝ ընկերության ստեղծում և փոփոխություն՝ հաստատումից հետո</span></div><div class="grid">'+(state.businesses.length?state.businesses.map(b=>'<div class="card click" onclick="openBusiness('+b.id+')"><div class="row"><div class="name">🏢 '+esc(b.name)+'</div>'+status(b.status)+'</div><p class="muted">'+esc(cleanCompanyDescription(b.description||''))+'</p><div class="actions"><button class="btn smallbtn" onclick="event.stopPropagation();openBusiness('+b.id+')">'+tr('open')+' →</button></div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>'}
 async function openBusiness(id){state.current=state.businesses.find(x=>String(x.id)===String(id))||state.current;document.getElementById('businessSelect').value=state.current?.id||'';try{await loadBusinessData();renderBusiness();setView('business',false)}catch(e){toast(e.message)}}
 function renderBusiness(){const b=state.current||{};document.getElementById('business').innerHTML='<button class="back" onclick="openMain(\'businesses\')">'+tr('back')+'</button><div class="heading"><div><h1>🏢 '+esc(b.name)+'</h1><p>'+esc(cleanCompanyDescription(b.description||''))+'</p></div></div><div class="grid"><div class="card click" onclick="showCompanySection(\'objects\')"><div class="name">📍 '+tr('objects')+'</div><div class="metric">'+state.objects.length+'</div><div class="muted">Այս ընկերության հասցեները</div></div><div class="card click" onclick="showCompanySection(\'services\')"><div class="name">🛠 '+tr('services')+'</div><div class="metric">'+state.services.length+'</div><div class="muted">Այս ընկերության ծառայությունները</div></div><div class="metric">'+new Set(state.services.map(s=>serviceDirectionLabel(s)).filter(Boolean)).size+'</div><div class="muted">AI դասակարգում՝ ուղղություն և ենթաուղղություն</div></div><div class="card click" onclick="showCompanySection(\'documents\')"><div class="name">📄 '+tr('documents')+'</div><div class="metric">'+state.documents.length+'</div><div class="muted">Ընկերության փաստաթղթեր</div></div><div class="card click" onclick="showCompanySection(\'territories\')"><div class="name">📍 '+tr('territories')+'</div><div class="metric">'+state.locations.length+'</div><div class="muted">Տարածքներ, որտեղ գործում է ընկերությունը</div></div><div class="card click" onclick="showCompanySection(\'reviews\')"><div class="name">⭐ Վարկանիշ</div><div class="metric">'+state.reviews.length+'</div><div class="muted">Կարծիքներ և գնահատականներ</div></div></div><div id="companySection" class="section"><div class="notice">AI-օգնականի միջոցով կարող եք փոխել ընկերության, հասցեի և ծառայության տվյալները։ AI-ն նախ ցույց կտա նախատեսվող փոփոխությունը և կպահանջի ձեր հաստատումը։</div></div>';showCompanySection('overview')}
 function renderServicesSection(e){
@@ -202,114 +200,6 @@ function objectHours(o){
 function hoursSummary(o){const h=objectHours(o),days=['mon','tue','wed','thu','fri','sat','sun'];const labels={hy:{mon:'Երկ',tue:'Երք',wed:'Չրք',thu:'Հնգ',fri:'Ուրբ',sat:'Շբթ',sun:'Կիր'},ru:{mon:'Пн',tue:'Вт',wed:'Ср',thu:'Чт',fri:'Пт',sat:'Сб',sun:'Вс'},en:{mon:'Mon',tue:'Tue',wed:'Wed',thu:'Thu',fri:'Fri',sat:'Sat',sun:'Sun'}}[state.lang]||{};const parts=days.map(k=>h[k]?.closed?labels[k]+': '+(state.lang==='hy'?'փակ':state.lang==='ru'?'выходной':'closed'):(h[k]?.from&&h[k]?.to?labels[k]+': '+h[k].from+'–'+h[k].to:null)).filter(Boolean);return parts.length?parts.join(' · '):(state.lang==='hy'?'Ժամերը նշված չեն':state.lang==='ru'?'Часы не указаны':'Hours not set')}
 function objectRoom(id){const o=state.objects.find(x=>String(x.id)===String(id));if(!o)return;document.getElementById('business').innerHTML='<button class="back" onclick="openBusiness('+state.current.id+')">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h2>📍 '+esc(o.object_name||o.name)+'</h2><p>'+esc([o.marz,o.city,o.address].filter(Boolean).join(', '))+'</p></div></div><div class="section"><h3>'+tr('companyInfo')+'</h3><div class="grid2"><div><b>'+tr('name')+'</b><div class="muted">'+esc(o.object_name||o.name||'—')+'</div></div><div><b>'+tr('city')+'</b><div class="muted">'+esc(o.city||'—')+'</div></div><div><b>'+tr('address')+'</b><div class="muted">'+esc(o.address||'—')+'</div></div><div><b>Մարզ / Marz</b><div class="muted">'+esc(o.marz||'—')+'</div></div></div></div><div class="section"><h3>🕘 '+(state.lang==='hy'?'Աշխատանքային ժամեր':state.lang==='ru'?'Рабочие часы':'Working hours')+'</h3><div class="notice">'+esc(hoursSummary(o))+'</div></div><div class="notice">Հասցեն պատկանում է այս ընկերությանը։ Հասցեն հեռացնելու դեպքում հին պատվերների պատմությունը չի ջնջվում։</div></div>';setView('business',false)}
 
-async function addAddress(){const name=prompt(tr('objectName'));if(!name)return;const address=prompt(tr('address'));if(!address)return;const city=prompt(tr('city'));if(!city)return;const marz=prompt(tr('marz'));try{await api('/api/master/current/objects',{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name,address,city,marz}});await openBusiness(state.current.id);showCompanySection('objects')}catch(e){toast(e.message)}}
-
-async function deleteAddress(id){const o=state.objects.find(x=>String(x.id)===String(id));if(!o)return;const label=[o.object_name||o.name,o.address].filter(Boolean).join(' — ');if(!confirm((state.lang==='hy'?'Ջնջե՞լ հասցեն՝ ':state.lang==='ru'?'Удалить адрес: ':'Delete address: ')+label+'?'))return;try{await api('/api/master/current/objects/'+id,{method:'DELETE',headers:{'X-Business-Id':String(state.current.id)}});await openBusiness(state.current.id);showCompanySection('objects')}catch(e){toast(e.message)}}
-
-async function saveCompanyEdit(id){
-  const b=state.businesses.find(x=>String(x.id)===String(id));if(!b)return;
-  const name=document.getElementById('editCompanyName')?.value.trim()||'';
-  const description=document.getElementById('editCompanyDescription')?.value||'';
-  const phone=document.getElementById('editCompanyPhone')?.value.trim()||'';
-  if(name.length<2){toast(tr('name'));return}
-  try{
-    const d=await api('/api/master/current/businesses/'+id,{method:'POST',body:{name,description,phone}});
-    const ix=state.businesses.findIndex(x=>String(x.id)===String(id));if(ix>=0)state.businesses[ix]=d.business;
-    state.current=state.businesses[ix>=0?ix:0]||d.business;
-    document.getElementById('businessSelect').value=state.current.id;
-    await loadBusinessData();renderBusiness();showCompanySection('settings');toast('✓ '+tr('saved'));
-  }catch(e){toast(e.message)}
-}
-function editCompany(){
-  const b=state.current;
-  if(!b)return;
-  const e=document.getElementById('business');
-  if(!e)return;
-  e.innerHTML='<button class="back" onclick="openBusiness('+b.id+')">'+tr('back')+'</button>'+
-    '<div class="detail"><div class="heading"><div><h2>✎ '+tr('companySettings')+'</h2><p>'+tr('companySettingsHint')+'</p></div></div>'+
-    '<div class="field"><label>'+tr('name')+'</label><input id="editCompanyName" value="'+esc(b.name||'')+'"></div>'+
-    '<div class="field"><label>'+tr('description')+'</label><textarea id="editCompanyDescription">'+esc(cleanCompanyDescription(b.description||''))+'</textarea></div>'+
-    '<div class="field"><label>'+tr('phoneCompany')+'</label><input id="editCompanyPhone" inputmode="tel" value="'+esc(b.phone||'')+'"></div>'+
-    '<div class="notice">'+(state.lang==='hy'?'Փոփոխվում են միայն այս ընկերության տվյալները։':'Данные изменяются только у этой компании.')+'</div>'+
-    '<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="openBusiness('+b.id+')">'+tr('back')+'</button><button class="btn" onclick="saveCompanyEdit('+b.id+')">✓ '+tr('save')+'</button></div></div>';
-  setView('business',false);
-  document.getElementById('editCompanyName')?.focus();
-}
-function openService(id){
-  const s=state.services.find(x=>String(x.id)===String(id));
-  if(!s || !state.current)return;
-  const d=typeof s.data_json==='string'?(function(){try{return JSON.parse(s.data_json)}catch(e){return {}}})():(s.data_json||{});
-  const objectId=s.service_object_id||d.object_id;
-  const o=state.objects.find(x=>String(x.id)===String(objectId))||{};
-  const location=serviceLocation(s);
-  document.getElementById('service').innerHTML=
-    '<button class="back" onclick="openBusiness('+state.current.id+')">'+tr('back')+'</button>'+
-    '<div class="detail"><div class="heading"><div><h1>🛠 '+esc(s.name||s.service_name||'')+'</h1><p>'+esc(state.current.name||'')+'</p></div>'+status(s.status)+'</div>'+
-    '<div class="grid2">'+
-      '<div><b>'+tr('price')+'</b><div class="muted">'+esc(s.price!=null?String(s.price)+' AMD':'—')+'</div></div>'+
-      '<div><b>'+tr('phone')+'</b><div class="muted">'+esc(s.service_contact_phone||d.contact_phone||o.phone||'—')+'</div></div>'+
-      '<div><b>'+tr('description')+'</b><div class="muted">'+esc(s.description||'—')+'</div></div>'+
-      '<div><b>'+tr('object')+'</b><div class="muted">'+esc(location||'—')+'</div></div>'+
-    '</div>'+
-    '<div class="notice" style="margin-top:14px">🤖 Ծառայության փոփոխությունները, գինը, ակտիվացումը և հեռացումը կատարեք AI-օգնականի միջոցով։ AI-ն նախ ցույց կտա նախատեսվող փոփոխությունը և կպահանջի հաստատում։</div>'+
-    '</div>';
-  setView('service',false);
-}
-function editObject(id){
-  const o=state.objects.find(x=>String(x.id)===String(id));if(!o)return;
-  const e=document.getElementById('business');if(!e)return;
-  e.innerHTML='<button class="back" onclick="objectRoom('+o.id+')">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h2>✎ '+tr('objects')+'</h2><p>'+esc(o.object_name||o.name||'')+'</p></div></div>'+
-    '<div class="field"><label>'+tr('name')+'</label><input id="editObjectName" value="'+esc(o.object_name||o.name||'')+'"></div>'+
-    '<div class="field"><label>'+tr('city')+'</label><input id="editObjectCity" value="'+esc(o.city||'')+'"></div>'+
-    '<div class="field"><label>'+tr('address')+'</label><input id="editObjectAddress" value="'+esc(o.address||'')+'"></div>'+
-    '<div class="field"><label>Մարզ / Marz</label><input id="editObjectMarz" value="'+esc(o.marz||'')+'"></div>'+
-    '<div class="section"><h3>🕘 '+(state.lang==='hy'?'Աշխատանքային ժամեր':state.lang==='ru'?'Рабочие часы':'Working hours')+'</h3>'+
-    ['mon','tue','wed','thu','fri','sat','sun'].map(function(k){const h=objectHours(o)[k]||{};const labels={hy:{mon:'Երկուշաբթի',tue:'Երեքշաբթի',wed:'Չորեքշաբթի',thu:'Հինգշաբթի',fri:'Ուրբաթ',sat:'Շաբաթ',sun:'Կիրակի'},ru:{mon:'Понедельник',tue:'Вторник',wed:'Среда',thu:'Четверг',fri:'Пятница',sat:'Суббота',sun:'Воскресенье'},en:{mon:'Monday',tue:'Tuesday',wed:'Wednesday',thu:'Thursday',fri:'Friday',sat:'Saturday',sun:'Sunday'}}[state.lang]||{};return '<div class="grid2"><div class="field"><label>'+labels[k]+' — '+(state.lang==='hy'?'սկիզբ':state.lang==='ru'?'начало':'from')+'</label><input type="time" id="hour_'+k+'_from" value="'+esc(h.from||'')+'"></div><div class="field"><label>'+labels[k]+' — '+(state.lang==='hy'?'վերջ':state.lang==='ru'?'конец':'to')+'</label><input type="time" id="hour_'+k+'_to" value="'+esc(h.to||'')+'"></div></div><label style="display:flex;gap:8px;align-items:center;margin-top:7px"><input type="checkbox" id="hour_'+k+'_closed" '+(h.closed?'checked':'')+'> '+(state.lang==='hy'?'Հանգստյան օր':state.lang==='ru'?'Выходной':'Closed')+'</label>'}).join('')+'</div>'+
-    '<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="objectRoom('+o.id+')">'+tr('back')+'</button><button class="btn" onclick="saveObjectEdit('+o.id+')">✓ '+tr('save')+'</button></div></div>';
-  document.getElementById('editObjectName')?.focus();
-  setView('business',false);
-}
-async function saveObjectEdit(id){
-  const o=state.objects.find(x=>String(x.id)===String(id));if(!o||!state.current)return;
-  const name=document.getElementById('editObjectName')?.value.trim()||'';
-  const city=document.getElementById('editObjectCity')?.value.trim()||'';
-  const address=document.getElementById('editObjectAddress')?.value.trim()||'';
-  const marz=document.getElementById('editObjectMarz')?.value.trim()||'';
-  const working_hours={};
-  ['mon','tue','wed','thu','fri','sat','sun'].forEach(function(k){const closedEl=document.getElementById('hour_'+k+'_closed');const fromEl=document.getElementById('hour_'+k+'_from');const toEl=document.getElementById('hour_'+k+'_to');const closed=!!closedEl?.checked;const from=String(fromEl?.value||'').trim();const to=String(toEl?.value||'').trim();working_hours[k]=closed?{closed:true}:{from,to};if(closed){if(fromEl)fromEl.value='';if(toEl)toEl.value='';}});
-  if(name.length<2){toast(tr('name'));return}
-  try{
-    const d=await api('/api/master/current/objects/'+id,{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{object_name:name,city,address,marz,working_hours}});
-    const ix=state.objects.findIndex(x=>String(x.id)===String(id));if(ix>=0)state.objects[ix]=d.object;
-    objectRoom(id);toast('✓ '+tr('saved'));
-  }catch(e){toast(e.message)}
-}
-function editService(id){
-  const s=state.services.find(x=>String(x.id)===String(id));if(!s)return;
-  const back='openBusiness('+state.current.id+')';
-  document.getElementById('service').innerHTML='<button class="back" onclick="'+back+'">'+tr('back')+'</button><div class="detail"><div class="heading"><div><h2>✎ '+tr('serviceEdit')+'</h2><p>'+esc(s.name||'')+'</p></div></div>'+
-    '<div class="field"><label>'+tr('name')+'</label><input id="editServiceName" value="'+esc(s.name||'')+'"></div>'+
-    '<div class="field"><label>'+tr('price')+'</label><input id="editServicePrice" type="number" min="0" step="1" value="'+esc(s.price??'')+'"></div>'+
-    '<div class="field"><label>'+tr('description')+'</label><textarea id="editServiceDescription">'+esc(s.description||'')+'</textarea></div>'+
-    '<div class="notice">Կարգավիճակը փոխվում է հաստատման աշխատանքային հոսքով և այստեղ ձեռքով չի կառավարվում։</div>'+
-    '<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="'+back+'">'+tr('back')+'</button><button class="btn" onclick="saveServiceEdit('+s.id+')">✓ '+tr('save')+'</button></div></div>';
-  document.getElementById('editServiceName')?.focus();
-  setView('service',false);
-}
-async function saveServiceEdit(id){
-  const s=state.services.find(x=>String(x.id)===String(id));if(!s||!state.current)return;
-  const name=document.getElementById('editServiceName')?.value.trim()||'';
-  const priceRaw=document.getElementById('editServicePrice')?.value.trim()||'';
-  const description=document.getElementById('editServiceDescription')?.value||'';
-  if(name.length<2){toast(tr('name'));return}
-  if(priceRaw!==''&&(!Number.isFinite(Number(priceRaw))||Number(priceRaw)<0)){toast(tr('price'));return}
-  try{
-    const d=await api('/api/master/current/services/'+id,{method:'POST',headers:{'X-Business-Id':String(state.current.id)},body:{name,description,price:priceRaw===''?null:Number(priceRaw)}});
-    const ix=state.services.findIndex(x=>String(x.id)===String(id));if(ix>=0)state.services[ix]=d.service;
-    openService(id);toast('✓ '+tr('saved'));
-  }catch(e){toast(e.message)}
-}
-async function deleteService(id){const s=state.services.find(x=>String(x.id)===String(id));if(!s)return;if(!confirm((state.lang==='hy'?'Ջնջե՞լ ծառայությունը՝ ':state.lang==='ru'?'Удалить услугу: ':'Delete service: ')+String(s.name||'')+'?'))return;try{await api('/api/master/current/services/'+id,{method:'DELETE',headers:{'X-Business-Id':String(state.current.id)}});await openBusiness(state.current.id);showCompanySection('services')}catch(e){toast(e.message)}}
 async function uploadApplicationDocument(applicationId,file){
   if(!applicationId||!file)return;
   const fd=new FormData();
