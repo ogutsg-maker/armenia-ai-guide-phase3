@@ -4801,80 +4801,121 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
                                             intent=None):
     """Persist an agreed negotiation booking before payment.
 
-    Partner confirmation moves the booking to pending_payment. Financial
-    ledger rows and QR are created only after payment is actually paid.
+    Exact prices and agreed ranges are both preserved. For a range, the
+    booking stores agreed_min/agreed_max while commission_base is the
+    deterministic midpoint used only for financial calculation.
     """
-    # New negotiation bookings are always persisted as a request awaiting
-    # partner confirmation. The caller cannot select pending_payment/paid.
-    # Payment settlement is performed only by the partner-confirmation/payment
-    # Data Core gates.
     booking_state = "pending_partner_confirmation"
     payment_row_status = "pending"
-    payment_amount = round(float(commission) + float(partner_amount), 2)
 
-    negotiation = one("SELECT id,status,state_json FROM negotiations WHERE id=%s AND request_id=%s",
-                      (int(negotiation_id), int(request_id)))
+    negotiation = one(
+        "SELECT id,status,state_json FROM negotiations WHERE id=%s AND request_id=%s",
+        (int(negotiation_id), int(request_id)),
+    )
     if not negotiation or str(negotiation.get("status") or "").lower() != "agreed":
         return None
+
     state_json = negotiation.get("state_json") or {}
     if isinstance(state_json, str):
-        try: state_json = json.loads(state_json)
-        except Exception: state_json = {}
-    agreed_price = state_json.get("agreed_price")
-    if agreed_price is None:
-        agreed_min, agreed_max = state_json.get("agreed_min"), state_json.get("agreed_max")
-        if agreed_min is not None and agreed_max is not None:
-            if float(agreed_min) != float(agreed_max): return None
-            agreed_price = float(agreed_min)
-    if agreed_price is None or float(agreed_price) <= 0: return None
-    price = float(agreed_price)
+        try:
+            state_json = json.loads(state_json)
+        except Exception:
+            state_json = {}
+    if not isinstance(state_json, dict):
+        state_json = {}
+
+    exact = state_json.get("agreed_price")
+    agreed_min = state_json.get("agreed_min")
+    agreed_max = state_json.get("agreed_max")
+    try:
+        exact_value = float(exact) if exact is not None else None
+    except (TypeError, ValueError):
+        exact_value = None
+    try:
+        min_value = float(agreed_min) if agreed_min is not None else None
+        max_value = float(agreed_max) if agreed_max is not None else None
+    except (TypeError, ValueError):
+        return None
+
+    if exact_value is not None:
+        min_value = max_value = exact_value
+    elif min_value is None or max_value is None or min_value <= 0 or max_value < min_value:
+        return None
+
+    commission_base = exact_value if exact_value is not None else round((min_value + max_value) / 2.0, 2)
+    commission = float(commission)
+    partner_amount = float(partner_amount)
+    payment_amount = round(commission + partner_amount, 2)
 
     def _tx(cur):
-        cur.execute("SELECT id FROM bookings WHERE negotiation_id=%s FOR UPDATE",(int(negotiation_id),))
-        existing=cur.fetchone()
+        cur.execute("SELECT id FROM bookings WHERE negotiation_id=%s FOR UPDATE", (int(negotiation_id),))
+        existing = cur.fetchone()
         if existing:
-            bid=int(existing["id"])
-            cur.execute("SELECT * FROM bookings WHERE id=%s",(bid,)); booking=cur.fetchone()
-            cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); payment=cur.fetchone()
-            cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1",(bid,)); check=cur.fetchone()
-            return {"booking":booking,"payment":payment,"checkin":check,"already_exists":True}
+            bid = int(existing["id"])
+            cur.execute("SELECT * FROM bookings WHERE id=%s", (bid,))
+            booking = cur.fetchone()
+            cur.execute("SELECT * FROM payments WHERE booking_id=%s ORDER BY id DESC LIMIT 1", (bid,))
+            payment = cur.fetchone()
+            cur.execute("SELECT * FROM booking_checkins WHERE booking_id=%s ORDER BY id DESC LIMIT 1", (bid,))
+            check = cur.fetchone()
+            return {"booking": booking, "payment": payment, "checkin": check, "already_exists": True}
 
-        cur.execute("""INSERT INTO bookings(request_id,negotiation_id,client_id,partner_id,service_id,business_id,status,
-                         service_name,agreed_price,currency,commission_amount,partner_amount,data_json)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
-                    (int(request_id),int(negotiation_id),int(client_id),int(partner_id),int(service["id"]),
-                     service.get("business_id"),booking_state,service["name"],price,currency,float(commission),float(partner_amount),
-                     json.dumps({"payment_mode":getattr(intent,"provider",None),
-                                 "payment_status":payment_row_status,
-                                 "service_price":price},ensure_ascii=False)))
-        booking=cur.fetchone()
-        cur.execute("UPDATE ai_usage_ledger SET order_id=%s WHERE order_id IS NULL AND negotiation_id=%s",
-                    (int(booking["id"]), int(negotiation_id)))
-        cur.execute("""INSERT INTO payments(booking_id,client_id,partner_id,payment_type,status,amount,currency,
-                         provider,provider_payment_id,data_json)
-                       VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb) RETURNING *""",
-                    (int(booking["id"]),int(client_id),int(partner_id),payment_row_status,
-                     payment_amount,currency,getattr(intent,"provider",None),
-                     getattr(intent,"transaction_id",None),
-                     json.dumps({"mode":getattr(intent,"mode",None),
-                                 "bill_no":getattr(intent,"bill_no",None),
-                                 "payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
-        payment=cur.fetchone()
-        # Financial ledger and QR are created only after verified payment.
-        request_status = "booked" if payment_row_status == "paid" else booking_state
-        cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
-                    (request_status, int(request_id)))
-        checkin=None
-        if payment_row_status == "paid":
-            cur.execute("""INSERT INTO booking_checkins(booking_id,token,expires_at,status)
-                           VALUES(%s,%s,COALESCE(%s,NOW()) + INTERVAL '1 hour','active') RETURNING *""",
-                        (int(booking["id"]), __import__("secrets").token_urlsafe(24), booking.get("scheduled_at")))
-            checkin=cur.fetchone()
-        return {"booking":booking,"payment":payment,"checkin":checkin,"already_exists":False}
+        cur.execute(
+            """INSERT INTO bookings(
+                   request_id,negotiation_id,client_id,partner_id,service_id,business_id,status,
+                   service_name,agreed_price,agreed_min,agreed_max,commission_base,currency,
+                   commission_amount,partner_amount,data_json)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+               RETURNING *""",
+            (
+                int(request_id), int(negotiation_id), int(client_id), int(partner_id),
+                int(service["id"]), service.get("business_id"), booking_state,
+                service["name"], exact_value, min_value, max_value, commission_base,
+                currency, commission, partner_amount,
+                json.dumps({
+                    "payment_mode": getattr(intent, "provider", None),
+                    "payment_status": payment_row_status,
+                    "service_price": exact_value,
+                    "agreed_min": min_value,
+                    "agreed_max": max_value,
+                    "commission_base": commission_base,
+                }, ensure_ascii=False),
+            ),
+        )
+        booking = cur.fetchone()
+        cur.execute(
+            "UPDATE ai_usage_ledger SET order_id=%s WHERE order_id IS NULL AND negotiation_id=%s",
+            (int(booking["id"]), int(negotiation_id)),
+        )
+        cur.execute(
+            """INSERT INTO payments(
+                   booking_id,client_id,partner_id,payment_type,status,amount,currency,
+                   provider,provider_payment_id,data_json)
+               VALUES(%s,%s,%s,'commission',%s,%s,%s,%s,%s,%s::jsonb)
+               RETURNING *""",
+            (
+                int(booking["id"]), int(client_id), int(partner_id), payment_row_status,
+                payment_amount, currency, getattr(intent, "provider", None),
+                getattr(intent, "transaction_id", None),
+                json.dumps({
+                    "mode": getattr(intent, "mode", None),
+                    "bill_no": getattr(intent, "bill_no", None),
+                    "payment_url": getattr(intent, "payment_url", None),
+                }, ensure_ascii=False),
+            ),
+        )
+        payment = cur.fetchone()
+        cur.execute(
+            "UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",
+            (booking_state, int(request_id)),
+        )
+        return {"booking": booking, "payment": payment, "checkin": None, "already_exists": False}
+
     try:
         return platform_db.transaction(_tx)
     except Exception:
-        logger.exception("Failed to persist marketplace booking")
+        import logging
+        logging.getLogger(__name__).exception("Failed to persist marketplace booking")
         return None
 
 def get_admin_setting(key: str, default: str = "") -> str:
