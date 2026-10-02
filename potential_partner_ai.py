@@ -6,6 +6,7 @@ No legacy Supabase table-client API is used here.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from ai_service import AIService
@@ -64,6 +65,34 @@ class PotentialPartnerAI:
             "min_price": None,
             "working_hours": None,
         }
+
+    async def structure_candidate(self, raw_text: str, source: str = "manual_research") -> dict | None:
+        """Create one canonical potential-partner record from researched text."""
+        from platform_db import create_potential
+
+        structured = self.analyze_and_structure_lead(raw_text)
+        name = str(structured.get("name") or "").strip()
+        if not name:
+            return None
+
+        services = structured.get("services") or []
+        min_price = structured.get("min_price")
+        prices = [{"type": "from", "amount": min_price, "currency": "AMD"}] if min_price is not None else []
+        urls = [x.strip() for x in re.findall(r"https?://[^\\s]+", raw_text)][:10]
+
+        row = create_potential({
+            "source": source,
+            "business_name": name,
+            "description": str(raw_text or "")[:4000],
+            "city": structured.get("city"),
+            "services": services,
+            "prices": prices,
+            "source_urls": urls,
+            "ai_reason": "Structured from researched source text; requires admin review before invitation.",
+            "ai_confidence": 0.8 if services else 0.6,
+            "status": "ready_for_review",
+        })
+        return row
 
     def generate_personalized_invite(self, structured_partner_data: dict) -> dict:
         """Generate an invitation while respecting optional channel settings."""
