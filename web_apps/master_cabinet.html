@@ -251,7 +251,7 @@ function openService(id){
       '<div><b>'+tr('description')+'</b><div class="muted">'+esc(s.description||'—')+'</div></div>'+
       '<div><b>'+tr('object')+'</b><div class="muted">'+esc(location||'—')+'</div></div>'+
     '</div>'+
-    '<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="editService('+s.id+')">✎ '+tr('serviceEdit')+'</button><button class="btn danger" onclick="deleteService('+s.id+')">🗑</button></div>'+
+    '<div class="notice" style="margin-top:14px">🤖 Ծառայության փոփոխությունները, գինը, ակտիվացումը և հեռացումը կատարեք AI-օգնականի միջոցով։ AI-ն նախ ցույց կտա նախատեսվող փոփոխությունը և կպահանջի հաստատում։</div>'+
     '</div>';
   setView('service',false);
 }
