@@ -804,28 +804,23 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                 )
                 if needs_reclass:
                     try:
-                        from partner_registration_ai import classify_profile_catalog
-                        classification=await classify_profile_catalog(
+                        from catalog_classifier import classify_services_batch
+                        classified=await classify_services_batch(
                             _CatalogDB(),
-                            {
-                                "business_name": merged.get("business_name") or row.get("business_name") or "",
-                                "description": merged.get("description") or row.get("description") or "",
-                                "marz": merged.get("marz") or row.get("location_marz") or "",
-                                "city": merged.get("city") or row.get("location_city") or "",
-                                "address": merged.get("address") or row.get("address") or "",
-                                "services": merged.get("services") or [],
-                            },
+                            merged.get("services") or [],
                             telegram_id=uid,
                             application_id=aid,
                         )
-                        classified=classification.get("services") or []
                         if classified:
                             merged["services"]=classified
-                            merged["master_category_id"]=classification.get("master_category_id") or merged.get("master_category_id")
-                            merged["ai_master_category_id"]=merged.get("master_category_id")
-                            merged["classification_confidence"]=classification.get("confidence",0)
-                            merged["classification_ambiguities"]=classification.get("ambiguities") or []
-                            merged["classification_needs_review"]=bool(classification.get("needs_review"))
+                            resolved=[x for x in classified if x.get("subcategory_id") is not None]
+                            merged["classification_needs_review"]=any(
+                                x.get("catalog_match_status") != "deterministic_confirmed"
+                                for x in classified
+                            )
+                            if resolved:
+                                merged["master_category_id"]=resolved[0].get("direction_id") or merged.get("master_category_id")
+                                merged["ai_master_category_id"]=merged.get("master_category_id")
                             fields["payload_json"]=json.dumps(merged,ensure_ascii=False)
                     except Exception:
                         logger.exception("Application service reclassification failed")
