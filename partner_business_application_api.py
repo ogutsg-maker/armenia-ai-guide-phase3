@@ -1192,6 +1192,49 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
             try: source_payload=json.loads(source_payload)
             except Exception: source_payload={}
         is_service_proposal=isinstance(source_payload,dict) and source_payload.get("source")=="partner_service"
+
+        # Service documents belong to the partner/company/direction gate, never
+        # to the individual service application. Resolve the direction from the
+        # application header/payload and attach the uploaded file to that exact
+        # direction.
+        master_id = a.get("master_category_id")
+        if master_id is None and isinstance(source_payload,dict):
+            master_id = source_payload.get("master_category_id") or source_payload.get("ai_master_category_id")
+            if master_id is None:
+                services_payload = source_payload.get("services") or []
+                if services_payload and isinstance(services_payload[0],dict):
+                    master_id = services_payload[0].get("master_category_id")
+                    if master_id is None:
+                        cid = services_payload[0].get("matched_subcategory_id") or services_payload[0].get("subcategory_id") or services_payload[0].get("category_id")
+                        if cid:
+                            cat=_one("SELECT master_category_id FROM categories WHERE id=%s",(int(cid),))
+                            master_id=cat.get("master_category_id") if cat else None
+        direction_id = None
+        if is_service_proposal and master_id and a.get("business_id"):
+            direction=_one(
+                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND master_category_id=%s ORDER BY id DESC LIMIT 1",
+                (p["id"],a["business_id"],int(master_id)),
+            )
+            if direction:
+                direction_id=int(direction["id"])
+
+        # For a service proposal, direction linkage is mandatory. This prevents
+        # a document from silently becoming an application-owned document.
+        if is_service_proposal and not direction_id:
+            return web.json_response({"ok":False,"error":"partner_direction_not_found"},status=409)
+
+        _exec("""UPDATE partner_verification_documents
+                 SET partner_direction_id=COALESCE(%s,partner_direction_id),
+                     business_id=COALESCE(%s,business_id)
+                 WHERE id=%s AND partner_id=%s""",
+              (direction_id,a.get("business_id"),doc["id"],p["id"]))
+
+        if direction_id:
+            _exec("UPDATE partner_directions SET status='pending',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(direction_id,))
+            _exec("""UPDATE partner_direction_verification_cases
+                     SET status='pending_review',submitted_at=NOW(),updated_at=NOW()
+                     WHERE partner_direction_id=%s AND status IN ('awaiting_document','rejected')""",(direction_id,))
+
         correction_upload = str(a.get("status") or "") == "pending_partner" and old_doc_id is not None
         next_status = "document_under_review" if (is_service_proposal or correction_upload) else a.get("status")
         row=_exec("""UPDATE partner_applications
