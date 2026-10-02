@@ -47,3 +47,21 @@ def test_prompt_has_no_dispatch_base_instruction():
     src = read("prompt_factory.py")
     assert "dispatch/base location" not in src
     assert "dispatch base" not in src.lower()
+
+
+def test_client_has_no_test_payment_path():
+    html = read("web_apps/client.html")
+    assert "/pay-test" not in html
+    assert "payTest" not in html
+    assert "Test Idram" not in html
+
+
+def test_partner_cabinet_has_no_hardcoded_master_zero_route():
+    html = read("web_apps/master_cabinet.html")
+    assert "/api/master/0" not in html
+    assert "/api/master/current" in html
+
+
+def test_partner_cabinet_does_not_expose_manual_service_mutation_buttons():
+    html = read("web_apps/master_cabinet.html")
+    assert "onclick=" not in html.split("function renderServicesSection", 1)[1].split("function ", 1)[0] if "function renderServicesSection" in html else True
