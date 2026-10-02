@@ -2203,9 +2203,29 @@ class AIManager:
                         }
                     if result.get("requires_confirmation"):
                         action = result.get("action") or {}
+                        # Keep explicit user facts (price type, service mode and
+                        # coverage) authoritative in the confirmation draft. The Data Core
+                        # may normalize these fields for storage, but it must not turn
+                        # "դրամից" into a fixed price or lose the requested coverage.
+                        action_args = dict(action.get("args") or {})
+                        result_services = list(action_args.get("services") or [])
+                        if result_services and parsed_service_action:
+                            merged_services = []
+                            for idx, parsed_item in enumerate(parsed_service_action):
+                                normalized = dict(result_services[idx]) if idx < len(result_services) and isinstance(result_services[idx], dict) else {}
+                                normalized.update(parsed_item)
+                                merged_services.append(normalized)
+                            action_args["services"] = merged_services
+                        elif parsed_service_action:
+                            action_args["services"] = [dict(x) for x in parsed_service_action]
+                        first_explicit = parsed_service_action[0] if parsed_service_action else {}
+                        if first_explicit.get("coverage"):
+                            action_args["coverage"] = first_explicit["coverage"]
+                        if first_explicit.get("service_mode"):
+                            action_args["service_mode"] = first_explicit["service_mode"]
                         pending_action = {
                             "name": str(action.get("name") or "add_services"),
-                            "args": dict(action.get("args") or {}),
+                            "args": action_args,
                             "summary": str(result.get("summary") or ""),
                             "state": "awaiting_confirmation",
                             "status": "AWAITING_CONFIRMATION",
@@ -2257,11 +2277,9 @@ class AIManager:
                             if context_lines:
                                 summary = summary.split("\n\n")[0] + "\n" + "\n".join(context_lines) + "\n\nПодтверждаете?"
                         pending_action["summary"] = summary
-                        await self._save_history(
-                            telegram_id, role, "ai", summary,
-                            {"confirmation_required": True, "action": pending_action,
-                             "deterministic_parser": True},
-                        )
+                        # Do not persist the preview as a second chat message.
+                        # The current response renders pending_action.summary once.
+                        # Persist only the state, not a duplicate visible message.
                         # The deterministic parser is an internal implementation detail.
                         # Do not expose its tool-call payload to the partner UI: the UI must
                         # render exactly one human confirmation preview.
