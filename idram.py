@@ -142,8 +142,7 @@ class IdramProvider:
     ) -> PaymentIntent:
         """Create a payment intent.
 
-        * **Test mode:** returns a deterministic, already-settled
-          (``status='paid'``) fictitious transaction. No network.
+        * **Live-only mode:** no fictitious transaction is ever created.
         * **Live mode:** returns a ``status='pending'`` intent whose
           ``payment_url`` redirects the client to Idram; settlement is later
           confirmed via :meth:`verify_callback`.
@@ -191,7 +190,7 @@ class IdramProvider:
     def verify_callback(self, payload: dict) -> CallbackResult:
         """Verify an Idram result callback.
 
-        * **Test mode:** trusts the payload and reports ``paid`` (fictitious).
+        * **Live-only mode:** rejects callbacks when credentials are missing.
         * **Live mode:** honours Idram's two-step protocol — answers the
           pre-check (``EDP_PRECHECK=YES``) and validates the ``EDP_CHECKSUM``
           MD5 signature on the settlement callback before accepting the payment.

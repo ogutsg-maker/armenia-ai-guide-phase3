@@ -75,3 +75,10 @@ def test_refund_settlement_closes_qr():
     src = read("data_core.py")
     block = src[src.index("def reconcile_refund"):src.index("def marketplace_existing_payment",src.index("def reconcile_refund"))]
     assert "status IN ('active','checked_in','expired')" in block
+
+def test_idram_is_live_only_and_has_no_fake_settlement():
+    src = read("idram.py")
+    assert "TEST-IDRAM-" not in src
+    block = src[src.index("def create_invoice"):src.index("def build_payment_url")]
+    assert 'status="paid"' not in block
+    assert "Idram live credentials are not configured" in block
