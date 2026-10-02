@@ -19,6 +19,11 @@ import secrets
 import os
 
 import platform_db
+from lifecycle_contract import (
+    require_transition, validate_booking_price, commission_amount,
+    payment_may_confirm, qr_may_activate, qr_may_checkin,
+    contacts_may_disclose,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -5012,24 +5017,20 @@ def create_marketplace_booking_from_agreed_negotiation(*, negotiation_id: int, c
     except (TypeError, ValueError):
         return None
 
-    if exact is not None:
-        base = exact
-        agreed_min = agreed_max = exact
-    elif agreed_min is not None and agreed_max is not None and agreed_min > 0 and agreed_max >= agreed_min:
-        base = round((agreed_min + agreed_max) / 2.0, 2)
-    else:
+    try:
+        base, agreed_min, agreed_max = validate_booking_price(
+            exact=exact, agreed_min=agreed_min, agreed_max=agreed_max
+        )
+    except ValueError:
         return None
 
     commission_type, commission_value = resolve_service_commission(service)
-    if commission_type == "fixed":
-        commission = round(float(commission_value), 2)
-        partner_amount = round(base - commission, 2)
-    elif commission_type == "inside":
-        commission = round(base * float(commission_value) / 100.0, 2)
-        partner_amount = round(base - commission, 2)
-    else:
-        commission = round(base * float(commission_value) / 100.0, 2)
-        partner_amount = round(base, 2)
+    try:
+        commission, partner_amount = commission_amount(
+            base, commission_type, commission_value
+        )
+    except ValueError:
+        return None
 
     result = marketplace_persist_negotiation_booking(
         request_id=request_id,
