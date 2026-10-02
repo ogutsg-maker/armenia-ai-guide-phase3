@@ -29,6 +29,7 @@ from partner_directions_api import register_partner_direction_routes
 from admin_ai_api import admin_ai_message, register_admin_ai_routes
 from admin_stats_api import register_admin_stats_routes
 from marketplace_flow_api import register_marketplace_flow_routes
+from client_api import register_client_routes
 import runtime_platform_bootstrap  # noqa: F401
 
 try:
@@ -336,6 +337,7 @@ async def main():
     register_partner_direction_routes(app, db, bot=bot, ensure_schema=False)
     register_admin_stats_routes(app)
     register_marketplace_flow_routes(app, ensure_schema=False)
+    register_client_routes(app, ai)
     register_admin_ai_routes(app, ai=ai, bot=bot)
     logger.info("✅ Business/application layer registered")
     logger.info("✅ Partner direction routes registered")
