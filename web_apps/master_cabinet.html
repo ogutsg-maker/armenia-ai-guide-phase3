@@ -229,7 +229,7 @@ async function loadNotifications(){const d=await api('/api/master/current/notifi
 function renderApplications(){
   document.getElementById('applications').innerHTML='<div class="heading"><div><h1>📨 '+tr('applications')+'</h1><p>Այստեղ ընթացիկ հայտերն են։ Նոր ընկերության առաջին ծառայության հայտը պահպանում է ամբողջ ընկերության կոնտեքստը։</p></div><div class="actions"><button class="btn secondary" onclick="openMain(\'businesses\')">← '+tr('businesses')+'</button><button class="btn secondary" onclick="loadApplications().then(renderApplications)">↻</button></div></div><div class="list">'+
   (applicationRows().length?applicationRows().map(a=>{
-    const documentRequired=a.document_required!==false && ['pending_admin','document_pending','document_under_review'].includes(String(a.status||''));
+    const documentRequired=a.document_required!==false && ['pending_partner','pending_admin','document_pending','document_under_review'].includes(String(a.status||''));
     const needsDoc=documentRequired && !a.document_id;
     const doc=a.document_id
       ?'<span class="chip ok">📄 '+tr('document')+'</span>'
