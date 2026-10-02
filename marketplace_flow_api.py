@@ -212,8 +212,9 @@ async def test_payment(request):
         check=existing.get('checkin')
         display=data_core.get_partner_booking_display(existing['booking']['partner_id'])
         partner=display['partner'] if display else {}
-        locations=display['locations'] if display else []
-        return web.json_response({'ok':True,'payment':existing.get('payment'),'booking':existing['booking'],
+        existing_payment=existing.get('payment') or {}
+        locations=display['locations'] if display and str(existing_payment.get('status') or '').lower()=='paid' else []
+        return web.json_response({'ok':True,'payment':existing_payment,'booking':existing['booking'],
                                   'checkin':check,'qr':qr_util.qr_data_uri(check['token']) if check else None,
                                   'partner':{'business_name':partner.get('business_name'),'locations':locations,'contact':{}}})
     st=_state(n)
@@ -235,7 +236,9 @@ async def test_payment(request):
     booking,payment,check=persisted['booking'],persisted['payment'],persisted.get('checkin')
     display=data_core.get_partner_booking_display(int(n['partner_id']))
     if not display:return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
-    partner,locations=display['partner'],display['locations']
+    partner=display['partner']
+    payment_confirmed=str((payment or {}).get('status') or '').lower()=='paid'
+    locations=display['locations'] if payment_confirmed else []
     contact=data_core.get_paid_booking_contact(int(booking['id']), actor_role='client', actor_id=uid)
     try:
         from notify import notify
@@ -351,7 +354,8 @@ async def direct_booking(request):
     if not display:
         return web.json_response({'ok':False,'error':'partner_not_available'},status=404)
     partner = display['partner']
-    locations = display['locations']
+    payment_confirmed = str((payment or {}).get('status') or '').lower() == 'paid'
+    locations = display['locations'] if payment_confirmed else []
     contact = data_core.get_paid_booking_contact(int(booking['id']), actor_role='client', actor_id=uid)
     details = {
         'business_name': partner['business_name'], 'locations': locations, 'contact': contact,
