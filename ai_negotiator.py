@@ -125,8 +125,8 @@ class AINegotiator:
             return {"ok": False, "error": "invalid_actor"}
 
         state = self._state(negotiation)
-        state.setdefault("client_agreed", False)
-        state.setdefault("partner_agreed", False)
+        state.setdefault("client_accepted", False)
+        state.setdefault("partner_accepted", False)
         state.setdefault("proposals", [])
 
         if insert_msg:
@@ -143,8 +143,8 @@ class AINegotiator:
             state["proposed_price_min"] = price["min"]
             state["proposed_price_max"] = price["max"]
             state["proposed_price"] = price["single"]
-            state["client_agreed"] = False
-            state["partner_agreed"] = False
+            state["client_accepted"] = False
+            state["partner_accepted"] = False
 
         extracted = await self._background_extract(text, state)
         if extracted:
@@ -172,9 +172,9 @@ class AINegotiator:
             return {"ok": True, "status": "cancelled", "state": state}
 
         if accepted:
-            state["client_agreed" if actor == "client" else "partner_agreed"] = True
+            state["client_accepted" if actor == "client" else "partner_accepted"] = True
 
-        both_agreed = bool(state.get("client_agreed") and state.get("partner_agreed"))
+        both_agreed = bool(state.get("client_accepted") and state.get("partner_accepted"))
         if both_agreed:
             pmin = state.get("proposed_price_min")
             pmax = state.get("proposed_price_max")
