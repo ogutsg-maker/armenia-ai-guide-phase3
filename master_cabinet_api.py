@@ -1371,17 +1371,6 @@ async def api_negotiation_messages(request: web.Request):
     return await partner_negotiation_messages(request)
 
 
-async def api_negotiation_reply(request: web.Request):
-    uid = _auth_partner(request)
-    from marketplace_flow_api import partner_reply
-    return await partner_reply(request)
-
-
-async def api_negotiation_agree(request: web.Request):
-    uid = _auth_partner(request)
-    from marketplace_flow_api import partner_agree
-    return await partner_agree(request)
-
 
 def register_master_cabinet_routes(app, db=None, bot=None):
     """Register the complete current partner cabinet API.
@@ -1407,7 +1396,6 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     app.router.add_get("/api/master/{id}/bookings", api_bookings)
     app.router.add_get("/api/master/{id}/negotiations", api_negotiations)
     app.router.add_get("/api/master/{id}/negotiations/{negotiation_id}", api_negotiation_messages)
-    app.router.add_post("/api/master/{id}/negotiations/{negotiation_id}/message", api_negotiation_reply)
     app.router.add_get("/api/master/{id}/applications", api_applications)
     # GET /documents is owned by stage3_partner_verification.api_partner_documents.
     # Keep a single route so document reads cannot be shadowed by a legacy handler.

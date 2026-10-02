@@ -88,6 +88,11 @@ def test_obsolete_storefront_pages_are_removed():
     assert not (ROOT / "web_apps/partner_negotiations.html").exists()
     assert not (ROOT / "storefront_api.py").exists()
 
+def test_admin_cabinet_has_no_direct_company_delete_ui():
+    src = read("web_apps/admin.html")
+    assert "deleteCompany(" not in src
+    assert "/businesses/'+pid" not in src
+
 def test_partner_cabinet_has_no_direct_service_creation_ui():
     src = read("web_apps/master_cabinet.html")
     assert "serviceCreateModal" not in src
@@ -148,6 +153,8 @@ def test_partner_negotiation_and_application_mutations_do_not_bypass_ai():
     src = read("master_cabinet_api.py")
     assert 'add_post("/api/master/{id}/negotiations/{negotiation_id}/agree"' not in src
     assert 'add_post("/api/master/{id}/negotiations/{negotiation_id}/message"' not in src
+    assert "api_negotiation_reply" not in src
+    assert "api_negotiation_agree" not in src
     assert 'add_put("/api/master/{id}/applications/{application_id}"' not in src
     assert 'add_post("/api/master/{id}/applications/{application_id}/submit"' not in src
     assert 'add_delete("/api/master/{id}/applications/{application_id}"' not in src
