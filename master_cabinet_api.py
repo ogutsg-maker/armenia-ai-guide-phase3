@@ -22,7 +22,6 @@ try:
 except Exception:
     AsyncGroq = None
 
-from partner_registration_ai import _groq_json, _norm, _safe_int
 from partner_ai_assistant_api import api_ai_command, api_ai_command_confirm
 
 
