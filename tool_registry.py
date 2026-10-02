@@ -876,9 +876,9 @@ class ToolRegistry:
                     return gate
                 return gate
             if name == "admin_activate_application_services":
-                return data_core.admin_activate_application_services(
+                return data_core.prepare_application_service_activation(
                     application_id=int(args["application_id"]),
-                    admin_telegram_id=int(context.user_id),
+                    actor_user_id=self.telegram_id,
                 )
 
             if name == "admin_reject_application":
