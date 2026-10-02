@@ -4918,6 +4918,78 @@ def marketplace_persist_negotiation_booking(*,request_id:int,negotiation_id:int,
         logging.getLogger(__name__).exception("Failed to persist marketplace booking")
         return None
 
+def create_marketplace_booking_from_agreed_negotiation(*, negotiation_id: int, client_id: int) -> dict[str, Any] | None:
+    """Create the real booking after the client explicitly presses Book."""
+    negotiation = get_negotiation(
+        int(negotiation_id), actor_role="client", actor_id=int(client_id)
+    )
+    if not negotiation or str(negotiation.get("status") or "").lower() != "agreed":
+        return None
+
+    partner_id = int(negotiation.get("partner_id") or 0)
+    service_id = int(negotiation.get("service_id") or 0)
+    request_id = int(negotiation.get("request_id") or 0)
+    if not partner_id or not service_id or not request_id:
+        return None
+
+    service = get_service(service_id)
+    if not service or int(service.get("partner_id") or 0) != partner_id:
+        return None
+    if str(service.get("status") or "").lower() != "active":
+        return None
+
+    state = negotiation.get("state_json") or {}
+    if isinstance(state, str):
+        try:
+            state = json.loads(state)
+        except Exception:
+            state = {}
+    if not isinstance(state, dict):
+        state = {}
+
+    exact = state.get("agreed_price")
+    agreed_min = state.get("agreed_min")
+    agreed_max = state.get("agreed_max")
+    try:
+        exact = float(exact) if exact is not None else None
+        agreed_min = float(agreed_min) if agreed_min is not None else None
+        agreed_max = float(agreed_max) if agreed_max is not None else None
+    except (TypeError, ValueError):
+        return None
+
+    if exact is not None:
+        base = exact
+        agreed_min = agreed_max = exact
+    elif agreed_min is not None and agreed_max is not None and agreed_min > 0 and agreed_max >= agreed_min:
+        base = round((agreed_min + agreed_max) / 2.0, 2)
+    else:
+        return None
+
+    commission_type, commission_value = resolve_service_commission(service)
+    if commission_type == "fixed":
+        commission = round(float(commission_value), 2)
+        partner_amount = round(base - commission, 2)
+    elif commission_type == "inside":
+        commission = round(base * float(commission_value) / 100.0, 2)
+        partner_amount = round(base - commission, 2)
+    else:
+        commission = round(base * float(commission_value) / 100.0, 2)
+        partner_amount = round(base, 2)
+
+    result = marketplace_persist_negotiation_booking(
+        request_id=request_id,
+        negotiation_id=int(negotiation_id),
+        client_id=int(client_id),
+        partner_id=partner_id,
+        service=service,
+        status="pending_partner_confirmation",
+        price=base,
+        currency=str(service.get("currency") or "AMD"),
+        commission=commission,
+        partner_amount=partner_amount,
+    )
+    return result
+
 def get_admin_setting(key: str, default: str = "") -> str:
     row = one("SELECT value_json FROM admin_settings WHERE key=%s", (str(key),))
     if not row or row.get("value_json") is None:
