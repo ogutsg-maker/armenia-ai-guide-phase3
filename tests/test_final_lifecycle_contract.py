@@ -18,6 +18,17 @@ def test_partner_registration_is_minimal():
     assert "/api/webapp/partner/start" in html
     assert "/api/webapp/partner/message" not in html
 
+def test_potential_partner_lifecycle_is_connected():
+    api = read("admin_ai_api.py")
+    ui = read("web_apps/admin.html")
+    helper = read("potential_partner_ai.py")
+    assert "async def potential_research(" in api
+    assert "async def potential_structure(" in api
+    assert "async def potential_invite(" in api
+    assert "/api/admin/potential-partners/research" in ui
+    assert "/api/admin/potential-partners/{id}/invite" not in ui
+    assert "async def structure_candidate(" in helper
+
 def test_partner_ai_router_uses_unified_partner_context():
     src = read("ai_router.py")
     assert "from partner_ai import PartnerAI" not in src
