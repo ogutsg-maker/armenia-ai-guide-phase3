@@ -28,6 +28,7 @@ from partner_business_application_api import register_business_application_route
 from partner_directions_api import register_partner_direction_routes
 from admin_ai_api import admin_ai_message, register_admin_ai_routes
 from admin_stats_api import register_admin_stats_routes
+from marketplace_flow_api import register_marketplace_flow_routes
 import runtime_platform_bootstrap  # noqa: F401
 
 try:
@@ -59,10 +60,12 @@ def _ensure_runtime_schema() -> None:
     from stage3_partner_verification import ensure_stage3_schema
     from partner_business_application_api import ensure_business_application_schema
     from partner_directions_api import ensure_partner_direction_schema
+    from booking_schema import ensure_booking_schema
 
     ensure_stage3_schema()
     ensure_business_application_schema()
     ensure_partner_direction_schema()
+    ensure_booking_schema()
 
 
 def webapp_url(path: str) -> str:
@@ -332,6 +335,7 @@ async def main():
     register_business_application_routes(app, bot_token=BOT_TOKEN, admin_id=ADMIN_ID, ensure_schema=False)
     register_partner_direction_routes(app, db, bot=bot, ensure_schema=False)
     register_admin_stats_routes(app)
+    register_marketplace_flow_routes(app, ensure_schema=False)
     register_admin_ai_routes(app, ai=ai, bot=bot)
     logger.info("✅ Business/application layer registered")
     logger.info("✅ Partner direction routes registered")
