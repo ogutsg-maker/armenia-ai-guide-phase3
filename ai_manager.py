@@ -2109,7 +2109,7 @@ class AIManager:
                         telegram_id, role, {"pending_action": new_pending}
                     )
                     # Confirmation card is the only visible preview; do not duplicate it as chat text.
-                    return {"reply": "", "confirmation_required": True, "pending_action": new_pending}
+                    return {"reply": str(new_pending.get("summary") or ""), "confirmation_required": True, "pending_action": new_pending}
                 return {"reply": result.get("reply") or self._error_text(language)}
 
         if role == ContextType.ADMIN:
