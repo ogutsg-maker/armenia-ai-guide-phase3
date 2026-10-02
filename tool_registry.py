@@ -455,6 +455,16 @@ class ToolRegistry:
                 contexts=a,
             ),
             self._spec(
+                "admin_get_potential_partners",
+                "List potential partners researched from real sources. Potential partners are not registered partners and must never be presented as active partners.",
+                {
+                    "status": _nullable("string"),
+                    "query": _nullable("string"),
+                    "limit": {"type": "integer"},
+                },
+                contexts=a,
+            ),
+            self._spec(
                 "admin_get_pending_applications",
                 "List partner applications currently awaiting administrative moderation.",
                 {"limit": {"type": "integer"}},
@@ -740,6 +750,12 @@ class ToolRegistry:
                     mappings=mappings,
                     actor_user_id=self.telegram_id,
                 )
+
+            if name == "admin_get_potential_partners":
+                return {"ok": True, "items": data_core.potential_partners(
+                    status=args.get("status"),
+                    query=args.get("query"),
+                )[:max(1, min(int(args.get("limit") or 50), 200))]}
 
             if name == "admin_get_pending_applications":
                 return {"ok": True, "items": data_core.admin_get_pending_applications(
