@@ -144,7 +144,7 @@ def service_activation_allowed(
 
 
 def potential_partner_may_invite(status: str) -> bool:
-    return str(status or "").lower() in {"new", "reviewed", "interested"}
+    return str(status or "").lower() in {"new", "researched", "ready_for_review", "contacted", "interested"}
 
 
 def potential_partner_may_link(status: str) -> bool:
