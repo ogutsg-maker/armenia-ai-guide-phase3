@@ -1872,7 +1872,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         company_document = None
         current_business_status = str(business.get("status") or "").lower()
         next_business_status = (
-            "active" if current_business_status == "active" else "pending_document"
+            "active" if current_business_status == "active" else "pending"
         )
         cur.execute(
             """UPDATE partner_businesses
@@ -3625,13 +3625,13 @@ def ensure_direction_verification_case(
     if not direction:
         direction = one(
             """INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
-               VALUES(%s,%s,%s,'pending_document') RETURNING id,partner_id,business_id,master_category_id,status,rejection_reason""",
+               VALUES(%s,%s,%s,'pending') RETURNING id,partner_id,business_id,master_category_id,status,rejection_reason""",
             (int(partner_id), int(business_id), int(master_category_id)),
         )
     elif str(direction.get("status") or "").lower() not in {"approved", "frozen"}:
         direction = one(
             """UPDATE partner_directions
-               SET status='pending_document',updated_at=NOW()
+               SET status='pending',updated_at=NOW()
                WHERE id=%s
                RETURNING id,partner_id,business_id,master_category_id,status,rejection_reason""",
             (int(direction["id"]),),
