@@ -4862,14 +4862,23 @@ def marketplace_create_negotiation_selection(request_id:int,client_id:int,servic
                 JOIN services s ON s.id=%s
                 JOIN partners p ON p.id=s.partner_id
                 WHERE sr.id=%s AND sr.client_id=%s
+                  AND sr.status='searching'
                   AND s.status='active'
                   AND p.status='approved'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM partner_businesses pb
+                      WHERE pb.id=s.business_id
+                        AND pb.partner_id=s.partner_id
+                        AND pb.status='active'
+                  )
                   AND EXISTS (
                       SELECT 1
                       FROM partner_direction_categories pdc
                       JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
                       WHERE pdc.category_id=s.category_id
                         AND pd.partner_id=s.partner_id
+                        AND pd.business_id=s.business_id
                         AND pd.status='approved'
                   )""",
              (int(service_id),int(request_id),int(client_id)))
@@ -5034,6 +5043,27 @@ def create_marketplace_booking_from_agreed_negotiation(*, negotiation_id: int, c
     if not service or int(service.get("partner_id") or 0) != partner_id:
         return None
     if str(service.get("status") or "").lower() != "active":
+        return None
+    business_id = int(service.get("business_id") or 0)
+    if not business_id:
+        return None
+    business = get_company(business_id)
+    if not business or int(business.get("partner_id") or 0) != partner_id:
+        return None
+    if str(business.get("status") or "").lower() != "active":
+        return None
+    direction_ok = one(
+        """SELECT 1
+           FROM partner_direction_categories pdc
+           JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
+           WHERE pdc.category_id=%s
+             AND pd.partner_id=%s
+             AND pd.business_id=%s
+             AND pd.status='approved'
+           LIMIT 1""",
+        (int(service.get("category_id") or 0), partner_id, business_id),
+    )
+    if not direction_ok:
         return None
 
     state = negotiation.get("state_json") or {}
