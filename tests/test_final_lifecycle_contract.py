@@ -226,3 +226,10 @@ def test_partner_cabinet_has_no_direct_company_service_address_mutations():
     for marker in ("createBusiness(", "deleteBusiness(", "addAddress(", "deleteAddress(", "saveCompanyEdit(", "editCompany(", "editObject(", "saveObjectEdit(", "editService(", "saveServiceEdit(", "deleteService(", "deleteApplication("):
         assert marker not in src
     assert "AI-օպերատոր" in src
+
+
+def test_admin_ui_has_no_direct_tariff_mutation_functions():
+    src = read("web_apps/admin.html")
+    assert "saveMasterTariff(" not in src
+    assert "saveCategorySettings(" not in src
+    assert "masterAction(" not in src
