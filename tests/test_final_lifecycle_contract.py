@@ -83,11 +83,19 @@ def test_idram_is_live_only_and_has_no_fake_settlement():
     assert 'status="paid"' not in block
     assert "Idram live credentials are not configured" in block
 
-def test_storefront_has_no_test_payment_or_early_qr_message():
-    src = read("web_apps/storefront.html")
-    assert "Тестовая оплата Idram" not in src
-    assert "QR для check-in выдаётся сразу" not in src
-    assert "только после подтверждённой оплаты" in src
+def test_obsolete_storefront_pages_are_removed():
+    assert not (ROOT / "web_apps/storefront.html").exists()
+    assert not (ROOT / "web_apps/partner_negotiations.html").exists()
+    assert not (ROOT / "storefront_api.py").exists()
+
+def test_partner_cabinet_has_no_direct_service_creation_ui():
+    src = read("web_apps/master_cabinet.html")
+    assert "serviceCreateModal" not in src
+    assert "submitNewService(" not in src
+    assert "analyzeServiceText(" not in src
+    assert "startServiceVoice(" not in src
+    assert "addService(" not in src
+    assert "saveGeneralSetting(" not in src
 
 def test_direct_booking_contract_waits_for_partner_confirmation():
     src = read("marketplace_flow_api.py")
@@ -139,6 +147,7 @@ def test_partner_cabinet_has_no_direct_business_object_service_mutation_routes()
 def test_partner_negotiation_and_application_mutations_do_not_bypass_ai():
     src = read("master_cabinet_api.py")
     assert 'add_post("/api/master/{id}/negotiations/{negotiation_id}/agree"' not in src
+    assert 'add_post("/api/master/{id}/negotiations/{negotiation_id}/message"' not in src
     assert 'add_put("/api/master/{id}/applications/{application_id}"' not in src
     assert 'add_post("/api/master/{id}/applications/{application_id}/submit"' not in src
     assert 'add_delete("/api/master/{id}/applications/{application_id}"' not in src
