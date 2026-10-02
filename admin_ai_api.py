@@ -1030,7 +1030,7 @@ async def _admin_execute_state_action(action, admin_telegram_id=None):
                 application_id=aid,
                 admin_telegram_id=int(admin_telegram_id),
             )
-            if isinstance(result, dict) and result.get("already_active"):
+            if isinstance(result, dict) and result.get("already_approved"):
                 return "✓ Заявка #"+str(aid)+" уже одобрена."
             return "✓ Заявка #"+str(aid)+" одобрена. Услуги подготовлены со статусом «approved»; их активация выполняется отдельным подтверждённым шагом."
         except ValueError as exc:
