@@ -9,37 +9,37 @@
 </style>
 </head>
 <body>
-<div id="auth" class="auth"><div class="authbox"><h2>👑 Armenia AI Guide</h2><p id="authText">Ստուգում ենք մուտքը… / Проверяем вход…</p><div id="authError" class="error" style="display:none"></div><button id="retry" class="btn" style="display:none">🔄 Կրկնել</button></div></div>
+<div id="auth" class="auth"><div class="authbox"><h2>👑 Armenia AI Guide</h2><p id="authText">Ստուգում ենք մուտքը… / Ստուգում ենք մուտքը…</p><div id="authError" class="error" style="display:none"></div><button id="retry" class="btn" style="display:none">🔄 Կրկնել</button></div></div>
 <div id="app" style="display:none">
 <header><b>👑 Armenia AI Guide — Ադմինիստրացիա</b><small>Գործընկերներ · ուղղություններ · պատվերներ · AI · ֆինանսներ</small></header>
 <nav>
-<button data-page="partners">🔎 Ռեեստր</button><button data-page="cats">📂 Ուղղություններ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="applications">📨 Հայտեր</button><button data-page="ai">🤖 AI</button><button data-page="aiCosts">💳 AI ծախսեր</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Настройки</button>
+<button data-page="partners">🔎 Ռեեստր</button><button data-page="cats">📂 Ուղղություններ</button><button data-page="orders">📦 Պատվերներ</button><button data-page="disputes">⚖️ Արբիտրաժ</button><button data-page="potential">🔎 Հնարավոր գործընկերներ</button><button data-page="proposals">🧠 AI առաջարկներ</button><button data-page="applications">📨 Հայտեր</button><button data-page="ai">🤖 AI</button><button data-page="aiCosts">💳 AI ծախսեր</button><button onclick="location.href=&quot;admin_settings.html&quot;">⚙️ Կարգավորումներ</button>
 </nav>
 <main>
 
 <section id="partners" class="page">
 <div class="card registry-shell">
-<div class="registry-search"><span>🔎</span><input id="registryQ" placeholder="Поиск компании, услуги, Telegram..."><button class="btn" onclick="registrySearch()">Найти</button></div>
+<div class="registry-search"><span>🔎</span><input id="registryQ" placeholder="Որոնել ընկերություն, ծառայություն, Telegram…"><button class="btn" onclick="registrySearch()">Որոնել</button></div>
 <div class="registry-types" id="registryTypes">
-<button class="btn active" data-regtype="companies" onclick="registrySetType('companies')">Компании</button>
-<button class="btn soft" data-regtype="services" onclick="registrySetType('services')">Услуги</button>
-<button class="btn soft" data-regtype="bookings" onclick="registrySetType('bookings')">Брони</button>
-<button class="btn soft" data-regtype="payments" onclick="registrySetType('payments')">Оплаты</button>
-<button class="btn soft" data-regtype="partners" onclick="registrySetType('partners')">Партнёры</button>
-<button class="btn soft" data-regtype="applications" onclick="registrySetType('applications')">Заявки</button>
+<button class="btn active" data-regtype="companies" onclick="registrySetType('companies')">Ընկերություններ</button>
+<button class="btn soft" data-regtype="services" onclick="registrySetType('services')">Ծառայություններ</button>
+<button class="btn soft" data-regtype="bookings" onclick="registrySetType('bookings')">Ամրագրումներ</button>
+<button class="btn soft" data-regtype="payments" onclick="registrySetType('payments')">Վճարումներ</button>
+<button class="btn soft" data-regtype="partners" onclick="registrySetType('partners')">Գործընկերներ</button>
+<button class="btn soft" data-regtype="applications" onclick="registrySetType('applications')">Հայտեր</button>
 </div>
 <div id="registryFilters" class="registry-filters"></div>
 <div class="registry-summary" id="registrySummary"></div>
 <div id="registryResults"></div>
 </div></section>
 
-<section id="cats" class="page"><div class="card"><b>📂 Կատալոգ</b><div class="muted">Ուղղություններ, ենթակատեգորիաներ և тарифներ։ Existing IDs are preserved.</div></div><div id="catsList"></div></section>
+<section id="cats" class="page"><div class="card"><b>📂 Կատալոգ</b><div class="muted">Ուղղություններ, ենթակատեգորիաներ և тарифներ։ Գոյություն ունեցող ID-ները պահպանվում են։</div></div><div id="catsList"></div></section>
 <section id="orders" class="page"><div class="card"><div class="row"><div><b>📦 Պատվերներ և գործարքների տնտեսագիտություն</b><div class="muted">Հանձնաժողով · AI ծախս · նախնական արդյունք</div></div><button class="btn soft" onclick="loadOrders()">↻</button></div></div><div id="ordersList"></div><div id="orderEconomics"></div></section>
 <section id="disputes" class="page"><div id="disputesList"></div></section>
 <section id="potential" class="page"><div class="card"><b>🔎 Հնարավոր գործընկերներ</b><div class="muted">Միայն իրական աղբյուրներից ստացված տվյալներ։</div><input id="researchQuery" placeholder="Օր․ beauty salons in Arabkir"><textarea id="researchText" placeholder="Կամ տեղադրեք աղբյուրի տեքստը"></textarea><div class="actions"><button class="btn" onclick="runResearch()">🔎 AI որոնել</button><button class="btn ok" onclick="structurePotential()">🤖 Կառուցվածքավորել</button></div></div><div id="potentialList"></div></section>
 <section id="proposals" class="page"><div class="card"><b>🧠 AI կատալոգի առաջարկներ</b><div class="muted">Նոր ուղղություններ և գործընկերների առաջարկած նոր ենթակատեգորիաներ։</div><button class="btn soft" onclick="loadProposals()">↻</button></div><div id="proposalList"></div><div class="card"><b>🏷 Նոր ենթակատեգորիաներ գործընկերներից</b><div class="muted">Գործընկերը չի ստեղծում կատեգորիան ինքնուրույն. առաջարկը նախ ստուգվում է ադմինի կողմից։</div><button class="btn soft" onclick="loadSubcategoryProposals()">↻</button></div><div id="subcategoryProposalList"></div><div class="card"><b>🧭 Նոր ուղղության հարցումներ գործընկերներից</b><div class="muted">AI-ն այստեղ ուղարկում է այն ծառայությունները, որոնք դուրս են գործընկերոջ արդեն հաստատված ուղղություններից։</div><button class="btn soft" onclick="loadServiceDirectionRequests()">↻</button></div><div id="serviceDirectionRequestList"></div></section>
 <section id="applications" class="page"><div class="card"><div class="row"><div><h2>📨 Գործընկերների հայտեր</h2><div class="muted">AI-ի կազմած ամբողջական հայտեր՝ բիզնես, տեղադրություն, ուղղություն, ենթաուղղություն, ծառայություն և փաստաթուղթ։</div></div><button class="btn soft" onclick="loadApplications()">↻</button></div><div id="applicationsList"><div class="notice">Գործողությունները կատարեք AI-սեկretարի միջոցով՝ նախադիտմամբ և հաստատումից հետո։</div></div></div></section>
-<section id="aiCosts" class="page"><div class="card"><div class="row"><div><h2>💳 AI ծախսեր և տնտեսագիտություն</h2><div class="muted">Բոլոր AI provider-ները և մոդելները՝ ըստ շղթայի, փուլի, partner-ի և token usage-ի։</div></div><div style="display:flex;gap:7px;align-items:center"><select id="aiCostDays"><option value="1">1 օր</option><option value="7">7 օր</option><option value="30" selected>30 օր</option><option value="90">90 օր</option></select><button class="btn soft" onclick="loadAiCosts()">↻</button></div></div></div><div class="grid" id="aiCostStats"></div><div class="card"><b>🤝 Ըստ գործընկերոջ</b><div id="aiCostPartners"></div></div><div class="card"><b>🧠 Ըստ provider / model</b><div id="aiCostProviders"></div></div><div class="card"><b>🔎 Վերջին AI գործողությունները</b><div id="aiCostRows"></div></div><div class="card"><div class="row"><div><b>📊 Գործարքների տնտեսագիտություն</b><div class="muted">Ընդհանուր հանձնաժողովը, AI ծախսը և արդյունքը</div></div><button class="btn soft" onclick="loadProjectEconomics()">↻</button></div><div class="grid" id="projectEconomicsStats" style="margin-top:10px"></div><div class="detail" id="projectEconomicsStages"><div class="card"><div class="row"><div><b>🤝 Տնտեսագիտություն ըստ գործընկերների</b><div class="muted">Հանձնաժողով · AI · այլ ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadPartnerEconomics()">↻</button></div><div id="partnerEconomicsRows" class="detail"></div></div><div class="card"><div class="row"><div><b>🏢 Տնտեսագիտություն ըստ ընկերությունների</b><div class="muted">Ընկերություն · գործընկեր · AI · ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadCompanyEconomics()">↻</button></div><div id="companyEconomicsRows" class="detail"></div></div></div></div></section><section id="ai" class="page"><div class="card"><div class="row"><div><h2>🤖 AI-սեկретар</h2><div class="muted">Խոսեք սովորական լեզվով։ AI-ը տեսնում է հայտերը և կարող է կատարել հաստատվող գործողություններ։</div></div><span class="badge green">Groq · AI-first</span></div><div id="adminAiChat" style="margin-top:12px;max-height:430px;overflow:auto;border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f8fafc"></div><div style="display:flex;gap:8px;margin-top:10px"><textarea id="adminAiInput" placeholder="Օր․ Ցույց տուր նոր հայտերը / Открой заявку 36 / Поставь заявке 36 категорию Брови" style="min-height:55px"></textarea><button class="btn" onclick="sendAdminAI()" style="align-self:flex-end">➤</button></div><div class="muted" style="margin-top:8px">AI попросит подтверждение только перед изменением данных.</div></div></section>
+<section id="aiCosts" class="page"><div class="card"><div class="row"><div><h2>💳 AI ծախսեր և տնտեսագիտություն</h2><div class="muted">Բոլոր AI provider-ները և մոդելները՝ ըստ շղթայի, փուլի, partner-ի և token usage-ի։</div></div><div style="display:flex;gap:7px;align-items:center"><select id="aiCostDays"><option value="1">1 օր</option><option value="7">7 օր</option><option value="30" selected>30 օր</option><option value="90">90 օր</option></select><button class="btn soft" onclick="loadAiCosts()">↻</button></div></div></div><div class="grid" id="aiCostStats"></div><div class="card"><b>🤝 Ըստ գործընկերոջ</b><div id="aiCostPartners"></div></div><div class="card"><b>🧠 Ըստ provider / model</b><div id="aiCostProviders"></div></div><div class="card"><b>🔎 Վերջին AI գործողությունները</b><div id="aiCostRows"></div></div><div class="card"><div class="row"><div><b>📊 Գործարքների տնտեսագիտություն</b><div class="muted">Ընդհանուր հանձնաժողովը, AI ծախսը և արդյունքը</div></div><button class="btn soft" onclick="loadProjectEconomics()">↻</button></div><div class="grid" id="projectEconomicsStats" style="margin-top:10px"></div><div class="detail" id="projectEconomicsStages"><div class="card"><div class="row"><div><b>🤝 Տնտեսագիտություն ըստ գործընկերների</b><div class="muted">Հանձնաժողով · AI · այլ ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadPartnerEconomics()">↻</button></div><div id="partnerEconomicsRows" class="detail"></div></div><div class="card"><div class="row"><div><b>🏢 Տնտեսագիտություն ըստ ընկերությունների</b><div class="muted">Ընկերություն · գործընկեր · AI · ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadCompanyEconomics()">↻</button></div><div id="companyEconomicsRows" class="detail"></div></div></div></div></section><section id="ai" class="page"><div class="card"><div class="row"><div><h2>🤖 AI-սեկретар</h2><div class="muted">Խոսեք սովորական լեզվով։ AI-ը տեսնում է հայտերը և կարող է կատարել հաստատվող գործողություններ։</div></div><span class="badge green">Groq · AI-first</span></div><div id="adminAiChat" style="margin-top:12px;max-height:430px;overflow:auto;border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f8fafc"></div><div style="display:flex;gap:8px;margin-top:10px"><textarea id="adminAiInput" placeholder="Օր․ Ցույց տուր նոր հայտերը / Открой заявку 36 / Поставь заявке 36 категорию Брови" style="min-height:55px"></textarea><button class="btn" onclick="sendAdminAI()" style="align-self:flex-end">➤</button></div><div class="muted" style="margin-top:8px">AI-ը հաստատում կպահանջի միայն տվյալների փոփոխությունից առաջ։</div></div></section>
 </main></div>
 <script>
 const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[m]));let initData=(tg?.initData||'').trim();let rows=[];let filter='all';
@@ -47,7 +47,7 @@ async function api(url,opt={}){const headers={...(opt.headers||{})};if(initData)
 const post=(u,d)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
 function badge(s){const c=s==='approved'?'green':(['pending','under_review'].includes(s)?'yellow':(['rejected','blocked'].includes(s)?'red':''));return `<span class="badge ${c}">${esc(s||'—')}</span>`}
 function empty(el,text='Տվյալներ չկան'){el.innerHTML=`<div class="empty">${esc(text)}</div>`}
-async function auth(){if(!initData){$('authText').textContent='Բացեք այս էջը Telegram Mini App-ի ներսում։ / Откройте панель внутри Telegram.';$('retry').style.display='inline-block';return false}try{await api('/api/admin/auth');$('auth').style.display='none';$('app').style.display='block';return true}catch(e){$('authText').textContent='Մուտքը մերժված է։ / Доступ не разрешён.';$('authError').textContent=e.message;$('authError').style.display='block';$('retry').style.display='inline-block';return false}}
+async function auth(){if(!initData){$('authText').textContent='Բացեք այս էջը Telegram Mini App-ի ներսում։ / Բացեք վահանակը Telegram-ի ներսում։';$('retry').style.display='inline-block';return false}try{await api('/api/admin/auth');$('auth').style.display='none';$('app').style.display='block';return true}catch(e){$('authText').textContent='Մուտքը մերժված է։ / Մուտքը թույլատրված չէ։';$('authError').textContent=e.message;$('authError').style.display='block';$('retry').style.display='inline-block';return false}}
 $('retry').onclick=()=>location.reload();
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.page).classList.add('active');loadPage(b.dataset.page).catch(showError)});
 function showError(e){console.error(e);alert(e.message||e)}
@@ -91,12 +91,12 @@ async function registrySearch(){
  catch(e){$('registryResults').innerHTML=`<div class="error">${esc(e.message)}</div>`}
 }
 function renderRegistryResults(items){
- if(!items.length){$('registryResults').innerHTML='`<div class="registry-empty">По заданным условиям ничего не найдено</div>`';return}
+ if(!items.length){$('registryResults').innerHTML='`<div class="registry-empty">Տրված պայմաններով ոչինչ չի գտնվել</div>`';return}
  $('registryResults').innerHTML=items.map(x=>{
-   if(registryType==='companies')return `<div class="registry-row" onclick="openRegistryCompany(${Number(x.id)})"><div class="row"><b>🏢 ${esc(x.company_name||'Без названия')}</b>${badge(x.status)}</div><div class="meta"><span>📍 ${esc([x.marz,x.city,x.address].filter(Boolean).join(' · ')||'—')}</span><span>🛠 ${Number(x.service_count||0)} услуг</span><span>📄 ${Number(x.document_count||0)} документов</span><span>👤 ${esc(x.telegram_id||'—')}</span></div></div>`;
+   if(registryType==='companies')return `<div class="registry-row" onclick="openRegistryCompany(${Number(x.id)})"><div class="row"><b>🏢 ${esc(x.company_name||'Անվանում չկա')}</b>${badge(x.status)}</div><div class="meta"><span>📍 ${esc([x.marz,x.city,x.address].filter(Boolean).join(' · ')||'—')}</span><span>🛠 ${Number(x.service_count||0)} услуг</span><span>📄 ${Number(x.document_count||0)} документов</span><span>👤 ${esc(x.telegram_id||'—')}</span></div></div>`;
    if(registryType==='services')return `<div class="registry-row"><div class="row"><b>🛠 ${esc(x.service_name||'—')}</b><span>${x.price==null?'—':Number(x.price).toLocaleString()+' ֏'}</span></div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>📍 ${esc(x.marz||'')} ${esc(x.city||'')}</span><span>🧭 ${esc(x.direction||'—')} / ${esc(x.subcategory||'—')}</span><span>${badge(x.status)}</span></div></div>`;
    if(registryType==='bookings')return `<div class="registry-row"><div class="row"><b>📦 #${esc(x.id)} · ${esc(x.service_name||'—')}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>📍 ${esc(x.city||'—')}</span><span>💰 ${x.agreed_price==null?'—':Number(x.agreed_price).toLocaleString()+' '+esc(x.currency||'AMD')}</span><span>📅 ${esc(x.scheduled_at||x.created_at||'—')}</span></div></div>`;
-   if(registryType==='payments')return `<div class="registry-row"><div class="row"><b>💳 Заказ #${esc(x.order_id)}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>🛠 ${esc(x.service_name||'—')}</span><span>💰 ${x.agreed_price==null?'—':Number(x.agreed_price).toLocaleString()+' '+esc(x.currency||'AMD')}</span><span>Комиссия: ${x.commission_amount==null?'—':Number(x.commission_amount).toLocaleString()}</span></div></div>`;
+   if(registryType==='payments')return `<div class="registry-row"><div class="row"><b>💳 Պատվեր #${esc(x.order_id)}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>🛠 ${esc(x.service_name||'—')}</span><span>💰 ${x.agreed_price==null?'—':Number(x.agreed_price).toLocaleString()+' '+esc(x.currency||'AMD')}</span><span>Հանձնաժողով՝ ${x.commission_amount==null?'—':Number(x.commission_amount).toLocaleString()}</span></div></div>`;
    if(registryType==='partners')return `<div class="registry-row"><div class="row"><b>🤝 ${esc(x.partner_name||'Партнёр')}</b>${badge(x.status)}</div><div class="meta"><span>Telegram ${esc(x.telegram_id||'—')}</span><span>🏢 ${Number(x.company_count||0)} компаний</span></div></div>`;
    return `<div class="registry-row"><div class="row"><b>📨 Заявка #${esc(x.id)}</b>${badge(x.status)}</div><div class="meta"><span>🏢 ${esc(x.company_name||'—')}</span><span>👤 ${esc(x.telegram_id||'—')}</span><span>📅 ${esc(x.created_at||'—')}</span></div></div>`;
  }).join('');
@@ -106,13 +106,13 @@ async function openRegistryCompany(id){
  try{
    const d=await api('/api/admin/registry-company/'+id);const c=d.company||{},objects=d.objects||[],services=d.services||[],docs=d.documents||[],bookings=d.bookings||[];
    $('registryResults').innerHTML=`<div class="registry-detail"><button class="btn soft" onclick="registrySearch()">← Назад к списку</button><div class="card" style="margin-top:8px">
-   <div class="row"><div><h2 style="margin:0">🏢 ${esc(c.name||'—')}</h2><div class="muted">Партнёр: ${esc(c.partner_name||'—')} · Telegram ${esc(c.telegram_id||'—')}</div></div>${badge(c.status)}</div>
-   ${c.description?`<div class="detail"><b>Описание</b><div class="muted">${esc(c.description)}</div></div>`:''}${c.phone?`<div class="detail">☎ ${esc(c.phone)}</div>`:''}
-   <div class="registry-kpis" style="margin-top:10px"><div class="registry-kpi">📍 Адреса<b>${objects.length}</b></div><div class="registry-kpi">🛠 Услуги<b>${services.length}</b></div><div class="registry-kpi">📄 Документы<b>${docs.length}</b></div><div class="registry-kpi">📦 Брони<b>${bookings.length}</b></div></div>
-   <div class="registry-detail-section"><h3>📍 Адреса</h3>${objects.length?objects.map(o=>`<div class="item"><b>${esc(o.object_name||'Объект')}</b><div class="muted">${esc([o.marz,o.city,o.address].filter(Boolean).join(' · '))}</div></div>`).join(''):'<div class="empty">Нет адресов</div>'}</div>
-   <div class="registry-detail-section"><h3>🛠 Услуги</h3>${services.length?services.map(s=>`<div class="item"><div class="row"><b>${esc(s.name||'—')}</b><span>${s.price==null?'—':Number(s.price).toLocaleString()+' ֏'}</span></div><div class="muted">${esc(s.direction_name_am||s.direction_name_ru||'')} · ${esc(s.subcategory_name_am||s.subcategory_name_ru||'')} · ${badge(s.status)}</div></div>`).join(''):'<div class="empty">Нет услуг</div>'}</div>
-   <div class="registry-detail-section"><h3>📄 Документы</h3>${docs.length?docs.map(d=>`<div class="item"><div class="row"><span>📄 ${esc(d.original_filename||d.document_type||'document')}</span>${badge(d.status)}</div></div>`).join(''):'<div class="empty">Нет документов</div>'}</div>
-   <div class="registry-detail-section"><h3>📦 Брони</h3>${bookings.length?bookings.map(b=>`<div class="item"><div class="row"><span>#${esc(b.id)} · ${esc(b.service_name||'—')}</span>${badge(b.status)}</div><div class="muted">${esc(b.scheduled_at||b.created_at||'')} · ${b.agreed_price==null?'—':Number(b.agreed_price).toLocaleString()+' '+esc(b.currency||'AMD')}</div></div>`).join(''):'<div class="empty">Нет бронирований</div>'}</div>
+   <div class="row"><div><h2 style="margin:0">🏢 ${esc(c.name||'—')}</h2><div class="muted">Գործընկեր՝ ${esc(c.partner_name||'—')} · Telegram ${esc(c.telegram_id||'—')}</div></div>${badge(c.status)}</div>
+   ${c.description?`<div class="detail"><b>Նկարագրություն</b><div class="muted">${esc(c.description)}</div></div>`:''}${c.phone?`<div class="detail">☎ ${esc(c.phone)}</div>`:''}
+   <div class="registry-kpis" style="margin-top:10px"><div class="registry-kpi">📍 Հասցեներ<b>${objects.length}</b></div><div class="registry-kpi">🛠 Ծառայություններ<b>${services.length}</b></div><div class="registry-kpi">📄 Փաստաթղթեր<b>${docs.length}</b></div><div class="registry-kpi">📦 Ամրագրումներ<b>${bookings.length}</b></div></div>
+   <div class="registry-detail-section"><h3>📍 Հասցեներ</h3>${objects.length?objects.map(o=>`<div class="item"><b>${esc(o.object_name||'Объект')}</b><div class="muted">${esc([o.marz,o.city,o.address].filter(Boolean).join(' · '))}</div></div>`).join(''):'<div class="empty">Հասցեներ չկան</div>'}</div>
+   <div class="registry-detail-section"><h3>🛠 Ծառայություններ</h3>${services.length?services.map(s=>`<div class="item"><div class="row"><b>${esc(s.name||'—')}</b><span>${s.price==null?'—':Number(s.price).toLocaleString()+' ֏'}</span></div><div class="muted">${esc(s.direction_name_am||s.direction_name_ru||'')} · ${esc(s.subcategory_name_am||s.subcategory_name_ru||'')} · ${badge(s.status)}</div></div>`).join(''):'<div class="empty">Ծառայություններ չկան</div>'}</div>
+   <div class="registry-detail-section"><h3>📄 Փաստաթղթեր</h3>${docs.length?docs.map(d=>`<div class="item"><div class="row"><span>📄 ${esc(d.original_filename||d.document_type||'document')}</span>${badge(d.status)}</div></div>`).join(''):'<div class="empty">Փաստաթղթեր չկան</div>'}</div>
+   <div class="registry-detail-section"><h3>📦 Ամրագրումներ</h3>${bookings.length?bookings.map(b=>`<div class="item"><div class="row"><span>#${esc(b.id)} · ${esc(b.service_name||'—')}</span>${badge(b.status)}</div><div class="muted">${esc(b.scheduled_at||b.created_at||'')} · ${b.agreed_price==null?'—':Number(b.agreed_price).toLocaleString()+' '+esc(b.currency||'AMD')}</div></div>`).join(''):'<div class="empty">Ամրագրումներ չկան</div>'}</div>
    </div></div>`;
  }catch(e){$('registryResults').innerHTML=`<div class="error">${esc(e.message)}</div>`}
 }
@@ -147,7 +147,7 @@ function renderPartners(){
        <div class="muted">Գործընկերոջ ընկերությունները բացելու համար սեղմեք «▼ Ընկերություններ»։</div>
      </div>
      <div class="actions">
-       <button class="btn soft" onclick="togglePartner(${p.id})">▼ Компании</button>
+       <button class="btn soft" onclick="togglePartner(${p.id})">▼ Ընկերություններ</button>
        ${p.status!=='approved'?'':''}
        ${!['blocked','approved'].includes(p.status)?'':''}
        ${p.status!=='suspended'&&p.status!=='blocked'?'':''}
@@ -223,7 +223,7 @@ async function togglePartner(id){
        <div class="row">
          <div>
            <button class="btn soft" style="text-align:left" onclick="toggleCompany(${b.id})">
-             🏢 ${esc(b.name||'Без названия')}
+             🏢 ${esc(b.name||'Անվանում չկա')}
            </button>
            <div class="muted" style="margin-top:5px">🛠 ${Number(b.service_count||0)} услуг · ${esc(b.status||'')}</div>
          </div>
@@ -275,7 +275,7 @@ async function loadSubcategoryProposals(){
         <div class="field"><label>Ծառայություն / Услуга</label><input id="spService${x.id}" value="${esc(x.requested_service_name||'')}"></div>
         <div class="field"><label>Գին, AMD</label><input id="spPrice${x.id}" type="number" min="0" step="1" value="${esc(x.price??'')}"></div>
       </div>
-      <div class="field" style="margin-top:8px"><label>Նկարագրություն / Описание</label><textarea id="spDesc${x.id}">${esc(x.description||'')}</textarea></div>
+      <div class="field" style="margin-top:8px"><label>Նկարագրություն / Նկարագրություն</label><textarea id="spDesc${x.id}">${esc(x.description||'')}</textarea></div>
       <div class="field" style="margin-top:8px"><label>Նշում ադմինիստրատորի համար / Заметка</label><input id="spNote${x.id}" value="${esc(x.admin_note||'')}"></div>
       <div class="actions">
         
@@ -533,7 +533,7 @@ async function sendAdminAIFastCommand(command){
   renderAdminAiActions(d);
   return d;
  }catch(e){
-  addAdminAiMessage('ai','⚠️ '+(e.message||'AI недоступен'));
+  addAdminAiMessage('ai','⚠️ '+(e.message||'AI հասանելի չէ'));
   throw e;
  }
 }
@@ -545,7 +545,7 @@ async function sendAdminAI(){
   const d=await post('/api/admin/assistant',{message:text});
   addAdminAiMessage('ai',d.reply||'—');
   renderAdminAiActions(d);
- }catch(e){addAdminAiMessage('ai','⚠️ '+(e.message||'AI недоступен'))}
+ }catch(e){addAdminAiMessage('ai','⚠️ '+(e.message||'AI հասանելի չէ'))}
 }
 async function loadCompanyEconomics(partnerId){
  const days=Number($('aiCostDays').value||30);
