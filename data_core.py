@@ -2904,15 +2904,12 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
     """Persist the booking/payment placeholder; settlement side effects happen only after payment."""
     if not request_row or not request_row.get("id"): return None
     request_id=int(request_row["id"])
-    requested_status=str(status or "pending_partner_confirmation").strip().lower()
-    if requested_status not in {"pending_partner_confirmation","pending_payment","paid"}:
-        requested_status="pending_partner_confirmation"
-    intent_status=str(getattr(intent,"status","") or "").strip().lower()
-    # A provider intent can never bypass the partner-confirmation gate.
-    # Direct booking requests stay pending until the partner confirms them.
-    auto_settle_allowed = requested_status == "pending_payment"
-    booking_status="paid" if intent_status=="paid" and auto_settle_allowed else requested_status
-    payment_status="paid" if intent_status=="paid" and auto_settle_allowed else "pending"
+    # This function is the persistence boundary for a *new* direct request.
+    # A caller is never allowed to choose a financial/settled state here.
+    # Partner confirmation and payment settlement are separate Data Core actions.
+    requested_status="pending_partner_confirmation"
+    booking_status=requested_status
+    payment_status="pending"
     payment_amount=round(float(commission)+float(partner_amount),2)
     metadata_json=json.dumps(metadata or {},ensure_ascii=False)
 
@@ -2943,14 +2940,7 @@ def persist_direct_booking(*, client_id: int, service: dict, request_row: dict,
              json.dumps({"mode":getattr(intent,"mode",None),"bill_no":getattr(intent,"bill_no",None),
                          "payment_url":getattr(intent,"payment_url",None)},ensure_ascii=False)))
         payment=cur.fetchone()
-        if payment_status=="paid":
-            cur.execute("""INSERT INTO partner_financial_ledger
-                   (partner_id,booking_id,entry_type,amount,currency,description)
-                   VALUES(%s,%s,'commission',%s,%s,%s),(%s,%s,'partner_due',%s,%s,%s)""",
-                (int(service["partner_id"]),int(booking["id"]),float(commission),currency,
-                 "Direct booking platform commission (payment confirmed)",
-                 int(service["partner_id"]),int(booking["id"]),float(partner_amount),currency,
-                 "Partner amount after platform commission (payment confirmed)"))
+        # No financial ledger or QR can be created by request persistence.
         request_status="booked" if payment_status=="paid" else ("pending_partner_confirmation" if booking_status=="pending_partner_confirmation" else booking_status)
         cur.execute("UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s",(request_status,request_id))
         checkin=None
