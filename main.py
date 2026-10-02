@@ -119,6 +119,19 @@ async def api_webapp_partner_start(request: web.Request):
     except Exception:
         payload = {}
 
+    existing_partner = db.get_partner_by_user(uid)
+    if existing_partner and not payload.get("business_name") and not payload.get("phone"):
+        companies = data_core.list_companies(partner_id=int(existing_partner["id"]))
+        if companies:
+            return web.json_response({
+                "ok": True,
+                "registered": True,
+                "partner_id": int(existing_partner["id"]),
+                "company_id": int(companies[0]["id"]),
+                "business_name": companies[0].get("name") or existing_partner.get("business_name") or "",
+                "destination": "master_cabinet.html",
+            })
+
     business_name = str(payload.get("business_name") or "").strip()
     phone = str(payload.get("phone") or "").strip()
     if not business_name or not phone:
