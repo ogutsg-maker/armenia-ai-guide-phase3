@@ -98,3 +98,10 @@ def test_direct_booking_contract_waits_for_partner_confirmation():
 def test_legacy_partner_agree_route_is_removed():
     src = read("marketplace_flow_api.py")
     assert "/api/market/partner/negotiation/{negotiation_id}/agree" not in src
+
+def test_admin_tariff_mutations_are_not_public_http_routes():
+    src = read("admin_tariff_api.py")
+    assert 'add_post("/api/admin/tariffs/direction/{id}"' not in src
+    assert 'add_post("/api/admin/tariffs/category/{id}"' not in src
+    assert 'add_post("/api/admin/tariffs/service/{id}"' not in src
+    assert 'add_get("/api/admin/tariffs"' in src

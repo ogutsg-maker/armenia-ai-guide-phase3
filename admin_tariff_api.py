@@ -5,10 +5,7 @@ The platform commission cascades: service override -> subcategory
 tariff is the mandatory "initial setting" (NOT NULL), while subcategory and
 service tariffs are optional overrides (NULL => inherit from the level above).
 
-These endpoints let the admin edit each level:
-  * direction default  : POST /api/admin/tariffs/direction/{id}
-  * subcategory override: POST /api/admin/tariffs/category/{id}
-  * service override    : POST /api/admin/tariffs/service/{id}
+The read-only endpoint exposes the effective tariff structure. Tariff mutations are internal actions:
   * overview           : GET  /api/admin/tariffs
 
 Auth is enforced by the platform-wide `/api/admin/` auth middleware in
@@ -123,6 +120,5 @@ async def tariffs_overview(request):
 
 def register_admin_tariff_routes(app):
     app.router.add_get("/api/admin/tariffs", tariffs_overview)
-    app.router.add_post("/api/admin/tariffs/direction/{id}", set_direction_tariff)
-    app.router.add_post("/api/admin/tariffs/category/{id}", set_category_tariff)
-    app.router.add_post("/api/admin/tariffs/service/{id}", set_service_tariff)
+    # Tariff mutations are intentionally not exposed as public HTTP routes.
+    # They must go through the Admin AI/Data Core action path with confirmation.
