@@ -153,7 +153,10 @@ async function sendAiCommand(){const i=document.getElementById('aiInput'),text=i
 function escNl(v){return esc(v).replace(/\r?\n/g,'<br>');}
 function aiCommandHtml(d){
   const x=d.command||{};
-  let h='<div class="notice">'+escNl(d.reply||'')+'</div>';
+  // The AI reply is added to the conversation exactly once by aiAdd() below.
+  // This container is only for transient action controls, otherwise the same
+  // preview was rendered twice: once here and once in the chat history.
+  let h='';
   if(d.confirmation_required){
     h+='<div class="ai-confirm" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">';
     h+='<button class="btn" style="margin:0" onclick="confirmAiCommand()">✓ '+({hy:'Հաստատել',ru:'Подтвердить',en:'Confirm'}[state.lang]||'Confirm')+'</button>';
