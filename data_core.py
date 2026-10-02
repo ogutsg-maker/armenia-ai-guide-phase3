@@ -2778,6 +2778,11 @@ def cancel_booking(booking_id: int, actor_role: str, actor_id: int,
     current=str(booking.get("status") or "").lower()
     if current in {"cancelled","refunded","completed"}: return None
     target=str(new_status or "").lower()
+    if target == "cancelled":
+        try:
+            require_transition(current, "cancelled")
+        except ValueError:
+            return None
     if target not in {"cancelled","refunded"}: return None
     payment=one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
     payment_status=str((payment or {}).get("status") or "").lower()
@@ -2857,8 +2862,14 @@ def checkin_booking(booking_id: int, partner_user_id: int, token: str):
     # Check-in is available only after the payment provider has confirmed
     # the commission payment. A legacy/negotiation "confirmed" booking state
     # must never be enough to unlock QR check-in.
-    if row.get("booking_status") != "paid":
-        return {"error": "booking_not_paid", "booking_status": row.get("booking_status")}
+    if not qr_may_checkin(
+        str(row.get("status") or ""),
+        str(row.get("booking_status") or ""),
+        str(row.get("status") or "") == "arbitration",
+    ):
+        if row.get("booking_status") != "paid":
+            return {"error": "booking_not_paid", "booking_status": row.get("booking_status")}
+        return {"error": "qr_not_active", "checkin_status": row.get("status")}
     check = execute(
         """UPDATE booking_checkins
            SET status='checked_in',checked_in_at=NOW(),checked_in_by=%s
@@ -2888,6 +2899,10 @@ def complete_booking(booking_id: int, actor_role: str, actor_id: int,
     if not booking:
         return None
     if str(booking.get("status") or "").lower() != "in_progress":
+        return None
+    try:
+        require_transition("in_progress", "completed")
+    except ValueError:
         return None
     checkin = one(
         "SELECT id,status,checked_in_at FROM booking_checkins WHERE booking_id=%s AND status='checked_in' ORDER BY id DESC LIMIT 1",
@@ -3134,6 +3149,14 @@ def reconcile_paid_payment(payment_id:int, transaction_id:str|None=None, provide
                 "already_paid":False,"rejected":"provider_mismatch",
             }
 
+        if not payment_may_confirm(str(booking.get("status") or "")):
+            return {
+                "payment": payment,
+                "booking": booking,
+                "checkin": None,
+                "already_paid": False,
+                "rejected": "booking_not_pending_payment",
+            }
         updated=execute(
             """UPDATE payments
                SET status='paid',
@@ -4651,7 +4674,11 @@ def get_paid_booking_contact(booking_id:int, actor_role:str="client", actor_id:i
     booking=get_booking(int(booking_id),actor_role=actor_role,actor_id=actor_id)
     if not booking: return {}
     payment=one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
-    if str((payment or {}).get("status") or "").lower()!="paid": return {}
+    if not contacts_may_disclose(
+        str((payment or {}).get("status") or ""),
+        str(booking.get("status") or ""),
+    ):
+        return {}
 
     existing=one("""SELECT * FROM contact_disclosures
                     WHERE booking_id=%s AND status='active'
