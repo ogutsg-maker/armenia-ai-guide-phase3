@@ -945,7 +945,7 @@ def list_companies(partner_id: int, include_archived: bool = False):
 def get_service(service_id: int):
     return one(
         """SELECT s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,
-                  p.business_name AS partner_name,b.name AS company_name,
+                  p.business_name AS partner_name,b.name AS company_name,b.status AS company_status,
                   c.master_category_id,c.name_am AS category_name_am,
                   c.name_ru AS category_name_ru,c.name_en AS category_name_en
            FROM services s
@@ -964,7 +964,20 @@ def search_services(
     max_price: float | None = None,
     limit: int = 100,
 ):
-    where = ["s.status='active'", "p.status='approved'", "EXISTS (SELECT 1 FROM partner_direction_categories pdc JOIN partner_directions pd ON pd.id=pdc.partner_direction_id WHERE pdc.category_id=s.category_id AND pd.partner_id=s.partner_id AND pd.status='approved')"]
+    """Search only services genuinely publishable in the marketplace."""
+    where = [
+        "s.status='active'",
+        "p.status='approved'",
+        "b.status='active'",
+        """EXISTS (
+            SELECT 1 FROM partner_direction_categories pdc
+            JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
+            WHERE pdc.category_id=s.category_id
+              AND pd.partner_id=s.partner_id
+              AND pd.business_id=s.business_id
+              AND pd.status='approved'
+        )""",
+    ]
     params: list[Any] = []
     if partner_id is not None:
         where.append("s.partner_id=%s")
@@ -977,26 +990,16 @@ def search_services(
         params.append(float(max_price))
     if city:
         where.append("""(
-            EXISTS (
-                SELECT 1 FROM partner_objects pl
-                WHERE pl.partner_id=p.id
-                  AND COALESCE(pl.is_active,TRUE)=TRUE
-                  AND (
-                    LOWER(COALESCE(pl.city,''))=LOWER(%s)
-                    OR LOWER(COALESCE(pl.village,''))=LOWER(%s)
-                    OR LOWER(COALESCE(pl.marz,''))=LOWER(%s)
-                    OR LOWER(COALESCE(pl.data_json->>'coverage',''))='all_armenia'
-                    OR LOWER(COALESCE(pl.data_json->>'service_area',''))='all_armenia'
-                  )
-            )
-            OR LOWER(COALESCE(s.data_json->'service_location'->>'city',''))=LOWER(%s)
+            LOWER(COALESCE(s.data_json->'service_location'->>'city',''))=LOWER(%s)
             OR LOWER(COALESCE(s.data_json->'service_location'->>'district',''))=LOWER(%s)
             OR LOWER(COALESCE(s.data_json->'service_location'->>'marz',''))=LOWER(%s)
-            OR LOWER(COALESCE(s.data_json->'service_location'->>'coverage',''))='all_armenia'
-            OR LOWER(COALESCE(s.data_json->>'coverage',''))='all_armenia'
-            OR LOWER(COALESCE(s.data_json->>'service_area',''))='all_armenia'
+            OR LOWER(COALESCE(s.data_json->>'coverage','')) ILIKE LOWER(%s)
+            OR LOWER(COALESCE(s.data_json->'coverage'->>'city',''))=LOWER(%s)
+            OR LOWER(COALESCE(s.data_json->'coverage'->>'district',''))=LOWER(%s)
+            OR LOWER(COALESCE(s.data_json->'coverage'->>'marz',''))=LOWER(%s)
         )""")
-        params.extend([city, city, city, city, city, city])
+        like_city=f"%{city}%"
+        params.extend([city, city, city, like_city, city, city, city])
     params.append(max(1, min(int(limit or 100), 200)))
     return rows(
         """SELECT DISTINCT s.id,s.partner_id,s.business_id,s.name,s.category_id,
@@ -1007,7 +1010,7 @@ def search_services(
            FROM services s
            JOIN categories c ON c.id=s.category_id
            JOIN partners p ON p.id=s.partner_id
-           LEFT JOIN partner_businesses b ON b.id=s.business_id
+           JOIN partner_businesses b ON b.id=s.business_id
            WHERE """ + " AND ".join(where) +
         " ORDER BY CASE WHEN s.price IS NULL THEN 1 ELSE 0 END,s.created_at DESC LIMIT %s",
         tuple(params),
@@ -1027,14 +1030,19 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
     where = ["s.status <> 'deleted'"]
     params: list[Any] = []
     if approved_only:
-        where += ["s.status='active'", "p.status='approved'",
-                  """EXISTS (
-                      SELECT 1 FROM partner_direction_categories pdc
-                      JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
-                      WHERE pdc.category_id=s.category_id
-                        AND pd.partner_id=s.partner_id
-                        AND pd.status='approved'
-                  )"""]
+        where += [
+            "s.status='active'",
+            "p.status='approved'",
+            "b.status='active'",
+            """EXISTS (
+                SELECT 1 FROM partner_direction_categories pdc
+                JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
+                WHERE pdc.category_id=s.category_id
+                  AND pd.partner_id=s.partner_id
+                  AND pd.business_id=s.business_id
+                  AND pd.status='approved'
+            )""",
+        ]
     if partner_id is not None:
         where.append("s.partner_id=%s"); params.append(int(partner_id))
     if category_id is not None:
@@ -1042,12 +1050,13 @@ def list_services(partner_id: int | None = None, category_id: int | None = None,
     params.append(max(1, min(int(limit or 100), 200)))
     return rows(
         """SELECT s.id,s.partner_id,s.business_id,s.name,s.category_id,s.price,s.status,
-                  p.business_name AS partner_name,c.name_am AS category_name_am,
-                  c.name_ru AS category_name_ru,c.name_en AS category_name_en,
-                  c.master_category_id
+                  p.business_name AS partner_name,b.name AS company_name,b.status AS company_status,
+                  c.name_am AS category_name_am,c.name_ru AS category_name_ru,
+                  c.name_en AS category_name_en,c.master_category_id
            FROM services s
            LEFT JOIN categories c ON c.id=s.category_id
            LEFT JOIN partners p ON p.id=s.partner_id
+           LEFT JOIN partner_businesses b ON b.id=s.business_id
            WHERE """ + " AND ".join(where) +
         " ORDER BY s.id DESC LIMIT %s", tuple(params)
     )
@@ -1104,8 +1113,15 @@ def archive_partner_company(*, company_id: int, actor_user_id: int) -> dict:
     if not company: raise ValueError("company_not_found")
     assert_partner_owns_partner(int(company["partner_id"]), int(actor_user_id))
     if company.get("status")=="archived": return company
-    row=one("UPDATE partner_businesses SET status='archived' WHERE id=%s AND partner_id=%s RETURNING id,partner_id,name,description,phone,status",(int(company_id),int(company["partner_id"])))
-    if not row: raise ValueError("company_archive_failed")
+    row=one(
+        """UPDATE partner_businesses
+           SET status='archived', updated_at=NOW()
+           WHERE id=%s AND partner_id=%s
+           RETURNING id,partner_id,name,description,phone,status""",
+        (int(company_id), int(company["partner_id"])),
+    )
+    if not row:
+        raise ValueError("company_archive_failed")
     return row
 
 
