@@ -1676,6 +1676,14 @@ def admin_approve_direction_verification(*, case_id: int, admin_telegram_id: int
             (int(case["partner_direction_id"]),),
         )
         cur.execute(
+            """UPDATE partner_applications
+               SET status='pending_admin',updated_at=NOW()
+               WHERE partner_id=%s AND business_id=%s
+                 AND master_category_id=%s
+                 AND status='pending_partner'""",
+            (int(case["partner_id"]), int(case["business_id"]), int(case["master_category_id"])),
+        )
+        cur.execute(
             """UPDATE partner_direction_verification_cases
                SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL,updated_at=NOW()
                WHERE id=%s""",
