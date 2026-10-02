@@ -497,6 +497,18 @@ async def api_ai_document_upload(request: web.Request):
                    WHERE id=%s AND partner_id=%s AND business_id=%s""",
                 (direction_id,pid,bid),
             )
+            # The document belongs to the direction. Every service application
+            # for that same direction that was waiting for the partner document
+            # can now enter the admin verification queue.
+            cur.execute(
+                """UPDATE partner_applications
+                   SET status='pending_admin',document_id=%s,updated_at=NOW()
+                   WHERE partner_id=%s
+                     AND business_id=%s
+                     AND master_category_id=%s
+                     AND status='pending_partner'""",
+                (int(doc["id"]),pid,bid,int(case["master_category_id"])),
+            )
         conn.commit()
     return web.json_response({"ok":True,"document_id":int(doc["id"]),"status":doc["status"],
                               "filename":doc["original_filename"],"direction_id":direction_id,
