@@ -87,6 +87,11 @@ async def _admin_auth_middleware(request,handler):
     if request.path.startswith("/api/admin/") and not (request.path.endswith("/viewer") or request.path.endswith("/proxy") or request.path.endswith("/open-file")): _validate_admin_request(request)
     return await handler(request)
 
+async def _admin_auth(request):
+    """Explicit admin WebApp auth endpoint used by admin.html."""
+    uid = request.get("admin_telegram_id") or _validate_admin_request(request)
+    return web.json_response({"ok": True, "authenticated": True, "telegram_id": int(uid)})
+
 async def _admin_settings_get(request):
     from features import all_settings
     return web.json_response({"ok":True,"settings":all_settings()})
@@ -153,6 +158,7 @@ async def _bootstrap(app):
         # ?access= token instead (browser tabs cannot send custom headers).
         app.router.add_get('/api/admin/partner-applications/{id}/documents/{doc_id}/open-file', _admin_document_proxy)
         app._armenia_docproxy_registered=True
+    app.router.add_get('/api/admin/auth', _admin_auth)
     app.router.add_get('/api/admin/settings', _admin_settings_get)
     app.router.add_post('/api/admin/settings', _admin_settings_save)
     register_partner_direction_routes(app,db=db,bot=bot)
