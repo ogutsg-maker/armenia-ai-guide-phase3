@@ -356,22 +356,29 @@ class AIManager:
             if hasattr(usage, "model_dump")
             else (usage if isinstance(usage, dict) else {})
         )
-        partner_id = (extra_context or {}).get("partner_id")
-        try:
-            partner_id = int(partner_id) if partner_id is not None else None
-        except (TypeError, ValueError):
-            partner_id = None
-
+        meta = extra_context or {}
+        def _int_or_none(value):
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+        partner_id = _int_or_none(meta.get("partner_id"))
+        company_id = _int_or_none(meta.get("company_id", meta.get("business_id")))
+        order_id = _int_or_none(meta.get("order_id", meta.get("booking_id")))
+        negotiation_id = _int_or_none(meta.get("negotiation_id"))
         return await asyncio.to_thread(
             ai_cost_center.record_usage,
             provider=str(provider or "groq"),
             model=str(model or self.model),
             chain=context.value.lower(),
-            stage="manager",
-            operation="chat",
-            purpose="Unified AIManager",
+            stage=str(meta.get("ai_stage") or meta.get("stage") or "manager"),
+            operation=str(meta.get("ai_operation") or meta.get("operation") or "chat"),
+            purpose=str(meta.get("ai_purpose") or meta.get("purpose") or "Unified AIManager"),
             user_id=int(telegram_id),
             partner_id=partner_id,
+            company_id=company_id,
+            order_id=order_id,
+            negotiation_id=negotiation_id,
             input_tokens=int(data.get("prompt_tokens") or data.get("input_tokens") or 0),
             output_tokens=int(data.get("completion_tokens") or data.get("output_tokens") or 0),
             cached_tokens=int(data.get("prompt_cached_tokens") or data.get("cached_tokens") or 0),
@@ -1145,7 +1152,13 @@ class AIManager:
             kwargs["response_format"] = {"type": "json_object"}
 
         try:
-            response = await self.client.chat.completions.create(**kwargs)
+            response, provider_used = await self._chat_completion_with_fallback(
+                messages=kwargs["messages"],
+                tools=None,
+                tool_choice=None,
+                temperature=kwargs["temperature"],
+                max_tokens=kwargs["max_tokens"],
+            )
             await self._cost_log(
                 telegram_id, role, getattr(response, "usage", None),
                 extra_context=extra_context,
