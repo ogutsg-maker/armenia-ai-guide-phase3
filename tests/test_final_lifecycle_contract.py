@@ -264,3 +264,8 @@ def test_partner_cabinet_backend_has_no_dead_direct_mutation_handlers():
         '"/api/master/{id}/subcategory-proposals"',
     ):
         assert marker not in src
+
+def test_partner_service_ai_does_not_import_deleted_service_matcher():
+    src = read("partner_ai_assistant_api.py")
+    assert "from master_cabinet_api import _ai_match_new_service" not in src
+    assert "data_core.resolve_catalog_services" in src
