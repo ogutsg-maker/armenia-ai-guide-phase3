@@ -4310,7 +4310,20 @@ def marketplace_client_search(
     """
     service_lng_sql = """
         CASE
-          WHEN COALESCE(s.data_json->'service_location'->>'lng','') ~ '^-?[0-9]+(\\.[0-9]+)?    service_city_sql = "COALESCE(s.data_json->'service_location'->>'city',po.city,'')"
+          WHEN COALESCE(s.data_json->'service_location'->>'lng','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (s.data_json->'service_location'->>'lng')::numeric
+          WHEN COALESCE(s.data_json->'service_location'->>'longitude','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (s.data_json->'service_location'->>'longitude')::numeric
+          WHEN COALESCE(po.data_json->>'lng','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (po.data_json->>'lng')::numeric
+          WHEN COALESCE(po.data_json->>'longitude','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+            THEN (po.data_json->>'longitude')::numeric
+          ELSE NULL
+        END
+    """
+    target_lat_sql = service_lat_sql
+    target_lng_sql = service_lng_sql
+    service_city_sql = "COALESCE(s.data_json->'service_location'->>'city',po.city,'')"
     service_district_sql = "COALESCE(s.data_json->'service_location'->>'district','')"
     service_marz_sql = "COALESCE(s.data_json->'service_location'->>'marz',po.marz,'')"
     base_city_sql = service_city_sql
