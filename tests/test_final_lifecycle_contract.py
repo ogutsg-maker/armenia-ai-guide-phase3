@@ -280,3 +280,9 @@ def test_partner_webapp_uses_ai_registration_flow():
     assert "/api/webapp/partner/start" in src
     assert "/api/webapp/partner/message" in src
     assert "/api/webapp/partner/register" not in src
+
+def test_partner_cabinet_has_no_application_delete_ui_bypass():
+    src = read("web_apps/master_cabinet.html")
+    assert "deletePartnerApplication" not in src
+    assert "method:'DELETE'" not in src
+    assert 'method:"DELETE"' not in src
