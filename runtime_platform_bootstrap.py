@@ -165,8 +165,6 @@ async def _bootstrap(app):
         from reviews_api import register_reviews_routes; register_reviews_routes(app)
         from support_api import register_support_routes; register_support_routes(app)
         from admin_stats_api import register_admin_stats_routes; register_admin_stats_routes(app); app._armenia_phase3_registered=True
-    if not getattr(app,"_armenia_storefront_registered",False):
-        from storefront_api import register_storefront_routes; register_storefront_routes(app); app._armenia_storefront_registered=True
 
 try:
     if not getattr(web.Application,"_armenia_phase3_patched",False):
