@@ -435,7 +435,7 @@ class AIManager:
         if mode in {"mobile", "both"}:
             loc_lines.append("📍 " + ("Հաճախորդի հասցեում" if language == "hy" else "У клиента" if language == "ru" else "At the customer's address"))
         elif mode == "at_address":
-            loc_lines.append("📍 " + ("Այս հասցեում" if language == "hy" else "По этому адресу" if language == "ru" else "At this address"))
+            loc_lines.append("📍 " + ("Հաճախորդի հասցեում" if language == "hy" else "По адресу клиента" if language == "ru" else "At the customer's address"))
         if cities:
             loc_lines.append(("Քաղաքներ: " if language == "hy" else "Города: " if language == "ru" else "Cities: ") + ", ".join(map(str, cities)))
         if marzes:
@@ -2092,7 +2092,8 @@ class AIManager:
                                 context_lines.insert(0, "📍 Տարածք՝ " + ", ".join(parts))
                         elif address:
                             context_lines.insert(0, f"📍 Հասցե՝ {address}")
-                        summary = "Պատրաստ է ստուգման ուղարկելու համար:\n\n" + summary.split("\n\n")[0] + "\n" + "\n".join(context_lines) + "\n\nՀաստատո՞ւմ եք։"
+                        # Canonical human preview: no internal fields and no second preview.
+                        summary = "Ավելացնել հետևյալ ծառայությունները:\n" + summary.split("\n\n")[0].replace("Ավելացնել «" + str(args.get("company_name") or "ընկերություն") + "» ընկերությունում հետևյալ ծառայությունները:", "").lstrip() + "\n" + "\n".join(context_lines) + "\n\nՀաստատո՞ւմ եք։"
                     elif language == "ru":
                         context_lines = [f"🚗 Режим: {mode or 'не указан'}"]
                         if isinstance(coverage, dict):
