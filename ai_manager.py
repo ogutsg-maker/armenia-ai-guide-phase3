@@ -1149,6 +1149,14 @@ class AIManager:
             await self._cost_log(
                 telegram_id, role, getattr(response, "usage", None),
                 extra_context=extra_context,
+                provider=provider_used,
+                model=(
+                    self.model if provider_used == "groq"
+                    else os.getenv(
+                        "OPENAI_MODEL" if provider_used == "openai" else "OPENROUTER_MODEL",
+                        self.model,
+                    ).strip()
+                ),
             )
             raw = (response.choices[0].message.content or "{}").strip()
             parsed = json.loads(raw)
