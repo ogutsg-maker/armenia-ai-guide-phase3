@@ -452,35 +452,29 @@ async function loadDirectionVerificationQueue(){
   // This queue is the complete application review, not a document-only list.
   // Load the partner/company/application data for every verification case so
   // the admin can inspect the whole submission before the single final action.
-  const full=await Promise.all(rows.map(async x=>{
-    let detail={partner:null,businesses:[]};
-    let apps=[];
-    try{
-      const [pd,ad]=await Promise.all([
-        api('/api/admin/partner-applications/'+Number(x.partner_id)),
-        api('/api/admin/universal-applications')
-      ]);
-      detail=pd||detail;
-      apps=(ad.applications||[]).filter(a=>
-        String(a.partner_id||'')===String(x.partner_id||'') &&
-        String(a.business_id||'')===String(x.business_id||'') &&
-        (a.master_category_id==null || String(a.master_category_id)===String(x.master_category_id||''))
-      );
-    }catch(e){console.warn('verification detail load failed',x.id,e)}
-    return {x,detail,apps};
-  }));
+  const full=rows.map(x=>({x,detail:null,apps:[]}));
 
   const cardHtml=full.map(({x,detail,apps})=>{
     const pending=x.status==='pending_review';
     const business=(detail.businesses||[]).find(b=>String(b.id)===String(x.business_id))||(detail.businesses||[])[0]||{};
     const partner=detail.partner||{};
-    const app=apps.find(a=>!['approved','rejected'].includes(String(a.status||'').toLowerCase()))||apps[0]||null;
-    let payload=app?.payload_json||{};
+    const app={
+      id:x.application_id,
+      status:x.application_status,
+      phone:x.application_phone,
+      address:x.application_address,
+      description:x.application_description,
+      payload_json:x.application_payload
+    };
+    let payload=app.payload_json||{};
     if(typeof payload==='string'){try{payload=JSON.parse(payload||'{}')}catch(e){payload={}}}
-    const services=Array.isArray(app?.catalog_services)&&app.catalog_services.length
-      ? app.catalog_services
+    const services=Array.isArray(x.services)&&x.services.length
+      ? x.services
       : (Array.isArray(payload?.services)?payload.services:[]);
-    const location=[app?.location_marz,app?.location_city,app?.location_village,app?.address].filter(Boolean).join(', ');
+    const coverage=payload?.coverage||payload?.service_location||payload?.location||{};
+    const location=typeof coverage==='string'
+      ? coverage
+      : [coverage.city,coverage.district,coverage.village,coverage.marz,coverage.address,app.address].filter(Boolean).join(', ');
     const doc=x.document_id
       ? '<button class="btn soft smallbtn" onclick="openApplicationDoc('+Number(x.partner_id)+','+Number(x.document_id)+')">📄 Բացել փաստաթուղթը</button>'
       : '<span class="muted">📄 Փաստաթուղթ չկա</span>';
@@ -506,6 +500,7 @@ async function loadDirectionVerificationQueue(){
       '<div class="muted">🧭 '+esc(x.direction_name_am||x.direction_name_ru||x.direction_name_en||'—')+' · verification case #'+esc(x.id)+'</div></div>'+statusText+'</div>'+
       '<div class="detail"><b>👤 Գործընկեր</b> '+esc(partner.business_name||x.partner_name||'—')+
         ' · Telegram '+esc(x.user_id||partner.user_id||'—')+'</div>'+
+      '<div class="detail"><b>📞 Հեռախոս</b> '+esc(app.phone||business.phone||'—')+'</div>'+
       '<div class="detail"><b>🏢 Ընկերություն</b> '+esc(business.name||x.company_name||'—')+
         (business.phone?' · ☎ '+esc(business.phone):'')+'</div>'+
       '<div class="detail"><b>📍 Տեղադրություն</b> '+esc(location||[business.objects?.[0]?.marz,business.objects?.[0]?.city,business.objects?.[0]?.address].filter(Boolean).join(', ')||'—')+'</div>'+
