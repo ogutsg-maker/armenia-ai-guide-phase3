@@ -1543,10 +1543,16 @@ async def api_admin_direction_verifications(request):
                   pa.description AS application_description,pa.payload_json AS application_payload,
                   COALESCE(
                     (SELECT json_agg(json_build_object(
-                      'id',s.id,'name',s.name,'description',s.description,'price',s.price,
-                      'status',s.status,'category_id',s.category_id,'object_id',s.object_id,
-                      'created_at',s.created_at
-                    ) ORDER BY s.id),
+                      'id',s2.id,'name',s2.name,'description',s2.description,'price',s2.price,
+                      'status',s2.status,'category_id',s2.category_id,'object_id',s2.object_id,
+                      'created_at',s2.created_at
+                    ) ORDER BY s2.id)
+                     FROM services s2
+                     WHERE s2.partner_id=vc.partner_id
+                       AND s2.business_id=vc.business_id
+                       AND s2.status <> 'deleted'
+                       AND s2.created_at >= COALESCE(vc.requested_at, NOW() - INTERVAL '30 days')
+                    ),
                     '[]'::json
                   ) AS services
            FROM partner_direction_verification_cases vc
@@ -1567,15 +1573,6 @@ async def api_admin_direction_verifications(request):
                  AND created_at >= COALESCE(vc.requested_at, NOW() - INTERVAL '30 days')
                ORDER BY id DESC LIMIT 1
            ) pa ON TRUE
-           LEFT JOIN LATERAL (
-               SELECT s.*
-               FROM services s
-               WHERE s.partner_id=vc.partner_id
-                 AND s.business_id=vc.business_id
-                 AND s.status <> 'deleted'
-                 AND s.created_at >= COALESCE(vc.requested_at, NOW() - INTERVAL '30 days')
-               ORDER BY s.id
-           ) s ON TRUE
            WHERE vc.status IN ('awaiting_document','pending_review','rejected')
            ORDER BY vc.updated_at DESC,vc.id DESC"""
     )
