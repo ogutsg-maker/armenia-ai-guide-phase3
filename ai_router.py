@@ -6,7 +6,6 @@ import logging
 
 import data_core
 from client_ai import ClientAI
-from partner_ai import PartnerAI
 from ai_manager import AIManager
 from prompt_factory import ContextType, as_context_type
 
@@ -36,7 +35,6 @@ class AIRouter:
         self.ai = ai
         self.manager = AIManager()
         self.client_ai = ClientAI(self.manager)
-        self.partner_ai = PartnerAI(self.manager)
 
     def _orchestrator_session(self, user_id: int, role: str) -> dict:
         return data_core.active_session(user_id, role, "orchestrator") or data_core.create_session(user_id, role, "orchestrator", {"history": [], "last_module": None})
@@ -52,8 +50,8 @@ class AIRouter:
         # remains inside AIService and can be changed without touching flows.
         if role == "admin":
             return "admin_secretary"
-        if module == "partner_onboarding":
-            return "partner_registration"
+        if module == "partner_operator":
+            return "partner_operator"
         if module == "negotiation":
             return "negotiation"
         if module == "client_search":
@@ -84,8 +82,12 @@ class AIRouter:
                       "reply":_NEGOTIATION_HINT.get(lang,_NEGOTIATION_HINT["ru"]),
                       "negotiation_id":neg_id}
         elif role == "partner":
-            out = await self.partner_ai.process(user_id, text, lang)
-            result = {"module":"partner_onboarding","chain":"partner_registration",
+            out = await self.manager.chat(
+                int(user_id), ContextType.PARTNER, text,
+                extra_context={"active_negotiation_id": neg_id},
+                language=lang,
+            )
+            result = {"module":"partner_operator","chain":"partner_operator",
                       "confidence":1.0,"reply":out.get("reply","")}
         else:
             result = {"module":"client_search","chain":"client_search",
