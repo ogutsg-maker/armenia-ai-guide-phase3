@@ -243,7 +243,7 @@ def _catalog_for_partner(partner_id, business_id=None):
         """, (business_id,partner_id,business_id))
         _exec("""
         INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
-        SELECT DISTINCT s.partner_id,s.business_id,c.master_category_id,'approved'
+        SELECT DISTINCT s.partner_id,s.business_id,c.master_category_id,'pending'
         FROM services s
         JOIN categories c ON c.id=s.category_id
         WHERE s.partner_id=%s AND s.business_id=%s
@@ -285,7 +285,7 @@ def _catalog_for_partner(partner_id, business_id=None):
                 continue
             m=_fetchone("SELECT id,name_am,name_ru,slug,is_active FROM master_categories WHERE id=%s",(mid,))
             if m:
-                rows.append({"direction_id":None,"master_category_id":mid,"status":"approved","rejection_reason":None,
+                rows.append({"direction_id":None,"master_category_id":mid,"status":"pending","rejection_reason":None,
                              "name_am":m["name_am"],"name_ru":m["name_ru"],"slug":m["slug"],"document_count":0})
         rows.sort(key=lambda x:int(x.get("master_category_id") or 0))
 
