@@ -1085,11 +1085,39 @@ class AIManager:
                 await self._save_history(telegram_id, role, "ai", reply, {"cancelled": True})
                 return {"reply": reply, "cancelled": True}
             if self._is_confirmation(message):
+                pending_name = str(pending.get("name") or "").strip()
+                is_partner_submission = (
+                    role == ContextType.PARTNER
+                    and pending_name in {"add_service", "add_services"}
+                )
+                claim = await asyncio.to_thread(
+                    platform_db.claim_ai_pending_action,
+                    int(telegram_id),
+                    self._storage_role(role),
+                    partner_submission=is_partner_submission,
+                )
+                if str(claim.get("status") or "") == "executing":
+                    reply = (
+                        "⏳ Գործողությունն արդեն կատարվում է։"
+                        if language == "hy"
+                        else "⏳ Действие уже выполняется."
+                        if language == "ru"
+                        else "⏳ The action is already being processed."
+                    )
+                    return {"reply": reply, "confirmation_pending": True}
+                if str(claim.get("status") or "") != "claimed":
+                    reply = (
+                        "⚠️ Ակտիվ գործողություն չի գտնվել։"
+                        if language == "hy"
+                        else "⚠️ Активного действия для подтверждения не найдено."
+                        if language == "ru"
+                        else "⚠️ No active action is waiting for confirmation."
+                    )
+                    return {"reply": reply, "confirmation_pending": False}
+                claimed = dict(claim.get("pending_action") or {})
+                pending_name = str(claimed.get("name") or "").strip()
+                pending_args = dict(claimed.get("args") or {})
                 try:
-                    pending_name = str(pending.get("name") or "").strip()
-                    pending_args = dict(pending.get("args") or {})
-                    if str(pending.get("state") or "awaiting_confirmation") != "awaiting_confirmation":
-                        raise PermissionError("invalid_pending_state")
                     tools = ToolRegistry(
                         telegram_id=int(telegram_id),
                         context_type=role,
@@ -1098,19 +1126,32 @@ class AIManager:
                     )
                     result = await tools.execute_confirmed(pending_name, pending_args)
                     await self._clear_pending(telegram_id, role)
-                    reply = self._done_text(language)
+                    reply = (
+                        "⏳ Հայտը ուղարկվեց ստուգման։"
+                        if is_partner_submission and language == "hy"
+                        else "⏳ Заявка отправлена на проверку."
+                        if is_partner_submission and language == "ru"
+                        else "⏳ The application was sent for review."
+                        if is_partner_submission
+                        else self._done_text(language)
+                    )
                     await self._save_history(
                         telegram_id, role, "ai", reply,
-                        {"confirmed_action": pending, "tool_result": result},
+                        {"confirmed_action": claimed, "tool_result": result},
                     )
                     return {"reply": reply, "tool_result": result, "confirmed": True}
                 except Exception as exc:
-                    await self._clear_pending(telegram_id, role)
+                    await asyncio.to_thread(
+                        platform_db.restore_ai_pending_action,
+                        int(telegram_id),
+                        self._storage_role(role),
+                        claimed,
+                    )
                     logger.exception("AIManager confirmed action failed")
                     reply = self._error_text(language)
                     await self._save_history(
                         telegram_id, role, "ai", reply,
-                        {"confirmed_action": pending, "error": str(exc)[:1000]},
+                        {"confirmed_action": claimed, "error": str(exc)[:1000]},
                     )
                     return {"reply": reply, "confirmed": False, "error": str(exc)}
             reply = (
@@ -1194,8 +1235,9 @@ class AIManager:
         """Small deterministic fallback for explicit service commands.
 
         AI remains the semantic extractor. This fallback only protects obvious
-        service+price messages from model variability. It has no dispatch/base
-        location concept and never asks clarification questions.
+        service+price messages from model variability and preserves explicit Armenian/Russian
+        mobile/coverage facts when they are present. It never invents a location or asks a
+        clarification question.
         """
         import re
         text = " ".join(str(message or "").strip().split())
@@ -1631,14 +1673,45 @@ class AIManager:
                 await self._save_history(telegram_id, role, "ai", reply, {"cancelled": True, "fast_path": True})
                 return {"reply": reply, "cancelled": True, "fast_path": True}
 
-            if pending_state in {"awaiting_confirmation", "submitted"}:
+            if pending_state in {"awaiting_confirmation", "submitted", "executing"}:
                 if self._is_confirmation(message):
-                    pending_name = str(pending.get("name") or "").strip()
-                    pending_args = dict(pending.get("args") or {})
                     is_partner_submission = (
                         role == ContextType.PARTNER
-                        and pending_name in {"add_service", "add_services"}
+                        and str(pending.get("name") or "").strip() in {"add_service", "add_services"}
                     )
+
+                    # The session row is locked by PostgreSQL while the action
+                    # is claimed. This is the real idempotency gate: two
+                    # concurrent "այո" messages cannot both execute the write.
+                    claim = await asyncio.to_thread(
+                        platform_db.claim_ai_pending_action,
+                        int(telegram_id),
+                        self._storage_role(role),
+                        partner_submission=is_partner_submission,
+                    )
+                    claim_status = str(claim.get("status") or "")
+                    if claim_status == "executing":
+                        reply = (
+                            "⏳ Գործողությունն արդեն կատարվում է։"
+                            if language == "hy"
+                            else "⏳ Действие уже выполняется."
+                            if language == "ru"
+                            else "⏳ The action is already being processed."
+                        )
+                        return {"reply": reply, "confirmation_pending": True, "processing": True, "fast_path": True}
+                    if claim_status != "claimed":
+                        reply = (
+                            "⚠️ Ակտիվ գործողություն չի գտնվել։"
+                            if language == "hy"
+                            else "⚠️ Активного действия для подтверждения не найдено."
+                            if language == "ru"
+                            else "⚠️ No active action is waiting for confirmation."
+                        )
+                        return {"reply": reply, "confirmation_pending": False, "fast_path": True}
+
+                    claimed = dict(claim.get("pending_action") or {})
+                    pending_name = str(claimed.get("name") or "").strip()
+                    pending_args = dict(claimed.get("args") or {})
 
                     try:
                         confirm_tools = ToolRegistry(
@@ -1647,28 +1720,13 @@ class AIManager:
                             trusted_context=trusted,
                             session_state=state.to_dict(),
                         )
-
-                        # Only partner service/application submission gets the
-                        # idempotent SUBMITTED marker. Admin actions have their
-                        # own lifecycle and must never become "submitted".
-                        if is_partner_submission:
-                            pending["status"] = "SUBMITTED"
-                            pending["state"] = "submitted"
-                            pending["submission_token"] = str(
-                                pending.get("submission_token") or secrets.token_urlsafe(24)
-                            )
-                            pending_args["submission_token"] = pending["submission_token"]
-                            pending["args"] = pending_args
-                            await self._update_session_context(
-                                telegram_id, role, {"pending_action": pending}
-                            )
-
                         result = await confirm_tools.execute_confirmed(
                             pending_name, pending_args
                         )
 
                         # A successful action consumes its confirmation state.
-                        # Repeated "yes" cannot execute the same action twice.
+                        # A repeated "այո" now finds no pending action and can
+                        # never execute the same application twice.
                         await self._clear_pending(telegram_id, role)
 
                         if is_partner_submission:
@@ -1679,10 +1737,6 @@ class AIManager:
                                 else "⏳ The application was sent for review."
                             )
                         elif pending_name == "admin_approve_application":
-                            # The backend result is the only source of truth.
-                            # Never report approval merely because the mutation
-                            # call returned without raising: re-read the application
-                            # and verify the canonical state and materialized services.
                             import data_core
                             application_id = int(pending_args.get("application_id") or 0)
                             verified = data_core.get_application_full(application_id)
@@ -1691,17 +1745,37 @@ class AIManager:
                                 raise RuntimeError(
                                     f"approval_verification_failed: application={application_id} status={verified_status or 'missing'}"
                                 )
-                            verified_services = data_core.application_service_items(application_id)
-                            if not verified_services:
+                            # Approve is deliberately NOT activation.
+                            if language == "hy":
+                                reply = f"✅ Հայտ #{application_id}-ը հաստատված է։ Ծառայությունները դեռ ակտիվացված չեն։"
+                            elif language == "ru":
+                                reply = f"✅ Заявка #{application_id} одобрена. Услуги ещё не активированы."
+                            else:
+                                reply = f"✅ Application #{application_id} is approved. Services are not active yet."
+                        elif pending_name == "admin_activate_application_services":
+                            import data_core
+                            application_id = int(pending_args.get("application_id") or 0)
+                            verified = data_core.get_application_full(application_id)
+                            verified_status = str((verified or {}).get("status") or "").strip().lower()
+                            if verified_status != "approved":
                                 raise RuntimeError(
-                                    f"approval_verification_failed: application={application_id} services_missing"
+                                    f"activation_verification_failed: application={application_id} status={verified_status or 'missing'}"
+                                )
+                            verified_services = data_core.application_service_items(application_id)
+                            active_count = sum(
+                                1 for item in verified_services
+                                if str(item.get("status") or "").strip().lower() == "active"
+                            )
+                            if not verified_services or active_count != len(verified_services):
+                                raise RuntimeError(
+                                    f"activation_verification_failed: application={application_id} active={active_count}/{len(verified_services)}"
                                 )
                             if language == "hy":
-                                reply = f"✅ Հայտ #{application_id}-ը հաստատված և ակտիվ է։ {len(verified_services)} ծառայություն ակտիվացված է։"
+                                reply = f"✅ Հայտ #{application_id}-ի {active_count} ծառայությունները ակտիվացված են։"
                             elif language == "ru":
-                                reply = f"✅ Заявка #{application_id} подтверждена и активна. Активировано услуг: {len(verified_services)}."
+                                reply = f"✅ У заявки #{application_id} активировано услуг: {active_count}."
                             else:
-                                reply = f"✅ Application #{application_id} is approved and active. Activated services: {len(verified_services)}."
+                                reply = f"✅ Application #{application_id}: {active_count} services are active."
                         elif pending_name == "admin_reject_application":
                             reply = (
                                 "✅ Հայտը մերժվեց։"
@@ -1724,7 +1798,7 @@ class AIManager:
                         await self._save_history(
                             telegram_id, role, "ai", reply,
                             {
-                                "confirmed_action": pending,
+                                "confirmed_action": claimed,
                                 "tool_result": result,
                                 "fast_path": True,
                             },
@@ -1737,13 +1811,21 @@ class AIManager:
                         }
 
                     except Exception as exc:
-                        # Keep the pending action for retry if the backend failed.
+                        # The action was claimed before execution. Restore it
+                        # only when the backend transaction failed, so the
+                        # partner/admin can safely retry the same confirmation.
+                        await asyncio.to_thread(
+                            platform_db.restore_ai_pending_action,
+                            int(telegram_id),
+                            self._storage_role(role),
+                            claimed,
+                        )
                         logger.exception("Pending confirmation execution failed")
                         reply = self._error_text(language)
                         await self._save_history(
                             telegram_id, role, "ai", reply,
                             {
-                                "confirmed_action": pending,
+                                "confirmed_action": claimed,
                                 "error": str(exc)[:1000],
                                 "fast_path": True,
                             },
