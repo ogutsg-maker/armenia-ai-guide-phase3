@@ -71,6 +71,22 @@ def _location_schema() -> dict[str, Any]:
     }
 
 
+def _coverage_schema() -> dict[str, Any]:
+    return {
+        "anyOf": [
+            {"type": "object", "properties": {
+                "city": _nullable("string"),
+                "district": _nullable("string"),
+                "marz": _nullable("string"),
+                "radius_km": _nullable("number"),
+                "all_armenia": {"type": "boolean"},
+            }, "additionalProperties": False},
+            {"type": "string"},
+            {"type": "null"},
+        ]
+    }
+
+
 class ToolRegistry:
     def __init__(
         self,
@@ -258,8 +274,8 @@ class ToolRegistry:
                     "description": _nullable("string"),
                     "price_type": {"type": "string", "enum": ["from", "fixed"]},
                     "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
-                    "service_location": _nullable("object"),
-                    "coverage": _nullable("string"),
+                    "service_location": _location_schema(),
+                    "coverage": _coverage_schema(),
                 },
                 required=("company_id", "name"),
                 tool_type=ToolType.ACTION_CONFIRM,
@@ -289,8 +305,8 @@ class ToolRegistry:
                                 "phone": _nullable("string"),
                                 "description": _nullable("string"),
                                 "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
-                                "service_location": _nullable("object"),
-                                "coverage": _nullable("string")
+                                "service_location": _location_schema(),
+                                "coverage": _coverage_schema()
                             },
                             "required": ["name", "price"],
                             "additionalProperties": False
