@@ -96,8 +96,8 @@ async def storefront(request):
         LEFT JOIN categories c ON c.id = s.category_id
         JOIN partner_direction_categories pdc ON pdc.category_id=s.category_id
         JOIN partner_directions pd ON pd.id=pdc.partner_direction_id
-             AND pd.partner_id=s.partner_id AND pd.status='approved'
-        WHERE s.partner_id = %s AND s.status = 'approved'
+             AND pd.partner_id=s.partner_id AND pd.business_id=s.business_id AND pd.status='approved'
+        WHERE s.partner_id = %s AND s.status = 'active' AND EXISTS (SELECT 1 FROM partner_businesses pb WHERE pb.id=s.business_id AND pb.partner_id=s.partner_id AND pb.status='active')
         ORDER BY s.created_at DESC
         """,
         (partner_id,),
