@@ -56,6 +56,15 @@ def test_prompt_has_no_dispatch_base_instruction():
     assert "dispatch base" not in src.lower()
 
 
+def test_client_natural_language_search_uses_ai_concierge():
+    src = read("web_apps/client.html")
+    assert "/api/client/ai/chat" in src
+    assert "/api/market/client/search" not in src
+    api = read("client_api.py")
+    assert "get_request_candidates" in api
+    main = read("main.py")
+    assert "register_client_routes(app, ai)" in main
+
 def test_marketplace_routes_are_registered_in_runtime():
     src = read("main.py")
     assert "register_marketplace_flow_routes" in src
