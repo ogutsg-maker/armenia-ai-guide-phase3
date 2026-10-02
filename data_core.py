@@ -1282,6 +1282,8 @@ def update_service_safe(*, service_id: int, actor_user_id: int, name: str | None
     if category_id is not None:
         category=get_catalog_category(int(category_id))
         if not category or not category.get("is_active"): raise ValueError("catalog_category_invalid")
+        if str(service.get("status") or "").lower() == "active" and int(service.get("category_id") or 0) != int(category_id):
+            raise ValueError("active_service_category_change_requires_review")
         fields.append("category_id=%s"); params.append(int(category_id))
     if not fields: raise ValueError("no_changes")
     params.extend([int(service_id),int(service["partner_id"])])
