@@ -2062,7 +2062,7 @@ class AIManager:
                         "created_at": pending.get("created_at") or int(time.time()),
                     }
                     await self._set_pending(telegram_id, role, new_pending)
-                    summary = self._partner_action_summary(language, new_pending, new_pending["summary"])
+                    summary = self._partner_action_summary(language, new_pending, "")
                     # Add only facts actually present in the pending action.
                     # Mobile services use coverage, not a fabricated company address.
                     args = new_pending["args"]
@@ -2106,11 +2106,8 @@ class AIManager:
                     await self._update_session_context(
                         telegram_id, role, {"pending_action": new_pending}
                     )
-                    await self._save_history(
-                        telegram_id, role, "ai", summary,
-                        {"confirmation_required": True, "action": new_pending},
-                    )
-                    return {"reply": summary, "confirmation_required": True, "pending_action": new_pending}
+                    # Confirmation card is the only visible preview; do not duplicate it as chat text.
+                    return {"reply": "", "confirmation_required": True, "pending_action": new_pending}
                 return {"reply": result.get("reply") or self._error_text(language)}
 
         if role == ContextType.ADMIN:
@@ -2234,7 +2231,7 @@ class AIManager:
                         }
                         await self._set_pending(telegram_id, role, pending_action)
                         summary = self._partner_action_summary(
-                            language, pending_action, pending_action["summary"]
+                            language, pending_action, ""
                         )
                         args = pending_action["args"]
                         services_preview = args.get("services") or []
