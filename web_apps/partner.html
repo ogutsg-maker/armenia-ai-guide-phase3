@@ -46,5 +46,7 @@ form.addEventListener('submit',async e=>{
  }catch(err){showError(err.message)}finally{submit.disabled=false}
 });
 render();
+async function restoreRegisteredPartner(){const initData=tg?.initData||'';if(!initData)return;try{const r=await fetch('/api/webapp/partner/start',{method:'POST',headers:{'Content-Type':'application/json','X-Telegram-Init-Data':initData},body:'{}'});const d=await r.json().catch(()=>({}));if(r.ok&&d.registered)location.replace('/master_cabinet.html?v=20261002-3')}catch(e){console.debug('partner registration restore',e)}}
+restoreRegisteredPartner();
 </script>
 </body></html>
