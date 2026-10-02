@@ -18,6 +18,11 @@ def test_partner_registration_is_minimal():
     assert "/api/webapp/partner/start" in html
     assert "/api/webapp/partner/message" not in html
 
+def test_registration_has_no_legacy_ai_save_tool():
+    src = read("tool_registry.py")
+    assert "save_completed_application" not in src
+    assert "AUTO_COMMIT" not in src
+
 def test_service_tool_has_no_dispatch_base_contract():
     src = read("tool_registry.py")
     assert '"base_location"' not in src
