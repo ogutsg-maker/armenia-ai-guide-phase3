@@ -119,3 +119,26 @@ def test_admin_ui_does_not_offer_direct_catalog_or_potential_mutations():
     assert "proposalAction(" not in src
     assert "/api/admin/potential-partners/research" not in src
     assert "/api/admin/potential-partners/structure" not in src
+
+def test_partner_cabinet_has_no_direct_business_object_service_mutation_routes():
+    src = read("master_cabinet_api.py")
+    for route in (
+        'add_post("/api/master/{id}/businesses"',
+        'add_delete("/api/master/{id}/businesses/{business_id}"',
+        'add_post("/api/master/{id}/businesses/{business_id}"',
+        'add_post("/api/master/{id}/objects"',
+        'add_delete("/api/master/{id}/objects/{object_id}"',
+        'add_post("/api/master/{id}/objects/{object_id}"',
+        'add_post("/api/master/{id}/services"',
+        'add_post("/api/master/{id}/services/{service_id}"',
+        'add_delete("/api/master/{id}/services/{service_id}"',
+        'add_post("/api/master/{id}/settings"',
+    ):
+        assert route not in src
+
+def test_partner_negotiation_and_application_mutations_do_not_bypass_ai():
+    src = read("master_cabinet_api.py")
+    assert 'add_post("/api/master/{id}/negotiations/{negotiation_id}/agree"' not in src
+    assert 'add_put("/api/master/{id}/applications/{application_id}"' not in src
+    assert 'add_post("/api/master/{id}/applications/{application_id}/submit"' not in src
+    assert 'add_delete("/api/master/{id}/applications/{application_id}"' not in src
