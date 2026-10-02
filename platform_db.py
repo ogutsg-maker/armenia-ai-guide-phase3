@@ -194,6 +194,30 @@ def save_partner_document(partner_id, direction_id, filename, mime_type, file_da
 def mark_clarification_answered(clarification_id):
     return execute("UPDATE admin_clarifications SET status='answered',answered_at=NOW() WHERE id=%s RETURNING *",(clarification_id,),True)
 
+# Potential partner invitation lifecycle
+
+def create_potential_invitation(potential_partner_id: int, invited_by: int | None = None, token: str | None = None):
+    import secrets
+    pid = int(potential_partner_id)
+    existing = one("SELECT * FROM potential_partner_invitations WHERE potential_partner_id=%s AND status='invited' ORDER BY id DESC LIMIT 1", (pid,))
+    if existing:
+        return existing
+    token = str(token or secrets.token_urlsafe(24))
+    return execute("INSERT INTO potential_partner_invitations (potential_partner_id,invited_by,token,status) VALUES(%s,%s,%s,'invited') RETURNING *", (pid, int(invited_by) if invited_by else None, token), True)
+
+def get_potential_invitation(token: str):
+    return one("SELECT i.*,p.business_name,p.phone,p.city,p.marz FROM potential_partner_invitations i JOIN potential_partners p ON p.id=i.potential_partner_id WHERE i.token=%s LIMIT 1", (str(token or '').strip(),))
+
+def accept_potential_invitation(token: str, telegram_user_id: int, business_name: str, phone: str):
+    invitation = get_potential_invitation(token)
+    if not invitation or str(invitation.get('status') or '').lower() != 'invited':
+        raise ValueError('invitation_not_active')
+    result = register_partner_basic(actor_user_id=int(telegram_user_id), business_name=str(business_name or invitation.get('business_name') or '').strip(), phone=str(phone or invitation.get('phone') or '').strip())
+    partner_id = int(result['partner']['id'])
+    updated = execute("UPDATE potential_partner_invitations SET status='accepted',partner_id=%s,accepted_at=NOW(),updated_at=NOW() WHERE id=%s AND status='invited' RETURNING *", (partner_id, int(invitation['id'])), True)
+    update_potential(int(invitation['potential_partner_id']), status='converted', partner_id=partner_id)
+    return {'invitation': updated, **result}
+
 # Notifications
 
 def create_notification(user_id, title='', body='', kind='info', audience='user', data=None, delivered=False):
