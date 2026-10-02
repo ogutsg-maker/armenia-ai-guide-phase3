@@ -413,19 +413,38 @@ class AIManager:
                 line += f" — {shown} ֏"
             items.append(line)
         joined = "\n".join(items) or "• —"
+        mode = str(args.get("service_mode") or "").strip().lower()
+        location = args.get("service_location") if isinstance(args.get("service_location"), dict) else {}
+        coverage = args.get("coverage") if isinstance(args.get("coverage"), dict) else (
+            location.get("coverage") if isinstance(location.get("coverage"), dict) else {}
+        )
+        cities = coverage.get("cities") or coverage.get("city") or []
+        marzes = coverage.get("marzes") or coverage.get("marz") or []
+        if isinstance(cities, str): cities = [cities]
+        if isinstance(marzes, str): marzes = [marzes]
+        loc_lines = []
+        if mode in {"mobile", "both"}:
+            loc_lines.append("📍 " + ("Հաճախորդի հասցեում" if language == "hy" else "У клиента" if language == "ru" else "At the customer's address"))
+        elif mode == "at_address":
+            loc_lines.append("📍 " + ("Այս հասցեում" if language == "hy" else "По этому адресу" if language == "ru" else "At this address"))
+        if cities:
+            loc_lines.append(("Քաղաքներ: " if language == "hy" else "Города: " if language == "ru" else "Cities: ") + ", ".join(map(str, cities)))
+        if marzes:
+            loc_lines.append(("Մարզեր: " if language == "hy" else "Марзы: " if language == "ru" else "Marzes: ") + ", ".join(map(str, marzes)))
+        location_text = "\n" + "\n".join(loc_lines) if loc_lines else ""
         if language == "hy":
             return (
                 f"Ավելացնել «{company or 'ընկերություն'}» ընկերությունում հետևյալ ծառայությունները:"
-                f"\n{joined}\n\nՀաստատո՞ւմ եք։"
+                f"\n{joined}{location_text}\n\nՀաստատո՞ւմ եք։"
             )
         if language == "ru":
             return (
                 f"Добавить в компанию «{company or 'компанию'}» следующие услуги:"
-                f"\n{joined}\n\nПодтверждаете?"
+                f"\n{joined}{location_text}\n\nПодтверждаете?"
             )
         return (
             f"Add the following services to “{company or 'the company'}”:"
-            f"\n{joined}\n\nConfirm?"
+            f"\n{joined}{location_text}\n\nConfirm?"
         )
 
     @staticmethod
