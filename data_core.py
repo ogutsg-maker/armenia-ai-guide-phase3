@@ -3609,9 +3609,12 @@ def ensure_direction_verification_case(
     if actor_user_id is not None:
         assert_partner_owns_partner(int(partner_id), int(actor_user_id))
     policy = get_direction_verification_policy(int(master_category_id))
-    if not policy["verification_required"]:
-        return {"required": False, "verified": True, "policy": policy, "case": None, "direction": None}
 
+    # A verification document is scoped to partner + company + direction.
+    # It is not scoped to an individual service and is not controlled by a
+    # service-level document flag. The first service in a direction therefore
+    # opens the direction verification flow; later services reuse the same
+    # approved direction document.
     direction = one(
         """SELECT id,partner_id,business_id,master_category_id,status,rejection_reason
            FROM partner_directions
@@ -3648,7 +3651,8 @@ def ensure_direction_verification_case(
                VALUES(%s,%s,%s,%s,'awaiting_document') RETURNING *""",
             (int(direction["id"]),int(partner_id),int(business_id),int(master_category_id)),
         )
-    return {"required": True, "verified": str(direction.get("status") or "").lower() in {"approved","frozen"},
+    verified = str(direction.get("status") or "").lower() in {"approved","frozen"}
+    return {"required": True, "verified": verified,
             "policy": policy, "case": case, "direction": direction}
 
 
