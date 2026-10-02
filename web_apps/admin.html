@@ -526,13 +526,15 @@ async function directionVerificationAction(id,action){
  if(action==='reject'&&reason===null)return;
  try{
   if(action==='approve'){
+    // Capture the case before approval because the backend removes an approved
+    // case from the pending verification queue immediately.
+    const before=await api('/api/admin/direction-verifications');
+    const approvedCase=(before.items||[]).find(x=>String(x.id)===String(id));
     // First approve the submitted direction document. That transaction moves
     // all waiting service applications for the same company/direction into
     // pending_admin. Then approve those applications so their services become
     // active. The admin sees this as one final "approve & activate" action.
     await post('/api/admin/direction-verifications/'+id+'/approve',{});
-    const queue=await api('/api/admin/direction-verifications');
-    const approvedCase=(queue.items||[]).find(x=>String(x.id)===String(id));
     if(approvedCase){
       const ad=await api('/api/admin/universal-applications');
       const apps=(ad.applications||[]).filter(a=>
