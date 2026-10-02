@@ -520,7 +520,7 @@ async function loadDirectionVerificationQueue(){
 async function editVerificationApplication(applicationId){
  if(!applicationId){alert('Հայտի ID-ն հասանելի չէ');return}
  try{
-  const d=await api('/api/admin/partner-applications/'+Number(applicationId));
+  const d=await api('/api/admin/partner-applications/'+Number(applicationId)+'/edit');
   const a=d.application||d.item||d;
   const phone=prompt('Հեռախոս / Телефон',String(a.phone||''));
   if(phone===null)return;
