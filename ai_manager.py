@@ -410,7 +410,16 @@ class AIManager:
                     shown = str(int(number)) if number.is_integer() else str(number)
                 except (TypeError, ValueError):
                     shown = str(price)
-                line += f" — {shown} ֏"
+                price_type = str(item.get("price_type") or args.get("price_type") or "").strip().lower()
+                if price_type == "from":
+                    shown_price = (
+                        f"{shown} ֏-ից" if language == "hy"
+                        else f"от {shown} ֏" if language == "ru"
+                        else f"from {shown} ֏"
+                    )
+                else:
+                    shown_price = f"{shown} ֏"
+                line += f" — {shown_price}"
             items.append(line)
         joined = "\n".join(items) or "• —"
         mode = str(args.get("service_mode") or "").strip().lower()
@@ -2256,8 +2265,11 @@ class AIManager:
                         # The deterministic parser is an internal implementation detail.
                         # Do not expose its tool-call payload to the partner UI: the UI must
                         # render exactly one human confirmation preview.
+                        # The confirmation widget renders pending_action.summary.
+                        # Do not also return the same summary as chat text, otherwise
+                        # partners see the confirmation preview twice.
                         return {
-                            "reply": summary,
+                            "reply": "",
                             "confirmation_required": True,
                             "pending_action": pending_action,
                         }
