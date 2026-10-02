@@ -142,3 +142,10 @@ def test_partner_negotiation_and_application_mutations_do_not_bypass_ai():
     assert 'add_put("/api/master/{id}/applications/{application_id}"' not in src
     assert 'add_post("/api/master/{id}/applications/{application_id}/submit"' not in src
     assert 'add_delete("/api/master/{id}/applications/{application_id}"' not in src
+
+def test_partner_cabinet_ui_does_not_offer_closed_mutation_actions():
+    src = read("web_apps/master_cabinet.html")
+    assert 'onclick="addService()"' not in src
+    assert "onclick=\"agreeNegotiation(" not in src
+    assert "saveGeneralSetting(&quot;contact_sharing_enabled&quot;" not in src
+    assert "saveGeneralSetting(&quot;premium_contact_sharing_enabled&quot;" not in src
