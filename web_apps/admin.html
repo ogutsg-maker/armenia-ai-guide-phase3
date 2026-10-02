@@ -42,6 +42,38 @@
 <section id="aiCosts" class="page"><div class="card"><div class="row"><div><h2>💳 AI ծախսեր և տնտեսագիտություն</h2><div class="muted">Բոլոր AI provider-ները և մոդելները՝ ըստ շղթայի, փուլի, partner-ի և token usage-ի։</div></div><div style="display:flex;gap:7px;align-items:center"><select id="aiCostDays"><option value="1">1 օր</option><option value="7">7 օր</option><option value="30" selected>30 օր</option><option value="90">90 օր</option></select><button class="btn soft" onclick="loadAiCosts()">↻</button></div></div></div><div class="grid" id="aiCostStats"></div><div class="card"><b>🤝 Ըստ գործընկերոջ</b><div id="aiCostPartners"></div></div><div class="card"><b>🧠 Ըստ provider / model</b><div id="aiCostProviders"></div></div><div class="card"><b>🔎 Վերջին AI գործողությունները</b><div id="aiCostRows"></div></div><div class="card"><div class="row"><div><b>📊 Գործարքների տնտեսագիտություն</b><div class="muted">Ընդհանուր հանձնաժողովը, AI ծախսը և արդյունքը</div></div><button class="btn soft" onclick="loadProjectEconomics()">↻</button></div><div class="grid" id="projectEconomicsStats" style="margin-top:10px"></div><div class="detail" id="projectEconomicsStages"><div class="card"><div class="row"><div><b>🤝 Տնտեսագիտություն ըստ գործընկերների</b><div class="muted">Հանձնաժողով · AI · այլ ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadPartnerEconomics()">↻</button></div><div id="partnerEconomicsRows" class="detail"></div></div><div class="card"><div class="row"><div><b>🏢 Տնտեսագիտություն ըստ ընկերությունների</b><div class="muted">Ընկերություն · գործընկեր · AI · ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadCompanyEconomics()">↻</button></div><div id="companyEconomicsRows" class="detail"></div></div></div></div></section><section id="ai" class="page"><div class="card"><div class="row"><div><h2>🤖 AI-սեկретар</h2><div class="muted">Խոսեք սովորական լեզվով։ AI-ը տեսնում է հայտերը և կարող է կատարել հաստատվող գործողություններ։</div></div><span class="badge green">Groq · AI-first</span></div><div id="adminAiChat" style="margin-top:12px;max-height:430px;overflow:auto;border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f8fafc"></div><div style="display:flex;gap:8px;margin-top:10px"><textarea id="adminAiInput" placeholder="Օր․ Ցույց տուր նոր հայտերը / Открой заявку 36 / Поставь заявке 36 категорию Брови" style="min-height:55px"></textarea><button class="btn" onclick="sendAdminAI()" style="align-self:flex-end">➤</button></div><div class="muted" style="margin-top:8px">AI-ը հաստատում կպահանջի միայն տվյալների փոփոխությունից առաջ։</div></div></section>
 </main></div>
 <script>
+(function(){
+  function show(msg,err){
+    var t=document.getElementById('authText'), e=document.getElementById('authError'), b=document.getElementById('retry');
+    if(t)t.textContent=msg;
+    if(err&&e){e.textContent=String(err);e.style.display='block';}
+    if(b)b.style.display='inline-block';
+  }
+  window.addEventListener('error',function(ev){
+    if(document.getElementById('auth') && document.getElementById('auth').style.display!=='none'){
+      show('Չհաջողվեց բեռնել ադմին վահանակը։ / Не удалось загрузить админ-панель.',ev.message||'JavaScript error');
+    }
+  });
+  window.addEventListener('unhandledrejection',function(ev){
+    if(document.getElementById('auth') && document.getElementById('auth').style.display!=='none'){
+      var r=ev.reason||'Promise error';
+      show('Չհաջողվեց բեռնել ադմին վահանակը։ / Не удалось загрузить админ-панель.',r.message||r);
+    }
+  });
+  setTimeout(function(){
+    var a=document.getElementById('auth'),t=document.getElementById('authText');
+    if(a && a.style.display!=='none' && t && /Ստուգում ենք մուտքը|Проверяем доступ/.test(t.textContent||'')){
+      var tg=window.Telegram&&window.Telegram.WebApp;
+      if(!tg || !tg.initData){
+        show('Բացեք Admin-ը Telegram Mini App-ի ներսում։ / Откройте Admin внутри Telegram Mini App.','telegram_init_data_required');
+      }else{
+        show('Չհաջողվեց գործարկել ադմին վահանակը։ / Не удалось запустить админ-панель.','admin_bootstrap_timeout');
+      }
+    }
+  },3000);
+})();
+</script>
+<script>
 const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[m]));let initData=(tg?.initData||'').trim();let rows=[];let filter='all';
 async function api(url,opt={}){const headers={...(opt.headers||{})};if(initData)headers['X-Telegram-Init-Data']=initData;const r=await fetch(url,{...opt,headers,cache:'no-store'});const text=await r.text();let d={};try{d=text?JSON.parse(text):{}}catch(_){d={error:text}}if(!r.ok)throw Error(d.error||d.message||('HTTP '+r.status));return d}
 const post=(u,d)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
