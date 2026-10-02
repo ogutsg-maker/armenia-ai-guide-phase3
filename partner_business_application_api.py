@@ -719,12 +719,17 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                 verified_document = None
                 if business_id:
                     verified_document = _one(
-                        """SELECT id,status FROM partner_verification_documents
-                           WHERE partner_id=%s AND business_id=%s
-                             AND COALESCE(is_current,TRUE)=TRUE
-                             AND status='approved'
-                           ORDER BY created_at DESC,id DESC LIMIT 1""",
-                        (row["partner_id"], business_id),
+                        """SELECT d.id,d.status
+                           FROM partner_verification_documents d
+                           JOIN partner_directions pd ON pd.id=d.partner_direction_id
+                           WHERE d.partner_id=%s AND d.business_id=%s
+                             AND pd.business_id=%s
+                             AND pd.master_category_id=%s
+                             AND pd.status IN ('approved','frozen')
+                             AND COALESCE(d.is_current,TRUE)=TRUE
+                             AND d.status='approved'
+                           ORDER BY d.created_at DESC,d.id DESC LIMIT 1""",
+                        (row["partner_id"], business_id, business_id, row.get("master_category_id")),
                     )
                 document_required = not bool(verified_document)
             row["document_required"] = document_required
