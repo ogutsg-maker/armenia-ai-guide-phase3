@@ -3632,7 +3632,6 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
                                       price_type: str | None = None,
                                       service_mode: str | None = None,
                                       service_location: dict[str, Any] | None = None,
-                                      base_location: dict[str, Any] | None = None,
                                       coverage: dict[str, Any] | None = None,
                                       submission_token: str | None = None):
     """Create one admin-review application for a single AI-added service."""
@@ -3641,10 +3640,9 @@ def create_partner_service_proposal(*, partner_id: int, actor_user_id: int, comp
         services=[{"name": name, "price": price, "address_id": address_id,
                    "phone": phone, "category_id": category_id, "description": description,
                    "price_type": price_type,
-                   "coverage": coverage, "base_location": base_location}],
+                   "coverage": coverage}],
         service_mode=service_mode,
         service_location=service_location,
-        base_location=base_location,
         submission_token=submission_token,
     )
 
@@ -3653,7 +3651,6 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
                                      company_id: int, services: list[dict[str, Any]],
                                      service_mode: str | None = None,
                                      service_location: dict[str, Any] | None = None,
-                                     base_location: dict[str, Any] | None = None,
                                      submission_token: str | None = None) -> dict:
     """Create ONE admin-review application containing the whole service batch."""
     pid = int(partner_id)
@@ -4259,10 +4256,10 @@ def marketplace_client_search(
 ):
     """Search approved services with service-mode-aware geographic filtering.
 
-    at_address uses service_location; mobile uses base_location (with a
-    backwards-compatible fallback to service_location/object data); both
-    matches either location. Coordinates are optional: radius filtering uses
-    Haversine when coordinates exist, otherwise city/marz matching is used.
+    All service modes use the service's own service_location and coverage.
+    For customer-visit/mobile services, city/district/marz in service_location
+    and coverage are the authoritative matching fields. Coordinates are optional:
+    radius filtering uses Haversine when coordinates exist, otherwise city/marz matching is used.
     """
     q = str(query or "").strip()
     city = str(city or "").strip()
@@ -4324,48 +4321,12 @@ def marketplace_client_search(
           ELSE NULL
         END
     """
-    base_lat_sql = """
-        CASE
-          WHEN COALESCE(s.data_json->'base_location'->>'lat','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-            THEN (s.data_json->'base_location'->>'lat')::numeric
-          WHEN COALESCE(s.data_json->'base_location'->>'latitude','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-            THEN (s.data_json->'base_location'->>'latitude')::numeric
-          ELSE NULL
-        END
-    """
-    base_lng_sql = """
-        CASE
-          WHEN COALESCE(s.data_json->'base_location'->>'lng','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-            THEN (s.data_json->'base_location'->>'lng')::numeric
-          WHEN COALESCE(s.data_json->'base_location'->>'longitude','') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-            THEN (s.data_json->'base_location'->>'longitude')::numeric
-          ELSE NULL
-        END
-    """
-
-    # For mobile, old records without base_location fall back to the service
-    # location/object coordinates. For both, either location can satisfy the
-    # request independently.
-    target_lat_sql = f"""
-        CASE
-          WHEN {mode_sql}='mobile'
-            THEN COALESCE(({base_lat_sql}), ({service_lat_sql}))
-          ELSE ({service_lat_sql})
-        END
-    """
-    target_lng_sql = f"""
-        CASE
-          WHEN {mode_sql}='mobile'
-            THEN COALESCE(({base_lng_sql}), ({service_lng_sql}))
-          ELSE ({service_lng_sql})
-        END
-    """
     service_city_sql = "COALESCE(s.data_json->'service_location'->>'city',po.city,'')"
     service_district_sql = "COALESCE(s.data_json->'service_location'->>'district','')"
     service_marz_sql = "COALESCE(s.data_json->'service_location'->>'marz',po.marz,'')"
-    base_city_sql = "COALESCE(s.data_json->'base_location'->>'city',po.city,'')"
-    base_district_sql = "COALESCE(s.data_json->'base_location'->>'district','')"
-    base_marz_sql = "COALESCE(s.data_json->'base_location'->>'marz',po.marz,'')"
+    base_city_sql = service_city_sql
+    base_district_sql = service_district_sql
+    base_marz_sql = service_marz_sql
 
     coverage_type_sql = """
         CASE
@@ -4535,7 +4496,7 @@ def marketplace_client_search(
            business_name,contact_share_policy,category_name_am,category_name_ru,
            data_json->>'service_mode' AS service_mode,
            data_json->'service_location' AS service_location,
-           data_json->'base_location' AS base_location,
+           data_json->'service_location' AS service_location,
            data_json->'coverage' AS service_coverage,
            service_lat,service_lng,coverage_type,coverage_radius_km,
            COALESCE(object_city,'') AS city,COALESCE(object_marz,'') AS marz
