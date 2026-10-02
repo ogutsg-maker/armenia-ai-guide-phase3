@@ -82,3 +82,15 @@ def test_idram_is_live_only_and_has_no_fake_settlement():
     block = src[src.index("def create_invoice"):src.index("def build_payment_url")]
     assert 'status="paid"' not in block
     assert "Idram live credentials are not configured" in block
+
+def test_storefront_has_no_test_payment_or_early_qr_message():
+    src = read("web_apps/storefront.html")
+    assert "Тестовая оплата Idram" not in src
+    assert "QR для check-in выдаётся сразу" not in src
+    assert "только после подтверждённой оплаты" in src
+
+def test_direct_booking_contract_waits_for_partner_confirmation():
+    src = read("marketplace_flow_api.py")
+    block = src[src.index("async def direct_booking"):src.index("# --- Phase 3: cancellations", src.index("async def direct_booking"))]
+    assert "status='pending_partner_confirmation'" in block
+    assert "checkin" in block
