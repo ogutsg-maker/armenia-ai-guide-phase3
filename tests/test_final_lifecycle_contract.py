@@ -240,3 +240,12 @@ def test_admin_ui_has_no_direct_application_mutations():
     for marker in ("decision(", "sendDocumentCorrection(", "subcategoryProposalEdit(", "subcategoryProposalAction(", "directionRequestEdit(", "directionRequestAction(", "deleteAdminApplication(", "editApplication(", "appAction("):
         assert marker not in src
     assert "AI-սեկretարի" in src or "AI-սեկretար" in src
+
+
+def test_marketplace_cancellation_routes_are_ai_only():
+    src = read("marketplace_flow_api.py")
+    assert "cancel_booking_client" not in src
+    assert "cancel_booking_partner" not in src
+    assert "/api/market/client/booking/{booking_id}/cancel" not in src
+    assert "/api/market/partner/booking/{booking_id}/cancel" not in src
+    assert '"cancel_order"' in read("tool_registry.py")

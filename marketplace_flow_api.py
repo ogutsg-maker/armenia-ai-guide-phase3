@@ -288,13 +288,6 @@ async def partner_checkin(request):
         'business_name':result.get('business_name'),
     })
 
-async def cancel_booking_client(request):
-    return await _cancel_booking(request,'client')
-
-async def cancel_booking_partner(request):
-    return await _cancel_booking(request,'partner')
-
-
 # ─── Idram live payment callback / return ──────────────────────────────
 # Idram (live mode) works in two steps against the merchant "result URL":
 #   1. pre-check  (EDP_PRECHECK=YES)  → we must answer plain "OK"
@@ -489,12 +482,10 @@ def register_marketplace_flow_routes(app):
     app.router.add_get('/api/market/partner/negotiations',partner_negotiations)
     app.router.add_get('/api/market/partner/negotiation/{negotiation_id}',partner_negotiation_messages)
     app.router.add_post('/api/market/partner/negotiation/{negotiation_id}/reply',partner_reply)
-    app.router.add_post('/api/market/client/booking/{booking_id}/cancel',cancel_booking_client)
     app.router.add_post('/api/market/booking/{booking_id}/arbitration',open_arbitration)
     app.router.add_get('/api/market/arbitration/{arbitration_id}',arbitration_get)
     app.router.add_get('/api/market/admin/arbitrations',admin_arbitrations)
     app.router.add_post('/api/market/admin/arbitration/{arbitration_id}/resolve',resolve_arbitration)
-    app.router.add_post('/api/market/partner/booking/{booking_id}/cancel',cancel_booking_partner)
     app.router.add_post('/api/market/partner/checkin',partner_checkin)
     # Idram live payment callback (server-to-server) + browser return pages.
     app.router.add_post('/api/idram/result',idram_result)
