@@ -38,19 +38,19 @@
 </head>
 <body>
 <header>
-  <h1>⚙️ Настройки платформы</h1>
-  <p>Фаза 3 — вкл/выкл модулей и параметры (без редеплоя)</p>
+  <h1>⚙️ Պլատֆորմի կարգավորումներ</h1>
+  <p>Փուլ 3 — մոդուլների միացում/անջատում և պարամետրեր (առանց վերատեղակայման)</p>
 </header>
 <main>
   <div id="err" class="err" style="display:none"></div>
 
   <!-- Блок ИИ-Рубильников и Безопасности -->
   <div class="card">
-    <h2>🤖 Настройки ИИ и Безопасность</h2>
+    <h2>🤖 AI-ի կարգավորումներ և անվտանգություն</h2>
     <div class="row">
       <div>
-        <div class="lbl">🔒 Анонимность до оплаты комиссии</div>
-        <div class="desc">Жестко вырезать телефоны и ссылки из чатов с ИИ до оплаты сделки</div>
+        <div class="lbl">🔒 Անանունություն մինչև հանձնաժողովի վճարումը</div>
+        <div class="desc">Մինչև գործարքի վճարումը AI զրույցներից հեռացնել հեռախոսներն ու հղումները</div>
       </div>
       <label class="switch">
         <input type="checkbox" id="flag_hide_contacts_before_payment">
@@ -59,8 +59,8 @@
     </div>
     <div class="row">
       <div>
-        <div class="lbl">🗣️ Голосовой ввод ИИ</div>
-        <div class="desc">Разрешить клиентам и партнерам наговаривать сообщения голосом</div>
+        <div class="lbl">🗣️ AI ձայնային մուտք</div>
+        <div class="desc">Թույլատրել հաճախորդներին և գործընկերներին ձայնով հաղորդագրություններ ուղարկել</div>
       </div>
       <label class="switch">
         <input type="checkbox" id="flag_allow_voice_input">
@@ -69,8 +69,8 @@
     </div>
     <div class="row">
       <div>
-        <div class="lbl">📸 Анализ картинок и прайсов</div>
-        <div class="desc">Разрешить мастерам загружать фото бумажных прайс-листов для распознавания</div>
+        <div class="lbl">📸 Նկարների և գնացուցակների վերլուծություն</div>
+        <div class="desc">Թույլատրել գործընկերներին վերբեռնել թղթային գնացուցակների լուսանկարներ ճանաչման համար</div>
       </div>
       <label class="switch">
         <input type="checkbox" id="flag_allow_image_input">
@@ -81,11 +81,11 @@
 
   <!-- Блок переключения ИИ-моделей и Каналов связи -->
   <div class="card">
-    <h2>⚙️ Выбор ИИ Моделей и Роутинг рассылок</h2>
+    <h2>⚙️ AI մոդելների ընտրություն և հաղորդագրությունների ուղղորդում</h2>
     <div class="row">
       <div>
-        <div class="lbl">Модель для Клиентов</div>
-        <div class="desc">ИИ-ассистент в чате и бронировании</div>
+        <div class="lbl">Հաճախորդների մոդել</div>
+        <div class="desc">AI օգնականը զրույցում և ամրագրման ժամանակ</div>
       </div>
       <select id="sel_client_ai_model" class="sel">
         <option value="groq-llama3">Groq (Llama 3)</option>
@@ -94,8 +94,8 @@
     </div>
     <div class="row">
       <div>
-        <div class="lbl">Модель для Партнеров</div>
-        <div class="desc">ИИ при разборе прайсов и в кабинете</div>
+        <div class="lbl">Գործընկերների մոդել</div>
+        <div class="desc">AI՝ գնացուցակների վերլուծության և կաբինետի համար</div>
       </div>
       <select id="sel_partner_ai_model" class="sel">
         <option value="openai-gpt4o">OpenAI (GPT-4o)</option>
@@ -104,8 +104,8 @@
     </div>
     <div class="row">
       <div>
-        <div class="lbl">Модель для Админки</div>
-        <div class="desc">Анализ лидов и сбор статистики</div>
+        <div class="lbl">Ադմինի մոդել</div>
+        <div class="desc">Լիդերի վերլուծություն և վիճակագրություն</div>
       </div>
       <select id="sel_admin_ai_model" class="sel">
         <option value="groq-llama3">Groq (Llama 3)</option>
@@ -114,21 +114,21 @@
     </div>
     <div class="row">
       <div>
-        <div class="lbl">Основной канал инвайтов</div>
-        <div class="desc">Куда ИИ шлет приглашения лидам из интернета</div>
+        <div class="lbl">Հրավերների հիմնական ալիք</div>
+        <div class="desc">Որտեղ AI-ը ուղարկում է ինտերնետից գտնված գործընկերների հրավերները</div>
       </div>
       <select id="sel_active_notification_channel" class="sel">
-        <option value="telegram">Telegram-бот</option>
+        <option value="telegram">Telegram բոտ</option>
         <option value="whatsapp">WhatsApp API</option>
-        <option value="sms">Обычные СМС</option>
+        <option value="sms">Սովորական SMS</option>
       </select>
     </div>
 
     <!-- Новые тумблеры активности шлюзов мессенджеров -->
     <div class="row" style="margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 14px;">
       <div>
-        <div class="lbl">🟢 Статус шлюза Telegram</div>
-        <div class="desc">Разрешить автоматическую отправку инвайтов через TG-бота</div>
+        <div class="lbl">🟢 Telegram ալիքի կարգավիճակ</div>
+        <div class="desc">Թույլատրել հրավերների ավտոմատ ուղարկումը Telegram բոտով</div>
       </div>
       <label class="switch">
         <input type="checkbox" id="flag_enable_telegram_channel">
@@ -137,8 +137,8 @@
     </div>
     <div class="row">
       <div>
-        <div class="lbl">🟢 Статус шлюза WhatsApp</div>
-        <div class="desc">Разрешить авто-рассылку предложений в WhatsApp</div>
+        <div class="lbl">🟢 WhatsApp ալիքի կարգավիճակ</div>
+        <div class="desc">Թույլատրել առաջարկների ավտոմատ ուղարկումը WhatsApp-ով</div>
       </div>
       <label class="switch">
         <input type="checkbox" id="flag_enable_whatsapp_channel">
@@ -147,8 +147,8 @@
     </div>
     <div class="row">
       <div>
-        <div class="lbl">🟢 Статус шлюза SMS</div>
-        <div class="desc">Разрешить отправку платных СМС-приглашений мастерам</div>
+        <div class="lbl">🟢 SMS ալիքի կարգավիճակ</div>
+        <div class="desc">Թույլատրել վճարովի SMS հրավերների ուղարկումը գործընկերներին</div>
       </div>
       <label class="switch">
         <input type="checkbox" id="flag_enable_sms_channel">
@@ -158,19 +158,19 @@
   </div>
 
   <div class="card">
-    <h2>Стандартные модули платформы</h2>
+    <h2>Պլատֆորմի ստանդարտ մոդուլներ</h2>
     <div id="flags"></div>
   </div>
 
   <div class="card">
-    <h2>Параметры лимитов</h2>
+    <h2>Սահմանաչափերի պարամետրեր</h2>
     <div class="row">
-      <div><div class="lbl">Макс. комиссия за премиум-контакт, AMD</div>
-        <div class="desc">Потолок платы за разблокировку контакта</div></div>
+      <div><div class="lbl">Premium կոնտակտի առավելագույն վճար, AMD</div>
+        <div class="desc">Կոնտակտի բացման վճարի առավելագույն սահմանաչափ</div></div>
       <input id="premium_contact_max_fee" class="num" type="number" min="0" step="500">
     </div>
     <div class="row">
-      <div><div class="lbl">Мин. оценка отзыва</div></div>
+      <div><div class="lbl">Կարծիքի նվազագույն գնահատական</div></div>
       <input id="review_min_rating" class="num" type="number" min="1" max="5">
     </div>
     <div class="row">
