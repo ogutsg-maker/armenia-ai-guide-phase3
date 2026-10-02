@@ -271,6 +271,7 @@ async function sendDocumentCorrection(pid,aid,did){
 }
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
 async function decision(id,a){
+ if(a==='approve' && !confirm('Հաստատե՞լ այս գործընկերոջ հայտը։'))return;
  const reason=a==='reject'?prompt('Պատճառ / Причина','Փաստաթուղթը չի համապատասխանում'):'';
  if(a==='reject' && reason===null)return;
  try{
@@ -594,6 +595,7 @@ async function editApplication(id){
  $('appEditor'+id).innerHTML=renderApplicationEditor(x);
 }
 async function appAction(id,action){
+ if(['approve','approve_service_proposal'].includes(action) && !confirm('Հաստատե՞լ այս գործողությունը։'))return;
  const list=(await api('/api/admin/universal-applications')).applications||[];
  const x=list.find(v=>Number(v.id)===Number(id))||{};
  try{
