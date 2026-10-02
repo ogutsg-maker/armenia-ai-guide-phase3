@@ -15,10 +15,21 @@ async def chat(request):
     user_id = uid(request)
     data = await request.json()
     text = str(data.get('text') or '').strip()
-    if not text: return web.json_response({'ok':False,'error':'text_required'}, status=400)
+    if not text:
+        return web.json_response({'ok':False,'error':'text_required'}, status=400)
     lang = (data_core.get_user(user_id) or {}).get('lang','hy')
     reply = await request.app['client_ai'].process(user_id, text, lang)
-    return web.json_response({'ok':True,'reply':reply})
+    session = data_core.active_session(user_id, 'client', 'sales') or {}
+    ctx = session.get('context_json') or {}
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except Exception:
+            ctx = {}
+    request_id = ctx.get('request_id')
+    candidates = data_core.get_request_candidates(int(request_id), 3) if request_id else []
+    return web.json_response({'ok':True,'reply':reply,'request_id':request_id,'items':candidates})
+
 
 async def route(request):
     """Phase 2 orchestrator entry: let the AI core decide which module handles
