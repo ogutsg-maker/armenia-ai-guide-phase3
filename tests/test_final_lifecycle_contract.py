@@ -23,6 +23,10 @@ def test_registration_has_no_legacy_ai_save_tool():
     assert "save_completed_application" not in src
     assert "AUTO_COMMIT" not in src
 
+def test_data_core_has_no_legacy_base_location_model():
+    src = read("data_core.py")
+    assert "base_location" not in src
+
 def test_service_tool_has_no_dispatch_base_contract():
     src = read("tool_registry.py")
     assert '"base_location"' not in src
