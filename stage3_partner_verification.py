@@ -1037,6 +1037,41 @@ async def api_admin_service_direction_request_action(request):
     return web.json_response({"ok":False,"error":"unknown_action"},status=400)
 
 
+async def api_admin_partner_application_edit(request):
+    admin_id = _admin_telegram_id(
+        request, request.app.get("stage3_bot_token"), request.app.get("stage3_admin_id")
+    )
+    application_id = int(request.match_info["id"])
+    payload = await request.json()
+    row = _db_fetchone(
+        """SELECT id,partner_id,business_id,status,phone,address,description
+           FROM partner_applications WHERE id=%s LIMIT 1""",
+        (application_id,),
+    )
+    if not row:
+        return web.json_response({"ok": False, "error": "application_not_found"}, status=404)
+    if str(row.get("status") or "").lower() in ("approved", "rejected"):
+        return web.json_response({"ok": False, "error": "application_not_editable"}, status=409)
+
+    phone = str(payload.get("phone") if payload.get("phone") is not None else row.get("phone") or "").strip()[:120]
+    address = str(payload.get("address") if payload.get("address") is not None else row.get("address") or "").strip()[:500]
+    description = str(payload.get("description") if payload.get("description") is not None else row.get("description") or "").strip()[:5000]
+
+    updated = _db_execute(
+        """UPDATE partner_applications
+           SET phone=%s,address=%s,description=%s
+           WHERE id=%s
+           RETURNING id,partner_id,business_id,status,phone,address,description""",
+        (phone,address,description,application_id),
+        returning=True,
+    )
+    _audit(admin_id, "partner_application_edited", application_id, {
+        "phone_changed": phone != str(row.get("phone") or ""),
+        "address_changed": address != str(row.get("address") or ""),
+        "description_changed": description != str(row.get("description") or ""),
+    })
+    return web.json_response({"ok": True, "application": updated})
+
 async def api_admin_partner_approve(request):
     return await _set_partner_decision(request, "approve")
 
@@ -1625,6 +1660,7 @@ def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=Tru
     app.router.add_get("/api/admin/partner-applications/{id}", api_admin_partner_detail)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/url", api_admin_partner_document_url)
     app.router.add_get("/api/admin/partner-applications/{id}/documents/{doc_id}/download", api_admin_partner_document_download)
+    app.router.add_post("/api/admin/partner-applications/{id}/edit", api_admin_partner_application_edit)
     app.router.add_post("/api/admin/partner-applications/{id}/approve", api_admin_partner_approve)
     app.router.add_post("/api/admin/partner-applications/{id}/reject", api_admin_partner_reject)
     app.router.add_post("/api/admin/partner-applications/{id}/suspend", api_admin_partner_suspend)
