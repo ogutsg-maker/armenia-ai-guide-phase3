@@ -249,3 +249,18 @@ def test_partner_cabinet_has_no_legacy_profile_mutation_routes():
     src = read("master_cabinet_api.py")
     assert "update_profile_by_image" not in src
     assert "update_profile_by_voice" not in src
+
+def test_partner_cabinet_backend_has_no_dead_direct_mutation_handlers():
+    src = read("master_cabinet_api.py")
+    for marker in (
+        "async def api_settings_update(",
+        "async def api_object_create(",
+        "async def api_object_update(",
+        "async def api_object_delete(",
+        "async def api_service_create(",
+        "async def api_service_update(",
+        "async def api_service_delete(",
+        "async def api_subcategory_proposal(",
+        '"/api/master/{id}/subcategory-proposals"',
+    ):
+        assert marker not in src
