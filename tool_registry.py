@@ -1274,7 +1274,7 @@ class ToolRegistry:
                         await notify(
                             None, user_id,
                             title="✅ Հայտը հաստատվել է",
-                            body="Ձեր գործընկերոջ հայտը հաստատվել է։ Ծառայությունները ակտիվ են, և կարող եք մուտք գործել գործընկերոջ աշխատասենյակ։",
+                            body="Ձեր գործընկերոջ հայտը հաստատվել է։ Ծառայությունները անցել են հաստատման փուլը և կակտիվացվեն հաջորդ հաստատված քայլով։",
                             kind="success",
                             audience="partner",
                             data={"application_id": int(args["application_id"]), "decision": "approved"},
@@ -1282,6 +1282,12 @@ class ToolRegistry:
                 except Exception:
                     pass
                 return {"ok": True, "item": result}
+            if name == "admin_activate_application_services":
+                return {"ok": True, "item": data_core.admin_activate_application_services(
+                    application_id=int(args["application_id"]),
+                    admin_telegram_id=self.telegram_id,
+                )}
+
             if name == "admin_reject_application":
                 reason = str(args.get("reason") or "").strip()
                 if not reason:
