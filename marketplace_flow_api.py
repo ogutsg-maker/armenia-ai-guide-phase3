@@ -703,7 +703,9 @@ def register_marketplace_flow_routes(app):
     app.router.add_post('/api/market/client/request/{request_id}/select',select_candidate)
     app.router.add_get('/api/market/client/negotiation/{negotiation_id}',negotiation_get)
     app.router.add_post('/api/market/client/negotiation/{negotiation_id}/message',negotiation_client_message)
-    app.router.add_post('/api/market/client/negotiation/{negotiation_id}/pay-test',test_payment)
+    # Test-payment endpoint is disabled by default in production. It is kept only for explicit local/staging settlement tests.
+    if os.getenv('ENABLE_TEST_PAYMENT', '').strip().lower() in {'1', 'true', 'yes', 'on'}:
+        app.router.add_post('/api/market/client/negotiation/{negotiation_id}/pay-test', test_payment)
     app.router.add_post('/api/market/client/service/{service_id}/book',direct_booking)
     app.router.add_get('/api/market/partner/negotiations',partner_negotiations)
     app.router.add_get('/api/market/partner/negotiation/{negotiation_id}',partner_negotiation_messages)
