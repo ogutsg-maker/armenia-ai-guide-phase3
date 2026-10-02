@@ -2723,15 +2723,10 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_get('/api/admin/ai/financial-summary',api_admin_ai_financial_summary)
     app.router.add_get('/api/admin/ai/partner-economics',api_admin_ai_partner_economics)
     app.router.add_get('/api/admin/ai/company-economics',api_admin_ai_company_economics)
-    app.router.add_post('/api/admin/ai/economics/expense',api_admin_ai_add_expense)
     app.router.add_get('/api/admin/ai/economics/negotiation/{negotiation_id}',api_admin_ai_negotiation_economics)
     app.router.add_get('/api/admin/ai/economics/company/{company_id}/orders',api_admin_ai_company_orders)
     app.router.add_get('/api/admin/ai/economics/order/{order_id}/trace',api_admin_ai_order_trace)
     app.router.add_get('/api/admin/ai/catalog-proposals',catalog_list)
-    app.router.add_post('/api/admin/ai/catalog-proposals/{id}/{action}',catalog_action)
     app.router.add_get('/api/admin/potential-partners',potential_list)
-    app.router.add_post('/api/admin/potential-partners/structure',potential_structure)
-    app.router.add_post('/api/admin/potential-partners/research',potential_research)
-    app.router.add_post('/api/admin/potential-partners/{id}/status',potential_status)
 
 

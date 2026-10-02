@@ -105,3 +105,17 @@ def test_admin_tariff_mutations_are_not_public_http_routes():
     assert 'add_post("/api/admin/tariffs/category/{id}"' not in src
     assert 'add_post("/api/admin/tariffs/service/{id}"' not in src
     assert 'add_get("/api/admin/tariffs"' in src
+
+def test_admin_ai_mutations_are_not_public_http_routes():
+    src = read("admin_ai_api.py")
+    assert "add_post('/api/admin/ai/economics/expense'" not in src
+    assert "add_post('/api/admin/ai/catalog-proposals/{id}/{action}'" not in src
+    assert "add_post('/api/admin/potential-partners/structure'" not in src
+    assert "add_post('/api/admin/potential-partners/research'" not in src
+    assert "add_post('/api/admin/potential-partners/{id}/status'" not in src
+
+def test_admin_ui_does_not_offer_direct_catalog_or_potential_mutations():
+    src = read("web_apps/admin.html")
+    assert "proposalAction(" not in src
+    assert "/api/admin/potential-partners/research" not in src
+    assert "/api/admin/potential-partners/structure" not in src
