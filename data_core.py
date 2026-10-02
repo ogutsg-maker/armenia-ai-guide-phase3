@@ -3171,28 +3171,48 @@ def reverse_booking_financial_entries(booking: dict, refund_amount: float):
     currency=booking.get("currency") or "AMD"
     if not partner_id or not booking_id:
         return
+
     # Refund reversals are cumulative so partial refunds can be followed
-    # by a later remainder without double-counting the first refund.
-    payment=one("SELECT amount,status FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(booking_id,))
-    paid_total=float((payment or {}).get("amount") or 0)
-    already=one("""SELECT COALESCE(SUM(-amount),0) refunded
-                   FROM partner_financial_ledger
-                   WHERE booking_id=%s AND entry_type='commission_refund'""",(booking_id,))
-    already_refunded=max(0.0,float((already or {}).get("refunded") or 0))
-    target=min(paid_total,max(0.0,float(refund_amount or 0)))
-    delta=max(0.0,target-already_refunded)
-    if delta<=0 or paid_total<=0:
-        return
-    ratio=min(1.0, delta/max(paid_total, 1e-9))
-    execute(
-        """INSERT INTO partner_financial_ledger
-           (partner_id,booking_id,entry_type,amount,currency,description)
-           VALUES(%s,%s,'commission_refund',%s,%s,%s),
-                 (%s,%s,'partner_due_refund',%s,%s,%s)""",
-        (partner_id,booking_id,-round(commission*ratio,2),currency,'Refund reversal of platform commission',
-         partner_id,booking_id,-round(partner_amount*ratio,2),currency,'Refund reversal of partner due'),
-        False,
-    )
+    # by a later remainder without double-counting the first refund. The
+    # duplicate check and the two reversal rows are kept in one transaction.
+    def _tx(cur):
+        cur.execute(
+            """SELECT amount,status FROM payments
+               WHERE booking_id=%s AND payment_type='commission'
+               ORDER BY id DESC LIMIT 1
+               FOR UPDATE""",
+            (booking_id,),
+        )
+        payment=cur.fetchone()
+        paid_total=float((payment or {}).get("amount") or 0)
+        cur.execute(
+            """SELECT COALESCE(SUM(-amount),0) refunded
+               FROM partner_financial_ledger
+               WHERE booking_id=%s AND entry_type='commission_refund'
+               FOR UPDATE""",
+            (booking_id,),
+        )
+        already=cur.fetchone()
+        already_refunded=max(0.0,float((already or {}).get("refunded") or 0))
+        target=min(paid_total,max(0.0,float(refund_amount or 0)))
+        delta=max(0.0,target-already_refunded)
+        if delta<=0 or paid_total<=0:
+            return None
+        ratio=min(1.0, delta/max(paid_total, 1e-9))
+        cur.execute(
+            """INSERT INTO partner_financial_ledger
+               (partner_id,booking_id,entry_type,amount,currency,description)
+               VALUES(%s,%s,'commission_refund',%s,%s,%s),
+                     (%s,%s,'partner_due_refund',%s,%s,%s)
+               RETURNING id""",
+            (partner_id,booking_id,-round(commission*ratio,2),currency,
+             'Refund reversal of platform commission',
+             partner_id,booking_id,-round(partner_amount*ratio,2),currency,
+             'Refund reversal of partner due'),
+        )
+        return cur.fetchone()
+
+    return platform_db.transaction(_tx)
 
 def create_booking_checkin(booking_id: int, token: str, starts_at=None):
     """Create a one-hour QR window anchored to the service start when known."""
