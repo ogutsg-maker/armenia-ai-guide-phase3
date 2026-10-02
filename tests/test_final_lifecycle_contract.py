@@ -23,6 +23,18 @@ def test_potential_ai_does_not_persist_directly():
     assert "platform_db" not in src
     assert "data_core" not in src
 
+def test_service_approval_is_separate_from_activation():
+    core = read("data_core.py")
+    tools = read("tool_registry.py")
+    api = read("partner_business_application_api.py")
+    ui = read("web_apps/admin.html")
+    assert "status='approved'" in core[core.index("def admin_approve_application"):core.index("def prepare_application_service_activation")]
+    assert "def prepare_application_service_activation" in core
+    assert "def admin_activate_application_services" in core
+    assert "admin_activate_application_services" in tools
+    assert "/api/admin/partner-applications/{application_id}/action" not in api
+    assert "/api/admin/partner-applications/" not in ui or "/action" not in ui
+
 def test_admin_ai_can_read_potential_partners():
     src = read("tool_registry.py")
     assert "admin_get_potential_partners" in src
