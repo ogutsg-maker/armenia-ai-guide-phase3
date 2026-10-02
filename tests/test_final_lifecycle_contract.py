@@ -243,3 +243,9 @@ def test_marketplace_cancellation_routes_are_ai_only():
     assert "/api/market/client/booking/{booking_id}/cancel" not in src
     assert "/api/market/partner/booking/{booking_id}/cancel" not in src
     assert '"cancel_order"' in read("tool_registry.py")
+
+
+def test_partner_cabinet_has_no_legacy_profile_mutation_routes():
+    src = read("master_cabinet_api.py")
+    assert "update_profile_by_image" not in src
+    assert "update_profile_by_voice" not in src
