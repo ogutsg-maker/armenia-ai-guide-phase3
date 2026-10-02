@@ -56,6 +56,13 @@ def test_prompt_has_no_dispatch_base_instruction():
     assert "dispatch base" not in src.lower()
 
 
+def test_marketplace_routes_are_registered_in_runtime():
+    src = read("main.py")
+    assert "register_marketplace_flow_routes" in src
+    assert "register_marketplace_flow_routes(app, ensure_schema=False)" in src
+    marketplace = read("marketplace_flow_api.py")
+    assert "def register_marketplace_flow_routes(app, *, ensure_schema: bool = True)" in marketplace
+
 def test_client_has_no_test_payment_path():
     html = read("web_apps/client.html")
     assert "/pay-test" not in html
