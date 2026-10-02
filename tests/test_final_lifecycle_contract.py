@@ -9,12 +9,14 @@ def read(name: str) -> str:
 
 def test_partner_registration_is_minimal():
     html = read("web_apps/partner.html")
-    assert "business_name" in html
-    assert 'id="phone"' in html
-    assert "services" not in html.split("<form", 1)[1].split("</form>", 1)[0]
-    assert "working_hours" not in html
-    assert "document" not in html.split("<form", 1)[1].split("</form>", 1)[0]
-
+    form = html.split("<form", 1)[1].split("</form>", 1)[0]
+    assert "business_name" in form
+    assert 'id="phone"' in form
+    assert "services" not in form
+    assert "working_hours" not in form
+    assert "document" not in form
+    assert "/api/webapp/partner/start" in html
+    assert "/api/webapp/partner/message" not in html
 
 def test_service_tool_has_no_dispatch_base_contract():
     src = read("tool_registry.py")
