@@ -942,14 +942,14 @@ def _admin_state_preview(action):
                       "description":"description","note":"admin_note"}.get(field))
         return "📨 Заявка #"+str(aid)+"\n🔧 "+str(field)+" : «"+str(old or "—")+"» → «"+str(action.get("new_value") or "—")+"»"
     if action.get("intent")=="approve_application":
-        return "📨 Заявка #"+str(aid)+"\n✅ Перевести заявку на этап документа"
+        return "📨 Заявка #"+str(aid)+"\n✅ Одобрить заявку и подготовить услуги к отдельной активации"
     if action.get("intent")=="reject_application":
         return "📨 Заявка #"+str(aid)+"\n❌ Отклонить\n📝 "+str(action.get("reason") or "Без причины")
     if action.get("intent")=="clarify_application":
         return "📨 Заявка #"+str(aid)+"\n📝 Отправить партнёру на уточнение\n"+str(action.get("admin_note") or "Требуется уточнение")
     return "Действие не определено."
 
-async def _admin_execute_state_action(action):
+async def _admin_execute_state_action(action, admin_telegram_id=None):
     if action.get("intent")=="delete_applications":
         ids=action.get("application_ids") or []
         clean=[]
@@ -1022,10 +1022,23 @@ async def _admin_execute_state_action(action):
         return platform_db.transaction(_edit_field)
 
     if action.get("intent")=="approve_application":
-        def _approve(cur):
-            cur.execute("UPDATE partner_applications SET status='document_pending',reviewed_at=NOW(),updated_at=NOW() WHERE id=%s AND status NOT IN ('approved','pending_partner')",(aid,))
-            return "✓ Заявка #"+str(aid)+" переведена на этап документа."
-        return platform_db.transaction(_approve)
+        if not admin_telegram_id:
+            return "Администратор не определён."
+        try:
+            from data_core import admin_approve_application
+            result=admin_approve_application(
+                application_id=aid,
+                admin_telegram_id=int(admin_telegram_id),
+            )
+            if isinstance(result, dict) and result.get("already_active"):
+                return "✓ Заявка #"+str(aid)+" уже одобрена."
+            return "✓ Заявка #"+str(aid)+" одобрена. Услуги подготовлены со статусом «approved»; их активация выполняется отдельным подтверждённым шагом."
+        except ValueError as exc:
+            if str(exc)=="direction_verification_required":
+                return "📄 Заявка #"+str(aid)+" не одобрена: для выбранного направления сначала требуется верификация документа."
+            if str(exc)=="services_need_classification":
+                return "⚠️ Заявка #"+str(aid)+" не одобрена: все услуги должны быть классифицированы в каталоге."
+            raise
 
     if action.get("intent")=="reject_application":
         reason=str(action.get("reason") or "Отклонено администратором.")[:3000]
@@ -2122,7 +2135,7 @@ async def admin_ai_message(admin_id,message):
     # Local state machine: confirmation and slot filling never call Groq.
     pending=state.get("pending_action")
     if pending and normalized in _CONFIRM_YES:
-        try: reply=await _admin_execute_state_action(_admin_safe(pending))
+        try: reply=await _admin_execute_state_action(_admin_safe(pending), state.get("admin_id"))
         except Exception: reply="Не удалось сохранить изменение. Изменений не внесено."
         state["pending_action"]=None; state["waiting_for_input"]=None; state["last_focused_field"]=None
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
