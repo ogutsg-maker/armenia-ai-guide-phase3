@@ -4326,9 +4326,9 @@ def marketplace_client_search(
     service_city_sql = "COALESCE(s.data_json->'service_location'->>'city',po.city,'')"
     service_district_sql = "COALESCE(s.data_json->'service_location'->>'district','')"
     service_marz_sql = "COALESCE(s.data_json->'service_location'->>'marz',po.marz,'')"
-    base_city_sql = service_city_sql
-    base_district_sql = service_district_sql
-    base_marz_sql = service_marz_sql
+    service_target_city_sql = service_city_sql
+    service_target_district_sql = service_district_sql
+    service_target_marz_sql = service_marz_sql
 
     coverage_type_sql = """
         CASE
@@ -4398,9 +4398,9 @@ def marketplace_client_search(
                   LOWER({service_city_sql})=LOWER(%s)
                   OR LOWER({service_district_sql})=LOWER(%s)
                   OR LOWER({service_marz_sql})=LOWER(%s)
-                  OR LOWER({base_city_sql})=LOWER(%s)
-                  OR LOWER({base_district_sql})=LOWER(%s)
-                  OR LOWER({base_marz_sql})=LOWER(%s)
+                  OR LOWER({service_target_city_sql})=LOWER(%s)
+                  OR LOWER({service_target_district_sql})=LOWER(%s)
+                  OR LOWER({service_target_marz_sql})=LOWER(%s)
                 )
               )
               OR (
@@ -4410,9 +4410,9 @@ def marketplace_client_search(
                   LOWER({service_city_sql})=LOWER(%s)
                   OR LOWER({service_district_sql})=LOWER(%s)
                   OR LOWER({service_marz_sql})=LOWER(%s)
-                  OR LOWER({base_city_sql})=LOWER(%s)
-                  OR LOWER({base_district_sql})=LOWER(%s)
-                  OR LOWER({base_marz_sql})=LOWER(%s)
+                  OR LOWER({service_target_city_sql})=LOWER(%s)
+                  OR LOWER({service_target_district_sql})=LOWER(%s)
+                  OR LOWER({service_target_marz_sql})=LOWER(%s)
                 )
               )
               OR (
@@ -4432,9 +4432,9 @@ def marketplace_client_search(
             {mode_sql}<>'both'
             AND {coverage_type_sql} IN ('city_marz','radius')
             AND (
-              LOWER(CASE WHEN {mode_sql}='mobile' THEN {base_city_sql} ELSE {service_city_sql} END)=LOWER(%s)
-              OR LOWER(CASE WHEN {mode_sql}='mobile' THEN {base_district_sql} ELSE {service_district_sql} END)=LOWER(%s)
-              OR LOWER(CASE WHEN {mode_sql}='mobile' THEN {base_marz_sql} ELSE {service_marz_sql} END)=LOWER(%s)
+              LOWER(CASE WHEN {mode_sql}='mobile' THEN {service_target_city_sql} ELSE {service_city_sql} END)=LOWER(%s)
+              OR LOWER(CASE WHEN {mode_sql}='mobile' THEN {service_target_district_sql} ELSE {service_district_sql} END)=LOWER(%s)
+              OR LOWER(CASE WHEN {mode_sql}='mobile' THEN {service_target_marz_sql} ELSE {service_marz_sql} END)=LOWER(%s)
             )
           )
         )""")
@@ -4456,17 +4456,17 @@ def marketplace_client_search(
               OR LOWER({service_district_sql})=LOWER(%s)
               OR LOWER({service_marz_sql})=LOWER(%s)
               OR ({mode_sql}='both' AND (
-                LOWER({base_city_sql})=LOWER(%s)
-                OR LOWER({base_district_sql})=LOWER(%s)
-                OR LOWER({base_marz_sql})=LOWER(%s)
+                LOWER({service_target_city_sql})=LOWER(%s)
+                OR LOWER({service_target_district_sql})=LOWER(%s)
+                OR LOWER({service_target_marz_sql})=LOWER(%s)
               ))
             )
           )
           OR (
             {mode_sql}='mobile' AND (
-              LOWER({base_city_sql})=LOWER(%s)
-              OR LOWER({base_district_sql})=LOWER(%s)
-              OR LOWER({base_marz_sql})=LOWER(%s)
+              LOWER({service_target_city_sql})=LOWER(%s)
+              OR LOWER({service_target_district_sql})=LOWER(%s)
+              OR LOWER({service_target_marz_sql})=LOWER(%s)
             )
           )
 
