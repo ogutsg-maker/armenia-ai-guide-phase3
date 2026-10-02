@@ -18,6 +18,12 @@ def test_partner_registration_is_minimal():
     assert "/api/webapp/partner/start" in html
     assert "/api/webapp/partner/message" not in html
 
+def test_partner_ai_router_uses_unified_partner_context():
+    src = read("ai_router.py")
+    assert "from partner_ai import PartnerAI" not in src
+    assert "partner_onboarding" not in src
+    assert "ContextType.PARTNER" in src
+
 def test_registration_has_no_legacy_ai_save_tool():
     src = read("tool_registry.py")
     assert "save_completed_application" not in src
