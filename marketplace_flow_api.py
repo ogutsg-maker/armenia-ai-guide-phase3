@@ -280,6 +280,39 @@ async def _cancel_booking(request, actor):
         pass
     return web.json_response({'ok':True,'booking_id':booking_id,'status':new_status,'refund_percent':pct,'refund_amount':refund_amount,'currency':currency})
 
+async def partner_confirm_booking(request):
+    """Partner confirmation is a backend state transition before payment."""
+    uid = _uid(request)
+    booking_id = int(request.match_info["booking_id"])
+    result = data_core.confirm_booking_and_prepare_payment(booking_id, uid)
+    if not result:
+        return web.json_response({"ok": False, "error": "booking_not_confirmable"}, status=409)
+    booking = result.get("booking") or {}
+    payment = result.get("payment") or {}
+    payment_url = result.get("payment_url")
+    # Notify the client only after the booking actually reaches payment-pending.
+    if str(booking.get("status") or "").lower() == "pending_payment":
+        try:
+            from notify import notify
+            await notify(
+                request.app,
+                int(booking["client_id"]),
+                title="✅ Партнёр подтвердил заказ",
+                body=f"Бронь №{booking_id} подтверждена. Можно перейти к оплате.",
+                kind="booking_partner_confirmed",
+                audience="client",
+                data={"booking_id": booking_id},
+            )
+        except Exception:
+            pass
+    return web.json_response({
+        "ok": True,
+        "booking": booking,
+        "payment": payment,
+        "payment_url": payment_url,
+    })
+
+
 async def partner_checkin(request):
     uid=_uid(request)
     data=await request.json()
@@ -504,6 +537,7 @@ def register_marketplace_flow_routes(app, *, ensure_schema: bool = True):
     app.router.add_get('/api/market/arbitration/{arbitration_id}',arbitration_get)
     app.router.add_get('/api/market/admin/arbitrations',admin_arbitrations)
     app.router.add_post('/api/market/admin/arbitration/{arbitration_id}/resolve',resolve_arbitration)
+    app.router.add_post('/api/market/booking/{booking_id}/confirm',partner_confirm_booking)
     app.router.add_post('/api/market/partner/checkin',partner_checkin)
     # Idram live payment callback (server-to-server) + browser return pages.
     app.router.add_post('/api/idram/result',idram_result)
