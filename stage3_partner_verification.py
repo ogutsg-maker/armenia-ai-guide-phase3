@@ -483,6 +483,25 @@ async def api_partner_document_upload(request):
             (int(direction_id), int(partner["id"]), int(business_id)),
         )
 
+        # The document belongs to the direction, not the service. Once the
+        # first direction document is uploaded, release every service
+        # application waiting for that direction into the admin queue.
+        direction_row = _db_fetchone(
+            """SELECT master_category_id
+               FROM partner_directions
+               WHERE id=%s AND partner_id=%s AND business_id=%s""",
+            (int(direction_id), int(partner["id"]), int(business_id)),
+        )
+        if direction_row:
+            _db_execute(
+                """UPDATE partner_applications
+                   SET status='pending_admin',updated_at=NOW()
+                   WHERE partner_id=%s AND business_id=%s
+                     AND master_category_id=%s
+                     AND status='pending_partner'""",
+                (int(partner["id"]), int(business_id), int(direction_row["master_category_id"])),
+            )
+
     return web.json_response({"ok": True, "document": doc, "verification_status": "pending"})
 
 
