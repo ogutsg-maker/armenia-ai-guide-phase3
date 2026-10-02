@@ -348,6 +348,8 @@ class AIManager:
         status: str = "success",
         error: str = "",
         extra_context: dict[str, Any] | None = None,
+        provider: str = "groq",
+        model: str | None = None,
     ):
         data = (
             usage.model_dump()
@@ -362,8 +364,8 @@ class AIManager:
 
         return await asyncio.to_thread(
             ai_cost_center.record_usage,
-            provider="groq",
-            model=self.model,
+            provider=str(provider or "groq"),
+            model=str(model or self.model),
             chain=context.value.lower(),
             stage="manager",
             operation="chat",
@@ -2008,6 +2010,14 @@ class AIManager:
                 await self._cost_log(
                     telegram_id, role, getattr(response, "usage", None),
                     extra_context=extra_context,
+                    provider=provider_used,
+                    model=(
+                        self.model if provider_used == "groq"
+                        else os.getenv(
+                            "OPENAI_MODEL" if provider_used == "openai" else "OPENROUTER_MODEL",
+                            self.model,
+                        ).strip()
+                    ),
                 )
             except Exception as exc:
                 await self._cost_log(
