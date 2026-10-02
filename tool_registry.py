@@ -18,7 +18,6 @@ from prompt_factory import ContextType, as_context_type
 
 class ToolType(Enum):
     READ = "read"
-    AUTO_COMMIT = "auto_commit"
     ACTION_CONFIRM = "action_requires_confirmation"
 
 
@@ -562,80 +561,6 @@ class ToolRegistry:
     def spec(self, name: str) -> ToolSpec | None:
         return next((s for s in self._visible_specs() if s.name == name), None)
 
-    def _save_completed_application(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Validate registration data and resolve live catalog slugs in Python."""
-        if self.context_type != ContextType.REGISTRATION:
-            raise PermissionError("registration_only")
-        company_name = str(args.get("company_name") or "").strip()
-        city = str(args.get("city") or "").strip()
-        phone = str(args.get("phone") or "").strip()
-        services = args.get("services") or []
-        if not company_name or not city or not phone or not isinstance(services, list) or not services:
-            raise ValueError("registration_required_fields_missing")
-
-        catalog = data_core.search_catalog(limit=500)
-        by_slug = {
-            str(cat.get("slug") or "").strip(): cat
-            for cat in catalog
-            if str(cat.get("slug") or "").strip()
-        }
-
-        normalized_services = []
-        for raw in services:
-            if not isinstance(raw, dict):
-                raise ValueError("invalid_service_payload")
-            name = str(raw.get("name") or "").strip()
-            if not name:
-                raise ValueError("service_name_required")
-            catalog_slug = str(raw.get("catalog_slug") or "").strip()
-            if not catalog_slug:
-                raise ValueError("catalog_subcategory_required")
-            cat = by_slug.get(catalog_slug)
-            if not cat or not cat.get("id") or not cat.get("master_category_id"):
-                raise ValueError("catalog_subcategory_not_in_live_catalog")
-            price = raw.get("price")
-            if price is not None:
-                try:
-                    price = float(price)
-                except (TypeError, ValueError):
-                    raise ValueError("invalid_service_price")
-                if price < 0:
-                    raise ValueError("invalid_service_price")
-            price_type = str(raw.get("price_type") or "fixed").strip().lower()
-            if price_type not in ("from", "fixed"):
-                raise ValueError("invalid_price_type")
-            normalized_services.append({
-                "name": name,
-                "price": price,
-                "price_type": price_type,
-                "catalog_slug": str(cat.get("slug") or ""),
-                "catalog_name": cat.get("name_am") or cat.get("name_ru") or cat.get("name_en"),
-                "subcategory_name": cat.get("name_am"),
-                "matched_subcategory_id": int(cat["id"]),
-                "subcategory_id": int(cat["id"]),
-                "category_id": int(cat["id"]),
-                "master_category_id": int(cat["master_category_id"]),
-                "master_name_am": cat.get("master_name_am"),
-                "master_name_ru": cat.get("master_name_ru"),
-                "master_name_en": cat.get("master_name_en"),
-            })
-
-        profile = {
-            "business_name": company_name,
-            "marz": args.get("marz"),
-            "city": city,
-            "address": args.get("address"),
-            "phone": phone,
-            "working_hours": args.get("working_hours"),
-            "description": args.get("description"),
-            "services": normalized_services,
-        }
-        result = data_core.save_partner_application_draft(
-            user_id=self.telegram_id,
-            profile=profile,
-        )
-        return {"ok": True, "draft": result, "catalog_resolved": True}
-
     def _prepare_action(self, name: str, args: dict[str, Any], summary: str) -> dict[str, Any]:
         return {
             "ok": True,
@@ -651,11 +576,6 @@ class ToolRegistry:
             raise PermissionError("tool_not_allowed")
         if self.context_type not in spec.contexts:
             raise PermissionError("tool_not_allowed")
-
-        if spec.tool_type == ToolType.AUTO_COMMIT:
-            if name == "save_completed_application":
-                return self._save_completed_application(args)
-            raise PermissionError("auto_commit_not_implemented")
 
         if spec.tool_type == ToolType.ACTION_CONFIRM:
             return self._prepare_action_checked(name, args)
