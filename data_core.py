@@ -1908,7 +1908,8 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                 )
                 object_id = int(cur.fetchone()["id"])
 
-        if not approved_direction:
+        approved_direction = None
+        if direction_verified and master_id is not None:
             cur.execute(
                 """SELECT id FROM partner_directions
                    WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
@@ -1985,7 +1986,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
                     """INSERT INTO services
                        (partner_id,business_id,category_id,subcategory_id,name,description,
                         price,currency,status,data_json,object_id,contact_phone)
-                       VALUES(%s,%s,%s,NULL,%s,%s,%s,'AMD','active',%s::jsonb,%s,%s)""",
+                       VALUES(%s,%s,%s,NULL,%s,%s,%s,'AMD','approved',%s::jsonb,%s,%s)""",
                     (partner_id, bid, cid, name, str(svc.get("description") or "").strip(),
                      price, data_json, service_object_id,
                      str(svc.get("contact_phone") or app_phone or "").strip() or None),
@@ -1994,7 +1995,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         cur.execute(
             """SELECT id,name,price,status,category_id,business_id
                FROM services
-               WHERE partner_id=%s AND business_id=%s AND status='active'
+               WHERE partner_id=%s AND business_id=%s AND status='approved'
                  AND data_json->>'application_id'=%s ORDER BY id""",
             (partner_id, int(bid), str(int(application_id))),
         )
@@ -2010,7 +2011,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         cur.execute(
             """UPDATE partner_applications
                SET status='approved',reviewed_by=%s,reviewed_at=NOW(),
-                   admin_note='Հայտը հաստատված է և ծառայությունները ակտիվացված են։',
+                   admin_note='Հայտը հաստատված է։ Ծառայությունների ակտիվացումը առանձին հաստատման քայլ է։',
                    business_id=%s,master_category_id=%s,updated_at=NOW()
                WHERE id=%s RETURNING *""",
             (int(admin_telegram_id), bid, int(master_id), int(application_id)),
