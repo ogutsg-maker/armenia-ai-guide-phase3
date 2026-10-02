@@ -43,3 +43,26 @@ def ensure_partner_lifecycle_schema() -> None:
         with conn.cursor() as cur:
             cur.execute(sql)
         conn.commit()
+
+    invite_sql = r'''
+    CREATE TABLE IF NOT EXISTS potential_partner_invitations (
+        id BIGSERIAL PRIMARY KEY,
+        potential_partner_id BIGINT NOT NULL REFERENCES potential_partners(id) ON DELETE CASCADE,
+        invited_by BIGINT,
+        partner_id BIGINT REFERENCES partners(id) ON DELETE SET NULL,
+        token TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'invited'
+          CHECK(status IN ('invited','accepted','declined','expired','cancelled')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        accepted_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_potential_partner_invitations_status
+      ON potential_partner_invitations(status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_potential_partner_invitations_potential
+      ON potential_partner_invitations(potential_partner_id,created_at DESC);
+    '''
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(invite_sql)
+        conn.commit()
