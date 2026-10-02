@@ -1970,7 +1970,7 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
             if existing:
                 cur.execute(
                     """UPDATE services
-                       SET category_id=%s,name=%s,price=%s,status='active',
+                       SET category_id=%s,name=%s,price=%s,status='approved',
                            data_json=%s::jsonb,object_id=%s,updated_at=NOW()
                        WHERE id=%s""",
                     (cid, name, price, data_json, service_object_id, int(existing["id"])),
@@ -2016,6 +2016,66 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
         return updated
 
     return platform_db.transaction(_approve)
+
+def admin_activate_application_services(*, application_id: int, admin_telegram_id: int) -> dict[str, Any]:
+    """Activate already approved services only after the application/company gates pass."""
+    if not is_admin(int(admin_telegram_id)):
+        raise PermissionError("admin_required")
+
+    def _activate(cur):
+        cur.execute(
+            """SELECT a.id,a.status,a.partner_id,a.business_id,
+                      b.status AS business_status
+               FROM partner_applications a
+               LEFT JOIN partner_businesses b ON b.id=a.business_id
+               WHERE a.id=%s FOR UPDATE""",
+            (int(application_id),),
+        )
+        app = cur.fetchone()
+        if not app:
+            raise ValueError("application_not_found")
+        if str(app.get("status") or "").lower() != "approved":
+            raise ValueError("application_not_approved")
+        if str(app.get("business_status") or "").lower() != "active":
+            raise ValueError("company_not_active")
+
+        cur.execute(
+            """SELECT s.id,s.status,s.category_id,s.business_id
+               FROM services s
+               WHERE s.partner_id=%s AND s.business_id=%s
+                 AND s.status='approved'
+                 AND s.data_json->>'application_id'=%s
+               FOR UPDATE""",
+            (int(app["partner_id"]), int(app["business_id"]), str(application_id)),
+        )
+        services = cur.fetchall()
+        if not services:
+            raise ValueError("approved_services_not_found")
+
+        ids = [int(x["id"]) for x in services]
+        cur.execute(
+            """UPDATE services
+               SET status='active',updated_at=NOW()
+               WHERE id=ANY(%s::bigint[]) AND status='approved'
+               RETURNING id,name,status""",
+            (ids,),
+        )
+        activated = cur.fetchall()
+        cur.execute(
+            """UPDATE partner_applications
+               SET updated_at=NOW()
+               WHERE id=%s
+               RETURNING id,status""",
+            (int(application_id),),
+        )
+        return {
+            "ok": True,
+            "application_id": int(application_id),
+            "activated_service_ids": [int(x["id"]) for x in activated],
+            "status": "active",
+        }
+
+    return transaction(_activate)
 
 def admin_reject_application(application_id: int, reason: str, admin_telegram_id: int):
     if not is_admin(int(admin_telegram_id)):
