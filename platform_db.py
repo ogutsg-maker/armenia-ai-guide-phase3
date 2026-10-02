@@ -87,6 +87,106 @@ def create_session(user_id, role, session_type, context=None):
     return execute('INSERT INTO ai_sessions(user_id,role,session_type,context_json) VALUES(%s,%s,%s,%s::jsonb) RETURNING *',(user_id,role,session_type,json_dump(context or {})),True)
 def update_session(session_id, context):
     return execute('UPDATE ai_sessions SET context_json=%s::jsonb,updated_at=NOW() WHERE id=%s RETURNING *',(json_dump(context),session_id),True)
+
+def claim_ai_pending_action(user_id, role, *, partner_submission=False):
+    """Atomically claim one AI pending action for confirmation.
+
+    The ai_sessions row is locked in PostgreSQL, so two concurrent
+    confirmations cannot both execute the same action. The action is moved to
+    EXECUTING inside the same transaction. Partner service submissions receive
+    one durable submission token before the write begins.
+    """
+    with _conn() as c:
+        with c.cursor() as cur:
+            cur.execute(
+                """SELECT id, context_json
+                   FROM ai_sessions
+                   WHERE user_id=%s AND role=%s
+                     AND session_type='ai_manager'
+                     AND status='active'
+                   ORDER BY id DESC
+                   LIMIT 1
+                   FOR UPDATE""",
+                (int(user_id), str(role)),
+            )
+            row = cur.fetchone()
+            if not row:
+                c.commit()
+                return {"status": "none"}
+
+            context = row["context_json"] or {}
+            if isinstance(context, str):
+                try:
+                    context = json.loads(context)
+                except Exception:
+                    context = {}
+            context = dict(context or {})
+            pending = context.get("pending_action") or context.get("ai_manager_pending_action")
+            if not isinstance(pending, dict):
+                c.commit()
+                return {"status": "none"}
+
+            state = str(pending.get("state") or "awaiting_confirmation").lower()
+            if state == "executing":
+                c.commit()
+                return {"status": "executing"}
+            if state not in {"awaiting_confirmation", "submitted"}:
+                c.commit()
+                return {"status": "none"}
+
+            pending = dict(pending)
+            pending["state"] = "executing"
+            pending["status"] = "EXECUTING"
+            if partner_submission:
+                token = str(pending.get("submission_token") or secrets.token_urlsafe(24))
+                pending["submission_token"] = token
+                args = dict(pending.get("args") or {})
+                args["submission_token"] = token
+                pending["args"] = args
+
+            context["pending_action"] = pending
+            context.pop("ai_manager_pending_action", None)
+            cur.execute(
+                "UPDATE ai_sessions SET context_json=%s::jsonb, updated_at=NOW() WHERE id=%s",
+                (json_dump(context), int(row["id"])),
+            )
+            c.commit()
+            return {"status": "claimed", "pending_action": _safe(pending)}
+
+def restore_ai_pending_action(user_id, role, pending):
+    """Restore a claimed confirmation after a failed backend execution."""
+    with _conn() as c:
+        with c.cursor() as cur:
+            cur.execute(
+                """SELECT id, context_json
+                   FROM ai_sessions
+                   WHERE user_id=%s AND role=%s
+                     AND session_type='ai_manager'
+                     AND status='active'
+                   ORDER BY id DESC LIMIT 1""",
+                (int(user_id), str(role)),
+            )
+            row = cur.fetchone()
+            if not row:
+                c.commit()
+                return None
+            context = row["context_json"] or {}
+            if isinstance(context, str):
+                try:
+                    context = json.loads(context)
+                except Exception:
+                    context = {}
+            context = dict(context or {})
+            restored = dict(pending or {})
+            restored["state"] = "awaiting_confirmation"
+            restored["status"] = "AWAITING_CONFIRMATION"
+            context["pending_action"] = restored
+            cur.execute(
+                "UPDATE ai_sessions SET context_json=%s::jsonb, updated_at=NOW() WHERE id=%s",
+                (json_dump(context), int(row["id"])),
+            )
+            c.commit()
+            return _safe(restored)
 def add_ai_message(session_id, sender_role, text, data=None, tool_call_id=None):
     return execute(
         'INSERT INTO ai_messages(session_id,sender_role,message_text,data_json,tool_call_id) VALUES(%s,%s,%s,%s::jsonb,%s) RETURNING *',
