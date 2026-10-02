@@ -215,7 +215,7 @@ def accept_potential_invitation(token: str, telegram_user_id: int, business_name
     result = register_partner_basic(actor_user_id=int(telegram_user_id), business_name=str(business_name or invitation.get('business_name') or '').strip(), phone=str(phone or invitation.get('phone') or '').strip())
     partner_id = int(result['partner']['id'])
     updated = execute("UPDATE potential_partner_invitations SET status='accepted',partner_id=%s,accepted_at=NOW(),updated_at=NOW() WHERE id=%s AND status='invited' RETURNING *", (partner_id, int(invitation['id'])), True)
-    update_potential(int(invitation['potential_partner_id']), status='converted', partner_id=partner_id)
+    update_potential(int(invitation['potential_partner_id']), status='registered', partner_id=partner_id)
     return {'invitation': updated, **result}
 
 # Notifications
