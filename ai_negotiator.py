@@ -1,8 +1,7 @@
-"""AI negotiation engine for the current PostgreSQL marketplace flow.
+"""Background AI analyzer for marketplace negotiations.
 
-This module intentionally has no legacy Supabase client dependency.  The
-marketplace API owns its transaction helpers and passes small DB hooks to
-handle(), so the negotiator remains independent from the HTTP layer.
+Client and partner messages are persisted as direct messages. AI is never a
+third participant and never generates user-visible negotiation replies.
 """
 from __future__ import annotations
 
@@ -28,49 +27,82 @@ class AINegotiator:
         return value if isinstance(value, dict) else {}
 
     @staticmethod
-    def _extract_price(text: str) -> float | None:
-        # Accept common AMD price forms: 5000, 5 000, 5,000, 5000 AMD.
-        for match in re.findall(r"(?<!\d)(\d{1,3}(?:[ ,]\d{3})+|\d{3,7})(?:\s*(?:AMD|դրամ|դր))?", text, re.I):
+    def _extract_price_terms(text: str) -> dict[str, float | None]:
+        raw = str(text or "")
+        values: list[float] = []
+        for match in re.findall(r"(?<!\d)(\d{1,3}(?:[ ,]\d{3})+|\d{3,7})(?:\s*(?:AMD|դրամ|դր))?", raw, re.I):
             try:
                 value = float(match.replace(" ", "").replace(",", ""))
-                if 100 <= value <= 10_000_000:
-                    return value
             except ValueError:
                 continue
-        return None
+            if 100 <= value <= 10_000_000:
+                values.append(value)
+        values = list(dict.fromkeys(values))
+        if len(values) >= 2:
+            return {"min": min(values), "max": max(values), "single": None}
+        if values:
+            return {"min": values[0], "max": values[0], "single": values[0]}
+        return {"min": None, "max": None, "single": None}
 
     @staticmethod
     def _contains_agreement(text: str) -> bool:
-        low = text.lower()
+        low = str(text or "").casefold()
         words = (
             "согласен", "согласна", "подходит", "готов", "готова", "заказываю",
-            "договорились", "беру", "ок", "да", "համաձայն եմ", "լավ", "կհամաձայնեմ",
+            "договорились", "беру", "ок", "да", "համաձայն եմ", "համաձայն եմ", "լավ",
+            "կհամաձայնեմ",
         )
         return any(word in low for word in words)
 
     @staticmethod
     def _contains_refusal(text: str) -> bool:
-        low = text.lower()
+        low = str(text or "").casefold()
         return any(x in low for x in ("отказываюсь", "не подходит", "отмена", "отменяю", "չեմ ուզում"))
 
-    def generate_system_prompt(self, context: dict) -> str:
-        service = context.get("service_name") or context.get("service_type") or "услуга"
-        price = context.get("price") or context.get("agreed_price")
-        city = context.get("city") or context.get("district") or "Армения"
-        price_line = f"Текущая цена: {price} AMD." if price else "Цена пока не зафиксирована."
-        return (
-            "Ты — AI-переговорщик маркетплейса Armenia AI Guide. "
-            "Помогай клиенту и партнёру согласовать услугу, цену, место и время.\n\n"
-            "ПРАВИЛА:\n"
-            "1. Не раскрывай телефон, точный адрес или другие прямые контакты до выполнения правил платформы.\n"
-            "2. Не выдумывай наличие партнёров, цены, расписание или факты. Используй только данные контекста.\n"
-            "3. Если клиент предлагает другую цену, зафиксируй её как предложение и попроси сторону подтвердить.\n"
-            "4. Не создавай бронь только из-за слова 'да', если существенные условия ещё неизвестны.\n"
-            "5. Когда обе стороны явно согласовали услугу, итоговую цену, место/город и время (если время требуется), сообщи, что условия согласованы.\n\n"
-            f"Услуга: {service}.\n"
-            f"Место: {city}.\n"
-            f"{price_line}"
-        )
+    @staticmethod
+    def _commission_base(state: dict) -> float | None:
+        agreed_price = state.get("agreed_price")
+        if agreed_price is not None:
+            try:
+                return float(agreed_price)
+            except (TypeError, ValueError):
+                return None
+        lo, hi = state.get("agreed_min"), state.get("agreed_max")
+        if lo is not None and hi is not None:
+            try:
+                return round((float(lo) + float(hi)) / 2.0, 2)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    async def _background_extract(self, text: str, state: dict) -> dict:
+        """Extract negotiation facts only. The result is not shown as a message."""
+        try:
+            data = self.ai_service.structured_request(
+                user_text=text,
+                role="client",
+                system_prompt=(
+                    "Ты — фоновый анализатор переговоров маркетплейса услуг. "
+                    "Не отвечай участникам и не пиши реплики от своего имени. "
+                    "Извлеки только факты из сообщения. Не придумывай отсутствующие данные. "
+                    "Определи, есть ли явное принятие текущих условий, отказ, предложенная цена, "
+                    "диапазон цены, дата, время, город/место. Верни только JSON."
+                ),
+                schema={
+                    "acceptance": "boolean",
+                    "refusal": "boolean",
+                    "price_min": "number|null",
+                    "price_max": "number|null",
+                    "date": "string|null",
+                    "time": "string|null",
+                    "place": "string|null",
+                },
+                operation="negotiation_background_extraction",
+                purpose="Extract structured terms from direct client-partner negotiation",
+            )
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     async def handle(
         self,
@@ -84,112 +116,94 @@ class AINegotiator:
         update_request: Callable | None = None,
         insert_ai_msg: Callable | None = None,
     ) -> dict:
-        """Process one negotiation message and persist through supplied hooks."""
+        """Persist a direct message and analyze it in the background."""
         text = str(text or "").strip()
         if not text:
             return {"ok": False, "error": "message_required"}
 
+        if actor not in {"client", "partner"}:
+            return {"ok": False, "error": "invalid_actor"}
+
         state = self._state(negotiation)
         state.setdefault("client_agreed", False)
         state.setdefault("partner_agreed", False)
+        state.setdefault("proposals", [])
 
-        # Persist the original message first so the conversation is durable.
         if insert_msg:
             insert_msg(negotiation["id"], actor, sender_id, text)
 
-        price = self._extract_price(text)
-        if price is not None:
-            state["proposed_price"] = price
-            # A new price is a new proposal and requires confirmation by both sides.
+        price = self._extract_price_terms(text)
+        if price["min"] is not None:
+            proposal = {
+                "actor": actor,
+                "min": price["min"],
+                "max": price["max"],
+            }
+            state["proposals"].append(proposal)
+            state["proposed_price_min"] = price["min"]
+            state["proposed_price_max"] = price["max"]
+            state["proposed_price"] = price["single"]
             state["client_agreed"] = False
             state["partner_agreed"] = False
-            if actor == "client":
-                state["client_price"] = price
-            else:
-                state["partner_price"] = price
 
-        if self._contains_refusal(text):
+        extracted = await self._background_extract(text, state)
+        if extracted:
+            state["last_extraction"] = extracted
+            if extracted.get("price_min") is not None:
+                state["proposed_price_min"] = float(extracted["price_min"])
+            if extracted.get("price_max") is not None:
+                state["proposed_price_max"] = float(extracted["price_max"])
+            if extracted.get("date"):
+                state["proposed_date"] = str(extracted["date"])
+            if extracted.get("time"):
+                state["proposed_time"] = str(extracted["time"])
+            if extracted.get("place"):
+                state["proposed_place"] = str(extracted["place"])
+
+        accepted = bool(extracted.get("acceptance")) if extracted else self._contains_agreement(text)
+        refused = bool(extracted.get("refusal")) if extracted else self._contains_refusal(text)
+
+        if refused:
             state["last_action"] = "refused"
             if update_neg:
                 update_neg(negotiation["id"], state, "cancelled")
             if update_request and negotiation.get("request_id"):
                 update_request(negotiation["request_id"], "cancelled")
-            reply = "Понял. Переговоры отменены."
-            if insert_ai_msg:
-                insert_ai_msg(negotiation["id"], "ai", reply, {"action": "cancelled"})
-            return {"ok": True, "reply_text": reply, "status": "cancelled", "state": state}
+            return {"ok": True, "status": "cancelled", "state": state}
 
-        if self._contains_agreement(text):
-            if actor == "client":
-                state["client_agreed"] = True
-            elif actor == "partner":
-                state["partner_agreed"] = True
-
-        # Use the final proposed/agreed price, never an old catalogue price.
-        final_price = state.get("proposed_price") or state.get("agreed_price") or state.get("price")
-        if final_price is not None:
-            try:
-                state["agreed_price"] = float(final_price)
-            except (TypeError, ValueError):
-                pass
+        if accepted:
+            state["client_agreed" if actor == "client" else "partner_agreed"] = True
 
         both_agreed = bool(state.get("client_agreed") and state.get("partner_agreed"))
         if both_agreed:
+            pmin = state.get("proposed_price_min")
+            pmax = state.get("proposed_price_max")
+            if pmin is not None and pmax is not None and float(pmin) != float(pmax):
+                state["agreed_min"] = float(min(pmin, pmax))
+                state["agreed_max"] = float(max(pmin, pmax))
+                state["agreed_price"] = None
+            elif pmin is not None:
+                state["agreed_price"] = float(pmin)
+                state["agreed_min"] = float(pmin)
+                state["agreed_max"] = float(pmin)
+            state["commission_base"] = self._commission_base(state)
             state["last_action"] = "agreed"
             if update_neg:
                 update_neg(negotiation["id"], state, "agreed")
             if update_request and negotiation.get("request_id"):
                 update_request(negotiation["request_id"], "confirmed")
-            reply = "Условия согласованы обеими сторонами. Можно переходить к оплате и оформлению бронирования."
-            if insert_ai_msg:
-                insert_ai_msg(negotiation["id"], "ai", reply, {"action": "agreed", "price": state.get("agreed_price")})
-            return {"ok": True, "reply_text": reply, "status": "agreed", "state": state}
+            return {"ok": True, "status": "agreed", "state": state}
 
-        prompt = self.generate_system_prompt(state)
-        try:
-            data = self.ai_service.structured_request(
-                user_text=text,
-                role="client" if actor == "client" else "partner",
-                system_prompt=prompt,
-                schema={"reply_text": "string"},
-                operation="negotiation_reply",
-                purpose="Generate the next negotiation response",
-            )
-            reply = str(data.get("reply_text") or "").strip()
-            if not reply:
-                raise RuntimeError("empty structured negotiation reply")
-        except Exception:
-            if actor == "client":
-                reply = "Принял ваше сообщение. Уточните, пожалуйста, желаемую цену и удобное время."
-            else:
-                reply = "Принял предложение. Подтвердите, пожалуйста, итоговую цену и условия."
-
-        if insert_ai_msg:
-            insert_ai_msg(negotiation["id"], "ai", reply, {"action": "continue"})
         if update_neg:
             update_neg(negotiation["id"], state, "active")
 
-        return {"ok": True, "reply_text": reply, "status": "active", "state": state}
+        return {"ok": True, "status": "active", "state": state}
 
-    # Compatibility method retained for older callers that only need a client reply.
     def reply_to_client(self, client_id: int, user_message: str, current_context: dict) -> dict:
-        """Synchronous compatibility wrapper; does not access a legacy Supabase API."""
+        """Compatibility wrapper retained without creating a visible AI participant."""
         state = dict(current_context or {})
-        price = self._extract_price(user_message)
-        if price is not None:
-            state["agreed_price"] = price
-        data = self.ai_service.structured_request(
-            user_text=user_message,
-            role="client",
-            system_prompt=self.generate_system_prompt(state),
-            schema={"reply_text": "string"},
-            operation="negotiation_client_reply",
-            purpose="Generate the client negotiation response",
-        )
-        response = str(data.get("reply_text") or "").strip()
-        return {
-            "reply_text": str(response).strip(),
-            "updated_context": state,
-            "action_required": False,
-            "booking_data": None,
-        }
+        price = self._extract_price_terms(user_message)
+        if price["min"] is not None:
+            state["proposed_price_min"] = price["min"]
+            state["proposed_price_max"] = price["max"]
+        return {"reply_text": "", "updated_context": state, "action_required": False, "booking_data": None}
