@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import secrets
 from dataclasses import dataclass, field, asdict
 from urllib.parse import urlencode
 
@@ -90,7 +89,7 @@ class CallbackResult:
 
 
 class IdramProvider:
-    """Thin, reusable wrapper around Idram with a fictitious test fallback."""
+    """Thin, reusable wrapper around the live Idram provider."""
 
     def __init__(
         self,
@@ -154,24 +153,7 @@ class IdramProvider:
         metadata = metadata or {}
 
         if not self.is_live:
-            # Deterministic test transaction per bill/order: retries for the
-            # same business operation cannot manufacture a different provider
-            # transaction identity.
-            txn = "TEST-IDRAM-" + hashlib.sha256(
-                f"{bill_no}:{amount:.2f}:{currency}".encode("utf-8")
-            ).hexdigest()[:16]
-            return PaymentIntent(
-                transaction_id=txn,
-                bill_no=bill_no,
-                amount=amount,
-                currency=currency,
-                status="paid",
-                provider=PROVIDER_TEST,
-                mode="test",
-                payment_url="",
-                description=description,
-                metadata={**metadata, "test": True},
-            )
+            raise RuntimeError("Idram live credentials are not configured")
 
         # Live mode: no transaction id yet (Idram assigns EDP_TRANS_ID on the
         # result callback). We hand the client a redirect URL and wait.
@@ -217,14 +199,7 @@ class IdramProvider:
         payload = payload or {}
 
         if not self.is_live:
-            return CallbackResult(
-                ok=True,
-                status="paid",
-                bill_no=str(payload.get("EDP_BILL_NO") or payload.get("bill_no") or ""),
-                transaction_id=str(payload.get("EDP_TRANS_ID") or ("TEST-IDRAM-" + secrets.token_hex(6))),
-                amount=_as_float(payload.get("EDP_AMOUNT") or payload.get("amount")),
-                reason="test_mode_auto_approved",
-            )
+            return CallbackResult(ok=False, status="failed", bill_no=str(payload.get("EDP_BILL_NO") or ""), reason="idram_credentials_not_configured")
 
         # Idram pre-check ping: reply is handled by the caller (must echo "OK").
         if str(payload.get("EDP_PRECHECK", "")).upper() == "YES":
