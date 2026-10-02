@@ -371,6 +371,21 @@ async def _upload_direction_document(request, partner, direction_id):
               SET status='document_under_review', document_id=%s, updated_at=NOW()
               WHERE partner_direction_id=%s AND status='document_pending'""",
           (doc["id"], direction_id))
+
+    # A service application can stay pending_partner until the direction
+    # document is uploaded. Once the document is actually attached, move only
+    # the affected company/direction applications into the admin queue.
+    _exec("""
+        UPDATE partner_applications
+           SET status='pending_admin', document_id=%s, updated_at=NOW()
+         WHERE partner_id=%s
+           AND business_id=%s
+           AND master_category_id=(SELECT master_category_id
+                                   FROM partner_directions
+                                   WHERE id=%s)
+           AND status='pending_partner'
+    """, (doc["id"], int(partner["id"]), int(pd["business_id"]), direction_id))
+
     return web.json_response({"ok":True,"document":doc,"direction_id":direction_id,"status":"pending"})
 
 
