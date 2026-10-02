@@ -943,6 +943,8 @@ def _admin_state_preview(action):
         return "📨 Заявка #"+str(aid)+"\n🔧 "+str(field)+" : «"+str(old or "—")+"» → «"+str(action.get("new_value") or "—")+"»"
     if action.get("intent")=="approve_application":
         return "📨 Заявка #"+str(aid)+"\n✅ Одобрить заявку и подготовить услуги к отдельной активации"
+    if action.get("intent")=="activate_application":
+        return "📨 Заявка #"+str(aid)+"\n⚡ Активировать одобренные услуги"
     if action.get("intent")=="reject_application":
         return "📨 Заявка #"+str(aid)+"\n❌ Отклонить\n📝 "+str(action.get("reason") or "Без причины")
     if action.get("intent")=="clarify_application":
@@ -2402,7 +2404,7 @@ async def admin_ai_message(admin_id,message):
         except (TypeError,ValueError): aid=None
 
     is_question=("?" in message or "՞" in message or bool(re.search(r"\b(как|какая|какие|какое|почему|зачем|что|где|сколько|what|which|how|why|where|how many|ինչ|ինչպես|որ|որտեղ|արդյոք|քանի)\b",message.casefold())))
-    if is_question and intent in {"edit_application","approve_application","reject_application","clarify_application"}: intent="show_application_field" if field else "inspect_application"
+    if is_question and intent in {"edit_application","approve_application","activate_application","reject_application","clarify_application"}: intent="show_application_field" if field else "inspect_application"
 
     if intent=="query_database" and c.get("tool_requests"):
         reply=await _admin_semantic_answer(message,c,state)
@@ -2466,7 +2468,7 @@ async def admin_ai_message(admin_id,message):
         reply="🔎 Нашёл исправление для заявки #"+str(aid)+":\n\n"+_admin_state_preview(action)+"\n\nПодтвердить? «да» / «нет»"
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
-    if intent not in {"edit_application","approve_application","reject_application","clarify_application","delete_applications"}:
+    if intent not in {"edit_application","approve_application","activate_application","reject_application","clarify_application","delete_applications"}:
         reply="Я понял запрос не полностью. Скажите: «покажи заявки», «сколько заявок?», «открой #36», «проверь подкатегорию» или «цена неправильная»."
         _admin_history(state,"admin",message); _admin_history(state,"assistant",reply); return reply
 
