@@ -2532,6 +2532,10 @@ def update_request_status(request_id: int, status: str,
     }
     if requested not in allowed_statuses:
         return None
+    # External client/partner callers cannot promote a request. Lifecycle
+    # promotions belong to the corresponding domain action.
+    if role in {"client","partner"} and requested != "cancelled":
+        return None
 
     current=one("SELECT status FROM service_requests WHERE id=%s",(int(request_id),))
     if not current:
