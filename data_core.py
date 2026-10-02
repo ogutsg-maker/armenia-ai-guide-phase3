@@ -3610,27 +3610,11 @@ def ensure_direction_verification_case(
         assert_partner_owns_partner(int(partner_id), int(actor_user_id))
     policy = get_direction_verification_policy(int(master_category_id))
 
-    # Not every direction requires verification. Keep the direction in the
-    # normal lifecycle, but do not create a document case or block the service
-    # application when the live catalog policy says verification is not required.
-    if not bool(policy.get("verification_required")):
-        direction = one(
-            """SELECT id,partner_id,business_id,master_category_id,status,rejection_reason
-               FROM partner_directions
-               WHERE partner_id=%s AND business_id=%s AND master_category_id=%s
-               ORDER BY id DESC LIMIT 1""",
-            (int(partner_id), int(business_id), int(master_category_id)),
-        )
-        if not direction:
-            direction = one(
-                """INSERT INTO partner_directions(partner_id,business_id,master_category_id,status)
-                   VALUES(%s,%s,%s,'pending')
-                   RETURNING id,partner_id,business_id,master_category_id,status,rejection_reason""",
-                (int(partner_id),int(business_id),int(master_category_id)),
-            )
-        return {"required": False, "verified": True, "policy": policy,
-                "case": None, "direction": direction}
-
+    # Every partner direction has one document gate. The catalogue policy
+    # may describe document types, but it does not remove the direction-level
+    # document lifecycle: the first service in a direction must have a current
+    # approved document before the direction can be released. Later services in
+    # the same approved direction reuse that document.
     # A verification document is scoped to partner + company + direction.
     # It is not scoped to an individual service and is not controlled by a
     # service-level document flag. The first service in a direction therefore
@@ -3930,9 +3914,10 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
             "object_name": (service_object or {}).get("object_name"),
             "address_text": raw_address_text or (service_object or {}).get("address"),
             "location": {
-                "marz": (service_object or {}).get("marz"),
-                "city": (service_object or {}).get("city"),
-                "address": raw_address_text or (service_object or {}).get("address"),
+                "marz": (service_object or {}).get("marz") or (raw.get("service_location") or {}).get("marz"),
+                "city": (service_object or {}).get("city") or (raw.get("service_location") or {}).get("city"),
+                "address": raw_address_text or (service_object or {}).get("address") or (raw.get("service_location") or {}).get("address"),
+                "coverage": raw.get("coverage") or ((raw.get("service_location") or {}).get("coverage") if isinstance(raw.get("service_location"), dict) else None),
             },
             "contact_phone": service_phone,
             "category_id": raw.get("category_id"),
@@ -3953,9 +3938,22 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     # it enter pending_admin.
     first = prepared[0]
     first_location = first.get("location") if isinstance(first.get("location"), dict) else {}
+    first_service_location = first.get("service_location") if isinstance(first.get("service_location"), dict) else {}
+    first_coverage = first.get("coverage") if isinstance(first.get("coverage"), dict) else (
+        first_service_location.get("coverage") if isinstance(first_service_location.get("coverage"), dict) else {}
+    )
+    # Mobile/customer-address coverage is not a partner_object. Preserve it
+    # as the canonical application location instead of falling back to empty
+    # company-address fields.
+    coverage_cities = first_coverage.get("cities") or first_coverage.get("city") or []
+    coverage_marzes = first_coverage.get("marzes") or first_coverage.get("marz") or []
+    if isinstance(coverage_cities, str):
+        coverage_cities = [coverage_cities]
+    if isinstance(coverage_marzes, str):
+        coverage_marzes = [coverage_marzes]
     header_address = str(first.get("address_text") or first_location.get("address") or (company_object or {}).get("address") or "").strip() or None
-    header_city = first_location.get("city") or (company_object or {}).get("city")
-    header_marz = first_location.get("marz") or (company_object or {}).get("marz")
+    header_city = first_location.get("city") or (company_object or {}).get("city") or (coverage_cities[0] if coverage_cities else None)
+    header_marz = first_location.get("marz") or (company_object or {}).get("marz") or (coverage_marzes[0] if coverage_marzes else None)
     header_phone = first.get("contact_phone") or company_phone
     header_object_id = first.get("object_id")
     payload = {
