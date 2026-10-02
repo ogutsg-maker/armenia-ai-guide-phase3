@@ -270,15 +270,18 @@ def test_partner_service_ai_does_not_import_deleted_service_matcher():
     assert "from master_cabinet_api import _ai_match_new_service" not in src
     assert "data_core.resolve_catalog_services" in src
 
-def test_partner_registration_has_no_direct_create_bypass():
+def test_partner_registration_is_deterministic_and_no_legacy_ai_onboarding_route():
     src = read("main.py")
     assert 'app.router.add_post("/api/webapp/partner/register"' not in src
     assert "async def api_webapp_partner_register(" not in src
+    assert "async def api_webapp_partner_message(" not in src
+    assert "PartnerAIStates" not in src
+    assert "register_partner_basic" in read("data_core.py")
 
-def test_partner_webapp_uses_ai_registration_flow():
+def test_partner_webapp_uses_minimal_registration_flow():
     src = read("web_apps/partner.html")
     assert "/api/webapp/partner/start" in src
-    assert "/api/webapp/partner/message" in src
+    assert "/api/webapp/partner/message" not in src
     assert "/api/webapp/partner/register" not in src
 
 def test_partner_cabinet_has_no_application_delete_ui_bypass():
