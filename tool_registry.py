@@ -492,6 +492,14 @@ class ToolRegistry:
                 contexts=a,
             ),
             self._spec(
+                "admin_activate_application_services",
+                "Activate services that have already passed application approval and company verification. Explicit confirmation required.",
+                {"application_id": {"type": "integer"}},
+                required=("application_id",),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
                 "admin_reject_application",
                 "Prepare rejection of a partner application. Non-empty reason required.",
                 {"application_id": {"type": "integer"}, "reason": {"type": "string"}},
@@ -867,6 +875,12 @@ class ToolRegistry:
                 if not gate.get("can_approve"):
                     return gate
                 return gate
+            if name == "admin_activate_application_services":
+                return data_core.admin_activate_application_services(
+                    application_id=int(args["application_id"]),
+                    admin_telegram_id=int(context.user_id),
+                )
+
             if name == "admin_reject_application":
                 reason = str(args.get("reason") or "").strip()
                 if not reason:
