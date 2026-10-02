@@ -67,20 +67,16 @@ class PotentialPartnerAI:
         }
 
     async def structure_candidate(self, raw_text: str, source: str = "manual_research") -> dict | None:
-        """Create one canonical potential-partner record from researched text."""
-        from platform_db import create_potential
-
+        """Return structured candidate data; persistence stays in Data Core."""
         structured = self.analyze_and_structure_lead(raw_text)
         name = str(structured.get("name") or "").strip()
         if not name:
             return None
-
         services = structured.get("services") or []
         min_price = structured.get("min_price")
         prices = [{"type": "from", "amount": min_price, "currency": "AMD"}] if min_price is not None else []
         urls = [x.strip() for x in re.findall(r"https?://[^\\s]+", raw_text)][:10]
-
-        row = create_potential({
+        return {
             "source": source,
             "business_name": name,
             "description": str(raw_text or "")[:4000],
@@ -91,8 +87,7 @@ class PotentialPartnerAI:
             "ai_reason": "Structured from researched source text; requires admin review before invitation.",
             "ai_confidence": 0.8 if services else 0.6,
             "status": "ready_for_review",
-        })
-        return row
+        }
 
     def generate_personalized_invite(self, structured_partner_data: dict) -> dict:
         """Generate an invitation while respecting optional channel settings."""
