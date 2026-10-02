@@ -1766,7 +1766,14 @@ class AIManager:
                 and isinstance(pending.get("args"), dict)
                 and isinstance(pending.get("args", {}).get("services"), list)
                 and pending.get("args", {}).get("services")
-                and not pending.get("missing_fields")
+                # If a final preview was already rendered, the confirmation
+                # must confirm that exact prepared action. Older sessions may
+                # still carry stale missing_fields from the collection phase;
+                # those must not turn "այո" into a second preview.
+                and (
+                    not pending.get("missing_fields")
+                    or bool(str(pending.get("summary") or "").strip())
+                )
             ):
                 pending = dict(pending)
                 pending["state"] = "awaiting_confirmation"
