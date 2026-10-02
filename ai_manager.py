@@ -137,6 +137,7 @@ class AIManager:
         tool_choice: str | None,
         temperature: float,
         max_tokens: int,
+        response_format: dict[str, Any] | None = None,
     ):
         """Call Groq once; on 429, move once to OpenAI then OpenRouter."""
         providers = [("groq", self.client, self.model)]
@@ -155,6 +156,7 @@ class AIManager:
                     tool_choice=tool_choice,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    response_format=response_format,
                 )
                 if provider != "groq":
                     logger.warning("AI provider fallback used: %s", provider)
@@ -1445,9 +1447,12 @@ class AIManager:
                 "additionalProperties": False,
             }
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
+                response, _provider_used = await self._chat_completion_with_fallback(
                     messages=[{"role": "user", "content": prompt}],
+                    tools=None,
+                    tool_choice=None,
+                    temperature=0,
+                    max_tokens=300,
                     response_format={
                         "type": "json_schema",
                         "json_schema": {
@@ -1456,10 +1461,6 @@ class AIManager:
                             "schema": schema,
                         },
                     },
-                    reasoning_format="hidden",
-                    reasoning_effort="low",
-                    temperature=0,
-                    max_tokens=300,
                 )
                 raw = (response.choices[0].message.content or "{}").strip()
                 parsed = json.loads(raw)
