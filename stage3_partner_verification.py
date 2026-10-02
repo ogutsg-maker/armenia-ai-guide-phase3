@@ -1537,7 +1537,18 @@ async def api_admin_direction_verifications(request):
                   p.business_name AS partner_name,p.user_id,
                   pb.name AS company_name,
                   m.name_am AS direction_name_am,m.name_ru AS direction_name_ru,m.name_en AS direction_name_en,
-                  d.id AS document_id,d.original_filename,d.mime_type,d.file_size,d.status AS document_status
+                  d.id AS document_id,d.original_filename,d.mime_type,d.file_size,d.status AS document_status,
+                  pa.id AS application_id,pa.status AS application_status,
+                  pa.phone AS application_phone,pa.address AS application_address,
+                  pa.description AS application_description,pa.payload_json AS application_payload,
+                  COALESCE(
+                    (SELECT json_agg(json_build_object(
+                      'id',s.id,'name',s.name,'description',s.description,'price',s.price,
+                      'status',s.status,'category_id',s.category_id,'object_id',s.object_id,
+                      'created_at',s.created_at
+                    ) ORDER BY s.id),
+                    '[]'::json
+                  ) AS services
            FROM partner_direction_verification_cases vc
            JOIN partners p ON p.id=vc.partner_id
            JOIN partner_businesses pb ON pb.id=vc.business_id
@@ -1548,6 +1559,23 @@ async def api_admin_direction_verifications(request):
                WHERE partner_direction_id=vc.partner_direction_id
                ORDER BY id DESC LIMIT 1
            ) d ON TRUE
+           LEFT JOIN LATERAL (
+               SELECT id,status,phone,address,description,payload_json
+               FROM partner_applications
+               WHERE partner_id=vc.partner_id
+                 AND business_id=vc.business_id
+                 AND created_at >= COALESCE(vc.requested_at, NOW() - INTERVAL '30 days')
+               ORDER BY id DESC LIMIT 1
+           ) pa ON TRUE
+           LEFT JOIN LATERAL (
+               SELECT s.*
+               FROM services s
+               WHERE s.partner_id=vc.partner_id
+                 AND s.business_id=vc.business_id
+                 AND s.status <> 'deleted'
+                 AND s.created_at >= COALESCE(vc.requested_at, NOW() - INTERVAL '30 days')
+               ORDER BY s.id
+           ) s ON TRUE
            WHERE vc.status IN ('awaiting_document','pending_review','rejected')
            ORDER BY vc.updated_at DESC,vc.id DESC"""
     )
