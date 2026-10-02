@@ -61,6 +61,7 @@ def _location_schema() -> dict[str, Any]:
             {"type": "object", "properties": {
                 "city": _nullable("string"),
                 "district": _nullable("string"),
+                "village": _nullable("string"),
                 "marz": _nullable("string"),
                 "address": _nullable("string"),
                 "lat": _nullable("number"),
