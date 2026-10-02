@@ -301,7 +301,9 @@ async def potential_list(request):
 async def potential_structure(request):
     _admin(request); data=await request.json(); raw=str(data.get('raw_text') or '').strip()
     if len(raw)<10: raise web.HTTPBadRequest(text=json.dumps({'ok':False,'error':'raw_text_required'}),content_type='application/json')
-    item=await PotentialPartnerAI(request.app['ai']).structure_candidate(raw,data.get('source','manual_research'))
+    structured=await PotentialPartnerAI(request.app['ai']).structure_candidate(raw,data.get('source','manual_research'))
+    if not structured: return web.json_response({'ok':False,'error':'potential_partner_not_found'},status=422)
+    item=data_core.create_potential(structured)
     return web.json_response({'ok':True,'item':item})
 
 async def potential_status(request):
@@ -329,11 +331,12 @@ async def potential_research(request):
     created=[]
     for r in results:
         raw=(r.get('title','')+'\n'+r.get('snippet','')+'\nSource: '+r.get('url','')).strip()
-        try: item=await PotentialPartnerAI(request.app['ai']).structure_candidate(raw,'web_research')
+        try: structured=await PotentialPartnerAI(request.app['ai']).structure_candidate(raw,'web_research')
         except Exception: continue
-        if item:
-            from platform_db import update_potential
-            item=update_potential(item['id'],source_urls_json=[r.get('url')],status='researched')
+        if structured:
+            structured['source_urls']=[r.get('url')] if r.get('url') else structured.get('source_urls') or []
+            structured['status']='researched'
+            item=data_core.create_potential(structured)
             created.append(item)
     return web.json_response({'ok':True,'results':created,'source_count':len(results)})
 
