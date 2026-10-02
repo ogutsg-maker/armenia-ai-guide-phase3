@@ -22,7 +22,6 @@ from database import DatabaseManager
 import data_core
 from ai_service import AIService
 from ai_manager import AIManager, AIContext
-from states import PartnerAIStates
 from telegram_webapp_auth import TelegramWebAppAuthError, validate_telegram_webapp_init_data
 from stage3_partner_verification import register_stage3_routes
 from partner_business_application_api import register_business_application_routes
@@ -94,197 +93,62 @@ def _partner_keyboard():
     return _keyboard("partner.html?entry=welcome", "🏢 Բացել գործընկերոջ AI բաժինը")
 
 
-def _partner_state(uid: int) -> FSMContext:
-    from aiogram.fsm.storage.base import StorageKey
-    return FSMContext(storage=storage, key=StorageKey(bot_id=bot.id, chat_id=uid, user_id=uid))
+def _partner_registration_error(lang: str, code: str) -> str:
+    messages = {
+        "business_name_required": t(lang, "Գրեք բիզնեսի անունը։", "Укажите название бизнеса.", "Enter the business name."),
+        "invalid_phone": t(lang, "Մուտքագրեք վավեր հեռախոսահամար։", "Укажите корректный номер телефона.", "Enter a valid phone number."),
+    }
+    return messages.get(code, t(lang, "Չհաջողվեց գրանցել բիզնեսը։ Փորձեք կրկին։", "Не удалось завершить регистрацию. Попробуйте ещё раз.", "Registration could not be completed. Please try again."))
 
 
-def _telegram_user_from_request(request: web.Request) -> tuple[int, dict]:
-    raw = request.headers.get("X-Telegram-Init-Data", "").strip()
-    if not raw:
-        raise web.HTTPUnauthorized(text=json.dumps({"ok": False, "error": "telegram_init_data_required"}), content_type="application/json")
-    try:
-        user = validate_telegram_webapp_init_data(raw, BOT_TOKEN)
-        return int(user["id"]), user
-    except (TelegramWebAppAuthError, KeyError, TypeError, ValueError) as exc:
-        raise web.HTTPUnauthorized(text=json.dumps({"ok": False, "error": str(exc) or "invalid_telegram_init_data"}), content_type="application/json")
+async def api_webapp_partner_start(request: web.Request):
+    """Minimal partner registration: business name + phone only.
 
-
-async def api_webapp_session(request: web.Request):
-    """Return the user's current app role/session destination."""
-    uid, tg_user = _telegram_user_from_request(request)
-    db.register_user(
-        uid,
-        tg_user.get("username") or f"user_{uid}",
-        tg_user.get("first_name") or tg_user.get("last_name") or "",
-    )
-    partner = db.get_partner_by_user(uid)
-
-    # Session restoration must be based on the actual partner/company
-    # relationship, not only on the partner verification status. A partner
-    # who has already created an account/company must never be sent back to
-    # the registration form just because the application is still pending
-    # administrator verification.
-    if partner:
-        partner_status = str(partner.get("status") or "").lower()
-        has_company = False
-        try:
-            companies = data_core.list_companies(partner_id=int(partner["id"]))
-            has_company = bool(companies)
-        except Exception:
-            logger.exception("Could not resolve partner companies for session uid=%s", uid)
-
-        if has_company:
-            return web.json_response({
-                "ok": True,
-                "role": "partner",
-                "partner_status": partner_status or None,
-                "destination": "master_cabinet.html",
-                "business_name": partner.get("business_name") or "",
-            })
-
-    return web.json_response({
-        "ok": True,
-        "role": "client",
-        "partner_status": str(partner.get("status") or "") if partner else None,
-        "destination": "welcome.html",
-    })
-
-
-async def api_webapp_role(request: web.Request):
-    uid, tg_user = _telegram_user_from_request(request)
+    The first registration step is deterministic and does not call AI. Once
+    the partner/company exists, all operational changes happen in the cabinet
+    through the AI operator and protected Data Core tools.
+    """
+    uid, user = await _partner_auth(request)
+    lang = user.get("lang") or "hy"
     try:
         payload = await request.json()
     except Exception:
         payload = {}
-    role = str(payload.get("role") or "").strip().lower()
-    lang = str(payload.get("lang") or "").strip().lower()
-    if role not in {"client", "partner", "master"}:
-        return web.json_response({"ok": False, "error": "invalid_role"}, status=400)
-    if lang not in {"hy", "ru", "en"}:
-        lang = "hy"
-    db.register_user(uid, tg_user.get("username") or f"user_{uid}", tg_user.get("first_name") or tg_user.get("last_name") or "")
-    db.update_user_field(uid, "role", "partner" if role == "master" else role)
-    db.update_user_field(uid, "lang", lang)
-    return web.json_response({"ok": True, "telegram_id": uid, "role": role, "lang": lang})
 
+    business_name = str(payload.get("business_name") or "").strip()
+    phone = str(payload.get("phone") or "").strip()
+    if not business_name or not phone:
+        return web.json_response({
+            "ok": True,
+            "registered": False,
+            "requires_form": True,
+            "message": t(lang,
+                "Գրանցեք ձեր բիզնեսը։ Լրացրեք անունը և հեռախոսահամարը։",
+                "Зарегистрируйте бизнес. Укажите название и телефон.",
+                "Register your business. Enter the business name and phone number."),
+        })
 
-async def _partner_auth(request: web.Request):
-    uid, tg_user = _telegram_user_from_request(request)
-    db.register_user(uid, tg_user.get("username") or f"user_{uid}", tg_user.get("first_name") or tg_user.get("last_name") or "")
-    db.update_user_field(uid, "role", "partner")
-    return uid, db.get_user(uid) or {}
-
-
-async def _start_partner_ai_state(uid: int) -> FSMContext:
-    state = _partner_state(uid)
-    current = await state.get_state()
-    if current != PartnerAIStates.onboarding.state:
-        await state.clear()
-        await state.set_state(PartnerAIStates.onboarding)
-        await state.update_data(partner_onboarding_history=[], partner_profile={}, partner_onboarding_pending_field=None)
-    return state
-
-
-
-async def api_webapp_partner_start(request: web.Request):
     try:
-        uid, user = await _partner_auth(request)
-        await _start_partner_ai_state(uid)
-        lang = user.get("lang") or "hy"
-        return web.json_response({"ok": True, "started": True, "telegram_id": uid, "message": t(lang,
-            "🏢 <b>Գրանցենք ձեր բիզնեսը</b>\n\nՊատմեք ազատ ձևով՝ ինչպես է կոչվում բիզնեսը, որտեղ է գտնվում, ինչ ծառայություններ եք մատուցում և ինչ գներով։ Կարող եք ավելացնել նաև օբյեկտների, տարածքի և աշխատանքի ժամերի մասին տեղեկություններ։ Ես ինքնուրույն կկառուցեմ հայտը։",
-            "🏢 <b>Зарегистрируем ваш бизнес</b>\n\nРасскажите свободно: как называется бизнес, где находится, какие услуги вы оказываете и по каким ценам. Можно добавить объекты, зону работы и график. Я сам соберу заявку.",
-            "🏢 <b>Let’s register your business</b>\n\nTell me naturally what your business is called, where it is located, what services you offer and their prices. You can also describe objects, coverage and schedule. I will build the application for you.")})
-    except web.HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Partner AI start failed for Telegram user")
-        return web.json_response({"ok": False, "error": "partner_start_failed", "detail": str(exc)[:500]}, status=500)
-
-
-async def api_webapp_partner_message(request: web.Request):
-    try:
-        uid, _ = await _partner_auth(request)
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        text = str(payload.get("text") or "").strip()
-        if len(text) < 2:
-            return web.json_response({"ok": False, "error": "message_too_short"}, status=400)
-        state = await _start_partner_ai_state(uid)
-        result = await _process_partner_onboarding_text(uid, text, state)
-        return web.json_response({"ok": True, **result})
-    except web.HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Partner AI message failed for Telegram user")
-        return web.json_response({"ok": False, "error": "partner_message_failed", "detail": str(exc)[:500]}, status=500)
-
-
-async def _process_partner_onboarding_text(uid: int, text: str, state: FSMContext) -> dict:
-    """Unified registration conversation.
-
-    Registration now goes through the same AIManager/Groq pipeline as client,
-    partner and admin conversations. The model owns semantic understanding;
-    ToolRegistry owns the authenticated save operation.
-    """
-    user = db.get_user(uid) or {}
-    lang = user.get("lang") or "hy"
-    try:
-        result = await ai_manager.handle_message(
-            int(uid),
-            text,
-            AIContext.REGISTRATION,
-            language=lang,
-            extra_context={"registration": True},
+        result = data_core.register_partner_basic(
+            actor_user_id=uid,
+            business_name=business_name,
+            phone=phone,
         )
+        db.update_user_field(uid, "phone", data_core.normalize_phone_number(phone))
+        db.update_user_field(uid, "role", "partner")
+        return web.json_response({
+            "ok": True,
+            "registered": True,
+            "partner_id": int(result["partner"]["id"]),
+            "company_id": int(result["company"]["id"]),
+            "business_name": result["company"]["name"],
+            "destination": "master_cabinet.html",
+        })
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc), "message": _partner_registration_error(lang, str(exc))}, status=400)
     except Exception:
-        logger.exception("Unified registration AI turn failed")
-        return {
-            "message": t(
-                lang,
-                "⚠️ Ներողություն, AI ծառայությունը ժամանակավորապես անհասանելի է։ Փորձեք կրկին։",
-                "⚠️ Извините, AI временно недоступен. Попробуйте ещё раз.",
-                "⚠️ Sorry, the AI service is temporarily unavailable. Please try again.",
-            ),
-            "completed": False,
-        }
-
-    tool_result = result.get("tool_result") or {}
-    profile = tool_result.get("profile") if isinstance(tool_result, dict) else None
-    application_id = tool_result.get("application_id") if isinstance(tool_result, dict) else None
-    completed = bool(tool_result.get("ok") and application_id)
-
-    # Keep the legacy FSM state only as a compatibility bridge for the existing
-    # WebApp UI. Conversation history/state is now owned by AIManager.
-    if completed:
-        await state.update_data(
-            partner_profile=profile or {},
-            partner_application_id=application_id,
-            partner_onboarding_pending_field=None,
-        )
-        await state.set_state(PartnerAIStates.onboarding)
-    else:
-        await state.update_data(partner_profile=profile or {})
-
-    response = {
-        "message": result.get("reply") or "",
-        "completed": completed,
-        "profile": profile or {},
-    }
-    if application_id:
-        response["application_id"] = application_id
-        # Once the AI has prepared the draft, the WebApp must immediately open
-        # the editable application form. The verification document is uploaded
-        # there; the AI chat itself is not the document-upload surface.
-        response["open_form"] = bool(completed)
-    if result.get("confirmation_required"):
-        response["confirmation_required"] = True
-    if result.get("error"):
-        response["error"] = result.get("error")
-    return response
+        logger.exception("Minimal partner registration failed for Telegram user")
+        return web.json_response({"ok": False, "error": "partner_registration_failed", "message": _partner_registration_error(lang, "partner_registration_failed")}, status=500)
 
 
 async def api_partner_registration_status(request: web.Request):
@@ -351,19 +215,6 @@ async def telegram_admin_ai_secretary(message: types.Message):
         logger.exception("Telegram admin AI secretary failed")
         await message.answer("⚠️ AI-секретарь временно недоступен. Попробуйте ещё раз.")
 
-
-@router.message(PartnerAIStates.onboarding)
-async def telegram_partner_ai_message(message: types.Message, state: FSMContext):
-    text = (message.text or message.caption or "").strip()
-    if not text:
-        await message.answer("🤖 Գրեք ձեր բիզնեսի մասին տեքստով։ / Опишите бизнес текстом.")
-        return
-    try:
-        result = await _process_partner_onboarding_text(message.from_user.id, text, state)
-        await message.answer(result["message"], parse_mode=ParseMode.HTML)
-    except Exception:
-        logger.exception("Telegram partner AI message failed")
-        await message.answer("⚠️ Произошла техническая ошибка. Попробуйте ещё раз.")
 
 
 @web.middleware
@@ -474,7 +325,6 @@ async def main():
     app.router.add_get("/api/webapp/session", api_webapp_session)
     app.router.add_post("/api/webapp/role", api_webapp_role)
     app.router.add_post("/api/webapp/partner/start", api_webapp_partner_start)
-    app.router.add_post("/api/webapp/partner/message", api_webapp_partner_message)
     app.router.add_get("/api/master/{id}/registration-status", api_partner_registration_status)
     # Register routes without running blocking PostgreSQL migrations. Render must
     # see the HTTP listener before startup migrations begin.
