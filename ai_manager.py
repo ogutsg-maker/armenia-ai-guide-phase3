@@ -1232,88 +1232,155 @@ class AIManager:
 
     @staticmethod
     def _parse_explicit_partner_services(message: str) -> list[dict[str, Any]] | None:
-        """Small deterministic fallback for explicit service commands.
+        """Parse only explicit service+price commands.
 
-        AI remains the semantic extractor. This fallback only protects obvious
-        service+price messages from model variability and preserves explicit Armenian/Russian
-        mobile/coverage facts when they are present. It never invents a location or asks a
-        clarification question.
+        This is a deterministic safety path, not a replacement for AI NLU.
+        It preserves the original service names and extracts explicit mobile
+        coverage in Armenian/Russian without inventing missing facts.
         """
         import re
-        text = " ".join(str(message or "").strip().split())
-        if not text:
+        raw = str(message or "").strip()
+        if not raw:
             return None
 
         command = re.match(
-            r"^(?:создай(?:те)?|добавь(?:те)?|создать|добавить)\s+"
-            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?)(?:\s*[:,-]?\s*)",
-            text, flags=re.IGNORECASE,
+            r"^(?:создай(?:те)?|добавь(?:те)?|создать|добавить|"
+            r"ստեղծիր|ստեղծեք|ստեղծել|ավելացրու|ավելացրեք|ավելացնել)\s+"
+            r"(?:услуг(?:у|и)?|сервис(?:ы|а)?|ծառայություն(?:ներ)?|ծառայությունները)"
+            r"(?:\s*[:,-]?\s*)",
+            raw,
+            flags=re.IGNORECASE,
         )
         if not command:
             return None
 
-        body = text[command.end():].strip()
+        body = raw[command.end():].strip()
         if not body:
             return None
 
+        folded = body.casefold()
         mode = None
-        if re.search(r"\b(?:выезд\s+к\s+клиенту|выезжаю|выезд|mobile)\b|հաճախորդի\s+մոտ|մեկնում\s+եմ", body, re.I):
+        if re.search(
+            r"выезд\s+к\s+клиенту|выезжаю|выезд|mobile|"
+            r"հաճախորդի\s+մոտ|պատվիրատուի\s+հասցեում|"
+            r"պատվիրատուի\s+մոտ|այցով\s+հաճախորդին|մեկնում\s+եմ",
+            folded,
+            flags=re.IGNORECASE,
+        ):
             mode = "mobile"
-        elif re.search(r"\b(?:по\s+этому\s+адресу|работаю\s+на\s+месте|at\s+address)\b|այս\s+հասցեում|տեղում", body, re.I):
+        elif re.search(
+            r"по\s+этому\s+адресу|работаю\s+на\s+месте|at\s+address|"
+            r"այս\s+հասցեում|հասցեում|տեղում",
+            folded,
+            flags=re.IGNORECASE,
+        ):
             mode = "at_address"
 
-        area = None
-        area_patterns = [
-            r"(?:по|в)\s+([А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})(?:\s|$)",
-            r"(?:քաղաք(?:ում)?|մարզ(?:ում)?|շրջան(?:ում)?)\s+([\u0531-\u058F-]{3,})",
-        ]
-        if mode == "mobile":
-            m_area = re.search(r"(?:по|в)\s+([А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})(?=\s|$)", body, re.I)
-            if m_area:
-                area = m_area.group(1)
-            m_area2 = re.search(r"(?:քաղաք(?:ում)?|մարզ(?:ում)?|շրջան(?:ում)?)\s+([\u0531-\u058F-]{3,})", body, re.I)
-            if m_area2:
-                area = m_area2.group(1)
+        coverage: dict[str, Any] | None = None
 
-        body = re.sub(
-            r"\b(?:выезд\s+к\s+клиенту|выезжаю|выезд|mobile)\b|հաճախորդի\s+մոտ|մեկնում\s+եմ",
-            " ", body, flags=re.I,
+        # Explicit Armenian coverage: "Հրազդանում և Կոտայքի մարզում".
+        m = re.search(
+            r"(?P<city>[Ա-Ֆա-ֆևօՕև]+)ում\s+և\s+"
+            r"(?P<marz>[Ա-Ֆա-ֆևօՕև]+)\s+մարզում",
+            body,
+            flags=re.IGNORECASE,
         )
-        body = re.sub(r"(?:\b(?:по|в)\s+[А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})$", "", body, flags=re.I).strip(" ,;.")
-        body = re.sub(r"(?:\b(?:по|в)\s+[А-ЯЁA-Z][А-ЯЁA-Zа-яёa-z-]{2,})(?=\s*(?:,|;|$))", "", body, flags=re.I)
-        body = re.sub(r"(?:քաղաք(?:ում)?|մարզ(?:ում)?|շրջան(?:ում)?)\s+[\u0531-\u058F-]{3,}", "", body, flags=re.I).strip(" ,;.")
-
-        conjunction = r"(?:и|և|ու|and)\s+(?=[^,;]+?\s+(?:от|за|по|цена(?: от)?|price(?: from)?|from)\s*\d)"
-        parts = [p.strip(" ,;") for p in re.split(r"\s*[;,]\s*|" + conjunction, body, flags=re.I) if p.strip(" ,;")]
-        if not parts:
-            return None
-
-        result = []
-        for part in parts[:30]:
-            m = re.match(
-                r"^(?P<name>.+?)\s+(?P<price_type>от|за|по|цена(?: от)?|price(?: from)?|from)?\s*"
-                r"(?P<price>\d[\d\s.,]*)\s*(?:֏|դր(?:ամ)?|amd|₽|руб(?:лей|\.)?)?\s*$",
-                part, flags=re.I,
+        if m:
+            coverage = {
+                "city": m.group("city").strip(),
+                "marz": m.group("marz").strip(),
+            }
+        else:
+            m = re.search(
+                r"(?:քաղաքում|քաղաք՝|քաղաք)\s*[:,-]?\s*"
+                r"(?P<city>[Ա-Ֆա-ֆևօՕև]+).*?"
+                r"(?:մարզում|մարզ՝|մարզ)\s*[:,-]?\s*"
+                r"(?P<marz>[Ա-Ֆա-ֆևօՕև]+)",
+                body,
+                flags=re.IGNORECASE,
             )
-            if not m:
-                return None
-            name = re.sub(r"\s+", " ", m.group("name")).strip(" ,.-")
-            raw_price = m.group("price").replace(" ", "").replace(",", "").replace(".", "")
+            if m:
+                coverage = {
+                    "city": m.group("city").strip(),
+                    "marz": m.group("marz").strip(),
+                }
+
+        # Russian explicit coverage forms.
+        if coverage is None:
+            m = re.search(
+                r"(?:в\s+городе|город)\s+(?P<city>[А-ЯЁа-яё-]+).*?"
+                r"(?:по\s+)?(?P<marz>[А-ЯЁа-яё-]+)\s+области",
+                body,
+                flags=re.IGNORECASE,
+            )
+            if m:
+                coverage = {
+                    "city": m.group("city").strip(),
+                    "marz": m.group("marz").strip(),
+                }
+
+        # Do not let the service-location sentence become a fake service.
+        body_for_services = re.split(
+            r"(?:Ծառայությունները|Ծառայություն(?:ները)?)\s+"
+            r"(?:մատուցում|մատուցվում|կատարում)|"
+            r"(?:услуги|услугу)\s+(?:оказываем|предоставляем)",
+            body,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+
+        # Match each explicit "name — price դրամից" segment independently.
+        # This handles Armenian "՝", em-dash, colon, and Russian "от".
+        pattern = re.compile(
+            r"(?P<name>.+?)\s*(?:՝|:|—|–|-)\s*"
+            r"(?P<price>\d[\d\s.,]*)\s*"
+            r"(?P<currency>դրամ(?:ից)?|֏|amd|руб(?:лей|\.)?|₽)?",
+            flags=re.IGNORECASE,
+        )
+
+        result: list[dict[str, Any]] = []
+        for match in pattern.finditer(body_for_services):
+            name = re.sub(r"\s+", " ", match.group("name") or "").strip(" ,;.-")
+            raw_price = re.sub(r"[\s,.]", "", match.group("price") or "")
             if not name or not raw_price:
-                return None
+                continue
             try:
                 price = float(raw_price)
             except ValueError:
-                return None
-            raw_type = str(m.group("price_type") or "").casefold()
-            price_type = "from" if raw_type in {"от","from","цена от","price from"} else "fixed"
-            item = {"name": name, "price": int(price) if price.is_integer() else price, "price_type": price_type}
+                continue
+            currency = str(match.group("currency") or "").casefold()
+            price_type = "from" if (
+                "ից" in currency or "от" in body_for_services[
+                    max(0, match.start() - 8):match.end() + 1
+                ].casefold()
+            ) else "fixed"
+            item: dict[str, Any] = {
+                "name": name,
+                "price": int(price) if price.is_integer() else price,
+                "price_type": price_type,
+            }
             if mode:
                 item["service_mode"] = mode
-            if area:
-                item["coverage"] = area
+            if coverage:
+                item["coverage"] = coverage
+                item["service_location"] = coverage
             result.append(item)
-        return result or None
+
+        # Require at least one explicit service and reject a partial parse.
+        if not result:
+            return None
+
+        # If the input contains multiple price-bearing services, every one must
+        # have been parsed; otherwise fall back to the full AI path.
+        expected_prices = re.findall(
+            r"\d[\d\s.,]*\s*(?:դրամ(?:ից)?|֏|amd|₽|руб(?:лей|\.)?)",
+            body_for_services,
+            flags=re.IGNORECASE,
+        )
+        if len(result) != len(expected_prices):
+            return None
+
+        return result
 
     @staticmethod
     def _pending_service_name(message: str) -> str | None:
