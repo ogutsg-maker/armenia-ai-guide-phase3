@@ -456,8 +456,9 @@ async function loadDirectionVerificationQueue(){
 
   const cardHtml=full.map(({x,detail,apps})=>{
     const pending=x.status==='pending_review';
-    const business=(detail.businesses||[]).find(b=>String(b.id)===String(x.business_id))||(detail.businesses||[])[0]||{};
-    const partner=detail.partner||{};
+    const businesses=Array.isArray(detail?.businesses)?detail.businesses:[];
+    const partner=detail?.partner||{};
+    const business=businesses.find(b=>String(b.id)===String(x.business_id))||businesses[0]||{};
     const app={
       id:x.application_id,
       status:x.application_status,
@@ -508,12 +509,28 @@ async function loadDirectionVerificationQueue(){
       serviceHtml+
       '<div class="detail"><b>📄 Փաստաթուղթ</b><div class="actions" style="margin-top:7px">'+doc+'</div></div>'+
       '<div class="detail"><b>🔎 Ստուգման արդյունք</b><div class="muted">Ուղղությունը, ծառայությունների դասակարգումը, գները, տարածքը և փաստաթուղթը ստուգվում են միասին։ Հաստատումից հետո հայտի ծառայությունները ակտիվացվում են մեկ վերջնական գործողությամբ։</div></div>'+
-      (pending?'<div class="actions" style="margin-top:10px"><button class="btn ok" onclick="directionVerificationAction('+x.id+',\'approve\')">✓ Հաստատել և ակտիվացնել</button><button class="btn danger" onclick="directionVerificationAction('+x.id+',\'reject\')">✕ Մերժել</button></div>':'')+
+      (pending?'<div class="actions" style="margin-top:10px"><button class="btn soft" onclick="editVerificationApplication('+Number(app.id||0)+')">✎ Редактировать</button><button class="btn ok" onclick="directionVerificationAction('+x.id+',\'approve\')">✓ Հաստատել և ակտիվացնել</button><button class="btn danger" onclick="directionVerificationAction('+x.id+',\'reject\')">✕ Մերժել</button></div>':'')+
       '</div>';
   }).join('');
 
   el.innerHTML='<div class="card" style="margin-bottom:12px"><div class="row"><div><b>📨 Գործընկերների հայտերի ստուգում</b><div class="muted">Ամբողջ հայտ → ստուգում → փաստաթուղթ → մեկ հաստատում → ակտիվացում</div></div><span class="muted">'+rows.length+'</span></div>'+cardHtml+'</div>';
  }catch(e){el.innerHTML='<div class="error">'+esc(e.message)+'</div>'}
+}
+
+async function editVerificationApplication(applicationId){
+ if(!applicationId){alert('Հայտի ID-ն հասանելի չէ');return}
+ try{
+  const d=await api('/api/admin/partner-applications/'+Number(applicationId));
+  const a=d.application||d.item||d;
+  const phone=prompt('Հեռախոս / Телефон',String(a.phone||''));
+  if(phone===null)return;
+  const address=prompt('Հասցե / Адрес',String(a.address||''));
+  if(address===null)return;
+  const description=prompt('Նկարագրություն / Описание',String(a.description||''));
+  if(description===null)return;
+  await post('/api/admin/partner-applications/'+Number(applicationId)+'/edit',{phone,address,description});
+  await loadDirectionVerificationQueue();
+ }catch(e){alert(e.message||'Չհաջողվեց խմբագրել հայտը')}
 }
 
 async function directionVerificationAction(id,action){
