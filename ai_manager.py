@@ -1275,7 +1275,7 @@ class AIManager:
             r"^(?:создай(?:те)?|добавь(?:те)?|создать|добавить|"
             r"ստեղծիր|ստեղծեք|ստեղծել|ավելացրու|ավելացրեք|ավելացնել)\s+"
             r"(?:услуг(?:у|и)?|сервис(?:ы|а)?|ծառայություն(?:ներ)?|ծառայությունները)"
-            r"(?:\s*[:,-]?\s*)",
+            r"(?:\s*[:,-․։]?\s*)",
             raw,
             flags=re.IGNORECASE,
         )
@@ -2221,13 +2221,15 @@ class AIManager:
                             action_args["coverage"] = first_explicit["coverage"]
                         if first_explicit.get("service_mode"):
                             action_args["service_mode"] = first_explicit["service_mode"]
+                        submission_token = secrets.token_urlsafe(24)
+                        action_args["submission_token"] = submission_token
                         pending_action = {
                             "name": str(action.get("name") or "add_services"),
                             "args": action_args,
                             "summary": str(result.get("summary") or ""),
                             "state": "awaiting_confirmation",
                             "status": "AWAITING_CONFIRMATION",
-                            "submission_token": secrets.token_urlsafe(24),
+                            "submission_token": submission_token,
                             "created_at": int(time.time()),
                         }
                         await self._set_pending(telegram_id, role, pending_action)
