@@ -189,6 +189,15 @@ def test_client_negotiation_exposes_booking_payment_state_without_mutation():
     assert "'booking': booking" in block
     assert "'payment_url': payment_url" in block
 
+def test_client_can_create_booking_only_after_agreement():
+    api = read("marketplace_flow_api.py")
+    core = read("data_core.py")
+    ui = read("web_apps/client.html")
+    assert "client_book_negotiation" in api
+    assert "/api/market/client/negotiation/{negotiation_id}/book" in api
+    assert "create_marketplace_booking_from_agreed_negotiation" in core
+    assert "bookNegotiation()" in ui
+
 def test_negotiation_ai_is_background_only():
     src = read("ai_negotiator.py")
     assert "AI is never a third participant" in src
