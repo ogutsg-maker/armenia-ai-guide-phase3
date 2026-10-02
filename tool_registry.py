@@ -465,6 +465,14 @@ class ToolRegistry:
                 contexts=a,
             ),
             self._spec(
+                "admin_invite_potential_partner",
+                "Prepare an invitation for a reviewed potential partner. This never creates a partner directly.",
+                {"potential_partner_id": {"type": "integer"}},
+                required=("potential_partner_id",),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=a,
+            ),
+            self._spec(
                 "admin_get_pending_applications",
                 "List partner applications currently awaiting administrative moderation.",
                 {"limit": {"type": "integer"}},
@@ -866,6 +874,19 @@ class ToolRegistry:
                     price=price,
                     actor_user_id=self.telegram_id,
                 )
+            if name == "admin_invite_potential_partner":
+                potential_id = int(args["potential_partner_id"])
+                item = data_core.potential_partners(limit=1)
+                # Re-read the exact record through the canonical Data Core path.
+                candidate = data_core.one("SELECT * FROM potential_partners WHERE id=%s", (potential_id,))
+                if not candidate:
+                    raise ValueError("potential_partner_not_found")
+                return self._prepare_action(
+                    name,
+                    {"potential_partner_id": potential_id},
+                    f"Пригласить потенциального партнёра «{candidate.get('business_name') or ''}»?"
+                )
+
             if name == "admin_approve_application":
                 application_id = int(args["application_id"])
                 gate = data_core.prepare_application_approval(
@@ -1260,6 +1281,12 @@ class ToolRegistry:
                     confirmation_token=str(args.get("confirmation_token") or ""),
                     actor_user_id=self.telegram_id,
                 )
+
+            if name == "admin_invite_potential_partner":
+                invitation = data_core.create_potential_partner_invitation(
+                    int(args["potential_partner_id"]), self.telegram_id
+                )
+                return {"ok": True, "item": invitation}
 
             if name == "admin_approve_application":
                 result = data_core.admin_approve_application(
