@@ -1408,11 +1408,11 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
             if str(business.get("status") or "").lower() != "active" and not company_document:
                 _exec(
                     """UPDATE partner_businesses
-                       SET status='pending_document',updated_at=NOW()
+                       SET status='pending',updated_at=NOW()
                        WHERE id=%s AND partner_id=%s""",
                     (bid,a["partner_id"]),
                 )
-                business["status"]="pending_document"
+                business["status"]="pending"
 
             # Existing approved direction: one Admin approval is enough for a
             # new service. No company document is required at service level.
@@ -1448,8 +1448,8 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
                               (a["partner_id"],bid,cid,name,service_description,price,"active" if can_activate else "pending",object_id,contact_phone,data_json))
                     _exec("INSERT INTO partner_direction_categories(partner_direction_id,category_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",(approved_direction["id"],cid))
                 row=_exec("UPDATE partner_applications SET status='approved',reviewed_by=%s,reviewed_at=NOW(),updated_at=NOW(),admin_note=%s WHERE id=%s RETURNING *",
-                          (_auth(request),"Ծառայությունը հաստատված և ակտիվացված է.",aid),True)
-                return web.json_response({"ok":True,"status":"approved","application":row,"activated":True})
+                          (_auth(request),"Ծառայությունը հաստատված." if not can_activate else "Ծառայությունը հաստատված և ակտիվացված է.",aid),True)
+                return web.json_response({"ok":True,"status":"approved","application":row,"activated":can_activate})
 
             business_name=str(
                 a.get("business_name")
@@ -1610,6 +1610,13 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
         if not app_services and a.get("service_name"):
             app_services=[{"name":a.get("service_name"),"price":a.get("price"),"matched_subcategory_id":a.get("category_id")}]
 
+        # Activation is the final safety gate: service publication requires the
+        # partner and its company to be currently publishable.
+        current_partner=_one("SELECT status FROM partners WHERE id=%s",(a["partner_id"],)) or {}
+        current_business=_one("SELECT status FROM partner_businesses WHERE id=%s AND partner_id=%s",(bid,a["partner_id"])) or {}
+        publishable_now=(str(current_partner.get("status") or "").lower()=="approved"
+                         and str(current_business.get("status") or "").lower()=="active")
+
         # Activation is the final safety gate: every service must have a real
         # catalogue subcategory selected by AI or corrected by the admin.
         unresolved=[]
@@ -1682,13 +1689,13 @@ def register_business_application_routes(app, bot_token=None, admin_id=None, ens
             object_id=_safe_int(svc.get("object_id") or payload.get("object_id"))
             contact_phone=str(svc.get("contact_phone") or payload.get("contact_phone") or a.get("phone") or "").strip() or None
             if existing:
-                _exec("""UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status='active',
+                _exec("""UPDATE services SET category_id=%s,name=%s,description=%s,price=%s,status=%s,
                          object_id=%s,contact_phone=%s,data_json=%s::jsonb,updated_at=NOW() WHERE id=%s""",
-                      (cid,name,service_description,price,object_id,contact_phone,data_json,existing["id"]))
+                      (cid,name,service_description,price,"active" if publishable_now else "pending",object_id,contact_phone,data_json,existing["id"]))
             else:
                 _exec("""INSERT INTO services(partner_id,business_id,category_id,subcategory_id,name,description,price,status,object_id,contact_phone,data_json)
-                         VALUES(%s,%s,%s,NULL,%s,%s,%s,'active',%s,%s,%s::jsonb)""",
-                      (a["partner_id"],bid,cid,name,service_description,price,object_id,contact_phone,data_json))
+                         VALUES(%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                      (a["partner_id"],bid,cid,name,service_description,price,"active" if publishable_now else "pending",object_id,contact_phone,data_json))
 
         # Create the firm's first physical object from the approved registration
         # when no object exists yet. A firm can add more objects later.
