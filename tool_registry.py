@@ -876,9 +876,7 @@ class ToolRegistry:
                 )
             if name == "admin_invite_potential_partner":
                 potential_id = int(args["potential_partner_id"])
-                item = data_core.potential_partners(limit=1)
-                # Re-read the exact record through the canonical Data Core path.
-                candidate = data_core.one("SELECT * FROM potential_partners WHERE id=%s", (potential_id,))
+                candidate = data_core.get_potential_partner(potential_id)
                 if not candidate:
                     raise ValueError("potential_partner_not_found")
                 return self._prepare_action(
