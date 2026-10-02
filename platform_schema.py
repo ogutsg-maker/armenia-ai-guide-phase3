@@ -573,4 +573,7 @@ def ensure_platform_schema() -> None:
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
+            # Existing databases keep the original CHECK constraint after CREATE TABLE.
+            cur.execute("ALTER TABLE project_expenses DROP CONSTRAINT IF EXISTS project_expenses_expense_type_check")
+            cur.execute("""ALTER TABLE project_expenses ADD CONSTRAINT project_expenses_expense_type_check CHECK (expense_type IN ('payment_fee','refund','refund_pending','other'))""")
         conn.commit()
