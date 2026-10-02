@@ -311,6 +311,16 @@ async def potential_status(request):
     if status not in allowed: raise web.HTTPBadRequest(text=json.dumps({'ok':False,'error':'invalid_status'}),content_type='application/json')
     return web.json_response({'ok':True,'item':update_potential(pid,status=status,admin_comment=str(data.get('comment') or '')[:2000])})
 
+async def potential_invite(request):
+    _admin(request)
+    pid=int(request.match_info['id'])
+    row=next((x for x in potential_partners(None,None) if int(x.get('id') or 0)==pid),None)
+    if not row:
+        return web.json_response({'ok':False,'error':'potential_partner_not_found'},status=404)
+    invite=PotentialPartnerAI(request.app['ai']).generate_personalized_invite(row)
+    updated=update_potential(pid,status='invited',admin_comment=str(invite.get('invite_text') or '')[:4000])
+    return web.json_response({'ok':True,'item':updated,'invite':invite})
+
 async def potential_research(request):
     _admin(request); data=await request.json(); query=str(data.get('query') or '').strip()
     if len(query)<3: raise web.HTTPBadRequest(text=json.dumps({'ok':False,'error':'query_required'}),content_type='application/json')
@@ -2731,5 +2741,6 @@ def register_admin_ai_routes(app, ai, bot=None):
     app.router.add_post('/api/admin/potential-partners/research',potential_research)
     app.router.add_post('/api/admin/potential-partners/structure',potential_structure)
     app.router.add_post('/api/admin/potential-partners/{id}/status',potential_status)
+    app.router.add_post('/api/admin/potential-partners/{id}/invite',potential_invite)
 
 
