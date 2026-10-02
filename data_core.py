@@ -2524,9 +2524,40 @@ def update_request_status(request_id: int, status: str,
     if not allowed:
         return None
 
+    requested=str(status or "").strip().lower()
+    allowed_statuses={
+        "pending","pending_partner_confirmation","pending_payment",
+        "negotiating","confirmed","booked","cancelled","completed",
+        "rejected","archived",
+    }
+    if requested not in allowed_statuses:
+        return None
+
+    current=one("SELECT status FROM service_requests WHERE id=%s",(int(request_id),))
+    if not current:
+        return None
+    current_status=str(current.get("status") or "").strip().lower()
+    transitions={
+        "pending":{"pending_partner_confirmation","negotiating","cancelled","rejected","archived"},
+        "pending_partner_confirmation":{"pending_payment","cancelled","rejected"},
+        "pending_payment":{"booked","cancelled"},
+        "negotiating":{"confirmed","cancelled","rejected"},
+        "confirmed":{"pending_partner_confirmation","cancelled"},
+        "booked":{"completed","cancelled"},
+        "completed":set(),
+        "cancelled":set(),
+        "rejected":set(),
+        "archived":set(),
+    }
+    if current_status == requested:
+        return current
+    if requested not in transitions.get(current_status,set()):
+        return None
+
     return execute(
-        "UPDATE service_requests SET status=%s,updated_at=NOW() WHERE id=%s RETURNING *",
-        (str(status), int(request_id)), True,
+        """UPDATE service_requests SET status=%s,updated_at=NOW()
+           WHERE id=%s AND status=%s RETURNING *""",
+        (requested, int(request_id), current_status), True,
     )
 
 
