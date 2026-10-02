@@ -38,7 +38,7 @@
 <section id="disputes" class="page"><div id="disputesList"></div></section>
 <section id="potential" class="page"><div class="card"><b>🔎 Հնարավոր գործընկերներ</b><div class="muted">Միայն իրական աղբյուրներից ստացված տվյալներ։</div><input id="researchQuery" placeholder="Օր․ beauty salons in Arabkir"><textarea id="researchText" placeholder="Կամ տեղադրեք աղբյուրի տեքստը"></textarea><div class="actions"><button class="btn" onclick="runResearch()">🔎 AI որոնել</button><button class="btn ok" onclick="structurePotential()">🤖 Կառուցվածքավորել</button></div></div><div id="potentialList"></div></section>
 <section id="proposals" class="page"><div class="card"><b>🧠 AI կատալոգի առաջարկներ</b><div class="muted">Նոր ուղղություններ և գործընկերների առաջարկած նոր ենթակատեգորիաներ։</div><button class="btn soft" onclick="loadProposals()">↻</button></div><div id="proposalList"></div><div class="card"><b>🏷 Նոր ենթակատեգորիաներ գործընկերներից</b><div class="muted">Գործընկերը չի ստեղծում կատեգորիան ինքնուրույն. առաջարկը նախ ստուգվում է ադմինի կողմից։</div><button class="btn soft" onclick="loadSubcategoryProposals()">↻</button></div><div id="subcategoryProposalList"></div><div class="card"><b>🧭 Նոր ուղղության հարցումներ գործընկերներից</b><div class="muted">AI-ն այստեղ ուղարկում է այն ծառայությունները, որոնք դուրս են գործընկերոջ արդեն հաստատված ուղղություններից։</div><button class="btn soft" onclick="loadServiceDirectionRequests()">↻</button></div><div id="serviceDirectionRequestList"></div></section>
-<section id="applications" class="page"><div class="card"><div class="row"><div><h2>📨 Գործընկերների հայտեր</h2><div class="muted">AI-ի կազմած ամբողջական հայտեր՝ բիզնես, տեղադրություն, ուղղություն, ենթաուղղություն, ծառայություն և փաստաթուղթ։</div></div><button class="btn soft" onclick="loadApplications()">↻</button></div><div id="applicationsList"></div></div></section>
+<section id="applications" class="page"><div class="card"><div class="row"><div><h2>📨 Գործընկերների հայտեր</h2><div class="muted">AI-ի կազմած ամբողջական հայտեր՝ բիզնես, տեղադրություն, ուղղություն, ենթաուղղություն, ծառայություն և փաստաթուղթ։</div></div><button class="btn soft" onclick="loadApplications()">↻</button></div><div id="applicationsList"><div class="notice">Գործողությունները կատարեք AI-սեկretարի միջոցով՝ նախադիտմամբ և հաստատումից հետո։</div></div></div></section>
 <section id="aiCosts" class="page"><div class="card"><div class="row"><div><h2>💳 AI ծախսեր և տնտեսագիտություն</h2><div class="muted">Բոլոր AI provider-ները և մոդելները՝ ըստ շղթայի, փուլի, partner-ի և token usage-ի։</div></div><div style="display:flex;gap:7px;align-items:center"><select id="aiCostDays"><option value="1">1 օր</option><option value="7">7 օր</option><option value="30" selected>30 օր</option><option value="90">90 օր</option></select><button class="btn soft" onclick="loadAiCosts()">↻</button></div></div></div><div class="grid" id="aiCostStats"></div><div class="card"><b>🤝 Ըստ գործընկերոջ</b><div id="aiCostPartners"></div></div><div class="card"><b>🧠 Ըստ provider / model</b><div id="aiCostProviders"></div></div><div class="card"><b>🔎 Վերջին AI գործողությունները</b><div id="aiCostRows"></div></div><div class="card"><div class="row"><div><b>📊 Գործարքների տնտեսագիտություն</b><div class="muted">Ընդհանուր հանձնաժողովը, AI ծախսը և արդյունքը</div></div><button class="btn soft" onclick="loadProjectEconomics()">↻</button></div><div class="grid" id="projectEconomicsStats" style="margin-top:10px"></div><div class="detail" id="projectEconomicsStages"><div class="card"><div class="row"><div><b>🤝 Տնտեսագիտություն ըստ գործընկերների</b><div class="muted">Հանձնաժողով · AI · այլ ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadPartnerEconomics()">↻</button></div><div id="partnerEconomicsRows" class="detail"></div></div><div class="card"><div class="row"><div><b>🏢 Տնտեսագիտություն ըստ ընկերությունների</b><div class="muted">Ընկերություն · գործընկեր · AI · ծախսեր · մաքուր արդյունք</div></div><button class="btn soft" onclick="loadCompanyEconomics()">↻</button></div><div id="companyEconomicsRows" class="detail"></div></div></div></div></section><section id="ai" class="page"><div class="card"><div class="row"><div><h2>🤖 AI-սեկретар</h2><div class="muted">Խոսեք սովորական լեզվով։ AI-ը տեսնում է հայտերը և կարող է կատարել հաստատվող գործողություններ։</div></div><span class="badge green">Groq · AI-first</span></div><div id="adminAiChat" style="margin-top:12px;max-height:430px;overflow:auto;border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f8fafc"></div><div style="display:flex;gap:8px;margin-top:10px"><textarea id="adminAiInput" placeholder="Օր․ Ցույց տուր նոր հայտերը / Открой заявку 36 / Поставь заявке 36 категорию Брови" style="min-height:55px"></textarea><button class="btn" onclick="sendAdminAI()" style="align-self:flex-end">➤</button></div><div class="muted" style="margin-top:8px">AI попросит подтверждение только перед изменением данных.</div></div></section>
 </main></div>
 <script>
@@ -148,10 +148,10 @@ function renderPartners(){
      </div>
      <div class="actions">
        <button class="btn soft" onclick="togglePartner(${p.id})">▼ Компании</button>
-       ${p.status!=='approved'?'<button class="btn ok" onclick="decision('+p.id+',\'approve\')">✓ Հաստատել</button>':''}
-       ${!['blocked','approved'].includes(p.status)?'<button class="btn danger" onclick="decision('+p.id+',\'reject\')">✕ Մերժել</button>':''}
-       ${p.status!=='suspended'&&p.status!=='blocked'?'<button class="btn warn" onclick="decision('+p.id+',\'suspend\')">Կասեցնել</button>':''}
-       ${p.status!=='blocked'?'<button class="btn danger" onclick="decision('+p.id+',\'block\')">Արգելափակել</button>':''}
+       ${p.status!=='approved'?'':''}
+       ${!['blocked','approved'].includes(p.status)?'':''}
+       ${p.status!=='suspended'&&p.status!=='blocked'?'':''}
+       ${p.status!=='blocked'?'':''}
      </div>
      <div id="expand${p.id}" class="detail" style="display:none"></div>
    </div>`).join(''):'<div class="empty">Գործընկերներ չկան։</div>';
@@ -199,7 +199,7 @@ function companyHtml(pid,b){
    </div>`;
  }).join(''):'<div class="empty">Ուղղություններ չկան</div>';
 
- const docHtml=docs.length?docs.map(d=>`\n   <div class="doc"><span>📄 ${esc(d.original_filename||d.document_type||'document')} · ${esc(d.status||'')}${d.rejection_reason?' · '+esc(d.rejection_reason):''}</span>\n   <div class="actions" style="margin:0"><button class="btn soft" onclick="openDoc(${pid},${d.id})">Բացել</button>${d.status!=='approved'&&d.status!=='replaced'?`<button class="btn warn" onclick="sendDocumentCorrection(${pid},${Number(d.application_id||0)},${Number(d.id)})">↩ Ուղարկել ճշտման</button>`:''}</div></div>`).join(''):'<div class="empty">Փաստաթղթեր չկան</div>';
+ const docHtml=docs.length?docs.map(d=>`\n   <div class="doc"><span>📄 ${esc(d.original_filename||d.document_type||'document')} · ${esc(d.status||'')}${d.rejection_reason?' · '+esc(d.rejection_reason):''}</span>\n   <div class="actions" style="margin:0"><button class="btn soft" onclick="openDoc(${pid},${d.id})">Բացել</button>${d.status!=='approved'&&d.status!=='replaced'?``:''}</div></div>`).join(''):'<div class="empty">Փաստաթղթեր չկան</div>';
 
  return `
    <div class="detail"><b>📝 Նկարագրություն</b><div class="muted">${esc(b.description||'—')}</div></div>
@@ -248,22 +248,7 @@ function toggleCompany(id){
  el.innerHTML=companyHtml(data.partner_id||0,data);
  el.style.display='block';
 }
-async function sendDocumentCorrection(pid,aid,did){
- const reason=prompt('Պատճառ / Причина','Փաստաթուղթը չի համապատասխանում պահանջներին։ Խնդրում ենք կցել ճիշտ փաստաթուղթ։');
- if(reason===null)return;
- if(!aid){alert('Հայտի ID-ն չի գտնվել այս փաստաթղթի համար');return}
- try{await post('/api/admin/partner-applications/'+aid+'/action',{action:'send_document_correction',reason:reason.trim()});await loadPartners();await loadApplications();}catch(e){alert(e.message||'Չհաջողվեց ուղարկել ճշտման')}
-}
 async function openDoc(pid,did){const d=await api(`/api/admin/partner-applications/${pid}/documents/${did}/url`);if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;try{if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(_){window.open(u,'_blank')||location.assign(u)}}
-async function decision(id,a){
- if(a==='approve' && !confirm('Հաստատե՞լ այս գործընկերոջ հայտը։'))return;
- const reason=a==='reject'?prompt('Պատճառ / Причина','Փաստաթուղթը չի համապատասխանում'):'';
- if(a==='reject' && reason===null)return;
- try{
-   await post(`/api/admin/partner-applications/${id}/${a}`,reason?{reason}:{});
-   await Promise.all([loadPartners(),loadStats(),loadApplications()]);
- }catch(e){alert(e.message||'Չհաջողվեց կատարել գործողությունը')}
-}
 async function loadServiceDirectionRequests(){
   const el=$('serviceDirectionRequestList');
   try{
@@ -293,30 +278,12 @@ async function loadSubcategoryProposals(){
       <div class="field" style="margin-top:8px"><label>Նկարագրություն / Описание</label><textarea id="spDesc${x.id}">${esc(x.description||'')}</textarea></div>
       <div class="field" style="margin-top:8px"><label>Նշում ադմինիստրատորի համար / Заметка</label><input id="spNote${x.id}" value="${esc(x.admin_note||'')}"></div>
       <div class="actions">
-        <button class="btn" onclick="subcategoryProposalEdit(${x.id})">💾 Պահպանել փոփոխությունները</button>
-        <button class="btn ok" onclick="subcategoryProposalAction(${x.id},'approve')">✓ Հաստատել</button>
-        <button class="btn danger" onclick="subcategoryProposalAction(${x.id},'reject')">✕ Մերժել</button>
+        
+        
+        
       </div>
     </div>`).join(''):'<div class="empty">Նոր առաջարկներ չկան</div>';
   }catch(e){el.innerHTML=`<div class="error">${esc(e.message)}</div>`}
-}
-async function subcategoryProposalEdit(id){
-  await post('/api/admin/subcategory-proposals/'+id+'/action',{
-    action:'edit',
-    name:$('spName'+id).value.trim(),
-    service_name:$('spService'+id).value.trim(),
-    price:$('spPrice'+id).value,
-    description:$('spDesc'+id).value.trim(),
-    admin_note:$('spNote'+id).value.trim()
-  });
-  await loadSubcategoryProposals();
-  alert('Փոփոխությունները պահպանված են');
-}
-async function subcategoryProposalAction(id,action){
-  const reason=action==='reject'?prompt('Պատճառ / Причина','Չի համապատասխանում կատալոգին'):'';
-  await post('/api/admin/subcategory-proposals/'+id+'/action',reason?{action,reason}:{action});
-  await loadSubcategoryProposals();
-  if(action==='approve') await loadCats();
 }
 async function loadCats(){
   const d=await api('/api/admin/directions-tree');
@@ -361,23 +328,14 @@ async function loadServiceDirectionRequests(){
         <div class="field"><label>Նշում</label><input id="drNote${x.id}" value="${esc(x.admin_note||'')}"></div>
       </div>
       <div class="actions">
-        ${x.status==='pending_admin'||x.status==='rejected'?`<button class="btn" onclick="directionRequestEdit(${x.id})">💾 Պահպանել</button><button class="btn ok" onclick="directionRequestAction(${x.id},'send_to_partner')">📄 Ուղարկել գործընկերոջը</button>`:''}
-        ${x.status==='document_under_review'?`<button class="btn ok" onclick="directionRequestAction(${x.id},'approve_document')">✓ Փաստաթուղթը հաստատել</button>`:''}
-        ${x.status!=='approved'?`<button class="btn danger" onclick="directionRequestAction(${x.id},'reject')">✕ Մերժել</button>`:''}
+        ${x.status==='pending_admin'||x.status==='rejected'?``:''}
+        ${x.status==='document_under_review'?``:''}
+        ${x.status!=='approved'?``:''}
       </div>
       ${x.original_filename?`<div class="muted">📄 ${esc(x.original_filename)} · ${esc(x.document_status||'')}</div>`:''}
       <div class="muted" style="margin-top:6px">ID հարցման՝ #${x.id}</div>
     </div>`).join(''):'<div class="empty">Նոր հարցումներ չկան</div>';
   }catch(e){el.innerHTML=`<div class="error">${esc(e.message)}</div>`}
-}
-async function directionRequestEdit(id){
- await post('/api/admin/service-direction-requests/'+id+'/action',{action:'edit',proposed_subcategory_name:$('drSub'+id).value.trim(),service_name:$('drService'+id).value.trim(),price:$('drPrice'+id).value,description:$('drDesc'+id).value.trim(),admin_note:$('drNote'+id).value.trim()});
- await loadServiceDirectionRequests();
-}
-async function directionRequestAction(id,action){
- const reason=action==='reject'?prompt('Պատճառ / Причина','Չի համապատասխանում պահանջներին'):'';
- await post('/api/admin/service-direction-requests/'+id+'/action',reason?{action,reason}:{action});
- await loadServiceDirectionRequests(); await loadPartners();
 }
 let applicationCatalog=null;
 async function getApplicationCatalog(){
@@ -507,12 +465,12 @@ async function loadApplications(){
    ''+
    '<div id="appEditor'+x.id+'"></div>'+
    '<div class="actions">'+
-   (x.status==='pending_admin'&&isServiceProposal&&serviceClassified?'<button class="btn ok" onclick="appAction('+x.id+',\'approve_service_proposal\')">✓ Հաստատել և ակտիվացնել</button>':'')+
-   (x.status==='pending_admin'&&isServiceProposal&&!serviceClassified?'<button class="btn secondary" onclick="editApplication('+x.id+')">✎ Դասակարգել</button>':'')+
-   (x.status==='pending_admin'&&!isServiceProposal?'<button class="btn" onclick="editApplication('+x.id+')">✎ Խմբագրել հայտը</button><button class="btn ok" onclick="appAction('+x.id+',\'approve\')">✓ Հաստատել հայտը</button>':'')+
+   (x.status==='pending_admin'&&isServiceProposal&&serviceClassified?'':'')+
+   (x.status==='pending_admin'&&isServiceProposal&&!serviceClassified?'':'')+
+   (x.status==='pending_admin'&&!isServiceProposal?'':'')+
    ''+
-   (!['approved','rejected'].includes(x.status)?'<button class="btn danger" onclick="appAction('+x.id+',\'reject\')">✕ Մերժել</button>':'')+
-   (x.status!=='approved'?'<button class="btn danger" onclick="deleteAdminApplication('+x.id+')">🗑 Ջնջել</button>':'')+
+   (!['approved','rejected'].includes(x.status)?'':'')+
+   (x.status!=='approved'?'':'')+
    '</div></div>';
   }).join('')+'</div>':'<div class="empty">Սպասող հայտեր չկան</div></div>';
   await loadDirectionVerificationQueue();
@@ -547,68 +505,7 @@ async function directionVerificationAction(id,action){
  }catch(e){alert(e.message||'Չհաջողվեց կատարել գործողությունը')}
 }
 
-async function deleteAdminApplication(id){
- const rows=(await api('/api/admin/universal-applications')).applications||[]; const x=rows.find(v=>Number(v.id)===Number(id)); if(!x)return;
- if(String(x.status||'')==='approved'){alert('Հաստատված հայտը չի ջնջվում։');return}
- if(!confirm('Ջնջե՞լ հայտը #'+id+'?'))return;
- try{await post('/api/admin/partner-applications/'+id+'/action',{action:'delete'});await Promise.all([loadApplications(),loadStats()]);alert('Հայտը ջնջված է։')}catch(e){alert(e.message||'Չհաջողվեց ջնջել հայտը')}
-}
 async function openApplicationDoc(partnerId,documentId){try{const d=await api('/api/admin/partner-applications/'+partnerId+'/documents/'+documentId+'/url');if(!d.url)throw Error('document_url_missing');const u=/^https?:/i.test(d.url)?d.url:location.origin+d.url;if(tg?.openLink)tg.openLink(u,{try_instant_view:false});else window.open(u,'_blank')}catch(e){alert(e.message||'Չհաջողվեց բացել փաստաթուղթը')}}
-async function editApplication(id){
- const rows=(await api('/api/admin/universal-applications')).applications||[];
- const x=rows.find(v=>Number(v.id)===Number(id));
- if(!x)return;
- await getApplicationCatalog();
- $('appEditor'+id).innerHTML=renderApplicationEditor(x);
-}
-async function appAction(id,action){
- if(['approve','approve_service_proposal'].includes(action) && !confirm('Հաստատե՞լ այս գործողությունը։'))return;
- const list=(await api('/api/admin/universal-applications')).applications||[];
- const x=list.find(v=>Number(v.id)===Number(id))||{};
- try{
-   // Initial partner registration: one admin click completes the existing
-   // three-stage backend flow (approve -> approve document -> activate).
-   // A new service proposal for an already existing business keeps its
-   // dedicated approve_service_proposal flow.
-   const payload=(x.payload_json&&typeof x.payload_json==='object')?x.payload_json:{};
-   const isServiceProposal=payload.source==='partner_service';
-   const isInitialRegistration=!isServiceProposal && x.status==='pending_admin';
-   if(action==='approve' && isInitialRegistration){
-     // Initial registration is one Admin decision: first move the application
-     // into document workflow, then approve the already uploaded document and
-     // let the backend run the final activation gate.
-     await post('/api/admin/partner-applications/'+id+'/action',{action:'approve'});
-     const afterApprove=(await api('/api/admin/universal-applications')).applications||[];
-     const a1=afterApprove.find(v=>Number(v.id)===Number(id))||{};
-     if(!a1.document_id){
-       await loadApplications();
-       return;
-     }
-     await post('/api/admin/partner-applications/'+id+'/action',{action:'approve_document'});
-   }else{
-     let data={action};
-     if(action==='reject' || action==='send_to_partner'){
-       const promptValue=prompt(
-         action==='send_to_partner'
-           ? 'Ինչը պետք է ուղղի գործընկերը? / Что партнёр должен исправить?'
-           : 'Պատճառ / Причина',
-         action==='send_to_partner'
-           ? 'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.'
-           : 'Մերժվել է ադմինիստրատորի կողմից'
-       );
-       if(promptValue===null)return;
-       data.admin_note=promptValue.trim()||
-         (action==='send_to_partner'
-           ? 'Խնդրում ենք ուղղել նշված տվյալները և կրկին ուղարկել հայտը.'
-           : 'Մերժվել է ադմինիստրատորի կողմից');
-     }
-     await post('/api/admin/partner-applications/'+id+'/action',data);
-   }
-   await loadApplications();
- }catch(e){
-   alert(e.message||'Չհաջողվեց կատարել գործողությունը');
- }
-}
 function addAdminAiMessage(role,text){const el=$('adminAiChat');const div=document.createElement('div');div.style.cssText='margin:7px 0;padding:10px 12px;border-radius:11px;white-space:pre-wrap;background:'+(role==='user'?'#e8edf2':'#fff')+';border:1px solid #e5e7eb';div.innerHTML='<b>'+esc(role==='user'?'Вы':'🤖 AI-секретарь')+'</b><br>'+esc(text);el.appendChild(div);el.scrollTop=el.scrollHeight;return div;}
 function renderAdminAiActions(d){
  const actions=[];

@@ -233,3 +233,10 @@ def test_admin_ui_has_no_direct_tariff_mutation_functions():
     assert "saveMasterTariff(" not in src
     assert "saveCategorySettings(" not in src
     assert "masterAction(" not in src
+
+
+def test_admin_ui_has_no_direct_application_mutations():
+    src = read("web_apps/admin.html")
+    for marker in ("decision(", "sendDocumentCorrection(", "subcategoryProposalEdit(", "subcategoryProposalAction(", "directionRequestEdit(", "directionRequestAction(", "deleteAdminApplication(", "editApplication(", "appAction("):
+        assert marker not in src
+    assert "AI-սեկretարի" in src or "AI-սեկretար" in src
