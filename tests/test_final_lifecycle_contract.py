@@ -167,3 +167,23 @@ def test_client_ui_represents_full_booking_lifecycle():
     for state in ("paid","in_progress","completed","cancelled","refunded"):
         assert state in src
     assert "provider-ի հաստատումը" in src
+
+def test_cancellation_does_not_mark_booking_refunded_without_provider_settlement():
+    src = read("data_core.py")
+    block = src[src.index("def cancel_booking"):src.index("def record_payment_provider_fee")]
+    assert 'final_status="cancelled"' in block
+    assert "refund_pending" in block
+    assert 'final_status="refunded"' not in block
+
+def test_refund_settlement_requires_real_provider_reference_and_cancelled_booking():
+    src = read("data_core.py")
+    block = src[src.index("def reconcile_refund"):src.index("def marketplace_existing_payment")]
+    assert 'booking_status != "cancelled"' in block
+    assert "if not provider_refund_id:" in block
+    assert "provider_refund_id" in block
+    assert '"already_refunded":True' in block
+
+def test_no_public_refund_settlement_endpoint():
+    src = read("marketplace_flow_api.py")
+    assert "/refund/settle" not in src
+    assert "/refund/confirm" not in src
