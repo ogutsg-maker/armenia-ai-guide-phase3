@@ -428,8 +428,8 @@ async def _execute_mutation(pid, c, ctx, actor_user_id):
             return web.json_response({"ok": True, "reply": {"hy":"Նշեք հասցեն, որտեղ պետք է մատուցվի այս ծառայությունը։","ru":"Укажите адрес, где должна быть эта услуга.","en":"Please provide the address where this service is offered."}.get(lang, "Նշեք հասցեն։")})
         if not name:
             return web.json_response({"ok": True, "reply": {"hy":"Գրեք ծառայության անունը։","ru":"Укажите название услуги.","en":"Please provide the service name."}.get(lang, "Укажите название услуги.")})
-        from master_cabinet_api import _ai_match_new_service
-        match = await _ai_match_new_service(pid, name, description, bid)
+        matches = data_core.resolve_catalog_services([{"name": name, "price": price, "description": description}])
+        match = matches[0] if matches else {"category_id": None, "master_category_id": None, "catalog_match_status": "unclassified"}
         try:
             row = data_core.create_partner_service_application(
                 partner_id=pid, actor_user_id=int(actor_user_id), company_id=bid, address_id=oid,
