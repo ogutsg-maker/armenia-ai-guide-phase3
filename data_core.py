@@ -4396,41 +4396,101 @@ def marketplace_cancel_side_effects(partner_id:int,booking_id:int,actor:str,reas
     return True
 
 def reconcile_refund(booking_id:int, refund_amount:float, provider_refund_id:str|None=None):
-    """Finalize a refund only after the provider confirms the money was returned."""
+    """Finalize a refund only after cancellation and provider confirmation.
+
+    Cancellation creates the business-state/refund-pending record. This method
+    is the settlement gate: it must be called with a real provider refund
+    reference and may only settle a booking that is already cancelled.
+    """
     booking=one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),))
-    if not booking: return None
-    payment=one("SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",(int(booking_id),))
-    if not payment or str(payment.get("status") or "").lower() not in {"refund_pending","partial_refund","paid"}:
+    if not booking:
         return None
+    booking_status=str(booking.get("status") or "").lower()
+    if booking_status != "cancelled":
+        return None
+
+    provider_refund_id=str(provider_refund_id or "").strip()
+    if not provider_refund_id:
+        return None
+
+    payment=one(
+        "SELECT * FROM payments WHERE booking_id=%s AND payment_type='commission' ORDER BY id DESC LIMIT 1",
+        (int(booking_id),),
+    )
+    if not payment or str(payment.get("status") or "").lower() not in {
+        "refund_pending","partial_refund","paid"
+    }:
+        return None
+
     paid_total=float(payment.get("amount") or 0)
-    existing=one("""SELECT COALESCE((data_json->>'refund_amount')::numeric,0) refund_amount
-                    FROM payments WHERE id=%s""",(int(payment["id"]),))
+    if paid_total <= 0:
+        return None
+
+    existing=one(
+        """SELECT COALESCE((data_json->>'refund_amount')::numeric,0) refund_amount
+           FROM payments WHERE id=%s""",
+        (int(payment["id"]),),
+    )
     already=max(0.0,float((existing or {}).get("refund_amount") or 0))
     target=min(paid_total,max(0.0,float(refund_amount or 0)))
     amount=max(0.0,target-already)
+
     if amount<=0:
-        return {"booking":booking,"payment":payment,"refund_amount":0.0,"already_refunded":True}
+        return {
+            "booking":booking,
+            "payment":payment,
+            "refund_amount":0.0,
+            "already_refunded":True,
+        }
+
     cumulative=already+amount
     data=payment.get("data_json") or {}
     if isinstance(data,str):
-        try: data=json.loads(data)
-        except Exception: data={}
+        try:
+            data=json.loads(data)
+        except Exception:
+            data={}
     data=dict(data or {})
-    data.update({"refund_confirmed":True,"refund_amount":cumulative,
-                 "provider_refund_id":provider_refund_id,
-                 "refund_confirmed_at":datetime.utcnow().isoformat()})
-    updated=execute("""UPDATE payments SET status=%s,data_json=%s::jsonb,updated_at=NOW()
-                       WHERE id=%s RETURNING *""",
-                    ("refunded" if cumulative>=paid_total else "partial_refund",
-                     json.dumps(data,ensure_ascii=False),int(payment["id"])),True)
-    if not updated: return None
-    if str(updated.get("status"))=="refunded":
-        execute("UPDATE bookings SET status='refunded',updated_at=NOW() WHERE id=%s AND status='cancelled'",
-                (int(booking_id),),False)
-    reverse_booking_financial_entries(booking,amount)
-    return {"booking":one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),)),
-            "payment":updated,"refund_amount":amount}
+    data.update({
+        "refund_confirmed":True,
+        "refund_amount":cumulative,
+        "provider_refund_id":provider_refund_id,
+        "refund_confirmed_at":datetime.utcnow().isoformat(),
+    })
 
+    updated=execute(
+        """UPDATE payments
+           SET status=%s,data_json=%s::jsonb,updated_at=NOW()
+           WHERE id=%s
+             AND status IN ('refund_pending','partial_refund','paid')
+           RETURNING *""",
+        (
+            "refunded" if cumulative>=paid_total else "partial_refund",
+            json.dumps(data,ensure_ascii=False),
+            int(payment["id"]),
+        ),
+        True,
+    )
+    if not updated:
+        return None
+
+    if str(updated.get("status") or "").lower()=="refunded":
+        execute(
+            "UPDATE bookings SET status='refunded',updated_at=NOW() "
+            "WHERE id=%s AND status='cancelled'",
+            (int(booking_id),),
+            False,
+        )
+
+    # Ledger reversal remains idempotent/cumulative and is based on the
+    # provider-confirmed amount, never on the cancellation request alone.
+    reverse_booking_financial_entries(booking,amount)
+
+    return {
+        "booking":one("SELECT * FROM bookings WHERE id=%s",(int(booking_id),)),
+        "payment":updated,
+        "refund_amount":amount,
+    }
 
 def marketplace_existing_payment(negotiation_id:int):
     booking=marketplace_booking_by_negotiation(int(negotiation_id))
