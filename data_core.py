@@ -2017,6 +2017,39 @@ def admin_approve_application(application_id: int, admin_telegram_id: int):
 
     return platform_db.transaction(_approve)
 
+def prepare_application_service_activation(*, application_id: int, actor_user_id: int) -> dict[str, Any]:
+    """Read-only gate for service activation; no mutation before confirmation."""
+    if not is_admin(int(actor_user_id)):
+        raise PermissionError("admin_required")
+    app = get_application_full(int(application_id))
+    if not app:
+        raise ValueError("application_not_found")
+    if str(app.get("status") or "").lower() != "approved":
+        return {"ok": False, "can_activate": False, "error": "application_not_approved"}
+    business_id = app.get("business_id")
+    if not business_id:
+        return {"ok": False, "can_activate": False, "error": "business_not_found"}
+    business = one("SELECT id,status FROM partner_businesses WHERE id=%s AND partner_id=%s",
+                   (int(business_id), int(app["partner_id"])))
+    if not business or str(business.get("status") or "").lower() != "active":
+        return {"ok": False, "can_activate": False, "error": "company_not_active"}
+    services = rows(
+        """SELECT id,name,status FROM services
+           WHERE partner_id=%s AND business_id=%s
+             AND status='approved' AND data_json->>'application_id'=%s
+           ORDER BY id""",
+        (int(app["partner_id"]), int(business_id), str(application_id)),
+    )
+    if not services:
+        return {"ok": False, "can_activate": False, "error": "approved_services_not_found"}
+    return {
+        "ok": True,
+        "can_activate": True,
+        "application_id": int(application_id),
+        "services": services,
+        "summary": f"Ակտիվացնել հայտ #{int(application_id)}-ի {len(services)} հաստատված ծառայություն(ներ)ը։",
+    }
+
 def admin_activate_application_services(*, application_id: int, admin_telegram_id: int) -> dict[str, Any]:
     """Activate already approved services only after the application/company gates pass."""
     if not is_admin(int(admin_telegram_id)):
