@@ -1,25 +1,8 @@
-"""Idram payment provider abstraction for Armenia AI Guide.
+"""Live Idram payment provider abstraction for Armenia AI Guide.
 
-This is the single place the whole platform talks to Idram through. It mirrors
-the real Idram *EDP* (Electronic Documents Payment) gateway surface so that
-switching from the current fictitious/test mode to a live integration is a
-configuration change, not a rewrite.
+Payment creation is live-only: without real merchant credentials the provider refuses to create an invoice. Settlement happens only after a real Idram callback is verified, so the application never fabricates a successful payment.
 
-Design (same philosophy as the GroqAI layer)
---------------------------------------------
-* **Test / fictitious mode (default now).** When no real Idram credentials are
-  configured (``IDRAM_MERCHANT_ID``/``IDRAM_SECRET_KEY`` still ``"test"`` or
-  empty) the provider does NOT touch the network. ``create_invoice`` returns a
-  deterministic ``TEST-IDRAM-...`` transaction that is immediately ``paid`` and
-  ``verify_callback`` auto-approves. This keeps the end-to-end booking flow
-  working today without a merchant account.
-* **Live mode (wired at the end).** As soon as real credentials are set and
-  ``is_live`` becomes ``True``, ``build_payment_url`` produces a real Idram
-  redirect URL and ``verify_callback`` validates the ``EDP_CHECKSUM`` MD5
-  signature exactly as Idram's result callback requires. No business logic in
-  the callers changes.
-
-Real Idram result-callback checksum (for reference / live mode):
+Real Idram result-callback checksum:
     md5(EDP_REC_ACCOUNT:EDP_AMOUNT:SECRET_KEY:EDP_BILL_NO:
         EDP_PAYER_ACCOUNT:EDP_TRANS_ID:EDP_TRANS_DATE)
 """
@@ -50,7 +33,6 @@ logger = logging.getLogger(__name__)
 IDRAM_PAYMENT_ENDPOINT = "https://banking.idram.am/Payment/GetPayment"
 
 # Provider tags stored on payment rows so we can always tell test vs live money.
-PROVIDER_TEST = "IDRAM_TEST"
 PROVIDER_LIVE = "IDRAM"
 
 
@@ -66,9 +48,9 @@ class PaymentIntent:
     bill_no: str
     amount: float
     currency: str
-    status: str            # 'paid' (test auto-settle) | 'pending' (live redirect)
-    provider: str          # PROVIDER_TEST | PROVIDER_LIVE
-    mode: str              # 'test' | 'live'
+    status: str            # 'pending' until Idram confirms settlement
+    provider: str          # PROVIDER_LIVE
+    mode: str              # 'live'
     payment_url: str = ""
     description: str = ""
     metadata: dict = field(default_factory=dict)
@@ -126,7 +108,7 @@ class IdramProvider:
 
     @property
     def provider_tag(self) -> str:
-        return PROVIDER_LIVE if self.is_live else PROVIDER_TEST
+        return PROVIDER_LIVE
 
     # ------------------------------------------------------------------
     # Invoice creation
