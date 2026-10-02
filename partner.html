@@ -1,58 +1,26 @@
 <!doctype html>
 <html lang="hy">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Armenia AI Guide — Partner</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#080c18;color:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.wrap{max-width:620px;margin:auto;padding:18px 14px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
-.brand{font-size:21px;font-weight:800}.sub{font-size:9px;letter-spacing:.2em;color:#9da8bc;margin-top:3px}
-.back{background:#ffffff10;border:1px solid #ffffff18;color:#fff;border-radius:12px;padding:9px 12px}
-.panel{background:#ffffff08;border:1px solid #ffffff12;border-radius:22px;overflow:hidden}.head{padding:22px;border-bottom:1px solid #ffffff10}
-h1{margin:0 0 9px;font-size:24px}.muted{color:#aeb7c8;line-height:1.5;font-size:14px}
-.form{padding:20px}.field{margin-bottom:14px}label{display:block;color:#cbd3e1;font-size:12px;margin:0 0 6px}
-input{width:100%;height:48px;background:#ffffff0b;border:1px solid #ffffff18;border-radius:13px;color:#fff;padding:11px 13px;font:inherit;outline:0}
-.primary{width:100%;height:50px;border:0;border-radius:13px;background:#9d8cff;color:#07101d;font-weight:800;font-size:15px;cursor:pointer;margin-top:5px}
-.notice{margin-bottom:15px;border:1px solid #ffffff12;background:#ffffff08;border-radius:13px;padding:12px;color:#aeb7c8;font-size:12px;line-height:1.45}
-.status{text-align:center;padding:0 20px 18px;color:#aeb7c8;font-size:12px}.error{color:#ffb4b4}.hidden{display:none!important}
+body{font-family:Arial,sans-serif;margin:0;background:#f5f6f8;color:#202124}.wrap{max-width:720px;margin:0 auto;padding:20px}.card{background:#fff;border-radius:18px;padding:18px;box-shadow:0 4px 20px #00000012}.messages{min-height:320px;max-height:58vh;overflow:auto;display:flex;flex-direction:column;gap:10px;margin-bottom:14px}.msg{padding:11px 13px;border-radius:14px;white-space:pre-wrap}.ai{background:#f0f2f5;align-self:flex-start}.user{background:#e5f0ff;align-self:flex-end}.row{display:flex;gap:8px}textarea{flex:1;min-height:54px;border:1px solid #ddd;border-radius:12px;padding:10px;resize:vertical}button{border:0;border-radius:12px;padding:11px 15px;cursor:pointer}.send{background:#111;color:#fff}.muted{color:#777;font-size:13px;margin:8px 0}.notice{background:#fff8df;padding:10px;border-radius:12px;margin-bottom:12px}
 </style>
 </head>
-<body>
-<div class="wrap">
-  <div class="top"><div><div class="brand">✦ Armenia AI Guide</div><div class="sub">ARMENIA · AI CONCIERGE</div></div><button class="back" onclick="try{Telegram.WebApp.close()}catch(e){history.back()}">‹</button></div>
-  <div class="panel">
-    <div class="head">
-      <h1>🏢 Գրանցեք ձեր բիզնեսը</h1>
-      <div class="muted">Գրանցման համար անհրաժեշտ է միայն ընկերության անունը և հեռախոսահամարը։ Գրանցումից հետո կբացվի ձեր գործընկերային կաբինետը, որտեղ ծառայությունները, գները, աշխատանքային ժամերը, աշխատանքի լոկացիան և մյուս կարգավորումները կարող եք լրացնել ձեռքով կամ AI օգնականի միջոցով։</div>
-    </div>
-    <form id="form" class="form">
-      <div class="notice">Գրանցումը այստեղ ավարտվում է։ Ծառայությունները, գները, փաստաթղթերը և մյուս տվյալները գրանցման պարտադիր մաս չեն։</div>
-      <div class="field"><label for="business_name">Անվանում *</label><input id="business_name" maxlength="100" required autocomplete="organization" placeholder="Օրինակ՝ SAFIR servis"></div>
-      <div class="field"><label for="phone">Հեռախոս *</label><input id="phone" inputmode="tel" maxlength="20" required autocomplete="tel" placeholder="+374 91 12 34 56"></div>
-      <button class="primary" type="submit">✓ Գրանցվել</button>
-    </form>
-    <div id="status" class="status"></div>
-  </div>
-</div>
+<body><div class="wrap"><div class="card">
+<h2>🤝 Armenia AI Guide</h2>
+<div id="notice" class="notice">Գրանցումը սկսված է։ Պատմեք ձեր բիզնեսի մասին ազատ ձևով։</div>
+<div id="messages" class="messages"></div>
+<div class="row"><textarea id="input" placeholder="Օրինակ՝ Հրազդանում ունեմ ավտոլվացման կետ..."></textarea><button id="send" class="send">➤</button></div>
+<div id="status" class="muted"></div>
+</div></div>
 <script>
-const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
-let entryAllowed=false;try{entryAllowed=sessionStorage.getItem('aig_partner_entry')==='welcome';sessionStorage.removeItem('aig_partner_entry')}catch(e){}
-if(!entryAllowed){location.replace('/welcome.html');throw new Error('Direct partner entry blocked')}
-const initData=tg?.initData||'',form=document.getElementById('form'),status=document.getElementById('status');
-function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-async function submitRegistration(e){
- e.preventDefault();status.textContent='Գրանցում…';
- const business_name=document.getElementById('business_name').value.trim();
- const phone=document.getElementById('phone').value.trim();
- try{
-   const r=await fetch('/api/webapp/partner/register',{method:'POST',headers:{'Content-Type':'application/json','X-Telegram-Init-Data':initData},body:JSON.stringify({business_name,phone})});
-   const d=await r.json().catch(()=>({}));
-   if(!r.ok||d.ok===false)throw new Error(d.error||d.message||'Registration failed');
-   status.textContent='✓ Գրանցումը ավարտված է։ Բացում ենք գործընկերային կաբինետը…';
-   setTimeout(()=>location.href='/master_cabinet.html',250);
- }catch(err){status.innerHTML='<span class="error">⚠️ '+esc(err.message)+'</span>'}
-}
-form.addEventListener('submit',submitRegistration);
-</script>
-</body></html>
+const tg=window.Telegram?.WebApp; tg?.ready(); tg?.expand();
+const headers=()=>({'X-Telegram-Init-Data':tg?.initData||''});
+const messages=document.getElementById('messages'),input=document.getElementById('input'),status=document.getElementById('status');
+function add(role,text){const d=document.createElement('div');d.className='msg '+role;d.textContent=text||'';messages.appendChild(d);messages.scrollTop=messages.scrollHeight}
+async function api(path,opt={}){opt.headers={...headers(),...(opt.headers||{})};if(opt.body&&typeof opt.body!=='string'){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(opt.body)}const r=await fetch(path,opt);const d=await r.json().catch(()=>({ok:false,error:'bad_json'}));if(!r.ok||d.ok===false)throw new Error(d.error||d.message||('HTTP '+r.status));return d}
+async function start(){try{const d=await api('/api/webapp/partner/start',{method:'POST'});if(d.message)add('ai',d.message)}catch(e){status.textContent=e.message}}
+async function send(){const text=input.value.trim();if(!text)return;input.value='';add('user',text);status.textContent='…';document.getElementById('send').disabled=true;try{const d=await api('/api/webapp/partner/message',{method:'POST',body:{text}});if(d.message)add('ai',d.message);if(d.completed&&d.application_id){status.textContent='✓ Հայտը պատրաստ է՝ #'+d.application_id+'.';add('ai','Հայտը պատրաստ է։ Հաջորդ քայլը՝ ստուգել տվյալները և կցել պահանջվող փաստաթուղթը։');}}catch(e){add('ai','⚠️ '+e.message)}finally{status.textContent='';document.getElementById('send').disabled=false;input.focus()}}
+document.getElementById('send').onclick=send;input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});start();
+</script></body></html>
