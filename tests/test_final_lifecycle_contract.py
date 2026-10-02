@@ -36,7 +36,8 @@ def test_potential_partner_lifecycle_is_connected():
     assert "async def potential_structure(" in api
     assert "async def potential_invite(" in api
     assert "/api/admin/potential-partners/research" in ui
-    assert "/api/admin/potential-partners/{id}/invite" not in ui
+    assert "/api/admin/potential-partners/" in ui
+    assert "invitePotential(" in ui
     assert "async def structure_candidate(" in helper
 
 def test_partner_ai_router_uses_unified_partner_context():
