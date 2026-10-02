@@ -370,7 +370,7 @@ def ensure_platform_schema() -> None:
         -- Keep this column dependency-free so a clean install can initialize.
         booking_id BIGINT,
         partner_id BIGINT REFERENCES partners(id) ON DELETE SET NULL,
-        expense_type TEXT NOT NULL CHECK (expense_type IN ('payment_fee','refund','other')),
+        expense_type TEXT NOT NULL CHECK (expense_type IN ('payment_fee','refund','refund_pending','other')),
         amount NUMERIC(18,4) NOT NULL DEFAULT 0,
         currency TEXT NOT NULL DEFAULT 'AMD',
         description TEXT NOT NULL DEFAULT '',
