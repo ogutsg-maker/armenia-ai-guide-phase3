@@ -4305,6 +4305,16 @@ def update_potential(potential_id: int, **fields):
     return platform_db.update_potential(int(potential_id),**fields)
 
 
+def create_potential_partner_invitation(potential_partner_id: int, admin_telegram_id: int):
+    item = platform_db.one("SELECT * FROM potential_partners WHERE id=%s", (int(potential_partner_id),))
+    if not item:
+        raise ValueError("potential_partner_not_found")
+    status = str(item.get("status") or "").lower()
+    if status not in {"new", "reviewed", "interested"}:
+        raise ValueError("potential_partner_not_invitable")
+    return platform_db.create_potential_invitation(int(potential_partner_id), int(admin_telegram_id))
+
+
 # ---------------------------------------------------------------------------
 # Safe ownership / permissions
 # ---------------------------------------------------------------------------
