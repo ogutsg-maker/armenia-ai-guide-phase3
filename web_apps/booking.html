@@ -21,7 +21,7 @@
 <div class="total-row master"><span>🤝 Վարպետին տեղում / Мастеру на месте:</span><span id="master-payout">0 ֏</span></div>
 <div class="total-row grand"><span>📦 Ընդհանուր / Итого:</span><span id="grand-total">0 ֏</span></div>
 </div>
-<button class="btn-pay" id="pay-btn" onclick="payViaIdram()">💳 Վճարել Idram-ով / Оплатить через Idram</button>
+<div class="note" id="payment-status">💳 Վճարումը հասանելի կլինի ամրագրման հաստատումից հետո։ / Оплата станет доступна после подтверждения бронирования.</div>
 <div id="success" class="success"></div><div id="error" class="error"></div>
 <p class="note">💡 Այժմ օգտագործվում է փորձնական Idram վճարում։ Իրական Idram կմիացվի հետագայում։<br>Сейчас используется тестовый Idram. Реальное подключение будет добавлено позже.</p>
 </div>
@@ -35,17 +35,6 @@ async function loadOrder(){
  try{const r=await fetch('/api/order/'+encodeURIComponent(orderId));const d=await r.json();if(!r.ok)throw Error(d.error||'order_load_failed');
  document.getElementById('service-name').textContent=d.category_name||d.service_name||'—';document.getElementById('master-name').textContent=d.master_name||'—';document.getElementById('city').textContent=d.city||'—';document.getElementById('master-price').textContent=formatAMD(d.master_price);document.getElementById('commission').textContent=formatAMD(d.commission);document.getElementById('master-payout').textContent=formatAMD(d.master_payout);document.getElementById('grand-total').textContent=formatAMD(d.total);
  }catch(e){showError('Չհաջողվեց բեռնել պատվերը / Не удалось загрузить заказ');document.getElementById('pay-btn').disabled=true}}
-async function payViaIdram(){
- const btn=document.getElementById('pay-btn');const userId=tg?.initDataUnsafe?.user?.id||0;if(!orderId||!userId){showError('Telegram օգտվողը կամ պատվերը չի գտնվել / Не найден пользователь Telegram или заказ');return}
- btn.disabled=true;btn.textContent='⏳ Կատարվում է փորձնական վճարում... / Тестовый платёж...';
- try{
-   // billing.py already processes this callback and creates the deal. We intentionally
-   // call it directly in test mode instead of redirecting to a fake external Idram page.
-   const r=await fetch('/api/idram/success',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'payment_success',order_id:Number(orderId),user_id:Number(userId),txn_id:'TEST-IDRAM-'+Date.now()})});
-   const d=await r.json().catch(()=>({}));if(!r.ok||d.ok===false)throw Error(d.error||d.message||('HTTP '+r.status));
-   document.getElementById('success').innerHTML='✅ Վճարումը հաջողությամբ հաստատվեց։<br>Оплата успешно подтверждена. Пատվերը ստեղծված է։ / Бронирование создано.';document.getElementById('success').style.display='block';btn.textContent='✅ Վճարված է / Оплачено';
- }catch(e){showError('Վճարումը չհաջողվեց / Ошибка тестового платежа: '+e.message);btn.disabled=false;btn.textContent='💳 Վճարել Idram-ով / Оплатить через Idram'}
-}
 loadOrder();
 </script>
 </body></html>
