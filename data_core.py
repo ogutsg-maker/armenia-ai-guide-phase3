@@ -3911,9 +3911,13 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     # The service application is created before catalogue classification.
     # Admin classification runs afterwards against the live catalogue. The AI
     # may provide a service name but never supplies a catalogue ID.
-    # Documents are optional service data. If a document exists, keep it
-    # attached for admin review; it is not a prerequisite for creating the
-    # service application.
+    #
+    # Documents belong to the PARTNER DIRECTION, never to an individual
+    # service. If this direction already has an approved/current verification,
+    # another service in the same direction must not request a document again.
+    # If the direction has no verified document yet, keep the application in
+    # pending_partner until the direction document is uploaded; only then does
+    # it enter pending_admin.
     first = prepared[0]
     first_location = first.get("location") if isinstance(first.get("location"), dict) else {}
     header_address = str(first.get("address_text") or first_location.get("address") or (company_object or {}).get("address") or "").strip() or None
@@ -3955,6 +3959,42 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
         else None
     )
 
+    # Resolve direction verification BEFORE choosing the application state.
+    # This is deliberately direction-scoped: one approved document covers all
+    # services under that partner/company/direction.
+    verification = []
+    direction_document_required = False
+    for svc in prepared:
+        mid = svc.get("master_category_id")
+        try:
+            mid = int(mid) if mid not in (None, "") else None
+        except (TypeError, ValueError):
+            mid = None
+        if not mid:
+            cid2 = svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id")
+            try:
+                cat2 = get_catalog_category(int(cid2)) if cid2 not in (None, "") else None
+                mid = int(cat2["master_category_id"]) if cat2 and cat2.get("master_category_id") else None
+            except (TypeError, ValueError):
+                mid = None
+        if mid:
+            gate = ensure_direction_verification_case(
+                partner_id=pid, business_id=cid, master_category_id=mid, actor_user_id=actor_user_id
+            )
+            verification.append(gate)
+            if gate.get("required") and not gate.get("verified"):
+                direction_document_required = True
+                case = gate.get("case") or {}
+                partner = get_partner_by_id(pid)
+                if partner:
+                    _notify_direction_document_required(
+                        partner_user_id=int(partner.get("user_id") or actor_user_id),
+                        master_category_id=mid,
+                        case_id=case.get("id"),
+                    )
+
+    application_status = "pending_partner" if direction_document_required else "pending_admin"
+
     row = one(
         """INSERT INTO partner_applications(
                partner_id,business_id,status,business_name,location_marz,location_city,
@@ -3990,39 +4030,11 @@ def create_partner_services_proposal(*, partner_id: int, actor_user_id: int,
     if not row:
         raise ValueError("service_application_create_failed")
 
-    # Direction verification is independent from the service application.
-    # If classification already knows a direction, open a verification case now.
-    verification = []
-    for svc in prepared:
-        mid = svc.get("master_category_id")
-        try:
-            mid = int(mid) if mid not in (None, "") else None
-        except (TypeError, ValueError):
-            mid = None
-        if not mid:
-            cid2 = svc.get("matched_subcategory_id") or svc.get("subcategory_id") or svc.get("category_id")
-            try:
-                cat2 = get_catalog_category(int(cid2)) if cid2 not in (None, "") else None
-                mid = int(cat2["master_category_id"]) if cat2 and cat2.get("master_category_id") else None
-            except (TypeError, ValueError):
-                mid = None
-        if mid:
-            gate = ensure_direction_verification_case(
-                partner_id=pid, business_id=cid, master_category_id=mid, actor_user_id=actor_user_id
-            )
-            verification.append(gate)
-            if gate.get("required") and not gate.get("verified"):
-                case = gate.get("case") or {}
-                _notify_direction_document_required(
-                    partner_user_id=int(get_partner_by_id(pid).get("user_id") or actor_user_id) if get_partner_by_id(pid) else int(actor_user_id),
-                    master_category_id=mid,
-                    case_id=case.get("id"),
-                )
-
     return {
         **row,
-        "workflow": "admin_verification",
+        "workflow": "direction_document_required" if direction_document_required else "admin_verification",
         "verification": verification,
+        "document_required": direction_document_required,
         "catalog_classified": sum(1 for x in prepared if x.get("catalog_match_status") == "matched"),
         "catalog_unclassified": sum(1 for x in prepared if x.get("catalog_match_status") != "matched"),
         "company": payload["company"],
