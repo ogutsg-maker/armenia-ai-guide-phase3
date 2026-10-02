@@ -418,7 +418,7 @@ async def api_partner_document_upload(request):
     try:
         if direction_id is None:
             row = _db_fetchone(
-                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND status IN ('draft','pending','pending_document','rejected') ORDER BY id DESC LIMIT 1",
+                "SELECT id FROM partner_directions WHERE partner_id=%s AND business_id=%s AND status IN ('draft','pending','pending','rejected') ORDER BY id DESC LIMIT 1",
                 (partner["id"],business_id),
             )
             if row:
@@ -478,7 +478,7 @@ async def api_partner_document_upload(request):
             (int(direction_id),),
         )
         _db_execute(
-            """UPDATE partner_directions SET status='pending_document',rejection_reason=NULL,updated_at=NOW()
+            """UPDATE partner_directions SET status='pending',rejection_reason=NULL,updated_at=NOW()
                WHERE id=%s AND partner_id=%s AND business_id=%s""",
             (int(direction_id), int(partner["id"]), int(business_id)),
         )
@@ -1001,7 +1001,7 @@ async def api_admin_service_direction_request_action(request):
             return web.json_response({"ok":False,"error":"document_not_ready"},status=400)
         doc = _db_fetchone("SELECT * FROM partner_verification_documents WHERE id=%s AND partner_direction_id=%s AND status='pending'",(req["document_id"],req["partner_direction_id"]))
         if not doc:
-            return web.json_response({"ok":False,"error":"pending_document_not_found"},status=404)
+            return web.json_response({"ok":False,"error":"pending_not_found"},status=404)
         _db_execute("UPDATE partner_verification_documents SET status='approved',reviewed_by=%s,reviewed_at=NOW(),rejection_reason=NULL WHERE id=%s",(admin_id,doc["id"]))
         _db_execute("UPDATE partner_directions SET status='approved',rejection_reason=NULL,updated_at=NOW() WHERE id=%s",(req["partner_direction_id"],))
         # Direction approval is the final service-activation gate for this
