@@ -291,7 +291,7 @@ class ToolRegistry:
                     "address_text": _nullable("string"),
                     "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
                     "service_location": _nullable("object"),
-                    "coverage": _nullable("string"),
+                    "coverage": _nullable("object"),
                     "services": {
                         "type": "array",
                         "minItems": 1,
@@ -1142,8 +1142,14 @@ class ToolRegistry:
                         "description": raw.get("description"),
                         "service_mode": raw.get("service_mode") or service_mode,
                         "service_location": raw.get("service_location") or location,
-                        "coverage": raw.get("coverage") or args.get("coverage") or ((location or {}).get("coverage") if isinstance(location, dict) else None),
-                        "address_text": address_text,
+                        "coverage": (
+                            raw.get("coverage")
+                            if isinstance(raw.get("coverage"), dict)
+                            else (args.get("coverage") if isinstance(args.get("coverage"), dict) else (
+                                (location or {}).get("coverage") if isinstance(location, dict) and isinstance((location or {}).get("coverage"), dict) else None
+                            ))
+                        ),
+                        "address_text": str(raw.get("address_text") or address_text or "").strip(),
                     })
 
                 prepared = data_core.resolve_catalog_services(prepared, limit=500)
@@ -1155,6 +1161,16 @@ class ToolRegistry:
                 # and price; Data Core may resolve them again on each subsequent
                 # validation and Admin can review the technical flag later.
 
+                # The pending action is the immutable business-data contract.
+                # Preserve both batch-level and per-service location/coverage so
+                # confirmation cannot regenerate or lose the original facts.
+                batch_coverage = args.get("coverage")
+                if not isinstance(batch_coverage, dict):
+                    batch_coverage = (
+                        location.get("coverage")
+                        if isinstance(location, dict) and isinstance(location.get("coverage"), dict)
+                        else None
+                    )
                 action_args = {
                     "company_id": company_id,
                     "company_name": company.get("name") or "",
@@ -1164,6 +1180,7 @@ class ToolRegistry:
                     "phone": phone,
                     "service_mode": service_mode,
                     "service_location": location,
+                    "coverage": batch_coverage,
                 }
 
                 if missing:
