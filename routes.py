@@ -240,6 +240,9 @@ async def partner_service_document(request):
     if not p:return j({"ok":False,"error":"service_not_owned"},403)
     body=await request.json()
     if not body.get("file_name") or not body.get("mime_type") or not body.get("storage_ref"):return j({"ok":False,"error":"document_data_required"},400)
+    try: size=int(body.get("size_bytes",0))
+    except (TypeError,ValueError): size=0
+    if size<=0 or size>10*1024*1024:return j({"ok":False,"error":"document_size_limit"},400)
     if body["mime_type"] not in ("application/pdf","image/jpeg","image/png","image/webp"):return j({"ok":False,"error":"unsupported_document_type"},400)
     row=db.exec("INSERT INTO aig_service_documents(service_id,file_name,mime_type,storage_ref) VALUES(%s,%s,%s,%s) RETURNING id",(sid,body["file_name"],body["mime_type"],body["storage_ref"]),True)
     db.exec("INSERT INTO aig_audit_logs(actor_telegram_id,action,entity_type,entity_id,payload) VALUES(%s,%s,%s,%s,%s)",(uid,"service_document_uploaded","service",sid,json.dumps({"document_id":row["id"]},ensure_ascii=False)))
