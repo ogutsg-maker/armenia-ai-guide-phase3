@@ -364,6 +364,20 @@ async def client_mark_notification_read(r):
     exec("UPDATE aig_notifications SET read_at=now() WHERE id=%s AND telegram_id=%s",(notification_id,u["telegram_id"]))
     return j({"ok":True})
 
+
+async def partner_negotiations(r):
+    u=await user(r)
+    partner=partners.get(u["telegram_id"])
+    if not partner:
+        return j({"ok":False,"error":"partner_registration_required"},404)
+    items=run("""SELECT n.id,n.status,n.request_id,n.service_id,n.agreed_price,n.created_at,n.partner_interest_at,
+                        s.name AS service_name,r.client_telegram_id,r.city,r.district,
+                        (SELECT message FROM negotiation_messages m WHERE m.negotiation_id=n.id ORDER BY m.id DESC LIMIT 1) AS last_message
+                 FROM aig_negotiations n JOIN aig_client_requests r ON r.id=n.request_id
+                 JOIN aig_services s ON s.id=n.service_id
+                 WHERE n.partner_id=%s ORDER BY COALESCE(n.partner_interest_at,n.created_at) DESC LIMIT 50""",(partner["id"],),True)
+    return j({"ok":True,"items":items})
+
 async def partner_mark_notification_read(r):
     u = await user(r)
     notification_id = int(r.match_info["id"])
@@ -466,6 +480,7 @@ def setup_routes(app):
     app.router.add_get("/api/client/negotiations", client_negotiations)
     app.router.add_post("/api/client/notifications/{id}/read", client_mark_notification_read)
     app.router.add_post("/api/partner/negotiations/{id}/decision", partner_negotiation_decision)
+    app.router.add_get("/api/partner/negotiations", partner_negotiations)
     app.router.add_get("/api/negotiations/{id}", negotiation_get)
     app.router.add_post("/api/negotiations/{id}/messages", negotiation_message)
     app.router.add_post("/api/partner/services/confirm", partner_service_confirm)
