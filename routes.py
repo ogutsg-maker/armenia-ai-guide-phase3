@@ -491,6 +491,20 @@ async def negotiation_terms(r):
     return j({"ok":True,"status":"agreed" if payload.get("client_agreed") and payload.get("partner_agreed") else "active","agreed_price":price})
 
 
+async def booking_by_negotiation(r):
+    u=await user(r)
+    try: nid=int(r.match_info["id"])
+    except: return j({"ok":False,"error":"invalid_negotiation_id"},400)
+    row=run("""SELECT b.*,n.partner_id,r.client_telegram_id,p.telegram_id AS partner_telegram_id
+               FROM aig_bookings b JOIN aig_negotiations n ON n.id=b.negotiation_id
+               JOIN aig_client_requests r ON r.id=n.request_id
+               JOIN aig_partners p ON p.id=n.partner_id WHERE b.negotiation_id=%s""",(nid,))
+    if not row: return j({"ok":True,"booking":None})
+    partner=partners.get(u["telegram_id"])
+    if int(row["client_telegram_id"])!=int(u["telegram_id"]) and not (partner and int(row["partner_id"])==int(partner["id"])):
+        return j({"ok":False,"error":"forbidden"},403)
+    return j({"ok":True,"booking":row})
+
 async def client_agree(r):
     u=await user(r)
     try: nid=int(r.match_info["id"])
@@ -584,6 +598,7 @@ def setup_routes(app):
     app.router.add_post("/api/client/services/{service_id}/select", client_select_service)
     app.router.add_post("/api/client/negotiations/{id}/agree", client_agree)
     app.router.add_post("/api/negotiations/{id}/terms", negotiation_terms)
+    app.router.add_get("/api/negotiations/{id}/booking", booking_by_negotiation)
     app.router.add_post("/api/client/negotiations/{id}/booking", client_booking)
     app.router.add_post("/api/client/bookings/{id}/pay", booking_payment)
     app.router.add_post("/api/client/bookings/{id}/review", client_review)
