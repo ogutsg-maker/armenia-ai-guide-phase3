@@ -132,6 +132,11 @@ async def select_service(request):
     req=db.one("SELECT * FROM aig_client_requests WHERE id=%s AND client_telegram_id=%s",(rid,uid)); svc=db.one("SELECT s.*,p.id partner_id,p.telegram_id FROM aig_services s JOIN aig_companies c ON c.id=s.company_id JOIN aig_partners p ON p.id=c.partner_id WHERE s.id=%s AND s.status='ACTIVE'",(sid,))
     if not req or not svc:return j({"ok":False,"error":"service_not_found"},404)
     deadline=datetime.now(timezone.utc)+timedelta(minutes=3)
+    if svc["price_type"]=="fixed":
+        n=db.exec("INSERT INTO aig_negotiations(request_id,service_id,partner_id,status,agreed_price,commission_base) VALUES(%s,%s,%s,'agreed',%s,%s) ON CONFLICT(request_id,partner_id) DO UPDATE SET status='agreed',agreed_price=EXCLUDED.agreed_price,commission_base=EXCLUDED.commission_base RETURNING id",(rid,sid,svc["partner_id"],float(svc["price_amd"]),float(svc["price_amd"])),True)
+        notify(int(svc["telegram_id"]),"new_booking_candidate",{"negotiation_id":n["id"],"service":svc["name"],"city":req["city"],"price":str(svc["price_amd"])})
+        return j({"ok":True,"negotiation_id":n["id"],"status":"agreed","agreed_price":float(svc["price_amd"])})
+    deadline=datetime.now(timezone.utc)+timedelta(minutes=3)
     n=db.exec("INSERT INTO aig_negotiations(request_id,service_id,partner_id,interest_deadline,status) VALUES(%s,%s,%s,%s,'waiting_partner') ON CONFLICT(request_id,partner_id) DO UPDATE SET service_id=EXCLUDED.service_id,interest_deadline=EXCLUDED.interest_deadline,status='waiting_partner' RETURNING id",(rid,sid,svc["partner_id"],deadline),True)
     notify(int(svc["telegram_id"]),"new_client",{"negotiation_id":n["id"],"service":svc["name"],"city":req["city"],"price":str(svc["price_amd"])})
     return j({"ok":True,"negotiation_id":n["id"],"interest_deadline":deadline.isoformat()})
@@ -174,7 +179,9 @@ async def partner_confirm_booking(request):
 async def payment_webhook(request):
     body=await request.json(); bid=int(body.get("booking_id",0)); b=db.one("SELECT * FROM aig_bookings WHERE id=%s",(bid,))
     if not b or b["status"]!="PENDING_PAYMENT" or not body.get("confirmed"):return j({"ok":False},400)
-    token=secrets.token_urlsafe(32); now=datetime.now(timezone.utc); exp=now+timedelta(hours=1)
+    token=secrets.token_urlsafe(32); now=datetime.now(timezone.utc)
+    service_start=b.get("service_start")
+    exp=(service_start + timedelta(hours=1)) if service_start else (now+timedelta(hours=1))
     db.exec("UPDATE aig_bookings SET status='PAYMENT_CONFIRMED',payment_ref=%s,payment_confirmed_at=%s,qr_token=%s,qr_expires_at=%s WHERE id=%s",(body.get("payment_ref"),now,token,exp,bid))
     n=db.one("SELECT r.client_telegram_id,p.telegram_id partner_telegram_id FROM aig_negotiations n JOIN aig_client_requests r ON r.id=n.request_id JOIN aig_partners p ON p.id=n.partner_id WHERE n.id=%s",(b["negotiation_id"],))
     if n:
@@ -205,8 +212,9 @@ async def review(request):
     db.exec("INSERT INTO aig_reviews(booking_id,client_telegram_id,rating,text) VALUES(%s,%s,%s,%s) ON CONFLICT(booking_id) DO NOTHING",(bid,uid,rating,body.get("text"))); return j({"ok":True})
 async def arbitration_open(request):
     uid=await current(request); bid=int(request.match_info["id"]); body=await request.json()
-    b=db.one("SELECT * FROM aig_bookings WHERE id=%s",(bid,))
+    b=db.one("SELECT b.*,r.client_telegram_id,p.telegram_id partner_telegram_id FROM aig_bookings b JOIN aig_negotiations n ON n.id=b.negotiation_id JOIN aig_client_requests r ON r.id=n.request_id JOIN aig_partners p ON p.id=n.partner_id WHERE b.id=%s",(bid,))
     if not b:return j({"ok":False,"error":"booking_not_found"},404)
+    if uid not in (int(b["client_telegram_id"]),int(b["partner_telegram_id"])):return j({"ok":False,"error":"forbidden"},403)
     a=db.exec("INSERT INTO aig_arbitrations(booking_id,opened_by,issue) VALUES(%s,%s,%s) RETURNING id",(bid,uid,str(body.get("issue") or "").strip()),True)
     db.exec("UPDATE aig_bookings SET status='ARBITRATION' WHERE id=%s",(bid,)); notify(ADMIN_ID,"arbitration_opened",{"arbitration_id":a["id"],"booking_id":bid}); return j({"ok":True,"arbitration_id":a["id"]})
 async def admin_arbitration(request):
