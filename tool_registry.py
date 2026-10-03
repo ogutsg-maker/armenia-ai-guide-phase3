@@ -285,7 +285,11 @@ class ToolRegistry:
                             "properties": {
                                 "name": {"type": "string"},
                                 "price": _nullable("number"),
-                                "price_type": {"type": "string", "enum": ["from", "fixed"]},
+                                "price_type": {
+                                    "type": "string",
+                                    "enum": ["from", "to", "fixed"],
+                                    "description": "Обязательно. Тип цены: from для «от»/«դրամից», to для «до», fixed для точной фиксированной цены. Никогда не передавай null."
+                                },
                                 "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
                                 "service_location": _location_schema(),
                                 "coverage": _coverage_schema(),
@@ -293,7 +297,7 @@ class ToolRegistry:
                                 "phone": _nullable("string"),
                                 "description": _nullable("string")
                             },
-                            "required": ["name", "price"],
+                            "required": ["name", "price", "price_type"],
                             "additionalProperties": False
                         }
                     }
