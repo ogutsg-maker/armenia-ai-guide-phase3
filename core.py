@@ -13,9 +13,6 @@ class DataCore:
     def search_active_services(text:str,city=None):
         return db.all("SELECT s.id service_id,s.name service_name,s.price_type,s.price_amd,c.name partner_name,p.id partner_id,a.city FROM aig_services s JOIN aig_companies c ON c.id=s.company_id JOIN aig_partners p ON p.id=c.partner_id LEFT JOIN aig_addresses a ON a.id=s.address_id WHERE s.status='ACTIVE' AND s.name ILIKE %s AND (%s IS NULL OR a.city IS NULL OR a.city ILIKE %s) ORDER BY s.id LIMIT 3",(f"%{text}%",city,f"%{city}%"))
     @staticmethod
-    def active_services(text:str):
-        return db.all("SELECT s.id service_id,s.name service_name,s.price_type,s.price_amd,c.name partner_name,p.id partner_id,a.city FROM aig_services s JOIN aig_companies c ON c.id=s.company_id JOIN aig_partners p ON p.id=c.partner_id LEFT JOIN aig_addresses a ON a.id=s.address_id WHERE s.status='ACTIVE' AND s.name ILIKE %s ORDER BY s.id LIMIT 3",(f"%{text}%",))
-    @staticmethod
     def commission(price:float,mode:str,rate:float)->float:
         if mode=="on_top": return round(price*rate/100,2)
         if mode=="inside": return round(price*rate/(100+rate),2)

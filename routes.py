@@ -27,7 +27,6 @@ async def register_partner(request):
     uid=await current(request); body=await request.json(); name=str(body.get("name") or "").strip(); phone=str(body.get("phone") or "").strip()
     if not name:return j({"ok":False,"error":"business_name_required"},400)
     if not re.fullmatch(r"[+0-9() .-]{7,30}",phone):return j({"ok":False,"error":"invalid_phone"},400)
-    u=authu(request)
     with db.conn() as c:
         c.execute("UPDATE aig_users SET role='partner',updated_at=now() WHERE telegram_id=%s",(uid,))
         p=c.execute("INSERT INTO aig_partners(telegram_id,phone) VALUES(%s,%s) ON CONFLICT(telegram_id) DO UPDATE SET phone=EXCLUDED.phone RETURNING id",(uid,phone)).fetchone()[0]
@@ -193,7 +192,6 @@ async def payment_webhook(request):
 async def contact(request):
     uid=await current(request); bid=int(request.match_info["id"]); b=db.one("SELECT b.*,r.client_telegram_id,p.telegram_id partner_telegram_id,pa.phone partner_phone FROM aig_bookings b JOIN aig_negotiations n ON n.id=b.negotiation_id JOIN aig_client_requests r ON r.id=n.request_id JOIN aig_partners p ON p.id=n.partner_id JOIN aig_partners pa ON pa.id=p.id WHERE b.id=%s",(bid,))
     if not b or uid not in (b["client_telegram_id"],b["partner_telegram_id"]) or b["status"]!="PAYMENT_CONFIRMED":return j({"ok":False,"error":"contact_not_disclosed"},403)
-    client=db.one("SELECT telegram_id FROM aig_users WHERE telegram_id=%s",(b["client_telegram_id"],))
     db.exec("INSERT INTO aig_booking_contacts(booking_id,client_telegram,partner_telegram,partner_phone) VALUES(%s,%s,%s,%s) ON CONFLICT(booking_id) DO NOTHING",(bid,b["client_telegram_id"],b["partner_telegram_id"],b["partner_phone"]))
     return j({"ok":True,"partner_phone":b["partner_phone"]})
 async def checkin(request):
@@ -267,7 +265,6 @@ async def admin_query(request):
     if uid!=ADMIN_ID:return j({"ok":False,"error":"forbidden"},403)
     body=await request.json(); text=str(body.get("text") or "").strip()
     if not text:return j({"ok":False,"error":"text_required"},400)
-    prompt=admin_prompt(text)
     meta=await admin_ai_turn(text,uid)
     db.exec("INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)",(uid,meta["provider"],meta["model"],"admin","natural_language_query",meta["input_tokens"],meta["output_tokens"]))
     return j({"ok":True,"answer":meta["text"],"tool_calls":[{"name":x.function.name,"arguments":x.function.arguments} for x in meta["tool_calls"]]})
