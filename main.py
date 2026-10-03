@@ -178,70 +178,42 @@ def _partner_registration_error(lang: str, code: str) -> str:
         "business_name_required": t(lang, "Գրեք բիզնեսի անունը։", "Укажите название бизнеса.", "Enter the business name."),
         "invalid_phone": t(lang, "Մուտքագրեք վավեր հեռախոսահամար։", "Укажите корректный номер телефона.", "Enter a valid phone number."),
     }
-    return messages.get(code, t(lang, "Չհաջողվեց գրանցել բիզնեսը։ Փորձեք կրկին։", "Не удалось завершить регистрацию. Попробуйте ещё раз.", "Registration could not be completed. Please try again."))
+    return messages.get(code, t(lang, "Տեխնիկական սխալ։", "Техническая ошибка.", "Technical error."))
 
 
 async def api_webapp_partner_start(request: web.Request):
-    """Minimal partner registration: business name + phone only.
-
-    The first registration step is deterministic and does not call AI. Once
-    the partner/company exists, all operational changes happen in the cabinet
-    through the AI operator and protected Data Core tools.
-    """
+    """Start the single AI-first partner registration flow."""
     uid, user = await _partner_auth(request)
     lang = user.get("lang") or "hy"
-    try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
-
-    existing_partner = db.get_partner_by_user(uid)
-    if existing_partner and not payload.get("business_name") and not payload.get("phone"):
-        companies = data_core.list_companies(partner_id=int(existing_partner["id"]))
+    partner = db.get_partner_by_user(uid)
+    if partner:
+        companies = data_core.list_companies(partner_id=int(partner["id"]))
         if companies:
             return web.json_response({
                 "ok": True,
                 "registered": True,
-                "partner_id": int(existing_partner["id"]),
+                "partner_id": int(partner["id"]),
                 "company_id": int(companies[0]["id"]),
-                "business_name": companies[0].get("name") or existing_partner.get("business_name") or "",
+                "business_name": companies[0].get("name") or partner.get("business_name") or "",
                 "destination": "master_cabinet.html",
+                "message": t(
+                    lang,
+                    "Բարի գալուստ գործընկերոջ AI բաժին։ Գրեք, թե ինչ եք ուզում անել։",
+                    "Добро пожаловать в AI-раздел партнёра. Напишите, что хотите сделать.",
+                    "Welcome to the partner AI workspace. Tell me what you want to do.",
+                ),
             })
-
-    business_name = str(payload.get("business_name") or "").strip()
-    phone = str(payload.get("phone") or "").strip()
-    if not business_name or not phone:
-        return web.json_response({
-            "ok": True,
-            "registered": False,
-            "requires_form": True,
-            "message": t(lang,
-                "Գրանցեք ձեր բիզնեսը։ Լրացրեք անունը և հեռախոսահամարը։",
-                "Зарегистрируйте бизнес. Укажите название и телефон.",
-                "Register your business. Enter the business name and phone number."),
-        })
-
-    try:
-        result = data_core.register_partner_basic(
-            actor_user_id=uid,
-            business_name=business_name,
-            phone=phone,
-        )
-        db.update_user_field(uid, "phone", data_core.normalize_phone_number(phone))
-        db.update_user_field(uid, "role", "partner")
-        return web.json_response({
-            "ok": True,
-            "registered": True,
-            "partner_id": int(result["partner"]["id"]),
-            "company_id": int(result["company"]["id"]),
-            "business_name": result["company"]["name"],
-            "destination": "master_cabinet.html",
-        })
-    except ValueError as exc:
-        return web.json_response({"ok": False, "error": str(exc), "message": _partner_registration_error(lang, str(exc))}, status=400)
-    except Exception:
-        logger.exception("Minimal partner registration failed for Telegram user")
-        return web.json_response({"ok": False, "error": "partner_registration_failed", "message": _partner_registration_error(lang, "partner_registration_failed")}, status=500)
+    return web.json_response({
+        "ok": True,
+        "registered": False,
+        "ai_first": True,
+        "message": t(
+            lang,
+            "Գրանցումը սկսված է։ Պատմեք ձեր բիզնեսի մասին ազատ ձևով՝ անունը, ծառայությունները, գները և գտնվելու վայրը։ AI-ը կհավաքի տվյալները, ցույց կտա մեկ ընդհանուր նախադիտում և միայն ձեր հաստատումից հետո կստեղծի հայտը։",
+            "Регистрация начата. Расскажите о бизнесе свободным текстом: название, услуги, цены и местоположение. AI соберёт данные, покажет одно общее предварительное представление и создаст заявку только после вашего подтверждения.",
+            "Registration started. Describe your business freely: name, services, prices and location. AI will collect the data, show one combined preview, and create the application only after your confirmation.",
+        ),
+    })
 
 
 async def api_partner_registration_status(request: web.Request):
