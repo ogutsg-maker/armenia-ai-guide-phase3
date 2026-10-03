@@ -38,15 +38,26 @@ async def webhook(request):
 
 
 async def page(request):
-    path = BASE / request.match_info["name"]
+    name = request.path.lstrip("/")
+    allowed = {
+        "welcome.html",
+        "partner.html",
+        "partner_cabinet.html",
+        "client.html",
+        "admin.html",
+    }
+    if name not in allowed:
+        raise web.HTTPNotFound()
+
+    path = BASE / name
     if not path.is_file():
         raise web.HTTPNotFound()
+
     return web.Response(
         text=path.read_text("utf-8"),
         content_type="text/html",
         charset="utf-8",
     )
-
 
 async def main():
     app = web.Application()
