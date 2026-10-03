@@ -61,6 +61,29 @@ async def client_search(r):
     return j({"ok": True, "items": active_services(b.get("text"), b.get("city"))})
 
 
+async def partner_profile(r):
+    u = await user(r)
+    partner = partners.get(u['telegram_id'])
+    if not partner: return j({'ok':False,'error':'partner_registration_required'}, status=404)
+    return j({'ok':True,'partner':partner,'companies':partners.companies(partner['id'])})
+
+async def partner_services(r):
+    u = await user(r)
+    partner = partners.get(u['telegram_id'])
+    if not partner: return j({'ok':False,'error':'partner_registration_required'}, status=404)
+    items = run("SELECT s.*,c.name AS company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s AND c.archived=false ORDER BY s.id DESC", (partner['id'],), True)
+    return j({'ok':True,'items':items})
+
+async def partner_service_confirm(r):
+    u = await user(r)
+    state = get_ai_session(u['telegram_id'])
+    pending = state.get('pending') if state else None
+    if not pending or pending.get('action') != 'create_service': return j({'ok':False,'error':'nothing_to_confirm'}, status=400)
+    service = pending['service']
+    row,status = create_after_confirmation(u['telegram_id'],service['company_id'],service)
+    clear_ai_session(u['telegram_id'])
+    return j({'ok':True,'kind':'created','service':row,'status':status})
+
 async def admin_ai(r):
     u = await user(r)
     require_admin(u["telegram_id"])
