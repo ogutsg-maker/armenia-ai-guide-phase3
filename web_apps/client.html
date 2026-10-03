@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="hy">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Armenia AI Guide</title>
@@ -7,116 +8,133 @@
 <style>
 body{font:15px system-ui;background:#f5f7fb;color:#172033;margin:0}
 .wrap{max-width:800px;margin:auto;padding:14px}
-.card{background:white;border:1px solid #e1e6ee;border-radius:18px;padding:16px;margin:10px 0}
+.card{background:#fff;border:1px solid #e1e6ee;border-radius:18px;padding:16px;margin:10px 0}
 .row{display:flex;gap:8px}
 .row input{flex:1;padding:12px;border:1px solid #d8dee8;border-radius:11px}
-.btn{border:0;border-radius:11px;padding:12px;background:#182033;color:white;font-weight:800}
+.btn{border:0;border-radius:11px;padding:12px;background:#182033;color:#fff;font-weight:800;cursor:pointer}
 .item{border:1px solid #e1e6ee;border-radius:14px;padding:13px;margin:8px 0}
 .muted{color:#6b7280;font-size:13px;margin-top:5px}
-.error{color:#b42318}.success{color:#16794b}.wait{padding:10px 0}
+.error{color:#b42318}
+.success{color:#16794b}
+.wait{padding:10px 0}
 </style>
+</head>
+<body>
 <div class="wrap">
-  <h2>✦ Armenia AI Guide</h2>
-  <div class="card">
-    <div class="row">
-      <input id="q" placeholder="Օր.՝ ремонт холодильников">
-      <button class="btn" onclick="search()">🔎</button>
-    </div>
-    <div id="items"></div>
-  </div>
+<h2>✦ Armenia AI Guide</h2>
+<div class="card">
+<form id="searchForm">
+<div class="row">
+<input id="searchInput" autocomplete="off" placeholder="Օր.՝ ремонт холодильников">
+<button class="btn" type="submit">🔎</button>
+</div>
+</form>
+<div id="items"></div>
+</div>
 </div>
 <script>
-const tg=Telegram.WebApp;
-tg.ready();
-tg.expand();
+(function(){
+const tg=window.Telegram&&window.Telegram.WebApp;
+if(tg){tg.ready();tg.expand();}
 
-const H={
-  'X-Telegram-Init-Data':tg.initData,
+const input=document.getElementById('searchInput');
+const form=document.getElementById('searchForm');
+const items=document.getElementById('items');
+const headers={
+  'X-Telegram-Init-Data':tg?tg.initData:'',
   'Content-Type':'application/json'
 };
 
-async function api(u,o={}){
-  o.headers={...H,...o.headers};
-  const r=await fetch(u,o);
-  const d=await r.json();
-  if(!r.ok) throw Error(d.error||'request_failed');
-  return d;
+async function api(url,options){
+  const response=await fetch(url,Object.assign({},options||{},{
+    headers:Object.assign({},headers,(options&&options.headers)||{})
+  }));
+  const data=await response.json().catch(function(){return {};});
+  if(!response.ok) throw new Error(data.error||'request_failed');
+  return data;
 }
 
 function escapeHtml(value){
-  return String(value??'')
-    .replaceAll('&','&amp;')
-    .replaceAll('<','&lt;')
-    .replaceAll('>','&gt;')
-    .replaceAll('"','&quot;')
-    .replaceAll("'","&#039;");
+  return String(value==null?'':value)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+    .replace(/'/g,'&#039;');
 }
 
-function priceLabel(x){
-  const type=x.price_type==='from'?'from':'fixed';
-  const price=x.price_amd!=null
-    ? Number(x.price_amd).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
-    : '—';
+function priceLabel(service){
+  const type=service.price_type==='from'?'from':'fixed';
+  const price=service.price_amd==null?'—':Number(service.price_amd).toLocaleString('en-US',{
+    minimumFractionDigits:2,maximumFractionDigits:2
+  });
   return type+' '+price+' AMD';
 }
 
 async function search(){
-  const text=q.value.trim();
+  const text=input.value.trim();
   if(!text){
     items.innerHTML='<div class="muted">Գրեք, թե ինչ ծառայություն եք փնտրում։</div>';
+    input.focus();
     return;
   }
-
-  items.innerHTML='<div class="muted">Փնտրում եմ հաստատված ծառայություններ…</div>';
-
+  items.innerHTML='<div class="wait">Փնտրում եմ հաստատված ծառայություններ…</div>';
   try{
-    const d=await api('/api/client/search',{
+    const data=await api('/api/client/search',{
       method:'POST',
-      body:JSON.stringify({text})
+      body:JSON.stringify({text:text})
     });
-
-    const rows=Array.isArray(d.items)?d.items:[];
-    items.innerHTML=rows.map(x=>{
+    const rows=Array.isArray(data.items)?data.items:[];
+    if(!rows.length){
+      items.innerHTML='<div class="muted">Հաստատված համապատասխան ծառայություն չգտա։</div>';
+      return;
+    }
+    items.innerHTML=rows.map(function(x){
       const company=escapeHtml(x.company_name||'Գործընկեր');
       const service=escapeHtml(x.name||'Ծառայություն');
-      const place=x.city||x.territory;
-      const location=place
-        ? '<div class="muted">📍 '+escapeHtml(place)+'</div>'
-        : '';
+      const place=x.city||x.territory||'';
       return '<div class="item">'+
         '<b>'+company+'</b>'+
         '<div>'+service+' · '+priceLabel(x)+'</div>'+
-        location+
+        (place?'<div class="muted">📍 '+escapeHtml(place)+'</div>':'')+
         '<div class="muted">Հաստատված ակտիվ ծառայություն</div>'+
-        '<button class="btn" style="margin-top:10px" onclick="selectService('+Number(x.id)+')">Ընտրել</button>'+
-      </div>';
-    }).join('')||'<div class="muted">Հաստատված համապատասխան ծառայություն չգտա։</div>';
-  }catch(e){
-    items.innerHTML='<div class="error">Չհաջողվեց կատարել որոնումը։</div>';
+        '<button class="btn select-btn" type="button" data-service-id="'+Number(x.id)+'" style="margin-top:10px">Ընտրել</button>'+
+      '</div>';
+    }).join('');
+  }catch(error){
+    console.error(error);
+    items.innerHTML='<div class="error">Չհաջողվեց կատարել որոնումը։ Փորձեք կրկին։</div>';
   }
 }
 
 async function selectService(serviceId){
   items.innerHTML='<div class="wait">Հարցումը ստեղծվում է…</div>';
   try{
-    const d=await api('/api/client/services/'+serviceId+'/select',{
+    const data=await api('/api/client/services/'+encodeURIComponent(serviceId)+'/select',{
       method:'POST',
       body:'{}'
     });
-    const city=d.service?.city||d.service?.territory||'';
+    const place=data.service&&(data.service.city||data.service.territory)||'';
     items.innerHTML=
       '<div class="success"><b>✓ Հարցումն ուղարկված է գործընկերոջը</b></div>'+
-      '<div class="wait">Գործընկերը պետք է հաստատի հետաքրքրված լինելը։'+
-      (city?' 📍 '+escapeHtml(city):'')+
+      '<div class="wait">Գործընկերը պետք է հաստատի հետաքրքրված լինելը.'+
+      (place?' 📍 '+escapeHtml(place):'')+
       '</div>'+
-      '<div class="muted">Հարցում #'+escapeHtml(d.request_id)+'</div>';
-  }catch(e){
-    items.innerHTML='<div class="error">Չհաջողվեց ուղարկել հարցումը։</div>';
+      '<div class="muted">Հարցում #'+escapeHtml(data.request_id)+'</div>';
+  }catch(error){
+    console.error(error);
+    items.innerHTML='<div class="error">Չհաջողվեց ուղարկել հարցումը։ Փորձեք կրկին։</div>';
   }
 }
 
-q.addEventListener('keydown',e=>{
-  if(e.key==='Enter') search();
+form.addEventListener('submit',function(event){
+  event.preventDefault();
+  search();
 });
+
+items.addEventListener('click',function(event){
+  const button=event.target.closest('.select-btn');
+  if(button) selectService(button.dataset.serviceId);
+});
+})();
 </script>
+</body>
 </html>
