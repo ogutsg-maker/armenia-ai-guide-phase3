@@ -7,7 +7,7 @@ from auth import user
 from ai import extract,ask,admin_prompt,ADMIN_TOOLS,admin_ai_turn
 from core import DataCore
 from classifier import classify
-from config import ADMIN_ID,COMMISSION_MODE,COMMISSION_RATE,IDRAM_PAYMENT_URL
+from config import ADMIN_ID,COMMISSION_MODE,COMMISSION_RATE,IDRAM_PAYMENT_URL,PAYMENT_WEBHOOK_SECRET
 def j(data,status=200): return web.json_response(data,status=status)
 def authu(request): return request["tg_user"]
 async def current(request):
@@ -96,8 +96,9 @@ async def service_confirm(request):
         db.exec("UPDATE aig_services SET catalog_category_id=%s,classification_confidence=%s,classification_margin=%s,status='PENDING_ADMIN',updated_at=now() WHERE id=%s",(result["category"]["id"],result["confidence"],result["margin"],row["id"]))
     else:
         db.exec("UPDATE aig_services SET classification_confidence=%s,classification_margin=%s,status='CLASSIFICATION_PENDING',updated_at=now() WHERE id=%s",(result["confidence"] if result else 0,result["margin"] if result else 0,row["id"]))
-    db.exec("INSERT INTO aig_service_applications(service_id) VALUES(%s)",(row["id"],)); db.exec("UPDATE aig_ai_sessions SET pending=NULL,updated_at=now() WHERE telegram_id=%s",(uid,))
-    notify(ADMIN_ID,"service_application",{"service_id":row["id"]}); return j({"ok":True,"service_id":row["id"],"status":"CLASSIFICATION_PENDING"})
+    final_status="PENDING_ADMIN" if result and result.get("category") else "CLASSIFICATION_PENDING"
+    db.exec("INSERT INTO aig_service_applications(service_id,status) VALUES(%s,%s)",(row["id"],final_status)); db.exec("UPDATE aig_ai_sessions SET pending=NULL,updated_at=now() WHERE telegram_id=%s",(uid,))
+    notify(ADMIN_ID,"service_application",{"service_id":row["id"],"status":final_status}); return j({"ok":True,"service_id":row["id"],"status":final_status})
 async def admin_services(request):
     uid=await current(request)
     if uid!=ADMIN_ID:return j({"ok":False,"error":"forbidden"},403)
@@ -119,7 +120,7 @@ async def client_search(request):
     service=x.get("service") or text; city=x.get("city")
     db.exec("UPDATE aig_users SET role=CASE WHEN role='partner' THEN role ELSE 'client' END WHERE telegram_id=%s",(uid,))
     req=db.exec("INSERT INTO aig_client_requests(client_telegram_id,service_text,city,district) VALUES(%s,%s,%s,%s) RETURNING id",(uid,service,city,x.get("district")),True)
-    items=db.all("SELECT s.id service_id,s.name service_name,s.price_type,s.price_amd,c.name partner_name,p.id partner_id,a.city FROM aig_services s JOIN aig_companies c ON c.id=s.company_id JOIN aig_partners p ON p.id=c.partner_id LEFT JOIN aig_addresses a ON a.id=s.address_id WHERE s.status='ACTIVE' AND s.name ILIKE %s AND (%s IS NULL OR a.city IS NULL OR a.city ILIKE %s) ORDER BY s.id LIMIT 3",(f"%{service}%",city,f"%{city}%"))
+    items=DataCore.search_active_services(service,city)
     db.exec("INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)",(uid,meta["provider"],meta["model"],"extract","client_search",meta["input_tokens"],meta["output_tokens"]))
     if not items: notify(ADMIN_ID,"potential_partner_research_needed",{"request_id":req["id"],"service":service,"city":city})
     return j({"ok":True,"request_id":req["id"],"items":items})
@@ -173,7 +174,12 @@ async def partner_confirm_booking(request):
     db.exec("UPDATE aig_bookings SET status='PENDING_PAYMENT' WHERE id=%s",(bid,))
     return j({"ok":True,"status":"PENDING_PAYMENT","payment_url":IDRAM_PAYMENT_URL or None})
 async def payment_webhook(request):
-    body=await request.json(); bid=int(body.get("booking_id",0)); b=db.one("SELECT * FROM aig_bookings WHERE id=%s",(bid,))
+    signature=request.headers.get("X-Payment-Signature","")
+    raw=await request.read()
+    if not PAYMENT_WEBHOOK_SECRET or not signature or not secrets.compare_digest(signature,secrets.token_hex(0)):
+        expected=__import__("hmac").new(PAYMENT_WEBHOOK_SECRET.encode(),raw,__import__("hashlib").sha256).hexdigest() if PAYMENT_WEBHOOK_SECRET else ""
+        if not PAYMENT_WEBHOOK_SECRET or not secrets.compare_digest(expected,signature): return j({"ok":False,"error":"invalid_payment_signature"},401)
+    body=json.loads(raw.decode("utf-8")); bid=int(body.get("booking_id",0)); b=db.one("SELECT * FROM aig_bookings WHERE id=%s",(bid,))
     if not b or b["status"]!="PENDING_PAYMENT" or not body.get("confirmed"):return j({"ok":False},400)
     if not body.get("payment_ref"):return j({"ok":False,"error":"payment_reference_required"},400)
     token=secrets.token_urlsafe(32); now=datetime.now(timezone.utc)
