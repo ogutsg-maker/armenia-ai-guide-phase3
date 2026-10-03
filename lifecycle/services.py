@@ -42,7 +42,7 @@ def _direction_document(company_id, direction_id):
     if not direction_id:
         return False
     return bool(run(
-        "SELECT id FROM aig_direction_documents WHERE company_id=%s AND catalog_category_id=%s AND status='ACTIVE' "
+        "SELECT id FROM aig_direction_documents WHERE company_id=%s AND catalog_category_id=%s AND status IN ('PENDING_ADMIN','ACTIVE') "
         "ORDER BY id DESC LIMIT 1",
         (company_id, direction_id),
     ))
