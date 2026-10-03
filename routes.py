@@ -267,7 +267,7 @@ async def negotiation_get(r):
     except (TypeError, ValueError):
         return j({"ok": False, "error": "invalid_negotiation_id"}, status=400)
     n = run("""SELECT n.id,n.status,n.request_id,n.service_id,n.partner_id,
-                      n.agreed_min,n.agreed_max,n.agreed_price,n.commission_base,
+                      n.agreed_min,n.agreed_max,n.agreed_price,n.commission_base,n.agreed_payload,
                       n.partner_interest_at,n.created_at,n.interest_deadline,
                       s.name AS service_name,c.name AS company_name,
                       r.client_telegram_id,r.city,r.district
@@ -380,11 +380,11 @@ async def negotiation_message(r):
 
     def _has_partner_acceptance(value):
         t = str(value or "").lower().strip()
-        return bool(re.search(r"(^|[\\s,!.?])(да|yes|այո|согласен|согласна|согласны|сможем|договорились|подходит|ок|ok)([\\s,!.?]|$)", t))
+        return bool(re.search(r"(^|[\\s,!.?])(да|yes|այո|согласен|согласна|согласны|сможем|договорились|подходит|ок|ok|լավ|կգամ|կգանք|ուրեմն կգամ|ուրեմն կգանք|буду|приеду|приедем|хорошо)([\\s,!.?]|$)", t))
 
     def _has_client_acceptance(value):
         t = str(value or "").lower().strip()
-        return bool(re.search(r"(^|[\\s,!.?])(договорились|согласовано|согласен|согласна|беру|подходит|да|yes|այո|ок|ok)([\\s,!.?]|$)", t))
+        return bool(re.search(r"(^|[\\s,!.?])(договорились|согласовано|согласен|согласна|беру|подходит|да|yes|այո|ок|ok|լավ|համաձայն եմ|համաձայն)([\\s,!.?]|$)", t))
 
     prices = [_price_from_text(x.get("message")) for x in history]
     price = next((p for p in reversed(prices) if p is not None), None)
