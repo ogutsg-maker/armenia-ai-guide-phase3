@@ -469,7 +469,7 @@ async def api_ai_document_upload(request: web.Request):
                 """SELECT id,partner_id,business_id,partner_direction_id,master_category_id
                    FROM partner_direction_verification_cases
                    WHERE partner_id=%s AND business_id=%s
-                     AND status IN ('awaiting_document','rejected')
+                     AND status IN ('awaiting_document','pending_review','rejected')
                    ORDER BY updated_at DESC,id DESC LIMIT 1""",
                 (pid,bid),
             )
@@ -567,9 +567,40 @@ async def api_ai_document_upload(request: web.Request):
                             direction_id = None
 
             if not case:
-                return web.json_response({"ok":False,"error":"direction_verification_not_requested"},status=409)
+                # Last deterministic fallback: the direction may already exist
+                # even when its verification case was not materialized yet.
+                # Never force the partner through a second registration step.
+                existing_direction = cur.execute(
+                    """SELECT id,master_category_id,status
+                       FROM partner_directions
+                       WHERE partner_id=%s AND business_id=%s
+                         AND status NOT IN ('approved','frozen','archived')
+                       ORDER BY id DESC LIMIT 1""",
+                    (pid,bid),
+                )
+                existing_direction = cur.fetchone()
+                if existing_direction:
+                    from data_core import ensure_direction_verification_case
+                    gate = ensure_direction_verification_case(
+                        partner_id=pid,
+                        business_id=bid,
+                        master_category_id=int(existing_direction["master_category_id"]),
+                        actor_user_id=uid,
+                    )
+                    case = gate.get("case")
+                if not case:
+                    return web.json_response({"ok":False,"error":"direction_verification_not_found"},status=409)
 
             direction_id = int(case["partner_direction_id"])
+
+            # A retry/replacement must not create two current documents for the
+            # same direction. The newest upload is the current pending document.
+            cur.execute(
+                """UPDATE partner_verification_documents
+                   SET is_current=FALSE,status=CASE WHEN status='pending' THEN 'replaced' ELSE status END
+                   WHERE partner_direction_id=%s AND is_current=TRUE AND status='pending'""",
+                (direction_id,),
+            )
             cur.execute(
                 """INSERT INTO partner_verification_documents
                    (partner_id,business_id,partner_direction_id,document_type,original_filename,
