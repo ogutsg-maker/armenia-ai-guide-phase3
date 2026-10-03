@@ -14,7 +14,7 @@ def parse_json(value):
 async def turn(uid, context, text):
     context_data = partner_context(uid) if context == 'PARTNER' else None
     result = await chat(prompt(context, text, context_data))
-    exec('INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)', (uid,result['provider'],result['model'],context,'natural_language',result['input_tokens'],result['output_tokens']))
+    exec('INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s)', (uid,result['provider'],result['model'],context,result['input_tokens'],result['output_tokens']))
     return result
 
 async def partner_service_preview(uid, text):
