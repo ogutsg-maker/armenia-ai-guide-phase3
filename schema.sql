@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS aig_messages(
  id BIGSERIAL PRIMARY KEY, negotiation_id BIGINT NOT NULL REFERENCES aig_negotiations(id) ON DELETE CASCADE, sender_role TEXT NOT NULL CHECK(sender_role IN('client','partner')), sender_telegram_id BIGINT NOT NULL, message TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS aig_bookings(
- id BIGSERIAL PRIMARY KEY, negotiation_id BIGINT UNIQUE NOT NULL REFERENCES aig_negotiations(id), status TEXT NOT NULL DEFAULT 'PENDING_PARTNER_CONFIRMATION', service_start TIMESTAMPTZ, agreed_price NUMERIC(12,2) NOT NULL, commission_amd NUMERIC(12,2) NOT NULL DEFAULT 0, payment_ref TEXT, payment_confirmed_at TIMESTAMPTZ, qr_token TEXT UNIQUE, qr_expires_at TIMESTAMPTZ, checked_in_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ id BIGSERIAL PRIMARY KEY, negotiation_id BIGINT UNIQUE NOT NULL REFERENCES aig_negotiations(id), status TEXT NOT NULL DEFAULT 'PENDING_PARTNER_CONFIRMATION' CHECK(status IN('PENDING_PARTNER_CONFIRMATION','PENDING_PAYMENT','PAYMENT_CONFIRMED','IN_PROGRESS','SERVICE_COMPLETED','ARBITRATION','ARBITRATION_RESOLVED','CANCELLED','EXPIRED')), service_start TIMESTAMPTZ, agreed_price NUMERIC(12,2) NOT NULL, commission_amd NUMERIC(12,2) NOT NULL DEFAULT 0, payment_ref TEXT, payment_confirmed_at TIMESTAMPTZ, qr_token TEXT UNIQUE, qr_expires_at TIMESTAMPTZ, checked_in_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS aig_booking_contacts(
  id BIGSERIAL PRIMARY KEY, booking_id BIGINT UNIQUE NOT NULL REFERENCES aig_bookings(id) ON DELETE CASCADE, disclosed_at TIMESTAMPTZ NOT NULL DEFAULT now(), client_phone TEXT, partner_phone TEXT, client_telegram BIGINT, partner_telegram BIGINT
@@ -89,3 +89,6 @@ CREATE INDEX IF NOT EXISTS aig_negotiations_deadline_idx ON aig_negotiations(sta
 
 CREATE TABLE IF NOT EXISTS aig_audit_logs(id BIGSERIAL PRIMARY KEY,actor_telegram_id BIGINT,action TEXT NOT NULL,entity_type TEXT,entity_id BIGINT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS aig_audit_actor_idx ON aig_audit_logs(actor_telegram_id,created_at);
+
+ALTER TABLE IF EXISTS aig_bookings DROP CONSTRAINT IF EXISTS aig_bookings_status_check;
+ALTER TABLE IF EXISTS aig_bookings ADD CONSTRAINT aig_bookings_status_check CHECK(status IN('PENDING_PARTNER_CONFIRMATION','PENDING_PAYMENT','PAYMENT_CONFIRMED','IN_PROGRESS','SERVICE_COMPLETED','ARBITRATION','ARBITRATION_RESOLVED','CANCELLED','EXPIRED'));

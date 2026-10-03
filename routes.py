@@ -156,10 +156,9 @@ async def send_message(request):
     if not n or uid not in (n["client_telegram_id"],n["partner_telegram_id"]) or n["status"]!="active":return j({"ok":False,"error":"negotiation_not_active"},403)
     role="client" if uid==n["client_telegram_id"] else "partner"; db.exec("INSERT INTO aig_messages(negotiation_id,sender_role,sender_telegram_id,message) VALUES(%s,%s,%s,%s)",(nid,role,uid,msg))
     x,meta=await extract(msg,"negotiation terms")
-    if x.get("agreed_price") is not None:
+    db.exec("UPDATE aig_negotiations SET agreed_min=COALESCE(%s,agreed_min),agreed_max=COALESCE(%s,agreed_max) WHERE id=%s",(x.get("agreed_min"),x.get("agreed_max"),nid))
+    if x.get("accepted") is True and x.get("agreed_price") is not None:
         price=float(x["agreed_price"]); db.exec("UPDATE aig_negotiations SET agreed_price=%s,commission_base=%s,status='agreed' WHERE id=%s",(price,price,nid))
-    else:
-        db.exec("UPDATE aig_negotiations SET agreed_min=COALESCE(%s,agreed_min),agreed_max=COALESCE(%s,agreed_max) WHERE id=%s",(x.get("agreed_min"),x.get("agreed_max"),nid))
     db.exec("INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)",(uid,meta["provider"],meta["model"],"extract","negotiation",meta["input_tokens"],meta["output_tokens"]))
     return await negotiation(request)
 async def book(request):
@@ -170,11 +169,13 @@ async def book(request):
 async def partner_confirm_booking(request):
     uid=await current(request); bid=int(request.match_info["id"]); b=db.one("SELECT b.*,p.telegram_id FROM aig_bookings b JOIN aig_negotiations n ON n.id=b.negotiation_id JOIN aig_partners p ON p.id=n.partner_id WHERE b.id=%s",(bid,))
     if not b or int(b["telegram_id"])!=uid:return j({"ok":False,"error":"forbidden"},403)
-    db.exec("UPDATE aig_bookings SET status='PENDING_PAYMENT' WHERE id=%s AND status='PENDING_PARTNER_CONFIRMATION'",(bid,))
+    if b["status"]!="PENDING_PARTNER_CONFIRMATION":return j({"ok":False,"error":"booking_confirmation_not_allowed"},409)
+    db.exec("UPDATE aig_bookings SET status='PENDING_PAYMENT' WHERE id=%s",(bid,))
     return j({"ok":True,"status":"PENDING_PAYMENT","payment_url":IDRAM_PAYMENT_URL or None})
 async def payment_webhook(request):
     body=await request.json(); bid=int(body.get("booking_id",0)); b=db.one("SELECT * FROM aig_bookings WHERE id=%s",(bid,))
     if not b or b["status"]!="PENDING_PAYMENT" or not body.get("confirmed"):return j({"ok":False},400)
+    if not body.get("payment_ref"):return j({"ok":False,"error":"payment_reference_required"},400)
     token=secrets.token_urlsafe(32); now=datetime.now(timezone.utc)
     service_start=b.get("service_start")
     exp=(service_start + timedelta(hours=1)) if service_start else (now+timedelta(hours=1))
@@ -218,7 +219,7 @@ async def admin_arbitration(request):
     if uid!=ADMIN_ID:return j({"ok":False,"error":"forbidden"},403)
     aid=int(request.match_info["id"]); body=await request.json(); a=db.one("SELECT * FROM aig_arbitrations WHERE id=%s",(aid,))
     if not a:return j({"ok":False,"error":"arbitration_not_found"},404)
-    db.exec("UPDATE aig_arbitrations SET status='RESOLVED',resolution=%s,closed_at=now() WHERE id=%s",(body.get("resolution"),aid)); db.exec("UPDATE aig_bookings SET status='SERVICE_COMPLETED' WHERE id=%s AND status='ARBITRATION'",(a["booking_id"],)); return j({"ok":True})
+    db.exec("UPDATE aig_arbitrations SET status='RESOLVED',resolution=%s,closed_at=now() WHERE id=%s",(body.get("resolution"),aid)); db.exec("UPDATE aig_bookings SET status='ARBITRATION_RESOLVED' WHERE id=%s AND status='ARBITRATION'",(a["booking_id"],)); return j({"ok":True,"status":"ARBITRATION_RESOLVED"})
 
 async def admin_potential_partners(request):
     uid=await current(request)
