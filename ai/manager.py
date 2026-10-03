@@ -200,6 +200,13 @@ async def partner_service_preview(uid, text):
             })
         return recovered
 
+    # The partner's explicit service/price pairs are authoritative.
+    explicit_services = _recover_explicit_services(text)
+    if explicit_services:
+        services = [_normalise_service(state["companies"][0]["id"], x, text, default_location) for x in explicit_services]
+        for service in services:
+            service["internal_phone"] = partner_phone
+
     invalid = (
         not services
         or any(
