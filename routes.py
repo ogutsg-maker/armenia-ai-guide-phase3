@@ -6,7 +6,7 @@ from auth import user, require_admin
 from data import partners
 from data.core import active_services
 from ai.manager import turn, partner_service_preview
-from ai.session import get as get_ai_session, clear as clear_ai_session
+from ai.session import get as get_ai_session, save as save_ai_session, clear as clear_ai_session
 from lifecycle.services import create_after_confirmation, activate_services_after_document
 from lifecycle.bookings import create_booking, partner_confirm_booking, confirm_commission_payment, checkin, complete, submit_review
 from db import run, exec
@@ -134,6 +134,14 @@ async def partner_upload_direction_document(r):
         (company_id, direction_id, filename, mime, len(data), bytes(data), u["telegram_id"]),
     )
     activate_services_after_document(company_id, direction_id, u["telegram_id"])
+    # The preview session may still contain the old missing-document gate. Remove only this direction so confirmation can continue.
+    state = get_ai_session(u["telegram_id"])
+    pending = state.get("pending") if state else None
+    if isinstance(pending, dict):
+        missing = [d for d in (pending.get("missing_documents") or []) if int(d.get("id", -1)) != direction_id]
+        pending["missing_documents"] = missing
+        pending["action"] = "create_services"
+        save_ai_session(u["telegram_id"], state.get("context") or "PARTNER", pending)
     audit(u["telegram_id"], "direction_document_uploaded", "direction", direction_id, {"document_id": row["id"], "company_id": company_id})
     return j({"ok": True, "document": row, "direction_id": direction_id})
 
