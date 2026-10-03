@@ -206,34 +206,8 @@ async def partner_service_preview(uid, text):
                 for service in services:
                     service["internal_phone"] = partner_phone
 
-    # Deterministic recovery is the final guard: explicit service names/prices written
-    # by the partner must not be lost because the model returned an incomplete JSON shape.
-    def _recover_explicit_services(source):
-        # Recover explicit service/price pairs from the partner's original text.
-        # This is deliberately deterministic and runs after the AI response.
-        chunks = re.split(
-            r",\s*(?=(?:ремонт|услуга|установка|замена|чистка|диагностика|մաքրում|վերանորոգում|տեղադրում|փոխարինում)\b)",
-            str(source),
-            flags=re.I,
-        )
-        recovered = []
-        for chunk in chunks:
-            m = re.search(
-                r"(?:создай(?:те)?\s+(?:услугу|услуги)|добавь(?:те)?\s+(?:услугу|услуги))?\s*(.+?)\s+(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)\s*(?:драм(?:ов)?|amd|֏)?",
-                chunk,
-                flags=re.I,
-            )
-            if not m:
-                continue
-            name = m.group(1).strip(" .,-")
-            if not name:
-                continue
-            recovered.append({
-                "name": name,
-                "price_type": "from",
-                "price_amd": _number(m.group(2)),
-            })
-        return recovered
+    # Deterministic recovery is the final guard: explicit service names/prices
+    # from the partner's original message remain authoritative.
 
     # The partner's explicit service/price pairs are authoritative.
     explicit_services = _recover_explicit_services(text)
