@@ -4,7 +4,7 @@ from datetime import datetime,timedelta,timezone
 from aiohttp import web
 import db
 from auth import user
-from ai import extract
+from ai import extract,ask,admin_prompt,ADMIN_TOOLS
 from classifier import classify
 from config import ADMIN_ID,COMMISSION_MODE,COMMISSION_RATE,IDRAM_PAYMENT_URL
 def j(data,status=200): return web.json_response(data,status=status)
@@ -214,13 +214,12 @@ async def notifications(request):
 async def admin_query(request):
     uid=await current(request)
     if uid!=ADMIN_ID:return j({"ok":False,"error":"forbidden"},403)
-    body=await request.json(); q=str(body.get("text") or "").lower()
-    if any(x in q for x in ("заяв","application","հայտ")): return await admin_services(request)
-    if "ai" in q or "ծախս" in q:
-        row=db.one("SELECT count(*) n,coalesce(sum(input_tokens+output_tokens),0) tokens,coalesce(sum(usd),0) usd FROM aig_ai_costs WHERE created_at::date=current_date")
-        return j({"ok":True,"answer":f"AI operations today: {row['n']}; tokens: {row['tokens']}; USD: {row['usd']}"})
-    if "arbitr" in q or "արբիտ" in q:return j({"ok":True,"items":db.all("SELECT * FROM aig_arbitrations WHERE status='OPEN' ORDER BY id")})
-    return j({"ok":True,"answer":"Data Core query accepted.","available":["applications","AI costs","arbitrations"]})
+    body=await request.json(); text=str(body.get("text") or "").strip()
+    if not text:return j({"ok":False,"error":"text_required"},400)
+    prompt=admin_prompt(text)
+    meta=await ask(prompt,ADMIN_TOOLS)
+    db.exec("INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)",(uid,meta["provider"],meta["model"],"admin","natural_language_query",meta["input_tokens"],meta["output_tokens"]))
+    return j({"ok":True,"answer":meta["text"],"tool_calls":[{"name":x.function.name,"arguments":x.function.arguments} for x in meta["tool_calls"]]})
 def setup(app):
     routes=[("GET","/api/session",session),("POST","/api/partner/register",register_partner),("GET","/api/partner/profile",partner_profile),("GET","/api/partner/services",partner_services),("POST","/api/partner/services/preview",service_preview),("POST","/api/partner/services/confirm",service_confirm),("GET","/api/admin/services",admin_services),("GET","/api/admin/potential-partners",admin_potential_partners),("PATCH","/api/admin/potential-partners/{id}",admin_potential_partner),("POST","/api/partner/services/{id}/documents",partner_service_document),("GET","/api/admin/services/{id}/documents",admin_service_documents),("POST","/api/admin/services/{id}/decision",admin_service_decision),("POST","/api/admin/ai",admin_query),("POST","/api/client/search",client_search),("POST","/api/client/requests/{id}/select",select_service),("POST","/api/negotiations/{id}/interest",partner_interest),("GET","/api/negotiations/{id}",negotiation),("POST","/api/negotiations/{id}/messages",send_message),("POST","/api/negotiations/{id}/book",book),("POST","/api/bookings/{id}/confirm",partner_confirm_booking),("POST","/api/payments/webhook",payment_webhook),("GET","/api/bookings/{id}/contact",contact),("POST","/api/bookings/{token}/checkin",checkin),("POST","/api/bookings/{id}/complete",complete),("POST","/api/bookings/{id}/review",review),("POST","/api/bookings/{id}/arbitration",arbitration_open),("POST","/api/admin/arbitrations/{id}/resolve",admin_arbitration),("GET","/api/notifications",notifications)]
     for method,path,fn in routes:getattr(app.router,"add_"+method.lower())(path,fn)
