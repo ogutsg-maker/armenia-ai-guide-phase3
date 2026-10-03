@@ -474,8 +474,80 @@ async def api_ai_document_upload(request: web.Request):
                 (pid,bid),
             )
             case = cur.fetchone()
+
+            # A unified register_business submission can create the application
+            # before deterministic catalogue classification fills the direction.
+            # In that flow the UI already correctly tells the partner that a
+            # direction document is required, but the verification case may not
+            # have existed at the exact moment the upload endpoint was called.
+            # Recover the direction from the latest pending application and
+            # materialize the canonical direction/case instead of returning the
+            # misleading "direction_verification_not_requested" error.
+            if not case:
+                from data_core import get_application_full, ensure_direction_verification_case
+
+                with _connect() as fallback_conn:
+                    with fallback_conn.cursor() as fallback_cur:
+                        fallback_cur.execute(
+                            """SELECT id
+                               FROM partner_applications
+                               WHERE partner_id=%s
+                                 AND business_id=%s
+                                 AND status IN ('pending_partner','pending_admin')
+                               ORDER BY id DESC
+                               LIMIT 1""",
+                            (pid, bid),
+                        )
+                        application_row = fallback_cur.fetchone()
+
+                if application_row:
+                    application = get_application_full(
+                        int(application_row["id"]), partner_id=pid
+                    )
+                    payload = (application or {}).get("payload_json") or {}
+                    if isinstance(payload, str):
+                        try:
+                            payload = json.loads(payload)
+                        except Exception:
+                            payload = {}
+
+                    master_id = (application or {}).get("master_category_id")
+                    if master_id is None and isinstance(payload, dict):
+                        master_id = payload.get("master_category_id") or payload.get("ai_master_category_id")
+                        if master_id is None:
+                            for service_item in payload.get("services") or []:
+                                if not isinstance(service_item, dict):
+                                    continue
+                                master_id = service_item.get("master_category_id")
+                                if master_id is None:
+                                    category_id = (
+                                        service_item.get("matched_subcategory_id")
+                                        or service_item.get("subcategory_id")
+                                        or service_item.get("category_id")
+                                    )
+                                    if category_id not in (None, ""):
+                                        from data_core import get_catalog_category
+                                        category = get_catalog_category(int(category_id))
+                                        master_id = category.get("master_category_id") if category else None
+                                if master_id is not None:
+                                    break
+
+                    if master_id is not None:
+                        gate = ensure_direction_verification_case(
+                            partner_id=pid,
+                            business_id=bid,
+                            master_category_id=int(master_id),
+                            actor_user_id=uid,
+                        )
+                        case = gate.get("case")
+                        if case:
+                            direction_id = int(case["partner_direction_id"])
+                        else:
+                            direction_id = None
+
             if not case:
                 return web.json_response({"ok":False,"error":"direction_verification_not_requested"},status=409)
+
             direction_id = int(case["partner_direction_id"])
             cur.execute(
                 """INSERT INTO partner_verification_documents
