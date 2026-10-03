@@ -1287,7 +1287,7 @@ class ToolRegistry:
                     prepared.append({
                         "name": checked["name"],
                         "price": checked["price"],
-                        "price_type": raw.get("price_type") or "fixed",
+                        "price_type": raw.get("price_type") or "from",
                         "service_mode": raw.get("service_mode") or args.get("service_mode"),
                         "service_location": raw.get("service_location") or args.get("service_location"),
                         "coverage": raw.get("coverage") or args.get("coverage"),
@@ -1557,7 +1557,12 @@ class ToolRegistry:
                     service_location=args.get("service_location"),
                     submission_token=args.get("submission_token"),
                 )
-            except Exception:
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "REGISTER_BUSINESS_FAILED partner_id=%s company_id=%s services=%s error=%s",
+                    pid, company_id, len(args.get("services") or []), str(exc),
+                )
                 # The compound action is logically one registration. If the
                 # application cannot be created after the new company is created,
                 # hide the newly-created empty company instead of leaving an
