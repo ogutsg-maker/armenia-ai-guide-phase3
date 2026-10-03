@@ -8,6 +8,7 @@ from data.core import active_services
 from ai.manager import turn, partner_service_preview
 from ai.session import get as get_ai_session, clear as clear_ai_session
 from lifecycle.services import create_after_confirmation
+from lifecycle.bookings import create_booking, partner_confirm_booking, confirm_commission_payment, checkin, complete, submit_review
 from db import run, exec
 
 
@@ -468,6 +469,80 @@ async def applications(r):
     })
 
 
+
+async def client_agree(r):
+    u=await user(r)
+    try: nid=int(r.match_info["id"])
+    except: return j({"ok":False,"error":"invalid_negotiation_id"},400)
+    n=run("SELECT n.*,r.client_telegram_id FROM aig_negotiations n JOIN aig_client_requests r ON r.id=n.request_id WHERE n.id=%s",(nid,))
+    if not n or int(n["client_telegram_id"])!=int(u["telegram_id"]): return j({"ok":False,"error":"forbidden"},403)
+    if n["status"]!="active": return j({"ok":False,"error":"negotiation_not_active"},409)
+    if not n.get("agreed_price"): return j({"ok":False,"error":"agreed_price_required"},409)
+    exec("UPDATE aig_negotiations SET status='agreed',agreed_at=now(),commission_base=agreed_price WHERE id=%s",(nid,))
+    return j({"ok":True,"status":"agreed"})
+
+async def client_booking(r):
+    u=await user(r)
+    try: nid=int(r.match_info["id"])
+    except: return j({"ok":False,"error":"invalid_negotiation_id"},400)
+    try: b=await r.json()
+    except: b={}
+    try: row=create_booking(u["telegram_id"],nid,b)
+    except ValueError as e: return j({"ok":False,"error":str(e)},409)
+    return j({"ok":True,"booking":row})
+
+async def partner_booking_confirm(r):
+    u=await user(r)
+    try: bid=int(r.match_info["id"])
+    except: return j({"ok":False,"error":"invalid_booking_id"},400)
+    try: row=partner_confirm_booking(u["telegram_id"],bid)
+    except ValueError as e: return j({"ok":False,"error":str(e)},404)
+    return j({"ok":True,"booking":row})
+
+async def booking_payment(r):
+    u=await user(r)
+    try: bid=int(r.match_info["id"])
+    except: return j({"ok":False,"error":"invalid_booking_id"},400)
+    row=run("SELECT b.*,n.request_id,r.client_telegram_id FROM aig_bookings b JOIN aig_negotiations n ON n.id=b.negotiation_id JOIN aig_client_requests r ON r.id=n.request_id WHERE b.id=%s",(bid,))
+    if not row or int(row["client_telegram_id"])!=int(u["telegram_id"]): return j({"ok":False,"error":"booking_not_found"},404)
+    if row["status"]!="PENDING_PAYMENT": return j({"ok":False,"error":"booking_not_payable"},409)
+    return j({"ok":False,"error":"payment_provider_not_configured","amount":row["commission_amd"],"message":"Payment provider credentials are required before charging a real client."},503)
+
+async def admin_test_payment(r):
+    u=await user(r); require_admin(u["telegram_id"])
+    try: bid=int(r.match_info["id"])
+    except: return j({"ok":False,"error":"invalid_booking_id"},400)
+    try: row=confirm_commission_payment(bid,"admin-test")
+    except ValueError as e: return j({"ok":False,"error":str(e)},409)
+    return j({"ok":True,"booking":row})
+
+async def partner_checkin(r):
+    u=await user(r)
+    try: b=await r.json(); token=str(b.get("token","")).strip()
+    except: token=""
+    try: row=checkin(u["telegram_id"],token)
+    except ValueError as e: return j({"ok":False,"error":str(e)},409)
+    return j({"ok":True,"booking":row})
+
+async def partner_complete(r):
+    u=await user(r)
+    try: bid=int(r.match_info["id"])
+    except: return j({"ok":False,"error":"invalid_booking_id"},400)
+    try: row=complete(u["telegram_id"],bid)
+    except ValueError as e: return j({"ok":False,"error":str(e)},409)
+    return j({"ok":True,"booking":row})
+
+async def client_review(r):
+    u=await user(r)
+    try: bid=int(r.match_info["id"]); b=await r.json()
+    except: return j({"ok":False,"error":"invalid_request"},400)
+    try: rating=int(b.get("rating")); txt=str(b.get("text","")).strip()
+    except: return j({"ok":False,"error":"invalid_rating"},400)
+    if rating<1 or rating>5: return j({"ok":False,"error":"invalid_rating"},400)
+    try: row=submit_review(u["telegram_id"],bid,rating,txt)
+    except ValueError as e: return j({"ok":False,"error":str(e)},409)
+    return j({"ok":True,"review":row})
+
 def setup_routes(app):
     app.router.add_get("/api/session", session)
     app.router.add_post("/api/partner/register", register)
@@ -486,6 +561,14 @@ def setup_routes(app):
     app.router.add_post("/api/partner/services/confirm", partner_service_confirm)
     app.router.add_post("/api/client/search", client_search)
     app.router.add_post("/api/client/services/{service_id}/select", client_select_service)
+    app.router.add_post("/api/client/negotiations/{id}/agree", client_agree)
+    app.router.add_post("/api/client/negotiations/{id}/booking", client_booking)
+    app.router.add_post("/api/client/bookings/{id}/pay", booking_payment)
+    app.router.add_post("/api/client/bookings/{id}/review", client_review)
+    app.router.add_post("/api/partner/bookings/{id}/confirm", partner_booking_confirm)
+    app.router.add_post("/api/partner/bookings/{id}/complete", partner_complete)
+    app.router.add_post("/api/partner/bookings/checkin", partner_checkin)
+    app.router.add_post("/api/admin/bookings/{id}/test-payment", admin_test_payment)
     app.router.add_post("/api/admin/ai", admin_ai)
     app.router.add_get("/api/admin/applications", applications)
     app.router.add_get("/api/admin/services", admin_services)
