@@ -61,6 +61,28 @@ CREATE TABLE IF NOT EXISTS aig_ai_sessions(
 CREATE TABLE IF NOT EXISTS aig_ai_costs(
  id BIGSERIAL PRIMARY KEY, telegram_id BIGINT, provider TEXT, model TEXT, operation TEXT, purpose TEXT, input_tokens INT DEFAULT 0, output_tokens INT DEFAULT 0, usd NUMERIC(12,8) DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Clean-runtime database compatibility: existing physical tables are brought to the new contract.
+ALTER TABLE IF EXISTS aig_negotiations ADD COLUMN IF NOT EXISTS interest_deadline TIMESTAMPTZ;
+ALTER TABLE IF EXISTS aig_negotiations ADD COLUMN IF NOT EXISTS partner_interest_at TIMESTAMPTZ;
+ALTER TABLE IF EXISTS aig_negotiations ADD COLUMN IF NOT EXISTS agreed_min NUMERIC(12,2);
+ALTER TABLE IF EXISTS aig_negotiations ADD COLUMN IF NOT EXISTS agreed_max NUMERIC(12,2);
+ALTER TABLE IF EXISTS aig_negotiations ADD COLUMN IF NOT EXISTS agreed_price NUMERIC(12,2);
+ALTER TABLE IF EXISTS aig_negotiations ADD COLUMN IF NOT EXISTS commission_base NUMERIC(12,2);
+ALTER TABLE IF EXISTS aig_services ADD COLUMN IF NOT EXISTS price_type TEXT;
+ALTER TABLE IF EXISTS aig_services ADD COLUMN IF NOT EXISTS price_amd NUMERIC(12,2);
+ALTER TABLE IF EXISTS aig_services ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE IF EXISTS aig_services ADD COLUMN IF NOT EXISTS catalog_category_id BIGINT;
+ALTER TABLE IF EXISTS aig_services ADD COLUMN IF NOT EXISTS classification_confidence NUMERIC(5,4);
+ALTER TABLE IF EXISTS aig_services ADD COLUMN IF NOT EXISTS classification_margin NUMERIC(5,4);
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS agreed_price NUMERIC(12,2);
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS commission_amd NUMERIC(12,2);
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS payment_ref TEXT;
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS payment_confirmed_at TIMESTAMPTZ;
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS qr_token TEXT;
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS qr_expires_at TIMESTAMPTZ;
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ;
+ALTER TABLE IF EXISTS aig_bookings ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS aig_services_active_idx ON aig_services(status,company_id);
 CREATE INDEX IF NOT EXISTS aig_notifications_user_idx ON aig_notifications(telegram_id,read_at);
 CREATE INDEX IF NOT EXISTS aig_negotiations_deadline_idx ON aig_negotiations(status,interest_deadline);
