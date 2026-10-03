@@ -107,58 +107,62 @@ def _normalise_service(company_id, item, source, default_location):
 
 
 def _recover_explicit_services(source):
-    """Deterministically recover service + price pairs from partner text."""
+    """Recover explicit service/price pairs without relying on the AI provider.
+
+    The parser is deliberately based on every price marker (от/սկսած/from),
+    then takes the service text immediately before that marker. This is more
+    reliable than a single greedy regex when the same message also contains
+    address/location text after the last price.
+    """
     text = str(source or "").strip()
     if not text:
         return []
 
-    # Accept comma/semicolon separated services and the common Russian/Armenian
-    # command prefixes. The final sentence/location is deliberately ignored.
-    pair = re.compile(
-        r"(?:^|[,;])\s*(?:создай(?:те)?\s+|добавь(?:те)?\s+)?"
-        r"(?:услугу\s+|услуги\s+)?"
-        r"(.+?)\s+(?:от|սկսած|from)\s*"
-        r"([0-9][0-9\s.,]*)\s*(?:драм(?:ов)?|amd|֏)?",
-        re.I,
-    )
-    found = []
-    for m in pair.finditer(text):
-        name = re.sub(
-            r"^(?:создай(?:те)?|добавь(?:те)?)\s+(?:услугу|услуги)\s+",
-            "",
-            m.group(1).strip(" .,-"),
-            flags=re.I,
-        ).strip()
-        price = _number(m.group(2))
-        if name and price is not None:
-            found.append({"name": name, "price_type": "from", "price_amd": price})
+    marker = re.compile(r"\b(?:от|սկсած|սկսած|from)\b\s*([0-9][0-9\s.,]*)", re.I)
+    matches = list(marker.finditer(text))
+    if not matches:
+        return []
 
-    # Also handle a single pair without a comma before it.
-    if not found:
-        m = re.search(
-            r"(?:создай(?:те)?\s+|добавь(?:те)?\s+)?(?:услугу\s+|услуги\s+)?"
-            r"(.+?)\s+(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)\s*(?:драм(?:ов)?|amd|֏)?",
-            text,
+    found = []
+    start = 0
+    for match in matches:
+        segment = text[start:match.start()]
+        # A new service normally starts after a comma/semicolon. Keep only the
+        # final segment so location or previous service text cannot leak into
+        # the next service name.
+        if "," in segment or ";" in segment:
+            segment = re.split(r"[,;]", segment)[-1]
+        name = re.sub(
+            r"^(?:создай(?:те)?|добавь(?:те)?)\s+",
+            "",
+            segment.strip(" .,-"),
             flags=re.I,
         )
-        if m:
-            name = m.group(1).strip(" .,-")
-            price = _number(m.group(2))
-            if name and price is not None:
-                found.append({"name": name, "price_type": "from", "price_amd": price})
+        name = re.sub(r"^(?:услугу|услуги)\s+", "", name, flags=re.I).strip(" .,-")
+        price = _number(match.group(1))
+        if name and price is not None:
+            found.append({"name": name, "price_type": "from", "price_amd": price})
+        start = match.end()
+
+    # Ignore a trailing location sentence after the final price. For a fixed
+    # price the normal AI path handles it; explicit "от" pairs stay deterministic.
     return found
 
-
 def _extract_from_text(text, data):
-    lower = str(text).lower()
-    prices = re.findall(r"(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)", lower)
-    nums = [_number(x) for x in prices if _number(x) is not None]
+    """Merge deterministic prices into an AI-extracted structure."""
+    source = str(text or "")
+    prices = []
+    marker = re.compile(r"\b(?:от|սկսած|from)\b\s*([0-9][0-9\s.,]*)", re.I)
+    for match in marker.finditer(source):
+        value = _number(match.group(1))
+        if value is not None:
+            prices.append(value)
+
     names = data.get("services") if isinstance(data.get("services"), list) else []
-    if names and len(nums) >= len(names):
+    if names and prices:
         for i, item in enumerate(names):
-            if not item.get("price_amd"):
-                item["price_amd"] = nums[i]
-            if not item.get("price_type"):
+            if i < len(prices):
+                item["price_amd"] = prices[i]
                 item["price_type"] = "from"
     return data
 
