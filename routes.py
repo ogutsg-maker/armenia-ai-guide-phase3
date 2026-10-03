@@ -1,4 +1,5 @@
 import re
+import json
 from aiohttp import web
 
 from auth import user, require_admin
@@ -11,7 +12,7 @@ from db import run, exec
 
 
 def j(x, status=200):
-    return web.json_response(x, status=status)
+    return web.json_response(x, status=status, dumps=lambda value: json.dumps(value, ensure_ascii=False, default=str))
 
 
 async def session(r):
