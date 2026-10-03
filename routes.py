@@ -7,9 +7,10 @@ from data import partners
 from data.core import active_services
 from ai.manager import turn, partner_service_preview
 from ai.session import get as get_ai_session, clear as clear_ai_session
-from lifecycle.services import create_after_confirmation
+from lifecycle.services import create_after_confirmation, activate_services_after_document
 from lifecycle.bookings import create_booking, partner_confirm_booking, confirm_commission_payment, checkin, complete, submit_review
 from db import run, exec
+from data.core import audit, notify
 
 
 def j(x, status=200):
@@ -47,24 +48,102 @@ async def register(r):
 
 async def partner_ai(r):
     u = await user(r)
-    b = await r.json()
-    text = str(b.get('text','')).strip()
-    if not text: return j({'ok':False,'error':'text_required'}, status=400)
-    confirmation = str(b.get('confirm','')).lower()
-    state = get_ai_session(u['telegram_id'])
-    if confirmation in ('yes','confirm','համաձայն եմ','подтверждаю','да'):
-        pending = state.get('pending') if state else None
-        if not pending or pending.get('action') != 'create_service': return j({'ok':False,'error':'nothing_to_confirm'}, status=400)
-        service = pending['service']
-        row,status = create_after_confirmation(u['telegram_id'],service['company_id'],service)
-        clear_ai_session(u['telegram_id'])
-        return j({'ok':True,'kind':'created','service':row,'status':status})
     try:
-        result = await partner_service_preview(u['telegram_id'],text)
-        return j({'ok':True,'result':result})
+        b = await r.json()
+    except Exception:
+        return j({"ok": False, "error": "invalid_json"}, status=400)
+    text = str(b.get("text", "")).strip()
+    if not text:
+        return j({"ok": False, "error": "text_required"}, status=400)
+    confirmation = str(b.get("confirm", "")).strip().lower()
+    state = get_ai_session(u["telegram_id"])
+    if confirmation in ("yes", "confirm", "համաձայն եմ", "подтверждаю", "да"):
+        pending = state.get("pending") if state else None
+        if not pending or pending.get("action") not in ("create_service", "create_services"):
+            return j({"ok": False, "error": "nothing_to_confirm"}, status=400)
+        result = create_after_confirmation(
+            u["telegram_id"],
+            pending["services"][0]["company_id"] if pending.get("services") else pending["service"]["company_id"],
+            pending,
+        )
+        clear_ai_session(u["telegram_id"])
+        return j({"ok": True, "kind": "created", **result})
+    try:
+        result = await partner_service_preview(u["telegram_id"], text)
+        return j({"ok": True, "result": result})
     except ValueError as exc:
-        return j({'ok':False,'error':str(exc)}, status=400)
+        return j({"ok": False, "error": str(exc)}, status=400)
+    except Exception:
+        __import__("logging").exception("partner ai")
+        return j({"ok": False, "error": "ai_request_failed"}, status=500)
 
+
+async def partner_upload_direction_document(r):
+    u = await user(r)
+    partner = partners.get(u["telegram_id"])
+    if not partner:
+        return j({"ok": False, "error": "partner_registration_required"}, status=403)
+    try:
+        company_id = int(r.query.get("company_id"))
+        direction_id = int(r.query.get("direction_category_id"))
+    except (TypeError, ValueError):
+        return j({"ok": False, "error": "company_and_direction_required"}, status=400)
+    company = run(
+        "SELECT id FROM aig_companies WHERE id=%s AND partner_id=%s AND archived=false",
+        (company_id, partner["id"]),
+    )
+    if not company:
+        return j({"ok": False, "error": "company_not_found"}, status=404)
+    direction = run("SELECT id FROM aig_catalog_categories WHERE id=%s AND active=true", (direction_id,))
+    if not direction:
+        return j({"ok": False, "error": "direction_not_found"}, status=404)
+
+    reader = await r.multipart()
+    field = await reader.next()
+    if not field or field.name != "file":
+        return j({"ok": False, "error": "file_required"}, status=400)
+    filename = field.filename or "document"
+    mime = (field.headers.get("Content-Type") or "").lower()
+    allowed = {
+        "application/pdf": ".pdf",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if mime not in allowed or ext not in ("pdf", "jpg", "jpeg", "png", "webp"):
+        return j({"ok": False, "error": "unsupported_document_format"}, status=400)
+    data = bytearray()
+    while True:
+        chunk = await field.read_chunk(1024 * 256)
+        if not chunk:
+            break
+        data.extend(chunk)
+        if len(data) > 10 * 1024 * 1024:
+            return j({"ok": False, "error": "document_too_large"}, status=400)
+    if not data:
+        return j({"ok": False, "error": "empty_document"}, status=400)
+
+    row = run(
+        "INSERT INTO aig_direction_documents(company_id,catalog_category_id,file_name,mime_type,size_bytes,content,status,uploaded_by) "
+        "VALUES(%s,%s,%s,%s,%s,%s,'ACTIVE',%s) RETURNING id,file_name,size_bytes,status",
+        (company_id, direction_id, filename, mime, len(data), bytes(data), u["telegram_id"]),
+    )
+    activate_services_after_document(company_id, direction_id, u["telegram_id"])
+    audit(u["telegram_id"], "direction_document_uploaded", "direction", direction_id, {"document_id": row["id"], "company_id": company_id})
+    return j({"ok": True, "document": row, "direction_id": direction_id})
+
+
+async def admin_direction_document(r):
+    u = await user(r)
+    require_admin(u["telegram_id"])
+    doc_id = int(r.match_info["id"])
+    row = run("SELECT file_name,mime_type,content FROM aig_direction_documents WHERE id=%s", (doc_id,))
+    if not row:
+        raise web.HTTPNotFound()
+    return web.Response(body=bytes(row["content"]), content_type=row["mime_type"], headers={
+        "Content-Disposition": f'inline; filename="{row["file_name"].replace(chr(34), "")}"'
+    })
 async def client_search(r):
     u = await user(r)
     b = await r.json()
@@ -494,11 +573,23 @@ async def admin_services(r):
     u = await user(r)
     require_admin(u["telegram_id"])
     items = run(
-        """SELECT s.id,s.name,s.price_type,s.price_amd,s.status,
-                  c.name AS company_name
+        """SELECT s.id,s.name,s.description,s.price_type,s.price_amd,s.hours,s.at_client,s.territory,
+                  s.marzes,s.cities,s.districts,s.status,s.catalog_category_id,s.direction_category_id,
+                  c.name AS company_name,p.phone,
+                  a.marz,a.city,a.district,a.address,
+                  app.id AS application_id,app.status AS application_status,app.reason,
+                  d.id AS document_id,d.file_name AS document_name,d.status AS document_status
            FROM aig_services s
            JOIN aig_companies c ON c.id=s.company_id
-           WHERE s.status IN ('PENDING_ADMIN','CLASSIFICATION_PENDING')
+           JOIN aig_partners p ON p.id=c.partner_id
+           LEFT JOIN aig_addresses a ON a.id=s.address_id
+           LEFT JOIN aig_service_applications app ON app.service_id=s.id
+           LEFT JOIN LATERAL (
+             SELECT id,file_name,status FROM aig_direction_documents
+             WHERE company_id=s.company_id AND catalog_category_id=s.direction_category_id
+             ORDER BY id DESC LIMIT 1
+           ) d ON true
+           WHERE s.status IN ('PENDING_ADMIN','NEEDS_CORRECTION')
            ORDER BY s.id DESC""",
         many=True,
     )
@@ -511,29 +602,76 @@ async def admin_service_decision(r):
     service_id = int(r.match_info["id"])
     body = await r.json()
     action = str(body.get("action", "")).lower()
-    if action not in ("approve", "reject"):
-        return j({"ok": False, "error": "invalid_action"}, status=400)
-
-    service = run("SELECT id,status FROM aig_services WHERE id=%s", (service_id,))
+    service = run(
+        """SELECT s.*,c.partner_id,p.telegram_id AS partner_telegram_id
+           FROM aig_services s JOIN aig_companies c ON c.id=s.company_id
+           JOIN aig_partners p ON p.id=c.partner_id WHERE s.id=%s""",
+        (service_id,),
+    )
     if not service:
         return j({"ok": False, "error": "service_not_found"}, status=404)
 
     if action == "approve":
-        exec("UPDATE aig_services SET status='ACTIVE',updated_at=now() WHERE id=%s", (service_id,))
+        if service.get("direction_category_id") and not run(
+            "SELECT id FROM aig_direction_documents WHERE company_id=%s AND catalog_category_id=%s AND status='ACTIVE' LIMIT 1",
+            (service["company_id"], service["direction_category_id"]),
+        ):
+            return j({"ok": False, "error": "direction_document_required"}, status=409)
+        exec("UPDATE aig_services SET status='ACTIVE',rejection_reason=NULL,updated_at=now() WHERE id=%s", (service_id,))
         exec(
-            "UPDATE aig_service_applications SET status='APPROVED',reviewed_at=now(),reviewer=%s "
-            "WHERE service_id=%s AND status IN ('PENDING_ADMIN','CLASSIFICATION_PENDING')",
+            "UPDATE aig_service_applications SET status='APPROVED',reviewed_at=now(),reviewer=%s,reason=NULL "
+            "WHERE service_id=%s",
             (u["telegram_id"], service_id),
         )
-    else:
-        exec("UPDATE aig_services SET status='REJECTED',updated_at=now() WHERE id=%s", (service_id,))
-        exec(
-            "UPDATE aig_service_applications SET status='REJECTED',reviewed_at=now(),reviewer=%s "
-            "WHERE service_id=%s AND status IN ('PENDING_ADMIN','CLASSIFICATION_PENDING')",
-            (u["telegram_id"], service_id),
-        )
+        audit(u["telegram_id"], "service_activated", "service", service_id, {})
+        return j({"ok": True, "service_id": service_id, "status": "ACTIVE"})
 
-    return j({"ok": True, "service_id": service_id, "status": "ACTIVE" if action == "approve" else "REJECTED"})
+    if action in ("delete", "archive"):
+        exec("UPDATE aig_services SET status='ARCHIVED',updated_at=now() WHERE id=%s", (service_id,))
+        exec("UPDATE aig_service_applications SET status='DELETED',reviewed_at=now(),reviewer=%s WHERE service_id=%s", (u["telegram_id"], service_id))
+        audit(u["telegram_id"], "service_deleted", "service", service_id, {})
+        return j({"ok": True, "service_id": service_id, "status": "ARCHIVED"})
+
+    if action in ("correction", "send_back", "return"):
+        reason = str(body.get("reason", "")).strip()
+        if not reason:
+            return j({"ok": False, "error": "correction_reason_required"}, status=400)
+        exec("UPDATE aig_services SET status='NEEDS_CORRECTION',rejection_reason=%s,updated_at=now() WHERE id=%s", (reason, service_id))
+        exec(
+            "UPDATE aig_service_applications SET status='NEEDS_CORRECTION',reviewed_at=now(),reviewer=%s,reason=%s WHERE service_id=%s",
+            (u["telegram_id"], reason, service_id),
+        )
+        notify(
+            service["partner_telegram_id"],
+            "service_correction_required",
+            {"service_id": service_id, "reason": reason},
+        )
+        audit(u["telegram_id"], "service_sent_for_correction", "service", service_id, {"reason": reason})
+        return j({"ok": True, "service_id": service_id, "status": "NEEDS_CORRECTION", "reason": reason})
+
+    if action == "edit":
+        fields = {
+            "name": body.get("name"),
+            "description": body.get("description"),
+            "price_type": body.get("price_type"),
+            "price_amd": body.get("price_amd"),
+            "hours": body.get("hours"),
+            "at_client": body.get("at_client"),
+            "territory": body.get("territory"),
+        }
+        updates, values = [], []
+        for key, value in fields.items():
+            if value is not None:
+                updates.append(f"{key}=%s")
+                values.append(value)
+        if not updates:
+            return j({"ok": False, "error": "no_edit_fields"}, status=400)
+        values.append(service_id)
+        exec("UPDATE aig_services SET " + ",".join(updates) + ",updated_at=now() WHERE id=%s", tuple(values))
+        audit(u["telegram_id"], "service_edited", "service", service_id, fields)
+        return j({"ok": True, "service_id": service_id, "status": "PENDING_ADMIN"})
+
+    return j({"ok": False, "error": "invalid_action"}, status=400)
 
 
 async def applications(r):
@@ -542,17 +680,26 @@ async def applications(r):
     return j({
         "ok": True,
         "items": run(
-            """SELECT a.*,s.name AS service_name,c.name AS company_name
+            """SELECT a.*,s.name AS service_name,s.description,s.price_type,s.price_amd,s.hours,s.at_client,
+                      s.territory,s.marzes,s.cities,s.districts,s.status AS service_status,
+                      s.catalog_category_id,s.direction_category_id,
+                      c.name AS company_name,p.phone,
+                      ad.marz,ad.city,ad.district,ad.address,
+                      d.id AS document_id,d.file_name AS document_name,d.status AS document_status
                FROM aig_service_applications a
                JOIN aig_services s ON s.id=a.service_id
                JOIN aig_companies c ON c.id=s.company_id
+               JOIN aig_partners p ON p.id=c.partner_id
+               LEFT JOIN aig_addresses ad ON ad.id=s.address_id
+               LEFT JOIN LATERAL (
+                 SELECT id,file_name,status FROM aig_direction_documents
+                 WHERE company_id=s.company_id AND catalog_category_id=s.direction_category_id
+                 ORDER BY id DESC LIMIT 1
+               ) d ON true
                ORDER BY a.id DESC""",
             many=True,
         ),
     })
-
-
-
 async def negotiation_terms(r):
     u=await user(r)
     try: nid=int(r.match_info["id"]); b=await r.json()
@@ -665,6 +812,8 @@ def setup_routes(app):
     app.router.add_get("/api/session", session)
     app.router.add_post("/api/partner/register", register)
     app.router.add_post("/api/partner/ai", partner_ai)
+    app.router.add_post("/api/partner/direction-document", partner_upload_direction_document)
+    app.router.add_get("/api/admin/direction-documents/{id}", admin_direction_document)
     app.router.add_get("/api/partner/profile", partner_profile)
     app.router.add_get("/api/partner/services", partner_services)
     app.router.add_get("/api/partner/notifications", partner_notifications)
