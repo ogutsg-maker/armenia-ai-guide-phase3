@@ -378,13 +378,27 @@ async def negotiation_message(r):
             return None
         return float(matches[-1])
 
+    def _normalize_chat_text(value):
+        return " ".join(str(value or "").lower().replace("։", " ").replace("՝", " ").split())
+
     def _has_partner_acceptance(value):
-        t = str(value or "").lower().strip()
-        return bool(re.search(r"(^|[\\s,!.?])(да|yes|այո|согласен|согласна|согласны|сможем|договорились|подходит|ок|ok|լավ|կգամ|կգանք|ուրեմն կգամ|ուրեմն կգանք|буду|приеду|приедем|хорошо)([\\s,!.?]|$)", t))
+        t = _normalize_chat_text(value)
+        phrases = (
+            "да", "yes", "այո", "согласен", "согласна", "согласны",
+            "сможем", "договорились", "подходит", "ок", "ok", "լավ",
+            "կգամ", "կգանք", "ուրեմն կգամ", "ուրեմն կգանք",
+            "буду", "приеду", "приедем", "хорошо",
+        )
+        return any(t == p or t.startswith(p + " ") or t.endswith(" " + p) for p in phrases)
 
     def _has_client_acceptance(value):
-        t = str(value or "").lower().strip()
-        return bool(re.search(r"(^|[\\s,!.?])(договорились|согласовано|согласен|согласна|беру|подходит|да|yes|այո|ок|ok|լավ|համաձայն եմ|համաձայն)([\\s,!.?]|$)", t))
+        t = _normalize_chat_text(value)
+        phrases = (
+            "договорились", "согласовано", "согласен", "согласна",
+            "беру", "подходит", "да", "yes", "այո", "ок", "ok",
+            "լավ", "համաձայն եմ", "համաձայն",
+        )
+        return any(t == p or t.startswith(p + " ") or t.endswith(" " + p) for p in phrases)
 
     prices = [_price_from_text(x.get("message")) for x in history]
     price = next((p for p in reversed(prices) if p is not None), None)
