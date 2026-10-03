@@ -13,7 +13,7 @@ body{font:15px system-ui;background:#f5f7fb;color:#172033;margin:0}
 .btn{border:0;border-radius:11px;padding:12px;background:#182033;color:white;font-weight:800}
 .item{border:1px solid #e1e6ee;border-radius:14px;padding:13px;margin:8px 0}
 .muted{color:#6b7280;font-size:13px;margin-top:5px}
-.error{color:#b42318}
+.error{color:#b42318}.success{color:#16794b}.wait{padding:10px 0}
 </style>
 <div class="wrap">
   <h2>✦ Armenia AI Guide</h2>
@@ -88,10 +88,30 @@ async function search(){
         '<div>'+service+' · '+priceLabel(x)+'</div>'+
         location+
         '<div class="muted">Հաստատված ակտիվ ծառայություն</div>'+
-      '</div>';
+        '<button class="btn" style="margin-top:10px" onclick="selectService('+Number(x.id)+')">Ընտրել</button>'+
+      </div>';
     }).join('')||'<div class="muted">Հաստատված համապատասխան ծառայություն չգտա։</div>';
   }catch(e){
     items.innerHTML='<div class="error">Չհաջողվեց կատարել որոնումը։</div>';
+  }
+}
+
+async function selectService(serviceId){
+  items.innerHTML='<div class="wait">Հարցումը ստեղծվում է…</div>';
+  try{
+    const d=await api('/api/client/services/'+serviceId+'/select',{
+      method:'POST',
+      body:'{}'
+    });
+    const city=d.service?.city||d.service?.territory||'';
+    items.innerHTML=
+      '<div class="success"><b>✓ Հարցումն ուղարկված է գործընկերոջը</b></div>'+
+      '<div class="wait">Գործընկերը պետք է հաստատի հետաքրքրված լինելը։'+
+      (city?' 📍 '+escapeHtml(city):'')+
+      '</div>'+
+      '<div class="muted">Հարցում #'+escapeHtml(d.request_id)+'</div>';
+  }catch(e){
+    items.innerHTML='<div class="error">Չհաջողվեց ուղարկել հարցումը։</div>';
   }
 }
 
