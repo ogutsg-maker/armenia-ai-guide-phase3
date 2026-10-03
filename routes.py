@@ -154,7 +154,18 @@ async def partner_upload_direction_document(r):
         pending["action"] = "create_services"
         save_ai_session(u["telegram_id"], state.get("context") or "PARTNER", pending)
     audit(u["telegram_id"], "direction_document_uploaded", "direction", direction_id, {"document_id": row["id"], "company_id": company_id})
-    return j({"ok": True, "document": row, "direction_id": direction_id})
+    # Return the saved AI preview so the partner can continue with the same
+    # request after uploading the document; no re-entry of the service text.
+    pending_preview = None
+    if isinstance(pending, dict):
+        pending_preview = {
+            "kind": "preview",
+            "services": pending.get("services") or [],
+            "missing_documents": pending.get("missing_documents") or [],
+            "can_submit_to_admin": not (pending.get("missing_documents") or [])
+                and all(s.get("classification") for s in (pending.get("services") or [])),
+        }
+    return j({"ok": True, "document": row, "direction_id": direction_id, "result": pending_preview})
 
 
 async def admin_direction_document(r):
