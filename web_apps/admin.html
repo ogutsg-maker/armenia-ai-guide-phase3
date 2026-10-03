@@ -1,11 +1,77 @@
-<!doctype html><html lang="hy"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin</title><script src="https://telegram.org/js/telegram-web-app.js"></script><style>body{font:15px system-ui;background:#f5f7fb;color:#172033}.wrap{max-width:1100px;margin:auto;padding:15px}.card{background:#fff;border:1px solid #e1e6ee;border-radius:18px;padding:15px;margin:10px 0}.btn{border:0;border-radius:10px;padding:10px 12px;margin:5px;font-weight:800}.danger{background:#fee4e2}.ok{background:#dff7e7}.muted{color:#687386}.error{color:#b42318}</style><div class="wrap"><h2>👑 Armenia AI Guide — Admin</h2><div class="card"><input id="q" style="width:70%;padding:11px" placeholder="Запрос к AI-секретарю"><button class="btn" id="askBtn">🤖 AI</button><div id="answer"></div></div><div class="card"><h3>📨 Заявки на услуги</h3><div id="list">Загрузка…</div></div></div><script>
-const tg=window.Telegram&&window.Telegram.WebApp?window.Telegram.WebApp:null;if(tg){tg.ready();tg.expand()}const H={'X-Telegram-Init-Data':tg?tg.initData:'','Content-Type':'application/json'};
+<!doctype html>
+<html lang="hy">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Armenia AI Guide — Admin</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+body{font:15px system-ui;background:#f5f7fb;color:#172033}.wrap{max-width:1200px;margin:auto;padding:15px}
+.card{background:#fff;border:1px solid #e1e6ee;border-radius:18px;padding:15px;margin:10px 0}
+.btn{border:0;border-radius:10px;padding:9px 12px;margin:4px;font-weight:800;cursor:pointer}
+.ok{background:#dff7e7}.danger{background:#fee4e2}.muted{color:#687386}.error{color:#b42318}
+.dir{border:1px solid #dce3ec;border-radius:14px;margin:10px 0;overflow:hidden}.dir>summary{padding:13px;background:#f8fafc;cursor:pointer;font-weight:900}
+.child{padding:10px 14px;border-top:1px solid #edf0f4}.settings{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#eef2f7;font-size:12px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+input,select{padding:8px;border:1px solid #ccd5e0;border-radius:9px}
+</style>
+<div class="wrap">
+<h2>👑 Armenia AI Guide — Admin</h2>
+<div class="card">
+  <input id="q" style="width:70%;padding:11px" placeholder="Запрос к AI-секретарю">
+  <button class="btn" id="askBtn">🤖 AI</button><div id="answer"></div>
+</div>
+<div class="card">
+  <h3>🗂 Каталог — 22 направления и 320 поднаправлений</h3>
+  <div class="muted">Направление → поднаправления. Настройки направления сохраняются отдельно: активность, верификация, типы документов и комиссия.</div>
+  <div id="catalog">Загрузка…</div>
+</div>
+<div class="card"><h3>📨 Заявки на услуги</h3><div id="list">Загрузка…</div></div>
+</div>
+<script>
+const tg=window.Telegram&&window.Telegram.WebApp?window.Telegram.WebApp:null;
+if(tg){tg.ready();tg.expand()}
+const H={'X-Telegram-Init-Data':tg?tg.initData:'','Content-Type':'application/json'};
 async function api(u,o={}){o.headers={...H,...o.headers};const r=await fetch(u,o);const raw=await r.text();let d;try{d=JSON.parse(raw)}catch(_){throw Error('Сервер вернул некорректный ответ')}if(!r.ok)throw Error(d.error||'request_failed');return d}
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;')}
-async function load(){try{const d=await api('/api/admin/services');const el=document.getElementById('list');el.innerHTML=(d.items||[]).map(x=>'<div class="card"><b>#'+x.id+' · '+esc(x.name)+'</b><div>🏢 '+esc(x.company_name)+' · 📞 '+esc(x.phone||'')+'</div><div>💰 '+esc(x.price_type)+' '+esc(x.price_amd)+' AMD</div><div>🕐 '+esc(x.hours||'')+' · 🚗 '+(x.at_client?'да':'нет')+'</div><div>📍 '+esc((x.marzes||[]).join(', '))+' · '+esc((x.cities||[]).join(', '))+' · '+esc((x.districts||[]).join(', '))+'</div><div>📄 '+(x.document_id?'<a href="/api/admin/direction-documents/'+x.document_id+'" target="_blank">'+esc(x.document_name)+'</a>':'нет')+'</div><div class="muted">Статус: '+esc(x.status)+' · '+esc(x.application_status)+'</div>'+(x.reason?'<div class="error">Причина: '+esc(x.reason)+'</div>':'')+'<div><button class="btn ok" onclick="dec('+x.id+',\'approve\')">✓ Активировать</button><button class="btn" onclick="editItem('+x.id+')">✏️ Редактировать</button><button class="btn" onclick="sendBack('+x.id+')">↩️ На исправление</button><button class="btn danger" onclick="dec('+x.id+',\'delete\')">🗑 Удалить</button></div></div>').join('')||'<div class="muted">Нет заявок</div>'}catch(e){document.getElementById('list').innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
-async function dec(id,action){let body={action};if(action==='correction')body.reason=prompt('Что партнёр должен исправить?')||'';try{await api('/api/admin/services/'+id+'/decision',{method:'POST',body:JSON.stringify(body)});load()}catch(e){alert(e.message)}}
-async function sendBack(id){const reason=prompt('Описание исправлений для партнёра:');if(!reason)return;try{await api('/api/admin/services/'+id+'/decision',{method:'POST',body:JSON.stringify({action:'correction',reason})});load()}catch(e){alert(e.message)}}
-async function editItem(id){const name=prompt('Новое название услуги:');if(!name)return;const price=prompt('Новая цена AMD:');try{await api('/api/admin/services/'+id+'/decision',{method:'POST',body:JSON.stringify({action:'edit',name,price_amd:Number(price)})});load()}catch(e){alert(e.message)}}
-async function ask(){const q=document.getElementById('q').value;try{const d=await api('/api/admin/ai',{method:'POST',body:JSON.stringify({text:q})});document.getElementById('answer').textContent=d.answer||JSON.stringify(d)}catch(e){document.getElementById('answer').textContent=e.message}}
-document.getElementById('askBtn').onclick=ask;load();
-</script></html>
+function commission(type,value){return (type||'—')+' '+(value==null?'':value)}
+async function loadCatalog(){
+ try{
+  const d=await api('/api/admin/catalog');
+  document.getElementById('catalog').innerHTML=(d.directions||[]).map(x=>{
+   const kids=x.subdirections||[];
+   return '<details class="dir"><summary>'+esc(x.name_ru||x.name_am)+' <span class="badge">'+kids.length+' поднаправлений</span></summary>'+
+    '<div class="settings"><label>Активно <input type="checkbox" '+(x.is_active?'checked':'')+' onchange="saveDir('+x.id+',this.checked)"></label>'+
+    '<span class="badge">Комиссия: '+esc(commission(x.commission_type,x.commission_value))+'</span>'+
+    '<span class="badge">Верификация: '+(x.verification_required?'да':'нет')+'</span>'+
+    '<span class="badge">Документы: '+esc(JSON.stringify(x.verification_document_types||[]))+'</span></div>'+
+    kids.map(k=>'<div class="child"><b>'+esc(k.name_ru||k.name_am)+'</b> <span class="badge">#'+k.id+'</span>'+
+      '<div class="settings"><label>Активно <input type="checkbox" '+(k.is_active?'checked':'')+' onchange="saveSub('+k.id+',this.checked)"></label>'+
+      '<span class="badge">Комиссия: '+esc(commission(k.commission_type,k.commission_value))+'</span></div></div>').join('')+
+    '</details>'
+  }).join('')||'<div class="muted">Каталог пуст</div>';
+ }catch(e){document.getElementById('catalog').innerHTML='<div class="error">'+esc(e.message)+'</div>'}
+}
+async function saveDir(id,value){try{await api('/api/admin/catalog/directions/'+id,{method:'POST',body:JSON.stringify({is_active:value})})}catch(e){alert(e.message);loadCatalog()}}
+async function saveSub(id,value){try{await api('/api/admin/catalog/subdirections/'+id,{method:'POST',body:JSON.stringify({is_active:value})})}catch(e){alert(e.message);loadCatalog()}}
+async function loadServices(){
+ try{const d=await api('/api/admin/services');const el=document.getElementById('list');
+ el.innerHTML=(d.items||[]).map(x=>'<div class="card"><b>#'+x.id+' · '+esc(x.name)+'</b>'+
+ '<div>🏢 '+esc(x.company_name)+' · 📞 '+esc(x.phone||'')+'</div>'+
+ '<div>💰 '+esc(x.price_type)+' '+esc(x.price_amd)+' AMD</div>'+
+ '<div>🕐 '+esc(x.hours||'')+' · 🚗 '+(x.at_client?'да':'нет')+'</div>'+
+ '<div>📍 '+esc((x.marzes||[]).join(', '))+' · '+esc((x.cities||[]).join(', '))+' · '+esc((x.districts||[]).join(', '))+'</div>'+
+ '<div>📄 '+(x.document_id?'<a href="/api/admin/direction-documents/'+x.document_id+'" target="_blank">'+esc(x.document_name)+'</a>':'нет')+'</div>'+
+ '<div class="muted">Статус: '+esc(x.status)+' · '+esc(x.application_status)+'</div>'+
+ (x.reason?'<div class="error">Причина: '+esc(x.reason)+'</div>':'')+
+ '<div><button class="btn ok" onclick="dec('+x.id+',\'approve\')">✓ Активировать</button>'+
+ '<button class="btn" onclick="editItem('+x.id+')">✏️ Редактировать</button>'+
+ '<button class="btn" onclick="sendBack('+x.id+')">↩️ На исправление</button>'+
+ '<button class="btn danger" onclick="dec('+x.id+',\'delete\')">🗑 Удалить</button></div></div>').join('')||'<div class="muted">Нет заявок</div>'
+ }catch(e){document.getElementById('list').innerHTML='<div class="error">'+esc(e.message)+'</div>'}
+}
+async function dec(id,action){try{await api('/api/admin/services/'+id+'/decision',{method:'POST',body:JSON.stringify({action})});loadServices()}catch(e){alert(e.message)}}
+async function sendBack(id){const reason=prompt('Описание исправлений для партнёра:');if(!reason)return;try{await api('/api/admin/services/'+id+'/decision',{method:'POST',body:JSON.stringify({action:'correction',reason})});loadServices()}catch(e){alert(e.message)}}
+async function editItem(id){const name=prompt('Новое название услуги:');if(!name)return;const price=prompt('Новая цена AMD:');try{await api('/api/admin/services/'+id+'/decision',{method:'POST',body:JSON.stringify({action:'edit',name,price_amd:Number(price)})});loadServices()}catch(e){alert(e.message)}}
+async function ask(){const q=document.getElementById('q').value;if(!q)return;try{const d=await api('/api/admin/ai',{method:'POST',body:JSON.stringify({text:q})});document.getElementById('answer').textContent=d.answer||JSON.stringify(d)}catch(e){document.getElementById('answer').textContent=e.message}}
+document.getElementById('askBtn').onclick=ask;loadCatalog();loadServices();
+</script>
+</html>
