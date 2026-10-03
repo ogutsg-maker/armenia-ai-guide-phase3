@@ -214,9 +214,9 @@ async def partner_negotiation_decision(r):
         return j({"ok": True, "status": negotiation["status"], "already_decided": True})
 
     if negotiation.get("interest_deadline") and negotiation["interest_deadline"] < __import__("datetime").datetime.now(__import__("datetime").timezone.utc):
-        exec("UPDATE aig_negotiations SET status='nonresponsive' WHERE id=%s", (negotiation_id,))
+        exec("UPDATE aig_negotiations SET status='expired' WHERE id=%s", (negotiation_id,))
         exec("UPDATE aig_client_requests SET status='searching' WHERE id=%s", (negotiation["request_id"],))
-        return j({"ok": True, "status": "nonresponsive", "expired": True})
+        return j({"ok": True, "status": "expired", "expired": True})
 
     if action == "interest":
         exec(
