@@ -130,7 +130,7 @@ async def partner_service_preview(uid, text):
         }]
 
     default_location = data.get("location") if isinstance(data.get("location"), dict) else {}
-    services = [_normalise_service(state["companies"][0]["id"], item, text, default_location) for item in raw_services]
+    services = [_normalise_service(state["companies"][0]["id"], item, text, default_location) for item in raw_services]\n    partner_phone = str((state.get("partner") or {}).get("phone") or "").strip() or None\n    for service in services:\n        service["internal_phone"] = service["internal_phone"] or partner_phone
     if not services or any(not s["name"] or s["price_type"] not in ("fixed", "from") or s["price_amd"] is None for s in services):
         raise ValueError("service_data_incomplete")
 
