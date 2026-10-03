@@ -151,20 +151,22 @@ async def partner_service_preview(uid, text):
         return {"kind": "select_company", "companies": state["companies"]}
 
     explicit_services = _recover_explicit_services(text)
-    result = await turn(uid, "PARTNER", text)
-    data = _extract_from_text(text, parse_json(result["text"]))
-    # A clear service+price command is sufficient to enter the service flow.
-    # Groq must not be able to discard a valid partner request by returning
-    # another action or an incomplete JSON shape.
+
+    # A partner command that explicitly contains service names and prices is
+    # already structured enough to enter the service lifecycle. Do NOT call
+    # Groq first: a provider timeout/429/parser failure must never turn a valid
+    # partner request into ai_request_failed.
     if explicit_services:
-        data["action"] = "create_service"
-        data["services"] = explicit_services + (
-            data.get("services")[len(explicit_services):]
-            if isinstance(data.get("services"), list) and len(data.get("services")) > len(explicit_services)
-            else []
-        )
-    elif data.get("action") != "create_service":
-        return {"kind": "message", "answer": data.get("answer", "")}
+        data = {
+            "action": "create_service",
+            "services": explicit_services,
+            "location": {},
+        }
+    else:
+        result = await turn(uid, "PARTNER", text)
+        data = _extract_from_text(text, parse_json(result["text"]))
+        if data.get("action") != "create_service":
+            return {"kind": "message", "answer": data.get("answer", "")}
 
     raw_services = data.get("services")
     if not isinstance(raw_services, list):
