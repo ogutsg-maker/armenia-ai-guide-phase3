@@ -532,6 +532,27 @@ async def api_ai_document_upload(request: web.Request):
                                 if master_id is not None:
                                     break
 
+                    # Registration stores the complete service names first.
+                    # If the application header has no direction yet, resolve
+                    # the same live catalogue now so document upload does not
+                    # depend on classification timing.
+                    if master_id is None and isinstance(payload, dict):
+                        from data_core import resolve_catalog_services
+                        service_items = payload.get("services") or []
+                        try:
+                            resolved = resolve_catalog_services(
+                                [{"name": str(x.get("name") or x.get("service_name") or "")}
+                                 for x in service_items if isinstance(x, dict)],
+                                limit=500,
+                            )
+                            for resolved_item in resolved:
+                                candidate = resolved_item.get("master_category_id")
+                                if candidate not in (None, "") and resolved_item.get("catalog_match_status") == "matched":
+                                    master_id = int(candidate)
+                                    break
+                        except Exception:
+                            logging.exception("document upload catalog resolution failed")
+
                     if master_id is not None:
                         gate = ensure_direction_verification_case(
                             partner_id=pid,
