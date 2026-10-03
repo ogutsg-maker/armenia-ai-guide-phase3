@@ -1,28 +1,33 @@
 import json
 
-
 def prompt(context, text, context_data=None):
     data = json.dumps(context_data or {}, ensure_ascii=False, default=str)
     rules = (
-        "Armenia AI Guide. AI is an interface, never the source of truth. "
-        "Use only supplied context. Never invent IDs, partners, prices, documents or state. "
-        "Reads are immediate. Writes must produce a preview and wait for explicit confirmation."
+        "Դու Armenia AI Guide հարթակի AI Օպերատորն ես։ "
+        "AI-ն երբեք չի հանդիսանում տվյալների կամ բիզնես-տրամաբանության աղբյուրը։ "
+        "Օգտագործիր միայն տրամադրված Context-ը և օգտատիրոջ հաղորդագրությունը։ "
+        "Երբ տվյալը բացակայում է, մի հորինիր այն և մի վերադարձիր տեխնիկական սխալ։ "
+        "Գրիր բնական, քաղաքավարի հայերեն։ JSON-ի դաշտերի անունները թող մնան անգլերեն։"
     )
     if context == "PARTNER":
         rules += (
-            " Return ONLY valid JSON. For a create-service request return action=create_service and "
-            "services as an array. For every service return name, price_type=fixed/from, price_amd, "
-            "description, hours, at_client, internal_phone, and location. "
-            "location may contain address, marzes, cities, districts. "
-            "If the user gives one location for all services, put it in the top-level location too. "
-            "Never select catalog IDs; backend classification does that."
+            " Գործընկերոջ ծառայության հրամանի դեպքում վերադարձիր միայն վավեր JSON։ "
+            "Օգտագործիր service_draft-ը որպես նախորդ քայլերի սևագիր և պահպանիր արդեն հավաքված տվյալները։ "
+            "Նոր հաղորդագրությամբ տրված տվյալները կարող են լրացնել կամ ուղղել սևագիրը։ "
+            "Վերադարձիր action=create_service, services զանգված, և յուրաքանչյուր ծառայության համար "
+            "name, price_type=fixed/from, price_amd, description, hours, at_client, internal_phone, location։ "
+            "location-ը կարող է պարունակել address, marzes, cities, districts։ "
+            "Եթե բոլոր ծառայությունների համար մեկ ընդհանուր տեղադրություն է նշված, այն դիր top-level location-ում։ "
+            "Մի ընտրիր catalog IDs. Դասակարգումը կատարում է backend-ը։ "
+            "Եթե որևէ պարտադիր տվյալ դեռ չկա, մի ստեղծիր կեղծ արժեք. թող այն բացակայի JSON-ում։"
         )
     elif context == "REGISTRATION":
         rules += (
-            " Return ONLY valid JSON. Extract only information explicitly present in the request. "
-            "Return name, phone, marz, city, village, address, hours, description, and services. "
-            "services is an array of objects with name, price_type=fixed/from, price_amd. "
-            "Do not invent missing values. The backend keeps the draft and asks only for missing fields."
+            " Գործընկերոջ գրանցման դեպքում վերադարձիր միայն վավեր JSON։ "
+            "Extract արա միայն հաղորդագրության մեջ կամ Context-ում բացահայտ առկա տվյալները։ "
+            "Վերադարձիր name, phone, marz, city, village, address, hours, description և services։ "
+            "services-ը զանգված է՝ name, price_type=fixed/from, price_amd։ "
+            "Մի հորինիր բացակայող արժեքները։ Backend-ը պահում է սևագիրը և հարցնում է միայն պակասող դաշտերը։"
         )
     else:
         rules += " Return ONLY valid JSON with action and answer."
