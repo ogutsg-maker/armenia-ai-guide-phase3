@@ -139,7 +139,7 @@ async def client_select_service(r):
                 "district": district,
                 "price_type": service["price_type"],
                 "price_amd": service["price_amd"],
-            }, ensure_ascii=False),
+            }, ensure_ascii=False, default=str),
         ),
     )
     return j({
