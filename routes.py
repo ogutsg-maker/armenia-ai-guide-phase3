@@ -115,6 +115,8 @@ async def partner_ai(r):
         pending = state.get("pending") if state else None
         if not pending or pending.get("action") not in ("create_service", "create_services"):
             return j({"ok": False, "error": "nothing_to_confirm"}, status=400)
+        if pending.get("missing_fields"):
+            return j({"ok": True, "result": {"kind": "service_data_incomplete", "services": pending.get("services") or [], "missing_fields": pending["missing_fields"], "answer": "Շարունակենք։ Խնդրում եմ լրացրեք միայն բացակայող տվյալները։"}})
         if pending.get("missing_documents"):
             return j({"ok": False, "error": "direction_document_required", "missing_documents": pending["missing_documents"]}, status=409)
         if pending.get("services") and any(not s.get("classification") for s in pending["services"]):
