@@ -22,12 +22,16 @@ function renderServicePreview(pv){
   let html='<div class="card"><b>🤖 Проверка AI</b>';
   html+=services.map(s=>'<div class="card"><b>'+esc(s.name)+'</b><div>💰 '+esc(s.price_type)+' · '+esc(s.price_amd)+' AMD</div>'+(s.hours?'<div>🕐 '+esc(s.hours)+'</div>':'')+'<div>🚗 Выезд: '+(s.at_client?'да':'нет')+'</div>'+(s.territory?'<div>📍 '+esc(s.territory)+'</div>':'')+(s.cities?.length?'<div>🏙 '+esc(s.cities.join(', '))+'</div>':'')+(s.marzes?.length?'<div>🗺 '+esc(s.marzes.join(', '))+'</div>':'')+(s.districts?.length?'<div>📌 '+esc(s.districts.join(', '))+'</div>':'')+(s.direction?'<div>🧭 '+esc(s.direction.name_ru||s.direction.name_am||'')+'</div>':'')+(s.classification?'<div>↳ '+esc(s.classification.name_ru||s.classification.name_am||s.classification.name_en||'')+'</div>':'')+'</div>').join('');
   if(missing.length){
-    html+='<div class="card"><b>📄 Нужен документ направления</b><p>Без соответствующего документа заявка не попадёт администратору.</p>';
+    html+='<div class="card"><b>📄 Ներբեռնեք ուղղության փաստաթուղթը</b><p>Ավտոծառայությունների ակտիվացման համար անհրաժեշտ է համապատասխան փաստաթուղթ։ Վերբեռնելուց հետո կարող եք հաստատել հայտը և ուղարկել ադմինիստրատորին։</p>';
     html+=missing.map(d=>'<div class="card"><b>'+esc(d.name_ru||d.name_am||d.name_en)+'</b><input type="file" id="doc-'+Number(d.id)+'" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"><button class="btn" style="margin-top:8px" onclick="uploadDirectionDocument('+Number(d.id)+')">📎 Загрузить документ</button><div id="docmsg-'+Number(d.id)+'" class="muted"></div></div>').join('');
     html+='</div>';
   }
-  if(pv.can_submit_to_admin) html+='<button class="btn" onclick="confirmIt()">✓ Подтвердить и отправить админу</button>';
-  else if(!missing.length) html+='<div class="muted">Заявка пока не может быть отправлена: классификация направления не завершена.</div>';
+  if(pv.can_submit_to_admin) {
+    html+='<button class="btn" style="margin-top:8px" onclick="confirmIt()">✓ Հաստատել և ուղարկել ադմինիստրատորին</button>';
+  } else if(missing.length) {
+    html+='<button class="btn secondary" disabled style="margin-top:8px;opacity:.55">✓ Հաստատել և ուղարկել ադմինիստրատորին</button>';
+    html+='<div class="muted" style="margin-top:6px">Փաստաթուղթը վերբեռնելուց հետո կբացվի հաստատման կոճակը։</div>';
+  } else html+='<div class="muted">Սպասվում է ծառայության դասակարգման ավարտը։</div>';
   html+='</div>';
   return html;
 }
