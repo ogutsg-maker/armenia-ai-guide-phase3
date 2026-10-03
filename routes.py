@@ -166,6 +166,33 @@ async def partner_services(r):
     items = run("SELECT s.*,c.name AS company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s AND c.archived=false ORDER BY s.id DESC", (partner['id'],), True)
     return j({'ok':True,'items':items})
 
+async def partner_notifications(r):
+    u = await user(r)
+    partner = partners.get(u["telegram_id"])
+    if not partner:
+        return j({"ok": False, "error": "partner_registration_required"}, status=404)
+    items = run(
+        """SELECT id,kind,payload,read_at,created_at
+           FROM aig_notifications
+           WHERE telegram_id=%s
+           ORDER BY id DESC
+           LIMIT 50""",
+        (u["telegram_id"],),
+        True,
+    )
+    return j({"ok": True, "items": items})
+
+
+async def partner_mark_notification_read(r):
+    u = await user(r)
+    notification_id = int(r.match_info["id"])
+    exec(
+        "UPDATE aig_notifications SET read_at=now() WHERE id=%s AND telegram_id=%s",
+        (notification_id, u["telegram_id"]),
+    )
+    return j({"ok": True})
+
+
 async def partner_service_confirm(r):
     u = await user(r)
     state = get_ai_session(u['telegram_id'])
@@ -252,6 +279,8 @@ def setup_routes(app):
     app.router.add_post("/api/partner/ai", partner_ai)
     app.router.add_get("/api/partner/profile", partner_profile)
     app.router.add_get("/api/partner/services", partner_services)
+    app.router.add_get("/api/partner/notifications", partner_notifications)
+    app.router.add_post("/api/partner/notifications/{id}/read", partner_mark_notification_read)
     app.router.add_post("/api/partner/services/confirm", partner_service_confirm)
     app.router.add_post("/api/client/search", client_search)
     app.router.add_post("/api/client/services/{service_id}/select", client_select_service)
