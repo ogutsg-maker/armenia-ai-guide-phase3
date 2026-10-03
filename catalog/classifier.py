@@ -3,8 +3,8 @@ from difflib import SequenceMatcher
 
 from data.core import catalog
 
-THRESHOLD = 0.70
-MARGIN = 0.10
+THRESHOLD = 0.62
+MARGIN = 0.06
 
 
 def norm(value):
@@ -15,6 +15,24 @@ def _tokens(value):
     return set(norm(value).split())
 
 
+def _stems(tokens):
+    out = set()
+    for token in tokens:
+        if len(token) <= 3:
+            out.add(token)
+            continue
+        # Lightweight Armenian/Russian inflection normalization; no catalog IDs or hardcoded directions.
+        variants = {token}
+        for suffix in (
+            "ների","ներով","ներից","ին","ի","ը","ն","ով","ից","ում","ական","ային",
+            "ами","ями","ов","ев","ы","и","а","я","у","ю","ом","ем","ой","ый","ий",
+        ):
+            if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+                variants.add(token[:-len(suffix)])
+        out.update(variants)
+    return out
+
+
 def _score(query, name):
     q = norm(query)
     n = norm(name)
@@ -22,11 +40,15 @@ def _score(query, name):
         return 0.0
     if q == n:
         return 1.0
-    qt = _tokens(q)
-    nt = _tokens(n)
-    overlap = len(qt & nt) / max(1, len(qt))
+
+    qt, nt = _tokens(q), _tokens(n)
+    qs, ns = _stems(qt), _stems(nt)
+    token_overlap = len(qt & nt) / max(1, len(qt))
+    stem_overlap = len(qs & ns) / max(1, len(qs))
     similarity = SequenceMatcher(None, q, n).ratio()
-    return 0.65 * overlap + 0.35 * similarity
+
+    # Token/root evidence is deterministic and independent of any LLM.
+    return 0.45 * token_overlap + 0.40 * stem_overlap + 0.15 * similarity
 
 
 def _candidate(row, text):
