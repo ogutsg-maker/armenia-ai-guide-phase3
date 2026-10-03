@@ -402,9 +402,14 @@ async def partner_service_preview(uid, text):
         "missing_documents": list(missing.values()),
         "missing_fields": [],
     })
+    can_submit = not missing and all(s["classification"] for s in services)
+    document_hint = ""
+    if missing:
+        document_hint = " Ամեն ինչ պատրաստ է, սակայն ակտիվացման համար անհրաժեշտ է կցել համապատասխան ուղղության փաստաթուղթը։ Փաստաթուղթը կցելուց հետո կարող եք հաստատել և ուղարկել հայտը ադմինիստրատորին։"
     return {
         "kind": "preview",
         "services": services,
         "missing_documents": list(missing.values()),
-        "can_submit_to_admin": not missing and all(s["classification"] for s in services),
+        "can_submit_to_admin": can_submit,
+        "ai_response_text": "Ամեն ինչ պատրաստ է։" + document_hint if can_submit or missing else "",
     }
