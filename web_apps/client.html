@@ -1,1 +1,102 @@
-<!doctype html><html lang="hy"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Client</title><script src="https://telegram.org/js/telegram-web-app.js"></script><style>body{font:15px system-ui;background:#f5f7fb;color:#172033;margin:0}.wrap{max-width:800px;margin:auto;padding:14px}.card{background:white;border:1px solid #e1e6ee;border-radius:18px;padding:16px;margin:10px 0}.row{display:flex;gap:8px}.row input{flex:1;padding:12px;border:1px solid #d8dee8;border-radius:11px}.btn{border:0;border-radius:11px;padding:12px;background:#182033;color:white;font-weight:800}.item{border:1px solid #e1e6ee;border-radius:14px;padding:13px;margin:8px 0}</style><div class="wrap"><h2>✦ Armenia AI Guide</h2><div class="card"><div class="row"><input id="q" placeholder="Օր.՝ ремонт холодильника в Раздане"><button class="btn" onclick="search()">🔎</button></div><div id="items"></div></div><div id="chat" class="card"></div></div><script>const tg=Telegram.WebApp;tg.ready();tg.expand();const H={'X-Telegram-Init-Data':tg.initData,'Content-Type':'application/json'};let rid=null,nid=null;async function api(u,o={}){o.headers={...H,...o.headers};let r=await fetch(u,o),d=await r.json();if(!r.ok)throw Error(d.error);return d}async function search(){let d=await api('/api/client/search',{method:'POST',body:JSON.stringify({text:q.value})});rid=d.request_id;items.innerHTML=d.items.map(x=>'<div class="item"><b>'+x.partner_name+'</b><div>'+x.service_name+' · '+x.price_type+' '+x.price_amd+' AMD</div><button class="btn" onclick="sel('+x.service_id+')">Ընտրել</button></div>').join('')||'<div>Հաստատված համապատասխան ծառայություն չգտա։</div>'}async function sel(id){let d=await api('/api/client/requests/'+rid+'/select',{method:'POST',body:JSON.stringify({service_id:id})});nid=d.negotiation_id;render()}async function render(){let d=await api('/api/negotiations/'+nid);chat.innerHTML='<h3>💬 Բանակցություն</h3>'+d.messages.map(m=>'<div><b>'+m.sender_role+'</b>: '+m.message+'</div>').join('')+'<div class="row"><input id="m"><button class="btn" onclick="send()">Ուղարկել</button></div>'+((d.negotiation.status==='agreed')?'<button class="btn" onclick="book()">📅 Բրոնավորել</button>':'')}async function send(){await api('/api/negotiations/'+nid+'/messages',{method:'POST',body:JSON.stringify({message:m.value})});m.value='';render()}async function book(){await api('/api/negotiations/'+nid+'/book',{method:'POST',body:'{}'});render()}</script></html>
+<!doctype html>
+<html lang="hy">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Armenia AI Guide</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+body{font:15px system-ui;background:#f5f7fb;color:#172033;margin:0}
+.wrap{max-width:800px;margin:auto;padding:14px}
+.card{background:white;border:1px solid #e1e6ee;border-radius:18px;padding:16px;margin:10px 0}
+.row{display:flex;gap:8px}
+.row input{flex:1;padding:12px;border:1px solid #d8dee8;border-radius:11px}
+.btn{border:0;border-radius:11px;padding:12px;background:#182033;color:white;font-weight:800}
+.item{border:1px solid #e1e6ee;border-radius:14px;padding:13px;margin:8px 0}
+.muted{color:#6b7280;font-size:13px;margin-top:5px}
+.error{color:#b42318}
+</style>
+<div class="wrap">
+  <h2>✦ Armenia AI Guide</h2>
+  <div class="card">
+    <div class="row">
+      <input id="q" placeholder="Օր.՝ ремонт холодильников">
+      <button class="btn" onclick="search()">🔎</button>
+    </div>
+    <div id="items"></div>
+  </div>
+</div>
+<script>
+const tg=Telegram.WebApp;
+tg.ready();
+tg.expand();
+
+const H={
+  'X-Telegram-Init-Data':tg.initData,
+  'Content-Type':'application/json'
+};
+
+async function api(u,o={}){
+  o.headers={...H,...o.headers};
+  const r=await fetch(u,o);
+  const d=await r.json();
+  if(!r.ok) throw Error(d.error||'request_failed');
+  return d;
+}
+
+function escapeHtml(value){
+  return String(value??'')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'","&#039;");
+}
+
+function priceLabel(x){
+  const type=x.price_type==='from'?'from':'fixed';
+  const price=x.price_amd!=null
+    ? Number(x.price_amd).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
+    : '—';
+  return type+' '+price+' AMD';
+}
+
+async function search(){
+  const text=q.value.trim();
+  if(!text){
+    items.innerHTML='<div class="muted">Գրեք, թե ինչ ծառայություն եք փնտրում։</div>';
+    return;
+  }
+
+  items.innerHTML='<div class="muted">Փնտրում եմ հաստատված ծառայություններ…</div>';
+
+  try{
+    const d=await api('/api/client/search',{
+      method:'POST',
+      body:JSON.stringify({text})
+    });
+
+    const rows=Array.isArray(d.items)?d.items:[];
+    items.innerHTML=rows.map(x=>{
+      const company=escapeHtml(x.company_name||'Գործընկեր');
+      const service=escapeHtml(x.name||'Ծառայություն');
+      const place=x.city||x.territory;
+      const location=place
+        ? '<div class="muted">📍 '+escapeHtml(place)+'</div>'
+        : '';
+      return '<div class="item">'+
+        '<b>'+company+'</b>'+
+        '<div>'+service+' · '+priceLabel(x)+'</div>'+
+        location+
+        '<div class="muted">Հաստատված ակտիվ ծառայություն</div>'+
+      '</div>';
+    }).join('')||'<div class="muted">Հաստատված համապատասխան ծառայություն չգտա։</div>';
+  }catch(e){
+    items.innerHTML='<div class="error">Չհաջողվեց կատարել որոնումը։</div>';
+  }
+}
+
+q.addEventListener('keydown',e=>{
+  if(e.key==='Enter') search();
+});
+</script>
+</html>
