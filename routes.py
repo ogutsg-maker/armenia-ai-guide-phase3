@@ -5,7 +5,7 @@ from aiohttp import web
 from auth import user, require_admin
 from data import partners
 from data.core import active_services
-from ai.manager import turn, partner_service_preview
+from ai.manager import turn, partner_service_preview, partner_registration_preview
 from ai.session import get as get_ai_session, save as save_ai_session, clear as clear_ai_session
 from lifecycle.services import create_after_confirmation, activate_services_after_document
 from lifecycle.bookings import create_booking, partner_confirm_booking, confirm_commission_payment, checkin, complete, submit_review
@@ -44,6 +44,46 @@ async def register(r):
             return j({"ok": True, "partner_id": p["id"], "company": existing[0], "destination": "/partner_cabinet.html", "existing": True})
     p, c = partners.register(u["telegram_id"], name, phone)
     return j({"ok": True, "partner_id": p["id"], "company": c, "destination": "/partner_cabinet.html", "existing": False})
+
+
+async def partner_registration_ai(r):
+    u = await user(r)
+    try:
+        body = await r.json()
+    except Exception:
+        return j({"ok": False, "error": "invalid_json"}, status=400)
+    text = str(body.get("text", "")).strip()
+    if not text:
+        return j({"ok": False, "error": "text_required"}, status=400)
+
+    normalized = " ".join(text.lower().replace("ё", "е").replace("։", " ").replace("՝", " ").split())
+    state = get_ai_session(u["telegram_id"])
+    pending = state.get("pending") if state else None
+    confirmations = {"yes","confirm","confirmed","համաձայն եմ","համաձայն","այո","հաստատում եմ","հաստատել","подтверждаю","подтвердить","да","согласен","согласна"}
+    if normalized in confirmations:
+        if not isinstance(pending, dict) or pending.get("action") != "register_partner":
+            return j({"ok": False, "error": "nothing_to_confirm"}, status=400)
+        draft = pending.get("draft") or {}
+        if pending.get("missing"):
+            return j({"ok": True, "result": {"kind": "registration_missing", "draft": draft, "missing": pending["missing"]}})
+        name = str(draft.get("name") or "").strip()
+        phone = str(draft.get("phone") or "").strip()
+        if not name or not re.fullmatch(r"[+0-9() .-]{7,30}", phone):
+            return j({"ok": False, "error": "registration_data_incomplete"}, status=400)
+        if partners.get(u["telegram_id"]):
+            return j({"ok": True, "result": {"kind": "message", "answer": "Ваш бизнес уже зарегистрирован.", "destination": "/partner_cabinet.html"}})
+        p, company = partners.register(u["telegram_id"], name, phone)
+        profile = {"marz": draft.get("marz"), "city": draft.get("city"), "village": draft.get("village"), "address": draft.get("address"), "hours": draft.get("hours"), "description": draft.get("description"), "services": draft.get("services") or []}
+        exec("UPDATE aig_companies SET description=%s, profile_json=%s WHERE id=%s", (draft.get("description") or None, json.dumps(profile, ensure_ascii=False), company["id"]))
+        clear_ai_session(u["telegram_id"])
+        return j({"ok": True, "result": {"kind": "registered", "company": company, "destination": "/partner_cabinet.html"}})
+
+    try:
+        result = await partner_registration_preview(u["telegram_id"], text)
+        return j({"ok": True, "result": result})
+    except Exception:
+        __import__("logging").exception("partner registration ai")
+        return j({"ok": False, "error": "ai_request_failed"}, status=500)
 
 
 async def partner_ai(r):
@@ -946,6 +986,7 @@ def setup_routes(app):
     app.router.add_get("/api/session", session)
     app.router.add_post("/api/partner/register", register)
     app.router.add_post("/api/partner/ai", partner_ai)
+    app.router.add_post("/api/partner/registration-ai", partner_registration_ai)
     app.router.add_post("/api/partner/direction-document", partner_upload_direction_document)
     app.router.add_get("/api/admin/direction-documents/{id}", admin_direction_document)
     app.router.add_get("/api/partner/profile", partner_profile)
