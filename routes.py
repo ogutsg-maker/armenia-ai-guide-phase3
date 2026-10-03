@@ -821,6 +821,105 @@ async def client_review(r):
     except ValueError as e: return j({"ok":False,"error":str(e)},409)
     return j({"ok":True,"review":row})
 
+async def admin_catalog(r):
+    u = await user(r)
+    require_admin(u["telegram_id"])
+    rows = run(
+        """SELECT m.id,m.name_am,m.name_ru,m.name_en,m.slug,m.is_active,
+                  m.commission_type,m.commission_value,m.verification_required,
+                  m.verification_document_types,
+                  root.id AS catalog_id
+           FROM master_categories m
+           LEFT JOIN aig_catalog_categories root
+             ON root.slug=m.slug AND root.parent_id IS NULL
+           ORDER BY m.id""",
+        many=True,
+    )
+    children = run(
+        """SELECT c.id,c.master_category_id,c.name_am,c.name_ru,c.name_en,c.slug,
+                  c.is_active,c.commission_type,c.commission_value,
+                  cat.id AS catalog_id
+           FROM categories c
+           LEFT JOIN aig_catalog_categories cat ON cat.slug=c.slug
+           ORDER BY c.master_category_id,c.id""",
+        many=True,
+    )
+    by_master = {}
+    for child in children:
+        by_master.setdefault(child["master_category_id"], []).append(child)
+    for direction in rows:
+        direction["subdirections"] = by_master.get(direction["id"], [])
+    return j({"ok": True, "directions": rows, "direction_count": len(rows),
+              "subdirection_count": len(children)})
+
+
+async def admin_catalog_direction_update(r):
+    u = await user(r)
+    require_admin(u["telegram_id"])
+    direction_id = int(r.match_info["id"])
+    body = await r.json()
+    current = run("SELECT * FROM master_categories WHERE id=%s", (direction_id,))
+    if not current:
+        return j({"ok": False, "error": "direction_not_found"}, status=404)
+
+    allowed = {
+        "is_active": body.get("is_active"),
+        "commission_type": body.get("commission_type"),
+        "commission_value": body.get("commission_value"),
+        "verification_required": body.get("verification_required"),
+        "verification_document_types": body.get("verification_document_types"),
+    }
+    updates, values = [], []
+    for key, value in allowed.items():
+        if value is not None:
+            updates.append(f"{key}=%s")
+            values.append(json.dumps(value, ensure_ascii=False) if key == "verification_document_types" else value)
+    if not updates:
+        return j({"ok": False, "error": "no_edit_fields"}, status=400)
+    values.append(direction_id)
+    exec("UPDATE master_categories SET " + ",".join(updates) + " WHERE id=%s", tuple(values))
+
+    if "is_active" in allowed and allowed["is_active"] is not None:
+        exec(
+            "UPDATE aig_catalog_categories SET active=%s WHERE parent_id IS NULL "
+            "AND slug=(SELECT slug FROM master_categories WHERE id=%s)",
+            (bool(allowed["is_active"]), direction_id),
+        )
+    audit(u["telegram_id"], "catalog_direction_updated", "master_category", direction_id, body)
+    return j({"ok": True, "direction_id": direction_id})
+
+
+async def admin_catalog_subdirection_update(r):
+    u = await user(r)
+    require_admin(u["telegram_id"])
+    sub_id = int(r.match_info["id"])
+    body = await r.json()
+    current = run("SELECT * FROM categories WHERE id=%s", (sub_id,))
+    if not current:
+        return j({"ok": False, "error": "subdirection_not_found"}, status=404)
+    allowed = {
+        "is_active": body.get("is_active"),
+        "commission_type": body.get("commission_type"),
+        "commission_value": body.get("commission_value"),
+    }
+    updates, values = [], []
+    for key, value in allowed.items():
+        if value is not None:
+            updates.append(f"{key}=%s")
+            values.append(value)
+    if not updates:
+        return j({"ok": False, "error": "no_edit_fields"}, status=400)
+    values.append(sub_id)
+    exec("UPDATE categories SET " + ",".join(updates) + " WHERE id=%s", tuple(values))
+    if "is_active" in allowed and allowed["is_active"] is not None:
+        exec(
+            "UPDATE aig_catalog_categories SET active=%s WHERE slug=(SELECT slug FROM categories WHERE id=%s)",
+            (bool(allowed["is_active"]), sub_id),
+        )
+    audit(u["telegram_id"], "catalog_subdirection_updated", "category", sub_id, body)
+    return j({"ok": True, "subdirection_id": sub_id})
+
+
 def setup_routes(app):
     app.router.add_get("/api/session", session)
     app.router.add_post("/api/partner/register", register)
@@ -853,5 +952,8 @@ def setup_routes(app):
     app.router.add_post("/api/admin/bookings/{id}/test-payment", admin_test_payment)
     app.router.add_post("/api/admin/ai", admin_ai)
     app.router.add_get("/api/admin/applications", applications)
+    app.router.add_get("/api/admin/catalog", admin_catalog)
+    app.router.add_post("/api/admin/catalog/directions/{id}", admin_catalog_direction_update)
+    app.router.add_post("/api/admin/catalog/subdirections/{id}", admin_catalog_subdirection_update)
     app.router.add_get("/api/admin/services", admin_services)
     app.router.add_post("/api/admin/services/{id}/decision", admin_service_decision)
