@@ -9,10 +9,13 @@ def create_after_confirmation(uid,company_id,d):
     )
     cat=classify(d["name"])
     if cat:
-        exec("UPDATE aig_services SET catalog_category_id=%s,status='PENDING_ADMIN' WHERE id=%s",(cat["id"],row["id"]))
+        exec(
+            "UPDATE aig_services SET catalog_category_id=%s,classification_confidence=%s,classification_margin=%s,status='PENDING_ADMIN',updated_at=now() WHERE id=%s",
+            (cat["id"],cat.get("classification_confidence"),cat.get("classification_margin"),row["id"])
+        )
         status="PENDING_ADMIN"
     else:
-        notify(__import__("config").ADMIN_ID,"classification_alert",{"service_id":row["id"]})
+        notify(__import__("config").ADMIN_ID,"classification_alert",{"service_id":row["id"],"service_name":d["name"]})
         status="CLASSIFICATION_PENDING"
     row=run("SELECT * FROM aig_services WHERE id=%s",(row["id"],))
     exec("INSERT INTO aig_service_applications(service_id,status) VALUES(%s,%s)",(row["id"],status))
