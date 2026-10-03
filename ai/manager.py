@@ -35,7 +35,7 @@ async def partner_service_preview(uid, text):
     raw_price = data.get('price_amd')
     if isinstance(raw_price, str):
         import re as _re
-        m = _re.search(r'\\d+(?:[.,]\\d+)?', raw_price.replace(' ', ''))
+        m = _re.search(r'\d+(?:[.,]\d+)?', raw_price.replace(' ', ''))
         raw_price = m.group(0).replace(',', '.') if m else None
     try:
         price_amd = float(raw_price) if raw_price is not None else None
