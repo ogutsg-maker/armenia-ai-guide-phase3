@@ -470,6 +470,27 @@ async def applications(r):
 
 
 
+async def negotiation_terms(r):
+    u=await user(r)
+    try: nid=int(r.match_info["id"]); b=await r.json()
+    except: return j({"ok":False,"error":"invalid_request"},400)
+    n=run("""SELECT n.*,r.client_telegram_id FROM aig_negotiations n JOIN aig_client_requests r ON r.id=n.request_id WHERE n.id=%s""",(nid,))
+    if not n: return j({"ok":False,"error":"negotiation_not_found"},404)
+    partner=partners.get(u["telegram_id"])
+    role="client" if int(n["client_telegram_id"])==int(u["telegram_id"]) else ("partner" if partner and int(n["partner_id"])==int(partner["id"]) else None)
+    if not role: return j({"ok":False,"error":"forbidden"},403)
+    if n["status"]!="active": return j({"ok":False,"error":"negotiation_not_active"},409)
+    try:
+        price=float(b.get("agreed_price"))
+        if price<=0: raise ValueError()
+    except: return j({"ok":False,"error":"valid_agreed_price_required"},400)
+    payload=n.get("agreed_payload") or {}
+    payload.update({"agreed_price":price,role+"_agreed":True})
+    exec("UPDATE aig_negotiations SET agreed_price=%s,agreed_min=%s,agreed_max=%s,agreed_payload=%s,agreed_at=CASE WHEN %s THEN now() ELSE agreed_at END,status=CASE WHEN COALESCE((%s)::jsonb->>'client_agreed','false')::boolean AND COALESCE((%s)::jsonb->>'partner_agreed','false')::boolean THEN 'agreed' ELSE 'active' END WHERE id=%s",
+         (price,price,price,json.dumps(payload),payload.get("client_agreed") and payload.get("partner_agreed"),json.dumps(payload),json.dumps(payload),nid))
+    return j({"ok":True,"status":"agreed" if payload.get("client_agreed") and payload.get("partner_agreed") else "active","agreed_price":price})
+
+
 async def client_agree(r):
     u=await user(r)
     try: nid=int(r.match_info["id"])
@@ -562,6 +583,7 @@ def setup_routes(app):
     app.router.add_post("/api/client/search", client_search)
     app.router.add_post("/api/client/services/{service_id}/select", client_select_service)
     app.router.add_post("/api/client/negotiations/{id}/agree", client_agree)
+    app.router.add_post("/api/negotiations/{id}/terms", negotiation_terms)
     app.router.add_post("/api/client/negotiations/{id}/booking", client_booking)
     app.router.add_post("/api/client/bookings/{id}/pay", booking_payment)
     app.router.add_post("/api/client/bookings/{id}/review", client_review)
