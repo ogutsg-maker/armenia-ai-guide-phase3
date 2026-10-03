@@ -553,13 +553,14 @@ async def partner_mark_notification_read(r):
 
 async def partner_service_confirm(r):
     u = await user(r)
-    state = get_ai_session(u['telegram_id'])
-    pending = state.get('pending') if state else None
-    if not pending or pending.get('action') != 'create_service': return j({'ok':False,'error':'nothing_to_confirm'}, status=400)
-    service = pending['service']
-    row,status = create_after_confirmation(u['telegram_id'],service['company_id'],service)
-    clear_ai_session(u['telegram_id'])
-    return j({'ok':True,'kind':'created','service':row,'status':status})
+    state = get_ai_session(u["telegram_id"])
+    pending = state.get("pending") if state else None
+    if not pending or pending.get("action") not in ("create_service", "create_services"):
+        return j({"ok": False, "error": "nothing_to_confirm"}, status=400)
+    services = pending.get("services") or [pending.get("service")]
+    result = create_after_confirmation(u["telegram_id"], services[0]["company_id"], pending)
+    clear_ai_session(u["telegram_id"])
+    return j({"ok": True, "kind": "created", **result})
 
 async def admin_ai(r):
     u = await user(r)
