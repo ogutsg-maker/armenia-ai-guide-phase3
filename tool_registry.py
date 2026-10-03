@@ -1541,15 +1541,29 @@ class ToolRegistry:
                 phone=args.get("phone"),
             )
             company_id = int(company["id"])
-            result = data_core.create_partner_services_proposal(
-                partner_id=pid,
-                actor_user_id=self.telegram_id,
-                company_id=company_id,
-                services=args.get("services") or [],
-                service_mode=args.get("service_mode"),
-                service_location=args.get("service_location"),
-                submission_token=args.get("submission_token"),
-            )
+            try:
+                result = data_core.create_partner_services_proposal(
+                    partner_id=pid,
+                    actor_user_id=self.telegram_id,
+                    company_id=company_id,
+                    services=args.get("services") or [],
+                    service_mode=args.get("service_mode"),
+                    service_location=args.get("service_location"),
+                    submission_token=args.get("submission_token"),
+                )
+            except Exception:
+                # The compound action is logically one registration. If the
+                # application cannot be created after the new company is created,
+                # hide the newly-created empty company instead of leaving an
+                # orphan cabinet record behind.
+                try:
+                    data_core.archive_partner_company(
+                        company_id=company_id,
+                        actor_user_id=self.telegram_id,
+                    )
+                except Exception:
+                    pass
+                raise
             return {
                 "ok": True,
                 "company": company,
