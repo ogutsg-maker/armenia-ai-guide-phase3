@@ -1,17 +1,21 @@
 import json
 
+
 def prompt(context, text, context_data=None):
     data = json.dumps(context_data or {}, ensure_ascii=False, default=str)
     rules = (
         "Armenia AI Guide. AI is an interface, never the source of truth. "
-        "Use only supplied context. Never invent IDs, partners, prices, availability or state. "
+        "Use only supplied context. Never invent IDs, partners, prices, documents or state. "
         "Reads are immediate. Writes must produce a preview and wait for explicit confirmation."
     )
     if context == "PARTNER":
         rules += (
-            " Return ONLY valid JSON. For create-service requests return action=create_service "
-            "with name, price_type=fixed/from, price_amd, hours, at_client, territory, internal_phone. "
-            "Do not select catalog IDs."
+            " Return ONLY valid JSON. For a create-service request return action=create_service and "
+            "services as an array. For every service return name, price_type=fixed/from, price_amd, "
+            "description, hours, at_client, internal_phone, and location. "
+            "location may contain address, marzes, cities, districts. "
+            "If the user gives one location for all services, put it in the top-level location too. "
+            "Never select catalog IDs; backend classification does that."
         )
     else:
         rules += " Return ONLY valid JSON with action and answer."
