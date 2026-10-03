@@ -38,3 +38,14 @@ class DataCore:
         if name=="admin_list_arbitrations":
             return db.all("SELECT a.*,b.status booking_status FROM aig_arbitrations a JOIN aig_bookings b ON b.id=a.booking_id WHERE a.status='OPEN' ORDER BY a.id DESC")
         raise RuntimeError("unsupported_tool:"+name)
+
+    @staticmethod
+    def partner_tool(name,args,partner_id,telegram_id):
+        if name=="partner_list_services":
+            return db.all("SELECT s.*,c.name company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s ORDER BY s.id DESC",(partner_id,))
+        if name=="partner_list_companies":
+            return db.all("SELECT id,name,archived FROM aig_companies WHERE partner_id=%s AND NOT archived ORDER BY id",(partner_id,))
+        if name=="partner_get_service":
+            row=db.one("SELECT s.*,c.name company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s AND s.id=%s",(partner_id,int(args["service_id"])))
+            return row or {"error":"service_not_found"}
+        raise RuntimeError("unsupported_partner_tool:"+name)

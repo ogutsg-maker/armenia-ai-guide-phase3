@@ -5,6 +5,7 @@ from aiohttp import web
 import db
 from auth import user
 from ai import extract,ask,admin_prompt,ADMIN_TOOLS,admin_ai_turn
+from core import DataCore
 from classifier import classify
 from config import ADMIN_ID,COMMISSION_MODE,COMMISSION_RATE,IDRAM_PAYMENT_URL
 def j(data,status=200): return web.json_response(data,status=status)
@@ -57,13 +58,8 @@ Request: """+text}]
     results=[]
     for call in meta["tool_calls"]:
         args=json.loads(call.function.arguments or "{}"); name=call.function.name
-        if name=="partner_list_services":
-            result=db.all("SELECT s.*,c.name company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s ORDER BY s.id DESC",(p["id"],))
-        elif name=="partner_list_companies":
-            result=db.all("SELECT id,name,archived FROM aig_companies WHERE partner_id=%s AND NOT archived ORDER BY id",(p["id"],))
-        elif name=="partner_get_service":
-            result=db.one("SELECT s.*,c.name company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s AND s.id=%s",(p["id"],int(args["service_id"])))
-            if not result: result={"error":"service_not_found"}
+        if name in ("partner_list_services","partner_list_companies","partner_get_service"):
+            result=DataCore.partner_tool(name,args,p["id"],uid)
         elif name=="partner_create_service_preview":
             x,emeta=await extract(str(args["text"]),"service creation")
             if not x.get("name") or x.get("price_amd") is None or x.get("price_type") not in ("fixed","from"):
