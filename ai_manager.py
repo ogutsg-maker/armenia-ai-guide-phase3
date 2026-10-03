@@ -393,7 +393,7 @@ class AIManager:
     def _partner_action_summary(language: str, action: dict[str, Any], fallback: str = "") -> str:
         name = str(action.get("name") or "")
         args = dict(action.get("args") or {})
-        if name not in {"add_service", "add_services"}:
+        if name not in {"add_service", "add_services", "register_business"}:
             return fallback
         company = str(args.get("company_name") or "").strip()
         items = []
@@ -1116,7 +1116,7 @@ class AIManager:
                 pending_name = str(pending.get("name") or "").strip()
                 is_partner_submission = (
                     role == ContextType.PARTNER
-                    and pending_name in {"add_service", "add_services"}
+                    and pending_name in {"add_service", "add_services", "register_business"}
                 )
                 claim = await asyncio.to_thread(
                     platform_db.claim_ai_pending_action,
@@ -1803,7 +1803,7 @@ class AIManager:
                 if self._is_confirmation(message):
                     is_partner_submission = (
                         role == ContextType.PARTNER
-                        and str(pending.get("name") or "").strip() in {"add_service", "add_services"}
+                        and str(pending.get("name") or "").strip() in {"add_service", "add_services", "register_business"}
                     )
 
                     # The session row is locked by PostgreSQL while the action
@@ -2458,7 +2458,7 @@ class AIManager:
                     action_args = dict(action.get("args") or {})
                     # For partner ADD_SERVICES, explicit user facts are authoritative.
                     # The model must not turn "դրամից" into fixed or leak internal fields.
-                    if role == ContextType.PARTNER and name in {"add_service", "add_services"}:
+                    if role == ContextType.PARTNER and name in {"add_service", "add_services", "register_business"}:
                         explicit = self._parse_explicit_partner_services(message) or []
                         if explicit:
                             model_services = list(action_args.get("services") or [])
@@ -2486,7 +2486,7 @@ class AIManager:
                     await self._set_pending(
                         telegram_id, role, pending_action
                     )
-                    if role == ContextType.PARTNER and pending_action["name"] in {"add_service", "add_services"}:
+                    if role == ContextType.PARTNER and pending_action["name"] in {"add_service", "add_services", "register_business"}:
                         summary = self._partner_action_summary(language, pending_action, "")
                         pending_action["summary"] = summary
                         # Confirmation UI is the single visible preview.
