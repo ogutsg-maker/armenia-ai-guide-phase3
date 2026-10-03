@@ -348,6 +348,22 @@ async def negotiation_message(r):
     return j({"ok": True, "message": row})
 
 
+async def client_notifications(r):
+    u = await user(r)
+    items = run("SELECT id,kind,payload,read_at,created_at FROM aig_notifications WHERE telegram_id=%s ORDER BY id DESC LIMIT 50",(u["telegram_id"],),True)
+    return j({"ok":True,"items":items})
+
+async def client_negotiations(r):
+    u = await user(r)
+    items = run("SELECT n.id,n.status,n.request_id,n.service_id,n.agreed_min,n.agreed_max,n.agreed_price,n.created_at,n.partner_interest_at,s.name AS service_name,c.name AS company_name,r.city,r.district FROM aig_negotiations n JOIN aig_client_requests r ON r.id=n.request_id JOIN aig_services s ON s.id=n.service_id JOIN aig_companies c ON c.id=s.company_id WHERE r.client_telegram_id=%s ORDER BY n.id DESC LIMIT 50",(u["telegram_id"],),True)
+    return j({"ok":True,"items":items})
+
+async def client_mark_notification_read(r):
+    u = await user(r)
+    notification_id = int(r.match_info["id"])
+    exec("UPDATE aig_notifications SET read_at=now() WHERE id=%s AND telegram_id=%s",(notification_id,u["telegram_id"]))
+    return j({"ok":True})
+
 async def partner_mark_notification_read(r):
     u = await user(r)
     notification_id = int(r.match_info["id"])
