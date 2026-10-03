@@ -82,26 +82,10 @@ def ensure_user_by_telegram_id(telegram_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Partner companies
+# Partner companies / minimal partner registration
 # ---------------------------------------------------------------------------
 
-def list_companies(partner_id: int):
-    """Return companies owned by a partner for session restoration/cabinet."""
-    return rows(
-        """
-        SELECT id, partner_id, name, description, phone, status, is_default
-        FROM partner_businesses
-        WHERE partner_id=%s
-          AND status <> 'archived'
-        ORDER BY is_default DESC, id
-        """,
-        (int(partner_id),),
-    )
 
-
-
-# ---------------------------------------------------------------------------
-# Minimal partner registration
 # ---------------------------------------------------------------------------
 
 def register_partner_basic(*, actor_user_id: int, business_name: str, phone: str) -> dict[str, Any]:
