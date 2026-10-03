@@ -64,6 +64,10 @@ register_business. This is ONE action and ONE confirmation: it creates the
 company and submits all listed services in one application. Never call
 add_company first and then add_services for the same registration.
 
+For register_business, service items contain ONLY service name, price and price_type.
+Do not put company-level fields such as service_mode, service_location, coverage, phone,
+address or description inside individual service items. Those belong only at the top level.
+
 PRICE TYPE RULE FOR EVERY register_business SERVICE:
 For every service item, price_type is REQUIRED and must always be a non-null string.
 - "from" when the user says «от» or Armenian «դրամից»
