@@ -178,6 +178,37 @@ async def admin_arbitration(request):
     aid=int(request.match_info["id"]); body=await request.json(); a=db.one("SELECT * FROM aig_arbitrations WHERE id=%s",(aid,))
     if not a:return j({"ok":False,"error":"arbitration_not_found"},404)
     db.exec("UPDATE aig_arbitrations SET status='RESOLVED',resolution=%s,closed_at=now() WHERE id=%s",(body.get("resolution"),aid)); db.exec("UPDATE aig_bookings SET status='SERVICE_COMPLETED' WHERE id=%s AND status='ARBITRATION'",(a["booking_id"],)); return j({"ok":True})
+
+async def admin_potential_partners(request):
+    uid=await current(request)
+    if uid!=ADMIN_ID:return j({"ok":False,"error":"forbidden"},403)
+    return j({"ok":True,"items":db.all("SELECT p.*,coalesce(json_agg(s) FILTER (WHERE s.id IS NOT NULL),'[]') sources FROM aig_potential_partners p LEFT JOIN aig_potential_partner_sources s ON s.potential_partner_id=p.id GROUP BY p.id ORDER BY p.id DESC")})
+async def admin_potential_partner(request):
+    uid=await current(request)
+    if uid!=ADMIN_ID:return j({"ok":False,"error":"forbidden"},403)
+    pid=int(request.match_info["id"]); body=await request.json()
+    row=db.one("SELECT * FROM aig_potential_partners WHERE id=%s",(pid,))
+    if not row:return j({"ok":False,"error":"potential_partner_not_found"},404)
+    allowed={"status","name","phone","city","district","notes"}; updates={k:body[k] for k in allowed if k in body}
+    if updates:
+        sets=", ".join(f"{k}=%s" for k in updates); db.exec(f"UPDATE aig_potential_partners SET {sets} WHERE id=%s",(*updates.values(),pid))
+    db.exec("INSERT INTO aig_audit_logs(actor_telegram_id,action,entity_type,entity_id,payload) VALUES(%s,%s,%s,%s,%s)",(uid,"potential_partner_update","potential_partner",pid,json.dumps(body,ensure_ascii=False)))
+    return j({"ok":True,"item":db.one("SELECT * FROM aig_potential_partners WHERE id=%s",(pid,))})
+async def partner_service_document(request):
+    uid=await current(request); sid=int(request.match_info["id"]); p=db.one("SELECT p.id FROM aig_partners p JOIN aig_companies c ON c.partner_id=p.id JOIN aig_services s ON s.company_id=c.id WHERE p.telegram_id=%s AND s.id=%s",(uid,sid))
+    if not p:return j({"ok":False,"error":"service_not_owned"},403)
+    body=await request.json()
+    if not body.get("file_name") or not body.get("mime_type") or not body.get("storage_ref"):return j({"ok":False,"error":"document_data_required"},400)
+    if body["mime_type"] not in ("application/pdf","image/jpeg","image/png","image/webp"):return j({"ok":False,"error":"unsupported_document_type"},400)
+    row=db.exec("INSERT INTO aig_service_documents(service_id,file_name,mime_type,storage_ref) VALUES(%s,%s,%s,%s) RETURNING id",(sid,body["file_name"],body["mime_type"],body["storage_ref"]),True)
+    db.exec("INSERT INTO aig_audit_logs(actor_telegram_id,action,entity_type,entity_id,payload) VALUES(%s,%s,%s,%s,%s)",(uid,"service_document_uploaded","service",sid,json.dumps({"document_id":row["id"]},ensure_ascii=False)))
+    notify(ADMIN_ID,"service_document_uploaded",{"service_id":sid,"document_id":row["id"]})
+    return j({"ok":True,"document_id":row["id"]})
+async def admin_service_documents(request):
+    uid=await current(request)
+    if uid!=ADMIN_ID:return j({"ok":False,"error":"forbidden"},403)
+    sid=int(request.match_info["id"]); return j({"ok":True,"items":db.all("SELECT d.*,s.name service_name,c.name company_name FROM aig_service_documents d JOIN aig_services s ON s.id=d.service_id JOIN aig_companies c ON c.id=s.company_id WHERE d.service_id=%s ORDER BY d.id DESC",(sid,))})
+
 async def notifications(request):
     uid=await current(request); return j({"ok":True,"items":db.all("SELECT * FROM aig_notifications WHERE telegram_id=%s ORDER BY id DESC LIMIT 100",(uid,))})
 async def admin_query(request):
@@ -191,5 +222,5 @@ async def admin_query(request):
     if "arbitr" in q or "արբիտ" in q:return j({"ok":True,"items":db.all("SELECT * FROM aig_arbitrations WHERE status='OPEN' ORDER BY id")})
     return j({"ok":True,"answer":"Data Core query accepted.","available":["applications","AI costs","arbitrations"]})
 def setup(app):
-    routes=[("GET","/api/session",session),("POST","/api/partner/register",register_partner),("GET","/api/partner/profile",partner_profile),("GET","/api/partner/services",partner_services),("POST","/api/partner/services/preview",service_preview),("POST","/api/partner/services/confirm",service_confirm),("GET","/api/admin/services",admin_services),("POST","/api/admin/services/{id}/decision",admin_service_decision),("POST","/api/admin/ai",admin_query),("POST","/api/client/search",client_search),("POST","/api/client/requests/{id}/select",select_service),("POST","/api/negotiations/{id}/interest",partner_interest),("GET","/api/negotiations/{id}",negotiation),("POST","/api/negotiations/{id}/messages",send_message),("POST","/api/negotiations/{id}/book",book),("POST","/api/bookings/{id}/confirm",partner_confirm_booking),("POST","/api/payments/webhook",payment_webhook),("GET","/api/bookings/{id}/contact",contact),("POST","/api/bookings/{token}/checkin",checkin),("POST","/api/bookings/{id}/complete",complete),("POST","/api/bookings/{id}/review",review),("POST","/api/bookings/{id}/arbitration",arbitration_open),("POST","/api/admin/arbitrations/{id}/resolve",admin_arbitration),("GET","/api/notifications",notifications)]
+    routes=[("GET","/api/session",session),("POST","/api/partner/register",register_partner),("GET","/api/partner/profile",partner_profile),("GET","/api/partner/services",partner_services),("POST","/api/partner/services/preview",service_preview),("POST","/api/partner/services/confirm",service_confirm),("GET","/api/admin/services",admin_services),("GET","/api/admin/potential-partners",admin_potential_partners),("PATCH","/api/admin/potential-partners/{id}",admin_potential_partner),("POST","/api/partner/services/{id}/documents",partner_service_document),("GET","/api/admin/services/{id}/documents",admin_service_documents),("POST","/api/admin/services/{id}/decision",admin_service_decision),("POST","/api/admin/ai",admin_query),("POST","/api/client/search",client_search),("POST","/api/client/requests/{id}/select",select_service),("POST","/api/negotiations/{id}/interest",partner_interest),("GET","/api/negotiations/{id}",negotiation),("POST","/api/negotiations/{id}/messages",send_message),("POST","/api/negotiations/{id}/book",book),("POST","/api/bookings/{id}/confirm",partner_confirm_booking),("POST","/api/payments/webhook",payment_webhook),("GET","/api/bookings/{id}/contact",contact),("POST","/api/bookings/{token}/checkin",checkin),("POST","/api/bookings/{id}/complete",complete),("POST","/api/bookings/{id}/review",review),("POST","/api/bookings/{id}/arbitration",arbitration_open),("POST","/api/admin/arbitrations/{id}/resolve",admin_arbitration),("GET","/api/notifications",notifications)]
     for method,path,fn in routes:getattr(app.router,"add_"+method.lower())(path,fn)
