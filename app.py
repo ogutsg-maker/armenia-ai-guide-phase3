@@ -25,10 +25,15 @@ async def lifecycle_worker():
         except Exception: log.exception("lifecycle worker")
         await asyncio.sleep(10)
 async def start():
-    db.init();app=web.Application()
+    app=web.Application()
     app.router.add_get("/health",health);app.router.add_post("/telegram/webhook",webhook);app.router.add_get("/",root)
     app.router.add_get("/{name:welcome.html|partner.html|master_cabinet.html|client.html|admin.html}",html);setup(app)
     runner=web.AppRunner(app);await runner.setup();port=int(os.getenv("PORT","10000"));await web.TCPSite(runner,"0.0.0.0",port).start()
+    try:
+        await asyncio.to_thread(db.init)
+    except Exception:
+        log.exception("database initialization failed")
+        raise
     log.info("Armenia AI Guide clean runtime on %s",port)
     worker=asyncio.create_task(lifecycle_worker())
     try: await asyncio.Event().wait()

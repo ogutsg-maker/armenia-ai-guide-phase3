@@ -17,9 +17,10 @@ def init():
     with conn() as c: c.execute(SCHEMA)
 def one(sql,args=()):
     with conn() as c:
-        r=c.execute(sql,args).fetchone()
+        cur=c.execute(sql,args)
+        r=cur.fetchone()
         if not r:return None
-        cols=[x.name for x in c.execute(sql,args).description]
+        cols=[x.name for x in cur.description]
         return dict(zip(cols,r))
 def all(sql,args=()):
     with conn() as c:

@@ -87,16 +87,5 @@ CREATE INDEX IF NOT EXISTS aig_services_active_idx ON aig_services(status,compan
 CREATE INDEX IF NOT EXISTS aig_notifications_user_idx ON aig_notifications(telegram_id,read_at);
 CREATE INDEX IF NOT EXISTS aig_negotiations_deadline_idx ON aig_negotiations(status,interest_deadline);
 
-CREATE TABLE IF NOT EXISTS aig_potential_partner_sources (
- id BIGSERIAL PRIMARY KEY, potential_partner_id BIGINT NOT NULL REFERENCES aig_potential_partners(id) ON DELETE CASCADE,
- source_type TEXT NOT NULL, source_ref TEXT, query TEXT, url TEXT, captured_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS aig_service_documents (
- id BIGSERIAL PRIMARY KEY, service_id BIGINT NOT NULL REFERENCES aig_services(id) ON DELETE CASCADE,
- file_name TEXT NOT NULL, mime_type TEXT NOT NULL, storage_ref TEXT NOT NULL,
- status TEXT NOT NULL DEFAULT 'PENDING_ADMIN', created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS aig_audit_logs (
- id BIGSERIAL PRIMARY KEY, actor_telegram_id BIGINT, action TEXT NOT NULL, entity_type TEXT, entity_id BIGINT, payload JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+CREATE TABLE IF NOT EXISTS aig_audit_logs(id BIGSERIAL PRIMARY KEY,actor_telegram_id BIGINT,action TEXT NOT NULL,entity_type TEXT,entity_id BIGINT,payload JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS aig_audit_actor_idx ON aig_audit_logs(actor_telegram_id,created_at);
