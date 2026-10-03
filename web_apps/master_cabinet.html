@@ -50,7 +50,7 @@ try{
   if(tg&&typeof tg.ready==='function')tg.ready();
   if(tg&&typeof tg.expand==='function')tg.expand();
 }catch(e){console.warn('Telegram WebApp init failed',e);}
-const state={lang:(tg?.initDataUnsafe?.user?.language_code||'hy').startsWith('ru')?'ru':'hy',businesses:[],current:null,directions:[],services:[],objects:[],documents:[],applications:[],bookings:[],reviews:[],locations:[],notifications:[],stack:[]};
+const state={pendingAiDocument:null,pendingAiDocumentName:'',lang:(tg?.initDataUnsafe?.user?.language_code||'hy').startsWith('ru')?'ru':'hy',businesses:[],current:null,directions:[],services:[],objects:[],documents:[],applications:[],bookings:[],reviews:[],locations:[],notifications:[],stack:[]};
 const T={
 hy:{ai:'AI Օգնական',company:'Ընկերություն',object:'Հասցե',selectObject:'Ընտրեք հասցեն',objectName:'Հասցեի անվանում',marz:'Մարզ',autoFromObject:'կընտրվի հասցեից',optionalNew:'կամ նոր հեռախոս',objectDataRequired:'Լրացրեք օբյեկտի անվանումը, հասցեն և քաղաքը',businesses:'Իմ ընկերությունները',applications:'Հայտեր',notifications:'Ծանուցումներ',orders:'Պատվերներ',negotiations:'Բանակցություններ',settings:'Կարգավորումներ',objects:'Հասցեներ',directions:'Ուղղություններ',services:'Ծառայություններ',territories:'Տարածքներ',documents:'Փաստաթղթեր',companyInfo:'Ընկերության տվյալներ',companySettings:'Ընկերության կարգավորումներ',objectEdit:'Խմբագրել հասցեն',serviceEdit:'Խմբագրել ծառայությունը',companySettingsHint:'Տվյալ ընկերության տվյալների խմբագրում',saved:'Պահպանված',open:'Բացել',back:'← Հետ',pending:'Սպասում է',approved:'Հաստատված',active:'Ակտիվ',verificationPending:'Պահանջվում է փաստաթուղթ',verificationReview:'Փաստաթուղթը ստուգվում է',rejected:'Մերժված',newCompany:'＋ Նոր ընկերություն',empty:'Տվյալներ դեռ չկան',save:'Պահպանել',addObject:'＋ Հասցե',addService:'＋ Նոր ծառայություն',all:'Բոլորը',applicationInfo:'Հայտի ընթացք',noOrders:'Պատվերներ դեռ չկան',noNegotiations:'Բանակցություններ դեռ չկան',global:'Ընդհանուր կարգավորումներ',name:'Անվանում',description:'Նկարագրություն',phoneCompany:'Հեռախոս',city:'Քաղաք',address:'Հասցե',phone:'Հեռախոս',status:'Կարգավիճակ',classification:'AI դասակարգում',document:'Փաստաթուղթ',price:'Գին',},
 ru:{ai:'AI-Помощник',company:'Компания',object:'Адрес',selectObject:'Выберите адрес',objectName:'Название адреса',marz:'Марз',autoFromObject:'подтянется из адреса',optionalNew:'или новый телефон',objectDataRequired:'Заполните название объекта, адрес и город',businesses:'Мои компании',applications:'Заявки',notifications:'Уведомления',orders:'Заказы',negotiations:'Переговоры',settings:'Настройки',objects:'Адреса',directions:'Направления',services:'Услуги',territories:'Территории',documents:'Документы',companyInfo:'Данные компании',companySettings:'Настройки компании',objectEdit:'Редактировать адрес',serviceEdit:'Редактировать услугу',companySettingsHint:'Редактирование данных этой компании',saved:'Сохранено',open:'Открыть',back:'← Назад',pending:'На проверке',approved:'Подтверждено',active:'Активно',verificationPending:'Требуется документ',verificationReview:'Документ проверяется',rejected:'Отклонено',newCompany:'＋ Новая компания',empty:'Данных пока нет',save:'Сохранить',addObject:'＋ Адрес',addService:'＋ Новая услуга',all:'Все',applicationInfo:'Ход заявки',noOrders:'Заказов пока нет',noNegotiations:'Переговоров пока нет',global:'Общие настройки',name:'Название',description:'Описание',phoneCompany:'Телефон',city:'Город',address:'Адрес',phone:'Телефон',status:'Статус',classification:'AI-классификация',document:'Документ',price:'Цена',},
@@ -93,7 +93,7 @@ async function uploadAiDocument(input){
   const status=document.getElementById('aiDocumentStatus');
   const allowed=['application/pdf','image/jpeg','image/png','image/webp'];
   if(!allowed.includes(file.type)){
-    toast(state.lang==='hy'?'Թույլատրվում են PDF, JPG, PNG կամ WEBP ֆայլեր։':state.lang==='ru'?'Разрешены только PDF, JPG, PNG կամ WEBP.':'Only PDF, JPG, PNG or WEBP files are allowed.');
+    toast(state.lang==='hy'?'Թույլատրվում են PDF, JPG, PNG կամ WEBP ֆայլեր։':state.lang==='ru'?'Разрешены только PDF, JPG, PNG или WEBP.':'Only PDF, JPG, PNG or WEBP files are allowed.');
     input.value='';
     return;
   }
@@ -102,8 +102,22 @@ async function uploadAiDocument(input){
     input.value='';
     return;
   }
+
+  // During a new registration the company/direction does not exist until the
+  // single confirmation is accepted. Keep the file in the same browser flow
+  // and upload it automatically immediately after that confirmation.
+  state.pendingAiDocument=file;
+  state.pendingAiDocumentName=file.name;
+  if(status)status.textContent=(state.lang==='hy'?'📎 Փաստաթուղթը պատրաստ է և կկցվի հաստատումից հետո՝ ':state.lang==='ru'?'📎 Документ будет прикреплён после подтверждения: ':'📎 Document will be attached after confirmation: ')+file.name;
+  input.value='';
+}
+
+async function uploadPendingAiDocument(){
+  const file=state.pendingAiDocument;
+  if(!file)return null;
+  const status=document.getElementById('aiDocumentStatus');
   try{
-    if(status)status.textContent=state.lang==='hy'?'📎 Փաստաթուղթը բեռնվում է…':state.lang==='ru'?'📎 Документը բեռնվում է…':'📎 Uploading document…';
+    if(status)status.textContent=state.lang==='hy'?'📎 Փաստաթուղթը բեռնվում է…':state.lang==='ru'?'📎 Документ загружается…':'📎 Uploading document…';
     const fd=new FormData();
     fd.append('file',file);
     fd.append('document_type','business_document');
@@ -114,40 +128,14 @@ async function uploadAiDocument(input){
     if(!r.ok||d.ok===false)throw new Error(d.error||d.message||('HTTP '+r.status));
     if(status)status.textContent=(state.lang==='hy'?'📎 Կցված է՝ ':state.lang==='ru'?'📎 Прикреплён: ':'📎 Attached: ')+(d.filename||file.name);
     aiAdd('user',state.lang==='hy'?'📎 Փաստաթուղթը կցեցի։':state.lang==='ru'?'📎 Документ прикреплён.':'📎 Document attached.');
-
-    // If the application was already submitted, never send another AI turn.
-    // If upload completed the collecting phase, one AI turn may build the final
-    // confirmation preview. The server has already persisted the document.
-    if(String(d.pending_status||'').toUpperCase()==='SUBMITTED'){
-      const p=document.getElementById('aiPreview');
-      if(p)p.innerHTML='';
-      await loadApplications().catch(()=>{});
-      if(typeof renderApplications==='function')renderApplications();
-      return;
-    }
-
-    if(d.pending_ready_for_confirmation){
-      const p=document.getElementById('aiPreview');
-      if(p)p.innerHTML='<div class="notice">🤖 …</div>';
-      const command=await api('/api/master/current/ai-command',{method:'POST',body:{
-        message:state.lang==='hy'?'Փաստաթուղթը կցված է։':state.lang==='ru'?'Документ прикреплён.':'Document attached.',
-        language:state.lang,
-        business_id:state.current?.id||null
-      }});
-      if(p)p.innerHTML=aiCommandHtml(command);
-      if(command.reply)aiAdd('ai',command.reply);
-    } else {
-      const p=document.getElementById('aiPreview');
-      if(p)p.innerHTML='';
-    }
+    state.pendingAiDocument=null;
+    state.pendingAiDocumentName='';
+    return d;
   }catch(e){
     if(status)status.textContent='';
-    toast(e.message||'document_upload_failed');
-  }finally{
-    input.value='';
+    throw e;
   }
 }
-
 function startAiVoice(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){toast(state.lang==='hy'?'Ձայնային մուտքը հասանելի չէ այս բրաուզերում':state.lang==='ru'?'Голосовой ввод недоступен в этом браузере':'Voice input is not available in this browser');return}const r=new SR();r.lang=state.lang==='hy'?'hy-AM':state.lang==='ru'?'ru-RU':'en-US';r.interimResults=false;r.onresult=e=>{const text=e.results?.[0]?.[0]?.transcript||'';const i=document.getElementById('aiInput');if(i)i.value=text};r.onerror=()=>toast('Voice input error');r.start()}
 async function sendAiCommand(){const i=document.getElementById('aiInput'),text=i?.value.trim();if(!text)return;aiAdd('user',text);i.value='';const p=document.getElementById('aiPreview');if(p)p.innerHTML='<div class="notice">🤖 …</div>';try{const d=await api('/api/master/current/ai-command',{method:'POST',body:{message:text,language:state.lang,business_id:state.current?.id||null}});if(p)p.innerHTML=aiCommandHtml(d);if(d.reply)aiAdd('ai',d.reply)}catch(e){if(p)p.innerHTML='';aiAdd('ai',e.message);}}
 function escNl(v){return esc(v).replace(/\r?\n/g,'<br>');}
@@ -165,7 +153,28 @@ function aiCommandHtml(d){
   }
   return h;
 }
-async function confirmAiCommand(){try{const d=await api('/api/master/current/ai-command/confirm',{method:'POST',body:{}});const p=document.getElementById('aiPreview');if(p)p.innerHTML='<div class="notice">✓ '+esc(d.reply||'Կատարված է')+'</div>';await loadBusinesses();if(state.current)await loadBusinessData();}catch(e){toast(e.message)}}
+async function confirmAiCommand(){
+  try{
+    const d=await api('/api/master/current/ai-command/confirm',{method:'POST',body:{}});
+    const p=document.getElementById('aiPreview');
+    if(p)p.innerHTML='<div class="notice">✓ '+esc(d.reply||'Կատարված է')+'</div>';
+    await loadBusinesses();
+    if(d.company?.id)state.current=state.businesses.find(x=>String(x.id)===String(d.company.id))||state.current;
+    if(state.current)await loadBusinessData();
+
+    // The registration is one confirmation only. If the partner selected the
+    // document before confirming, attach it now to the just-created direction.
+    if(state.pendingAiDocument){
+      try{
+        await uploadPendingAiDocument();
+        await loadApplications();
+        if(typeof renderApplications==='function')renderApplications();
+      }catch(e){
+        toast(e.message||'document_upload_failed');
+      }
+    }
+  }catch(e){toast(e.message)}
+}
 async function cancelAiCommand(){try{const i=document.getElementById('aiInput');if(i)i.value='ոչ';await sendAiCommand();}catch(e){toast(e.message)}}
 function renderBusinesses(){document.getElementById('businesses').innerHTML='<div class="heading"><div><h1>'+tr('businesses')+'</h1><p>Յուրաքանչյուր ընկերություն ունի իր առանձին աշխատանքային սենյակը։</p></div><span class="notice small">AI-օպերատոր՝ ընկերության ստեղծում և փոփոխություն՝ հաստատումից հետո</span></div><div class="grid">'+(state.businesses.length?state.businesses.map(b=>'<div class="card click" onclick="openBusiness('+b.id+')"><div class="row"><div class="name">🏢 '+esc(b.name)+'</div>'+status(b.status)+'</div><p class="muted">'+esc(cleanCompanyDescription(b.description||''))+'</p><div class="actions"><button class="btn smallbtn" onclick="event.stopPropagation();openBusiness('+b.id+')">'+tr('open')+' →</button></div></div>').join(''):'<div class="empty">'+tr('empty')+'</div>')+'</div>'}
 async function openBusiness(id){state.current=state.businesses.find(x=>String(x.id)===String(id))||state.current;document.getElementById('businessSelect').value=state.current?.id||'';try{await loadBusinessData();renderBusiness();setView('business',false)}catch(e){toast(e.message)}}
