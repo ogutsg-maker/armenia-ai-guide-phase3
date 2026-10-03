@@ -277,16 +277,28 @@ async def negotiation_get(r):
                WHERE n.id=%s""",(negotiation_id,))
     if not n:
         return j({"ok": False, "error": "negotiation_not_found"}, status=404)
+    requested_role = str(r.query.get("role", "")).strip().lower()
     partner = partners.get(u["telegram_id"])
-    is_partner = bool(partner and int(n["partner_id"]) == int(partner["id"]))
-    is_client = int(n["client_telegram_id"]) == int(u["telegram_id"])
-    if not is_partner and not is_client:
+    can_be_partner = bool(partner and int(n["partner_id"]) == int(partner["id"]))
+    can_be_client = int(n["client_telegram_id"]) == int(u["telegram_id"])
+    if requested_role == "client":
+        if not can_be_client:
+            return j({"ok": False, "error": "forbidden"}, status=403)
+        role = "client"
+    elif requested_role == "partner":
+        if not can_be_partner:
+            return j({"ok": False, "error": "forbidden"}, status=403)
+        role = "partner"
+    elif can_be_client:
+        role = "client"
+    elif can_be_partner:
+        role = "partner"
+    else:
         return j({"ok": False, "error": "forbidden"}, status=403)
     messages = run("""SELECT id,sender_role,sender_id,message,data_json,created_at
                       FROM negotiation_messages
                       WHERE negotiation_id=%s ORDER BY id ASC""",(negotiation_id,),True)
-    return j({"ok": True, "negotiation": n, "messages": messages,
-              "role": "partner" if is_partner else "client"})
+    return j({"ok": True, "negotiation": n, "messages": messages, "role": role})
 
 
 async def negotiation_message(r):
@@ -308,14 +320,26 @@ async def negotiation_message(r):
                WHERE n.id=%s""",(negotiation_id,))
     if not n:
         return j({"ok": False, "error": "negotiation_not_found"}, status=404)
+    requested_role = str(r.query.get("role", "")).strip().lower()
     partner = partners.get(u["telegram_id"])
-    is_partner = bool(partner and int(n["partner_id"]) == int(partner["id"]))
-    is_client = int(n["client_telegram_id"]) == int(u["telegram_id"])
-    if not is_partner and not is_client:
+    can_be_partner = bool(partner and int(n["partner_id"]) == int(partner["id"]))
+    can_be_client = int(n["client_telegram_id"]) == int(u["telegram_id"])
+    if requested_role == "client":
+        if not can_be_client:
+            return j({"ok": False, "error": "forbidden"}, status=403)
+        role = "client"
+    elif requested_role == "partner":
+        if not can_be_partner:
+            return j({"ok": False, "error": "forbidden"}, status=403)
+        role = "partner"
+    elif can_be_client:
+        role = "client"
+    elif can_be_partner:
+        role = "partner"
+    else:
         return j({"ok": False, "error": "forbidden"}, status=403)
     if n["status"] != "active":
         return j({"ok": False, "error": "negotiation_not_active"}, status=409)
-    role = "partner" if is_partner else "client"
     row = run("""INSERT INTO negotiation_messages
                  (negotiation_id,sender_role,sender_id,message,data_json)
                  VALUES(%s,%s,%s,%s,%s)
@@ -422,6 +446,9 @@ def setup_routes(app):
     app.router.add_get("/api/partner/services", partner_services)
     app.router.add_get("/api/partner/notifications", partner_notifications)
     app.router.add_post("/api/partner/notifications/{id}/read", partner_mark_notification_read)
+    app.router.add_get("/api/client/notifications", client_notifications)
+    app.router.add_get("/api/client/negotiations", client_negotiations)
+    app.router.add_post("/api/client/notifications/{id}/read", client_mark_notification_read)
     app.router.add_post("/api/partner/negotiations/{id}/decision", partner_negotiation_decision)
     app.router.add_get("/api/negotiations/{id}", negotiation_get)
     app.router.add_post("/api/negotiations/{id}/messages", negotiation_message)
