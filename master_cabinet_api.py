@@ -483,6 +483,22 @@ async def api_ai_document_upload(request: web.Request):
     with _connect() as conn:
         with conn.cursor() as cur:
             pending_application_id = None
+            route_application_id = request.match_info.get("application_id")
+            if route_application_id not in (None, ""):
+                try:
+                    pending_application_id = int(route_application_id)
+                except (TypeError, ValueError):
+                    return web.json_response({"ok": False, "error": "invalid_application_id"}, status=400)
+                cur.execute(
+                    """SELECT id
+                       FROM partner_applications
+                       WHERE id=%s AND partner_id=%s AND business_id=%s
+                         AND status NOT IN ('approved','rejected')
+                       LIMIT 1""",
+                    (pending_application_id, pid, bid),
+                )
+                if not cur.fetchone():
+                    return web.json_response({"ok": False, "error": "application_not_found"}, status=404)
             cur.execute(
                 """SELECT id,partner_id,business_id,partner_direction_id,master_category_id
                    FROM partner_direction_verification_cases
@@ -647,7 +663,7 @@ async def api_ai_document_upload(request: web.Request):
                     )
                     case = gate.get("case")
                 if not case:
-                    return web.json_response({"ok":False,"error":"direction_verification_not_found"},status=409)
+                    return web.json_response({"ok":False,"error":"document_application_target_not_found"},status=409)
 
             direction_id = int(case["partner_direction_id"])
 
@@ -661,11 +677,11 @@ async def api_ai_document_upload(request: web.Request):
             )
             cur.execute(
                 """INSERT INTO partner_verification_documents
-                   (partner_id,business_id,partner_direction_id,document_type,original_filename,
-                    file_data,mime_type,file_size,status,is_current)
-                   VALUES(%s,%s,%s,'direction_document',%s,%s,%s,%s,'pending',TRUE)
+                   (partner_id,business_id,partner_direction_id,application_id,
+                    document_type,original_filename,file_data,mime_type,file_size,status,is_current)
+                   VALUES(%s,%s,%s,%s,'direction_document',%s,%s,%s,%s,'pending',TRUE)
                    RETURNING id,status,original_filename""",
-                (pid,bid,direction_id,filename,data,allowed[suffix],len(data)),
+                (pid,bid,direction_id,pending_application_id,filename,data,allowed[suffix],len(data)),
             )
             doc = cur.fetchone()
             cur.execute(
@@ -763,6 +779,7 @@ def register_master_cabinet_routes(app, db=None, bot=None):
     # GET /documents is owned by stage3_partner_verification.api_partner_documents.
     # Keep a single route so document reads cannot be shadowed by a legacy handler.
     app.router.add_get("/api/master/{id}/applications/{application_id}", api_application_get)
+    app.router.add_post("/api/master/{id}/applications/{application_id}/document", api_ai_document_upload)
     app.router.add_get("/api/master/{id}/locations", api_locations)
     app.router.add_get("/api/master/{id}/reviews", api_reviews)
     # NOTE: GET /api/master/{id}/documents is already registered by
