@@ -4,7 +4,7 @@ from datetime import datetime,timedelta,timezone
 from aiohttp import web
 import db
 from auth import user
-from ai import extract,ask,admin_prompt,ADMIN_TOOLS
+from ai import extract,ask,admin_prompt,ADMIN_TOOLS,admin_ai_turn
 from classifier import classify
 from config import ADMIN_ID,COMMISSION_MODE,COMMISSION_RATE,IDRAM_PAYMENT_URL
 def j(data,status=200): return web.json_response(data,status=status)
@@ -217,7 +217,7 @@ async def admin_query(request):
     body=await request.json(); text=str(body.get("text") or "").strip()
     if not text:return j({"ok":False,"error":"text_required"},400)
     prompt=admin_prompt(text)
-    meta=await ask(prompt,ADMIN_TOOLS)
+    meta=await admin_ai_turn(text,uid)
     db.exec("INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)",(uid,meta["provider"],meta["model"],"admin","natural_language_query",meta["input_tokens"],meta["output_tokens"]))
     return j({"ok":True,"answer":meta["text"],"tool_calls":[{"name":x.function.name,"arguments":x.function.arguments} for x in meta["tool_calls"]]})
 def setup(app):
