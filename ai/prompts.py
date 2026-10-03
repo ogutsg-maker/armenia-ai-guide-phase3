@@ -1,0 +1,2 @@
+def prompt(context,text):
+ return [{"role":"user","content":f"Armenia AI Guide. Context={context}. AI is interface only; Data Core is source of truth. Never invent IDs, partners, prices, availability or state. Reads are immediate; writes require preview and explicit confirmation. Request: {text}"}]
