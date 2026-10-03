@@ -185,7 +185,12 @@ async def api_webapp_partner_start(request: web.Request):
     """Start the single AI-first partner registration flow."""
     uid, user = await _partner_auth(request)
     lang = user.get("lang") or "hy"
+    # Materialize the partner account at the start of the partner flow.
+    # Company/application data is still created only by the confirmed AI action.
+    db.update_user_field(uid, "role", "partner")
     partner = db.get_partner_by_user(uid)
+    if not partner:
+        partner = data_core.ensure_partner(uid)
     if partner:
         companies = data_core.list_companies(partner_id=int(partner["id"]))
         if companies:
