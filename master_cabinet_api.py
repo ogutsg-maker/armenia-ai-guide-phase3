@@ -58,11 +58,28 @@ def _auth_partner(request: web.Request) -> int:
 
 
 def _partner_id(telegram_id: int) -> int | None:
+    """Resolve the canonical partner from the authenticated Telegram user.
+
+    The cabinet must never lose the partner identity just because an older
+    registration path did not materialize the partners row yet. The user is
+    already authenticated by Telegram; in that case the canonical Data Core
+    helper is used to materialize the partner record once.
+    """
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM partners WHERE user_id=%s", (telegram_id,))
+            cur.execute("SELECT id FROM partners WHERE user_id=%s", (int(telegram_id),))
             row = cur.fetchone()
-            return int(row["id"]) if row else None
+            if row:
+                return int(row["id"])
+    try:
+        import data_core
+        partner = data_core.ensure_partner(int(telegram_id))
+        return int(partner["id"]) if partner else None
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "partner identity materialization failed telegram_id=%s", telegram_id
+        )
+        return None
 
 
 def _business_id(request: web.Request, pid: int) -> int | None:
