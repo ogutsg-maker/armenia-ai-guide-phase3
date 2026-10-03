@@ -73,8 +73,11 @@ async def partner_registration_ai(r):
         if partners.get(u["telegram_id"]):
             return j({"ok": True, "result": {"kind": "message", "answer": "Ваш бизнес уже зарегистрирован.", "destination": "/partner_cabinet.html"}})
         p, company = partners.register(u["telegram_id"], name, phone)
-        profile = {"marz": draft.get("marz"), "city": draft.get("city"), "village": draft.get("village"), "address": draft.get("address"), "hours": draft.get("hours"), "description": draft.get("description"), "services": draft.get("services") or []}
-        exec("UPDATE aig_companies SET description=%s, profile_json=%s WHERE id=%s", (draft.get("description") or None, json.dumps(profile, ensure_ascii=False), company["id"]))
+        if draft.get("marz") or draft.get("city") or draft.get("village") or draft.get("address"):
+            exec(
+                "INSERT INTO aig_addresses(company_id,marz,city,district,address,is_base) VALUES(%s,%s,%s,%s,%s,true)",
+                (company["id"], draft.get("marz") or None, draft.get("city") or draft.get("village") or None, None, draft.get("address") or None),
+            )
         clear_ai_session(u["telegram_id"])
         return j({"ok": True, "result": {"kind": "registered", "company": company, "destination": "/partner_cabinet.html"}})
 
