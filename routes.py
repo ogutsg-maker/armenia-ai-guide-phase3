@@ -26,13 +26,21 @@ async def session(r):
 
 async def register(r):
     u = await user(r)
-    b = await r.json()
+    try:
+        b = await r.json()
+    except Exception:
+        return j({"ok": False, "error": "invalid_json"}, status=400)
     name = str(b.get("name", "")).strip()
     phone = str(b.get("phone", "")).strip()
     if not name or not re.fullmatch(r"[+0-9() .-]{7,30}", phone):
         return j({"ok": False, "error": "name_and_phone_required"}, status=400)
+    p = partners.get(u["telegram_id"])
+    if p:
+        existing = partners.companies(p["id"])
+        if existing:
+            return j({"ok": True, "partner_id": p["id"], "company": existing[0], "destination": "/partner_cabinet.html", "existing": True})
     p, c = partners.register(u["telegram_id"], name, phone)
-    return j({"ok": True, "partner_id": p["id"], "company": c, "destination": "/partner_cabinet.html"})
+    return j({"ok": True, "partner_id": p["id"], "company": c, "destination": "/partner_cabinet.html", "existing": False})
 
 
 async def partner_ai(r):
@@ -158,6 +166,9 @@ def setup_routes(app):
     app.router.add_get("/api/session", session)
     app.router.add_post("/api/partner/register", register)
     app.router.add_post("/api/partner/ai", partner_ai)
+    app.router.add_get("/api/partner/profile", partner_profile)
+    app.router.add_get("/api/partner/services", partner_services)
+    app.router.add_post("/api/partner/services/confirm", partner_service_confirm)
     app.router.add_post("/api/client/search", client_search)
     app.router.add_post("/api/admin/ai", admin_ai)
     app.router.add_get("/api/admin/applications", applications)
