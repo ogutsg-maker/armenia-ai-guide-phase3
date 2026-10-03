@@ -56,8 +56,19 @@ async def partner_ai(r):
     if not text:
         return j({"ok": False, "error": "text_required"}, status=400)
     confirmation = str(b.get("confirm", "")).strip().lower()
+    normalized_text = " ".join(text.lower().replace("ё", "е").replace("։", " ").replace("՝", " ").split())
+    # Confirmation is a natural-language action. The partner must be able to
+    # type "подтверждаю" / "подтверждаю заявку" / "да" instead of pressing
+    # the UI button. Keep this as a deterministic fast path before Groq.
+    confirmation_phrases = {
+        "yes", "confirm", "confirmed", "համաձայն եմ", "համաձայն",
+        "այո", "հաստատում եմ", "հաստատել", "подтверждаю",
+        "подтверждаю заявку", "подтвердить", "подтверждаю отправку",
+        "да", "согласен", "согласна",
+    }
+    is_text_confirmation = normalized_text in confirmation_phrases
     state = get_ai_session(u["telegram_id"])
-    if confirmation in ("yes", "confirm", "համաձայն եմ", "подтверждаю", "да"):
+    if confirmation in confirmation_phrases or is_text_confirmation:
         pending = state.get("pending") if state else None
         if not pending or pending.get("action") not in ("create_service", "create_services"):
             return j({"ok": False, "error": "nothing_to_confirm"}, status=400)
