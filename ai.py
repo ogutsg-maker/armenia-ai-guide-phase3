@@ -49,7 +49,7 @@ async def execute_tool(name,args,context):
     if not fn: raise RuntimeError("unknown_tool:"+name)
     return await fn(args,context)
 async def admin_tool(name,args,uid):
-    import db
+    from core import DataCore
     if name=="admin_list_service_applications":
         q="SELECT a.*,s.name service_name,s.status service_status,c.name company_name FROM aig_service_applications a JOIN aig_services s ON s.id=a.service_id JOIN aig_companies c ON c.id=s.company_id"
         vals=[]

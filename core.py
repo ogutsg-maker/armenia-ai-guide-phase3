@@ -17,3 +17,24 @@ class DataCore:
         if mode=="on_top": return round(price*rate/100,2)
         if mode=="inside": return round(price*rate/(100+rate),2)
         return 0.0
+
+    @staticmethod
+    def admin_tool(name,args):
+        if name=="admin_list_service_applications":
+            q="SELECT a.*,s.name service_name,s.status service_status,c.name company_name FROM aig_service_applications a JOIN aig_services s ON s.id=a.service_id JOIN aig_companies c ON c.id=s.company_id";v=[]
+            if args.get("status"):q+=" WHERE a.status=%s OR s.status=%s";v=[args["status"],args["status"]]
+            return db.all(q+" ORDER BY a.id DESC",v)
+        if name=="admin_list_uncategorized_services":
+            return db.all("SELECT s.id,s.name,s.status,s.classification_confidence,s.classification_margin,c.name company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE s.catalog_category_id IS NULL OR s.status='CLASSIFICATION_PENDING' ORDER BY s.id DESC")
+        if name=="admin_ai_costs_today":
+            return db.one("SELECT count(*) operations,coalesce(sum(input_tokens+output_tokens),0) tokens,coalesce(sum(usd),0) usd FROM aig_ai_costs WHERE created_at::date=current_date")
+        if name=="admin_list_potential_partners":
+            q="SELECT * FROM aig_potential_partners WHERE 1=1";v=[]
+            if args.get("city"):q+=" AND city ILIKE %s";v.append("%"+args["city"]+"%")
+            if args.get("status"):q+=" AND status=%s";v.append(args["status"])
+            return db.all(q+" ORDER BY id DESC",v)
+        if name=="admin_get_order":
+            return db.one("SELECT b.*,n.status negotiation_status,s.name service_name,c.name company_name FROM aig_bookings b JOIN aig_negotiations n ON n.id=b.negotiation_id JOIN aig_services s ON s.id=n.service_id JOIN aig_companies c ON c.id=s.company_id WHERE b.id=%s",(int(args["booking_id"]),))
+        if name=="admin_list_arbitrations":
+            return db.all("SELECT a.*,b.status booking_status FROM aig_arbitrations a JOIN aig_bookings b ON b.id=a.booking_id WHERE a.status='OPEN' ORDER BY a.id DESC")
+        raise RuntimeError("unsupported_tool:"+name)
