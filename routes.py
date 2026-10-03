@@ -204,10 +204,29 @@ async def partner_upload_direction_document(r):
     # request after uploading the document; no re-entry of the service text.
     pending_preview = None
     if isinstance(pending, dict):
+        direction_documents = []
+        for direction_id in {
+            int(s.get("direction_category_id"))
+            for s in (pending.get("services") or [])
+            if s.get("direction_category_id")
+        }:
+            doc = run(
+                "SELECT id,file_name,status FROM aig_direction_documents "
+                "WHERE company_id=%s AND catalog_category_id=%s ORDER BY id DESC LIMIT 1",
+                (company_id, direction_id),
+            )
+            if doc:
+                direction_documents.append({
+                    "direction_id": direction_id,
+                    "id": doc["id"],
+                    "file_name": doc["file_name"],
+                    "status": doc["status"],
+                })
         pending_preview = {
             "kind": "preview",
             "services": pending.get("services") or [],
             "missing_documents": pending.get("missing_documents") or [],
+            "direction_documents": direction_documents,
             "can_submit_to_admin": not (pending.get("missing_documents") or []),
         }
     return j({"ok": True, "document": row, "direction_id": direction_id, "result": pending_preview})
