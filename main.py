@@ -53,7 +53,7 @@ WEB_APPS_DIR = BASE_DIR / "web_apps"
 
 # Telegram WebView can retain HTML aggressively. Change this value when a
 # frontend deployment must invalidate an already opened Mini App URL.
-WEBAPP_VERSION = "20261002-5"
+WEBAPP_VERSION = "20261003-1"
 
 
 def _ensure_runtime_schema() -> None:
