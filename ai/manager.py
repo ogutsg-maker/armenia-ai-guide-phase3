@@ -166,6 +166,76 @@ def _extract_from_text(text, data):
                 item["price_type"] = "from"
     return data
 
+async def partner_registration_preview(uid, text):
+    """Maintain a conversational partner-registration draft until confirmation."""
+    state = partner_context(uid)
+    existing = state.get("partner")
+    if existing:
+        companies = state.get("companies") or []
+        if companies:
+            return {"kind": "message", "answer": "Ваш бизнес уже зарегистрирован. Откройте кабинет партнёра.", "destination": "/partner_cabinet.html"}
+
+    session = __import__("ai.session", fromlist=["get"]).get(uid)
+    pending = (session or {}).get("pending") if session else None
+    draft = dict(pending) if isinstance(pending, dict) and pending.get("action") == "register_partner" else {}
+
+    # Deterministic fields are always authoritative when explicitly present.
+    source = str(text or "").strip()
+    phone_match = re.search(r"(?:\+?\d[\d\s().-]{6,}\d)", source)
+    if phone_match:
+        draft["phone"] = phone_match.group(0).strip()
+    name_match = re.search(r"[«“\"]([^»”\"]+)[»”\"]", source)
+    if name_match:
+        draft["name"] = name_match.group(1).strip()
+
+    try:
+        result = await turn(uid, "REGISTRATION", source)
+        extracted = parse_json(result["text"])
+    except Exception:
+        extracted = {}
+
+    if isinstance(extracted, dict):
+        for key in ("name", "phone", "marz", "city", "village", "address", "hours", "description"):
+            value = extracted.get(key)
+            if value not in (None, "", [], {}):
+                draft[key] = value
+        services = extracted.get("services")
+        if isinstance(services, list) and services:
+            draft["services"] = services
+
+    # Normalize common aliases returned by AI.
+    draft["name"] = str(draft.get("name") or "").strip()
+    draft["phone"] = str(draft.get("phone") or "").strip()
+    draft["city"] = str(draft.get("city") or "").strip()
+    draft["marz"] = str(draft.get("marz") or "").strip()
+    draft["village"] = str(draft.get("village") or "").strip()
+    draft["address"] = str(draft.get("address") or "").strip()
+    draft["hours"] = str(draft.get("hours") or "").strip()
+    draft["description"] = str(draft.get("description") or "").strip()
+    draft["services"] = draft.get("services") if isinstance(draft.get("services"), list) else []
+
+    required = [
+        ("name", "անվանումը"),
+        ("phone", "հեռախոսահամարը"),
+        ("city", "քաղաքը/գյուղը"),
+        ("address", "ճշգրիտ հասցեն"),
+        ("hours", "աշխատանքային օրերն ու ժամերը"),
+    ]
+    missing = [label for key, label in required if not draft.get(key)]
+    __import__("ai.session", fromlist=["save"]).save(uid, "REGISTRATION", {"action": "register_partner", "draft": draft, "missing": missing})
+    return {
+        "kind": "registration_preview" if not missing else "registration_missing",
+        "draft": draft,
+        "missing": missing,
+        "can_confirm": not missing,
+        "answer": (
+            "Պարզ է։ Արդեն ունեմ՝ անվանումը, հեռախոսը և տրամադրված տվյալները։ "
+            "Մնացածը կարող եք ուղարկել մեկ հաղորդագրությամբ։"
+            if missing else
+            "Տվյալները լրացված են։ Ստորև վերջնական նախադիտումն է։ Հաստատելուց հետո կստեղծվի բիզնեսի գրանցումը."
+        ),
+    }
+
 
 async def partner_service_preview(uid, text):
     state = partner_context(uid)
