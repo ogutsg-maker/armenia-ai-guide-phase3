@@ -4,7 +4,9 @@ from aiohttp import web
 from auth import user, require_admin
 from data import partners
 from data.core import active_services
-from ai.manager import turn
+from ai.manager import turn, partner_service_preview
+from ai.session import get as get_ai_session, clear as clear_ai_session
+from lifecycle.services import create_after_confirmation
 from db import run, exec
 
 
@@ -36,8 +38,22 @@ async def register(r):
 async def partner_ai(r):
     u = await user(r)
     b = await r.json()
-    return j({"ok": True, "result": await turn(u["telegram_id"], "PARTNER", str(b.get("text", "")))})
-
+    text = str(b.get('text','')).strip()
+    if not text: return j({'ok':False,'error':'text_required'}, status=400)
+    confirmation = str(b.get('confirm','')).lower()
+    state = get_ai_session(u['telegram_id'])
+    if confirmation in ('yes','confirm','համաձայն եմ','подтверждаю','да'):
+        pending = state.get('pending') if state else None
+        if not pending or pending.get('action') != 'create_service': return j({'ok':False,'error':'nothing_to_confirm'}, status=400)
+        service = pending['service']
+        row,status = create_after_confirmation(u['telegram_id'],service['company_id'],service)
+        clear_ai_session(u['telegram_id'])
+        return j({'ok':True,'kind':'created','service':row,'status':status})
+    try:
+        result = await partner_service_preview(u['telegram_id'],text)
+        return j({'ok':True,'result':result})
+    except ValueError as exc:
+        return j({'ok':False,'error':str(exc)}, status=400)
 
 async def client_search(r):
     u = await user(r)
