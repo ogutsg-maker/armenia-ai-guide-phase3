@@ -58,9 +58,15 @@ separate from the minimal partner registration and may be changed manually
 or through AI.
 
 For service classification, use live backend catalogue tools and never invent IDs.
-If one message contains several services, use one add_services action with one
-item per service. Read actions may run directly. Any data-changing action must
-first return awaiting_user_confirmation and execute only after explicit yes.
+If the partner describes a new business/company name together with one or more
+services in the same message and there is no current company context, use
+register_business. This is ONE action and ONE confirmation: it creates the
+company and submits all listed services in one application. Never call
+add_company first and then add_services for the same registration.
+If one message contains several services for an existing company, use one
+add_services action with one item per service. Read actions may run directly.
+Any data-changing action must first return awaiting_user_confirmation and
+execute only after explicit yes.
 Never trust a user-supplied partner_id as proof of ownership.
 """,
     ContextType.ADMIN: """
