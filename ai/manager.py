@@ -24,8 +24,10 @@ def parse_json(value):
         raise
 
 
-async def turn(uid, context, text):
-    context_data = partner_context(uid) if context == "PARTNER" else None
+async def turn(uid, context, text, extra_context=None):
+    context_data = partner_context(uid) if context in ("PARTNER", "REGISTRATION") else None
+    if extra_context:
+        context_data = {**(context_data or {}), **extra_context}
     result = await chat(prompt(context, text, context_data))
     try:
         exec(
@@ -244,6 +246,14 @@ async def partner_service_preview(uid, text):
     if len(state["companies"]) != 1:
         return {"kind": "select_company", "companies": state["companies"]}
 
+    session = __import__("ai.session", fromlist=["get"]).get(uid)
+    pending = (session or {}).get("pending") if session else None
+    pending_services = []
+    if isinstance(pending, dict) and pending.get("action") in ("create_service", "create_services"):
+        pending_services = pending.get("services") or []
+        if not isinstance(pending_services, list):
+            pending_services = []
+
     explicit_services = _recover_explicit_services(text)
 
     # A partner command that explicitly contains service names and prices is
@@ -257,7 +267,7 @@ async def partner_service_preview(uid, text):
             "location": {},
         }
     else:
-        result = await turn(uid, "PARTNER", text)
+        result = await turn(uid, "PARTNER", text, {"service_draft": pending_services})
         data = _extract_from_text(text, parse_json(result["text"]))
         if data.get("action") != "create_service":
             return {"kind": "message", "answer": data.get("answer", "")}
@@ -277,6 +287,14 @@ async def partner_service_preview(uid, text):
         }]
 
     default_location = data.get("location") if isinstance(data.get("location"), dict) else {}
+    if pending_services and not explicit_services and raw_services:
+        base = [dict(x) for x in pending_services]
+        for idx, item in enumerate(raw_services):
+            if idx < len(base):
+                base[idx] = {**base[idx], **{k:v for k,v in item.items() if v not in (None, "", [], {})}}
+            else:
+                base.append(item)
+        raw_services = base
     services = [_normalise_service(state["companies"][0]["id"], item, text, default_location) for item in raw_services]
     partner_phone = str((state.get("partner") or {}).get("phone") or "").strip() or None
     for service in services:
@@ -326,8 +344,39 @@ async def partner_service_preview(uid, text):
             for service in services:
                 service["internal_phone"] = partner_phone
 
-    if not services or any(not s["name"] or s["price_type"] not in ("fixed", "from") or s["price_amd"] is None for s in services):
-        raise ValueError("service_data_incomplete")
+    missing_fields = []
+    for index, service in enumerate(services, 1):
+        if not service["name"]:
+            missing_fields.append({"service": index, "field": "name", "label": "անվանումը"})
+        if service["price_amd"] is None:
+            missing_fields.append({"service": index, "field": "price_amd", "label": "գինը"})
+        elif service["price_type"] not in ("fixed", "from"):
+            missing_fields.append({"service": index, "field": "price_type", "label": "գնի տեսակը՝ ֆիքսված կամ «սկսած»"})
+
+    if not services:
+        missing_fields.extend([
+            {"service": 1, "field": "name", "label": "ծառայության անվանումը"},
+            {"service": 1, "field": "price_amd", "label": "գինը"},
+        ])
+
+    if missing_fields:
+        save(uid, "PARTNER", {
+            "action": "create_services",
+            "services": services,
+            "missing_fields": missing_fields,
+            "missing_documents": [],
+        })
+        labels = []
+        for item in missing_fields:
+            if item["label"] not in labels:
+                labels.append(item["label"])
+        return {
+            "kind": "service_data_incomplete",
+            "services": services,
+            "missing_fields": missing_fields,
+            "can_confirm": False,
+            "answer": "Շատ լավ, տվյալների մեծ մասը արդեն ունեմ։ Խնդրում եմ նշեք միայն բացակայող տվյալները՝ " + ", ".join(labels) + "։",
+        }
 
     missing = {}
     for service in services:
@@ -351,6 +400,7 @@ async def partner_service_preview(uid, text):
         "action": "create_services",
         "services": services,
         "missing_documents": list(missing.values()),
+        "missing_fields": [],
     })
     return {
         "kind": "preview",
