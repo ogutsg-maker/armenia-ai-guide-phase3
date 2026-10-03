@@ -482,6 +482,7 @@ async def api_ai_document_upload(request: web.Request):
 
     with _connect() as conn:
         with conn.cursor() as cur:
+            pending_application_id = None
             cur.execute(
                 """SELECT id,partner_id,business_id,partner_direction_id,master_category_id
                    FROM partner_direction_verification_cases
@@ -518,6 +519,7 @@ async def api_ai_document_upload(request: web.Request):
                         application_row = fallback_cur.fetchone()
 
                 if application_row:
+                    pending_application_id = int(application_row["id"])
                     application = get_application_full(
                         int(application_row["id"]), partner_id=pid
                     )
@@ -582,6 +584,45 @@ async def api_ai_document_upload(request: web.Request):
                             direction_id = int(case["partner_direction_id"])
                         else:
                             direction_id = None
+
+            if not case and pending_application_id:
+                # The application is the authoritative document target.
+                # Direction classification may still be unresolved, so a
+                # document must never be blocked by direction verification.
+                cur.execute(
+                    """UPDATE partner_verification_documents
+                       SET is_current=FALSE,
+                           status=CASE WHEN status='pending' THEN 'replaced' ELSE status END
+                       WHERE partner_id=%s AND business_id=%s AND application_id=%s
+                         AND is_current=TRUE AND status='pending'""",
+                    (pid, bid, pending_application_id),
+                )
+                cur.execute(
+                    """INSERT INTO partner_verification_documents
+                       (partner_id,business_id,partner_direction_id,application_id,
+                        document_type,original_filename,file_data,mime_type,file_size,status,is_current)
+                       VALUES(%s,%s,NULL,%s,'business_document',%s,%s,%s,%s,'pending',TRUE)
+                       RETURNING id,status,original_filename""",
+                    (pid,bid,pending_application_id,filename,data,allowed[suffix],len(data)),
+                )
+                doc = cur.fetchone()
+                cur.execute(
+                    """UPDATE partner_applications
+                       SET status='pending_admin',document_id=%s,updated_at=NOW()
+                       WHERE id=%s AND partner_id=%s AND business_id=%s
+                         AND status IN ('pending_partner','pending_admin','document_pending','document_under_review')""",
+                    (int(doc["id"]),pending_application_id,pid,bid),
+                )
+                conn.commit()
+                return web.json_response({
+                    "ok": True,
+                    "document_id": int(doc["id"]),
+                    "status": doc["status"],
+                    "filename": doc["original_filename"],
+                    "application_id": pending_application_id,
+                    "direction_id": None,
+                    "verification_case_id": None,
+                })
 
             if not case:
                 # Last deterministic fallback: the direction may already exist
