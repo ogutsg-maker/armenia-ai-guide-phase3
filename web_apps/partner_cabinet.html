@@ -12,12 +12,27 @@
           (p.city?'<div class="muted">📍 '+esc(p.city)+'</div>':'')+
           (p.price_amd!=null?'<div class="muted">'+esc(p.price_type||'')+' '+esc(p.price_amd)+' AMD</div>':'')+
           '<div class="muted">Запрос #'+esc(p.request_id)+'</div>'+
-          (x.read_at?'':'<button class="btn" style="margin-top:8px" onclick="markNotification('+Number(x.id)+')">Прочитано</button>');
+          (x.read_at?'':'<button class="btn" style="margin-top:8px" onclick="markNotification('+Number(x.id)+')">Прочитано</button>')+
+          (x.kind==='new_client_request' && p.negotiation_id?'<div class="row" style="margin-top:10px"><button class="btn" onclick="decideNegotiation('+Number(p.negotiation_id)+',\'interest\')">✅ Мне интересно</button><button class="btn" onclick="decideNegotiation('+Number(p.negotiation_id)+',\'decline\')">❌ Не интересно</button></div>':'');
       }else{body='<b>'+esc(x.kind||'Уведомление')+'</b><pre>'+esc(JSON.stringify(p,null,2))+'</pre>';}
       return '<div class="card">'+body+'</div>';
     }).join('');
   }catch(e){app.innerHTML='<div>'+esc(e.message)+'</div>'}
 }
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;')}
+async function decideNegotiation(id,action){
+  try{
+    const d=await api('/api/partner/negotiations/'+id+'/decision',{method:'POST',body:JSON.stringify({action})});
+    if(d.status==='active'){
+      app.innerHTML='<h3>💬 Переговоры</h3><div class="card">✅ Вы подтвердили интерес.<br>Переговоры с клиентом активированы.</div>';
+    }else if(d.status==='declined'){
+      app.innerHTML='<h3>🔔 Уведомление</h3><div class="card">❌ Запрос отклонён. Клиентский запрос возвращён в поиск.</div>';
+    }else if(d.expired){
+      app.innerHTML='<h3>🔔 Уведомление</h3><div class="card">⏱ Срок интереса истёк. Запрос возвращён в поиск.</div>';
+    }else{
+      loadNotifications();
+    }
+  }catch(e){app.innerHTML='<div>'+esc(e.message)+'</div>'}
+}
 async function markNotification(id){try{await api('/api/partner/notifications/'+id+'/read',{method:'POST',body:'{}'});loadNotifications()}catch(e){app.innerHTML='<div>'+esc(e.message)+'</div>'}}
 async function loadServices(){let d=await api('/api/partner/services');app.innerHTML='<h3>🛠 Услуги</h3>'+((d.items.length)?d.items.map(x=>'<div class="card"><b>'+x.name+'</b><div>'+x.price_type+' · '+x.price_amd+' AMD</div><div class="muted">'+x.status+'</div></div>').join(''):'<div>Դեռ ծառայություններ չկան։</div>')}function servicePrompt(){app.innerHTML='<h3>🤖 AI-Помощник</h3><p>Գրեք, օրինակ՝ «Создай услугу ремонт холодильников от 5000, работаю 10–20, выезжаю по Раздану».</p><div class="row"><input id="txt" placeholder="Ваш запрос"><button class="btn" onclick="preview()">Հասկանալ</button></div><div id="out"></div>'}async function preview(){try{let d=await api('/api/partner/ai',{method:'POST',body:JSON.stringify({text:txt.value})}); const pv=d.result&&d.result.preview?d.result.preview:null; out.innerHTML='<div class="card"><b>🤖 Նախադիտում</b>'+(pv?'<pre>'+JSON.stringify(pv,null,2)+'</pre><button class="btn" onclick="confirmIt()">✓ Հաստատել</button>':'<div>'+((d.result&&d.result.answer)||d.error||'')+'</div>')+'</div>'}catch(e){out.textContent=e.message}}async function confirmIt(){let d=await api('/api/partner/services/confirm',{method:'POST',body:'{}'});out.innerHTML='<div class="card">✓ Հայտը ստեղծված է։ Սպասում է admin ստուգմանը։</div>';loadServices()}loadProfile();</script></html>
