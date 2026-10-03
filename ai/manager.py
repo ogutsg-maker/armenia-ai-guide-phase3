@@ -396,10 +396,41 @@ async def partner_service_preview(uid, text):
                 "name_en": direction["name_en"],
             }
 
+    # If several services were submitted together and the classifier identified
+    # exactly one direction, keep that direction on the remaining services too.
+    # This keeps the shared direction document attached to the whole application.
+    known_directions = {}
+    for service in services:
+        direction = service.get("direction")
+        if direction and direction.get("id"):
+            known_directions[int(direction["id"])] = direction
+    if len(known_directions) == 1:
+        shared_direction = next(iter(known_directions.values()))
+        for service in services:
+            if not service.get("direction_category_id"):
+                service["direction_category_id"] = shared_direction["id"]
+                service["direction"] = shared_direction
+
+    direction_documents = []
+    for direction_id in known_directions:
+        doc = run(
+            "SELECT id,file_name,status FROM aig_direction_documents "
+            "WHERE company_id=%s AND catalog_category_id=%s ORDER BY id DESC LIMIT 1",
+            (state["companies"][0]["id"], direction_id),
+        )
+        if doc:
+            direction_documents.append({
+                "direction_id": direction_id,
+                "id": doc["id"],
+                "file_name": doc["file_name"],
+                "status": doc["status"],
+            })
+
     save(uid, "PARTNER", {
         "action": "create_services",
         "services": services,
         "missing_documents": list(missing.values()),
+        "direction_documents": direction_documents,
         "missing_fields": [],
     })
     # A missing catalog classification must not block the partner after all
@@ -414,6 +445,7 @@ async def partner_service_preview(uid, text):
         "kind": "preview",
         "services": services,
         "missing_documents": list(missing.values()),
+        "direction_documents": direction_documents,
         "can_submit_to_admin": can_submit,
         "ai_response_text": "Ամեն ինչ պատրաստ է։" + document_hint if can_submit or missing else "",
     }
