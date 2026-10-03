@@ -107,27 +107,6 @@ async def _storage_upload(path, content, mime):
             raise RuntimeError(f"Supabase Storage upload failed ({status}): {body[:1000]}")
 
 
-async def _storage_signed_url(path, expires=900):
-    base, key, bucket = _storage_config()
-    await _ensure_storage_bucket()
-    url = f"{base}/storage/v1/object/sign/{bucket}/{path}"
-    status, body, _ = await _storage_request(
-        "POST", url, key=key,
-        headers={"Content-Type": "application/json"},
-        json={"expiresIn": expires},
-        timeout=aiohttp.ClientTimeout(total=30),
-    )
-    if status not in (200, 201):
-        raise RuntimeError(f"Supabase Storage signed URL failed ({status}): {body[:1000]}")
-    try:
-        payload = __import__("json").loads(body)
-    except Exception:
-        payload = {}
-    signed = payload.get("signedURL") or payload.get("signedUrl")
-    if not signed:
-        raise RuntimeError(f"Supabase did not return a signed URL: {body[:500]}")
-    return signed if signed.startswith("http") else base + signed
-
 def _json_safe(value):
     if isinstance(value, (datetime, date)):
         return value.isoformat()
@@ -278,23 +257,6 @@ def _admin_telegram_id(request, bot_token=None, admin_id=None):
     if not admin_id or uid != admin_id:
         raise web.HTTPForbidden(text='{"ok":false,"error":"admin_access_required"}', content_type="application/json")
     return uid
-
-
-async def _storage_signed_url(path, expires=900):
-    base, key, bucket = _storage_config()
-    url = f"{base}/storage/v1/object/sign/{bucket}/{path}"
-    headers = {"Authorization": f"Bearer {key}", "apikey": key, "Content-Type": "application/json"}
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, headers=headers, json={"expiresIn": expires}) as response:
-            body = await response.json(content_type=None)
-            if response.status not in (200, 201):
-                raise RuntimeError(f"Supabase Storage signed URL failed ({response.status}): {body}")
-            signed = body.get("signedURL") or body.get("signedUrl")
-            if not signed:
-                raise RuntimeError("Supabase did not return a signed URL")
-            return signed if signed.startswith("http") else base + signed
-
 
 
 async def api_admin_auth(request):
@@ -1668,7 +1630,6 @@ def register_stage3_routes(app, bot_token=None, admin_id=None, ensure_schema=Tru
     app["stage3_bot_token"] = bot_token
     app["stage3_admin_id"] = admin_id
     app.router.add_get("/api/master/{id}/documents", api_partner_documents)
-    app.router.add_post("/api/master/{id}/documents/upload", api_partner_document_upload)
     app.router.add_post("/api/master/{id}/directions/{direction_id}/verification-document", api_partner_document_upload)
     app.router.add_get("/api/admin/auth", api_admin_auth)
     app.router.add_get("/api/admin/partner-applications", api_admin_partner_applications)
