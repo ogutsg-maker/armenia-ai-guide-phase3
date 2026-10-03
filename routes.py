@@ -208,8 +208,7 @@ async def partner_upload_direction_document(r):
             "kind": "preview",
             "services": pending.get("services") or [],
             "missing_documents": pending.get("missing_documents") or [],
-            "can_submit_to_admin": not (pending.get("missing_documents") or [])
-                and all(s.get("classification") for s in (pending.get("services") or [])),
+            "can_submit_to_admin": not (pending.get("missing_documents") or []),
         }
     return j({"ok": True, "document": row, "direction_id": direction_id, "result": pending_preview})
 
@@ -670,7 +669,7 @@ async def admin_services(r):
              WHERE company_id=s.company_id AND catalog_category_id=s.direction_category_id
              ORDER BY id DESC LIMIT 1
            ) d ON true
-           WHERE s.status IN ('PENDING_ADMIN','NEEDS_CORRECTION')
+           WHERE s.status IN ('PENDING_ADMIN','CLASSIFICATION_PENDING','NEEDS_CORRECTION')
            ORDER BY s.id DESC""",
         many=True,
     )
