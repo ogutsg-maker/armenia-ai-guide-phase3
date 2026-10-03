@@ -288,14 +288,8 @@ class ToolRegistry:
                                 "price_type": {
                                     "type": "string",
                                     "enum": ["from", "to", "fixed"],
-                                    "description": "Обязательно. Тип цены: from для «от»/«դրամից», to для «до», fixed для точной фиксированной цены. Никогда не передавай null."
-                                },
-                                "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
-                                "service_location": _location_schema(),
-                                "coverage": _coverage_schema(),
-                                "address_text": _nullable("string"),
-                                "phone": _nullable("string"),
-                                "description": _nullable("string")
+                                    "description": "from=դրամից/от; to=մինչև/до; fixed=exact. Never null."
+                                }
                             },
                             "required": ["name", "price", "price_type"],
                             "additionalProperties": False
