@@ -258,6 +258,72 @@ async def partner_negotiation_decision(r):
     return j({"ok": True, "status": "declined", "negotiation_id": negotiation_id})
 
 
+
+async def negotiation_get(r):
+    u = await user(r)
+    try:
+        negotiation_id = int(r.match_info["id"])
+    except (TypeError, ValueError):
+        return j({"ok": False, "error": "invalid_negotiation_id"}, status=400)
+    n = run("""SELECT n.id,n.status,n.request_id,n.service_id,n.partner_id,
+                      n.agreed_min,n.agreed_max,n.agreed_price,n.commission_base,
+                      n.partner_interest_at,n.created_at,n.interest_deadline,
+                      s.name AS service_name,c.name AS company_name,
+                      r.client_telegram_id,r.city,r.district
+               FROM aig_negotiations n
+               JOIN aig_client_requests r ON r.id=n.request_id
+               JOIN aig_services s ON s.id=n.service_id
+               JOIN aig_companies c ON c.id=s.company_id
+               WHERE n.id=%s""",(negotiation_id,))
+    if not n:
+        return j({"ok": False, "error": "negotiation_not_found"}, status=404)
+    partner = partners.get(u["telegram_id"])
+    is_partner = bool(partner and int(n["partner_id"]) == int(partner["id"]))
+    is_client = int(n["client_telegram_id"]) == int(u["telegram_id"])
+    if not is_partner and not is_client:
+        return j({"ok": False, "error": "forbidden"}, status=403)
+    messages = run("""SELECT id,sender_role,sender_id,message,data_json,created_at
+                      FROM negotiation_messages
+                      WHERE negotiation_id=%s ORDER BY id ASC""",(negotiation_id,),True)
+    return j({"ok": True, "negotiation": n, "messages": messages,
+              "role": "partner" if is_partner else "client"})
+
+
+async def negotiation_message(r):
+    u = await user(r)
+    try:
+        negotiation_id = int(r.match_info["id"])
+    except (TypeError, ValueError):
+        return j({"ok": False, "error": "invalid_negotiation_id"}, status=400)
+    try:
+        body = await r.json()
+    except Exception:
+        return j({"ok": False, "error": "invalid_json"}, status=400)
+    message = str(body.get("message", "")).strip()
+    if not message or len(message) > 4000:
+        return j({"ok": False, "error": "message_required"}, status=400)
+    n = run("""SELECT n.id,n.status,n.partner_id,r.client_telegram_id
+               FROM aig_negotiations n
+               JOIN aig_client_requests r ON r.id=n.request_id
+               WHERE n.id=%s""",(negotiation_id,))
+    if not n:
+        return j({"ok": False, "error": "negotiation_not_found"}, status=404)
+    partner = partners.get(u["telegram_id"])
+    is_partner = bool(partner and int(n["partner_id"]) == int(partner["id"]))
+    is_client = int(n["client_telegram_id"]) == int(u["telegram_id"])
+    if not is_partner and not is_client:
+        return j({"ok": False, "error": "forbidden"}, status=403)
+    if n["status"] != "active":
+        return j({"ok": False, "error": "negotiation_not_active"}, status=409)
+    role = "partner" if is_partner else "client"
+    row = run("""INSERT INTO negotiation_messages
+                 (negotiation_id,sender_role,sender_id,message,data_json)
+                 VALUES(%s,%s,%s,%s,%s)
+                 RETURNING id,sender_role,sender_id,message,data_json,created_at""",
+              (negotiation_id,role,u["telegram_id"],message,json.dumps({},ensure_ascii=False)))
+    return j({"ok": True, "message": row})
+
+
 async def partner_mark_notification_read(r):
     u = await user(r)
     notification_id = int(r.match_info["id"])
@@ -357,6 +423,8 @@ def setup_routes(app):
     app.router.add_get("/api/partner/notifications", partner_notifications)
     app.router.add_post("/api/partner/notifications/{id}/read", partner_mark_notification_read)
     app.router.add_post("/api/partner/negotiations/{id}/decision", partner_negotiation_decision)
+    app.router.add_get("/api/negotiations/{id}", negotiation_get)
+    app.router.add_post("/api/negotiations/{id}/messages", negotiation_message)
     app.router.add_post("/api/partner/services/confirm", partner_service_confirm)
     app.router.add_post("/api/client/search", client_search)
     app.router.add_post("/api/client/services/{service_id}/select", client_select_service)
