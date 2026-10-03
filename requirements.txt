@@ -1,26 +1,8 @@
-# Telegram Bot Framework
 aiogram==3.13.1
-
- # AI Providers
-openai>=1.50
-groq>=0.5
-
-# Database
-psycopg[binary]>=3.1
-
-# Environment
-python-dotenv==1.0.1
-
-# Data validation
-pydantic>=2.9
-
-# HTTP server (aiohttp for web hooks + static)
 aiohttp>=3.9
-
-# QR codes
+openai>=1.50
+psycopg[binary]>=3.1
+python-dotenv==1.0.1
+pydantic>=2.9
 qrcode[pil]>=7.4
 Pillow>=10.0
-
-# Audio processing
-pypdf>=5.0
-
