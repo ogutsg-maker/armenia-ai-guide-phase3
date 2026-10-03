@@ -73,9 +73,12 @@ def _direction(category):
     return category
 
 
-def _has_active_document(company_id, direction_id):
+def _has_direction_document(company_id, direction_id):
+    # Uploading a document is enough to let the service application reach Admin.
+    # Admin later decides whether the direction document becomes ACTIVE.
     return bool(run(
-        "SELECT id FROM aig_direction_documents WHERE company_id=%s AND catalog_category_id=%s AND status='ACTIVE' ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM aig_direction_documents WHERE company_id=%s AND catalog_category_id=%s "
+        "AND status IN ('PENDING_ADMIN','ACTIVE') ORDER BY id DESC LIMIT 1",
         (company_id, direction_id),
     ))
 
@@ -181,7 +184,7 @@ async def partner_service_preview(uid, text):
         service["classification_margin"] = category.get("classification_margin") if category else None
         service["classification"] = category
         service["direction"] = direction
-        if direction and not _has_active_document(service["company_id"], direction["id"]):
+        if direction and not _has_direction_document(service["company_id"], direction["id"]):
             missing[str(direction["id"])] = {
                 "id": direction["id"],
                 "name_am": direction["name_am"],
