@@ -171,6 +171,54 @@ async def partner_service_preview(uid, text):
                 for service in services:
                     service["internal_phone"] = partner_phone
 
+    # Deterministic recovery is the final guard: explicit service names/prices written
+    # by the partner must not be lost because the model returned an incomplete JSON shape.
+    def _recover_explicit_services(source):
+        chunks = re.split(
+            r",\\s*(?=(?:ремонт|услуга|установка|замена|чистка|диагностика|մաքրում|վերանորոգում|տեղադրում|փոխարինում)\\b)",
+            str(source),
+            flags=re.I,
+        )
+        recovered = []
+        for chunk in chunks:
+            m = re.search(
+                r"(.+?)\\s+(?:от|սկսած|from)\\s*([0-9][0-9\\s.,]*)\\s*(?:драм(?:ов)?|amd|֏)?",
+                chunk,
+                flags=re.I,
+            )
+            if not m:
+                continue
+            name = re.sub(
+                r"^(?:создай(?:те)?\\s+(?:услугу|услуги)\\s*|добавь(?:те)?\\s+(?:услугу|услуги)\\s*)",
+                "",
+                m.group(1).strip(" .,-"),
+                flags=re.I,
+            ).strip()
+            if not name:
+                continue
+            recovered.append({
+                "name": name,
+                "price_type": "from",
+                "price_amd": _number(m.group(2)),
+            })
+        return recovered
+
+    invalid = (
+        not services
+        or any(
+            not s["name"]
+            or s["price_type"] not in ("fixed", "from")
+            or s["price_amd"] is None
+            for s in services
+        )
+    )
+    if invalid:
+        recovered = _recover_explicit_services(text)
+        if recovered:
+            services = [_normalise_service(state["companies"][0]["id"], x, text, default_location) for x in recovered]
+            for service in services:
+                service["internal_phone"] = partner_phone
+
     if not services or any(not s["name"] or s["price_type"] not in ("fixed", "from") or s["price_amd"] is None for s in services):
         raise ValueError("service_data_incomplete")
 
