@@ -24,7 +24,24 @@ async def partner_service_preview(uid, text):
     result = await turn(uid, 'PARTNER', text)
     data = parse_json(result['text'])
     if data.get('action') != 'create_service': return {'kind':'message','answer':data.get('answer','')}
-    service = {'company_id':state['companies'][0]['id'],'name':str(data.get('name','')).strip(),'price_type':str(data.get('price_type','')).lower(),'price_amd':data.get('price_amd'),'hours':data.get('hours'),'at_client':bool(data.get('at_client',False)),'territory':data.get('territory'),'address_id':None,'internal_phone':data.get('internal_phone')}
+    raw_type = str(data.get('price_type','')).strip().lower()
+    if raw_type in ('from','starting','starting_from','от','от_цены','սկսած','դրամից'):
+        price_type = 'from'
+    elif raw_type in ('fixed','exact','фиксированная','фиксированный','ֆիքսված'):
+        price_type = 'fixed'
+    else:
+        lower_text = str(text).lower()
+        price_type = 'from' if any(x in lower_text for x in (' от ', 'от ', 'սկսած', 'դրամից', 'from ')) else ''
+    raw_price = data.get('price_amd')
+    if isinstance(raw_price, str):
+        import re as _re
+        m = _re.search(r'\\d+(?:[.,]\\d+)?', raw_price.replace(' ', ''))
+        raw_price = m.group(0).replace(',', '.') if m else None
+    try:
+        price_amd = float(raw_price) if raw_price is not None else None
+    except (TypeError, ValueError):
+        price_amd = None
+    service = {'company_id':state['companies'][0]['id'],'name':str(data.get('name','')).strip(),'price_type':price_type,'price_amd':price_amd,'hours':data.get('hours'),'at_client':bool(data.get('at_client',False)),'territory':data.get('territory'),'address_id':None,'internal_phone':data.get('internal_phone')}
     if not service['name'] or service['price_type'] not in ('fixed','from') or service['price_amd'] is None: raise ValueError('service_data_incomplete')
     save(uid,'PARTNER',{'action':'create_service','service':service})
     return {'kind':'preview','preview':service}
