@@ -49,8 +49,14 @@ async function uploadDirectionDocument(directionId){
     const r=await fetch('/api/partner/direction-document?company_id='+encodeURIComponent((await api('/api/partner/profile')).companies[0].id)+'&direction_category_id='+directionId,{method:'POST',headers:{'X-Telegram-Init-Data':tg?tg.initData:''},body:data});
     const d=await r.json();
     if(!r.ok)throw Error(d.error||'upload_failed');
-    msg.textContent='✓ Документ принят. Заявка переведена на проверку.';
-    servicePrompt();
+    msg.textContent='✓ Документ принят.';
+    // Keep the saved AI preview on screen and immediately expose the final
+    // confirmation step. The partner must not repeat the original request.
+    if(d.result && d.result.kind==='preview'){
+      document.getElementById('out').innerHTML=renderServicePreview(d.result);
+    }else{
+      servicePrompt();
+    }
   }catch(e){msg.textContent='Ошибка: '+e.message}
 }
 async function confirmIt(){
