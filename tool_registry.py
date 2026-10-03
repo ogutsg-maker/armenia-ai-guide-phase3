@@ -106,7 +106,13 @@ class ToolRegistry:
         return data_core.is_admin(self.telegram_id)
 
     def _partner_id(self) -> int:
+        # Partner context is authenticated by Telegram user identity. If the
+        # partner row was not materialized yet (for example after a fresh
+        # cabinet session), materialize it here instead of exposing a raw
+        # partner_not_found error to the AI operator.
         partner = data_core.get_partner_by_user(self.telegram_id)
+        if not partner:
+            partner = data_core.ensure_partner(self.telegram_id)
         if not partner:
             raise PermissionError("partner_not_found")
         return int(partner["id"])
