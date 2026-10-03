@@ -70,6 +70,89 @@ async def client_search(r):
     return j({"ok": True, "items": active_services(b.get("text"), b.get("city"))})
 
 
+async def client_select_service(r):
+    u = await user(r)
+    try:
+        service_id = int(r.match_info["service_id"])
+    except (TypeError, ValueError):
+        return j({"ok": False, "error": "invalid_service_id"}, status=400)
+
+    service = run(
+        """SELECT s.id,s.name,s.price_type,s.price_amd,s.territory,s.address_id,
+                  c.name AS company_name,p.id AS partner_id,p.telegram_id AS partner_telegram_id,
+                  a.city,a.district
+           FROM aig_services s
+           JOIN aig_companies c ON c.id=s.company_id
+           JOIN aig_partners p ON p.id=c.partner_id
+           LEFT JOIN aig_addresses a ON a.id=s.address_id
+           WHERE s.id=%s AND s.status='ACTIVE' AND c.archived=false AND p.status='active'""",
+        (service_id,),
+    )
+    if not service:
+        return j({"ok": False, "error": "active_service_not_found"}, status=404)
+
+    existing = run(
+        """SELECT n.id,n.status
+           FROM aig_negotiations n
+           JOIN aig_client_requests r ON r.id=n.request_id
+           WHERE r.client_telegram_id=%s AND n.service_id=%s
+             AND n.status IN ('waiting_partner','active','agreed')
+           ORDER BY n.id DESC LIMIT 1""",
+        (u["telegram_id"], service_id),
+    )
+    if existing:
+        return j({
+            "ok": True,
+            "request_id": run("SELECT request_id FROM aig_negotiations WHERE id=%s", (existing["id"],))["request_id"],
+            "negotiation_id": existing["id"],
+            "status": existing["status"],
+            "existing": True,
+        })
+
+    city = service.get("city") or service.get("territory")
+    district = service.get("district")
+    request_row = run(
+        """INSERT INTO aig_client_requests(client_telegram_id,service_text,city,district,status)
+           VALUES(%s,%s,%s,%s,'searching') RETURNING *""",
+        (u["telegram_id"], service["name"], city, district),
+    )
+    negotiation = run(
+        """INSERT INTO aig_negotiations
+             (request_id,service_id,partner_id,status,interest_deadline)
+           VALUES(%s,%s,%s,'waiting_partner',now()+interval '3 minutes')
+           RETURNING *""",
+        (request_row["id"], service["id"], service["partner_id"]),
+    )
+
+    exec(
+        """INSERT INTO aig_notifications(telegram_id,kind,payload)
+           VALUES(%s,'new_client_request',%s)""",
+        (
+            service["partner_telegram_id"],
+            json.dumps({
+                "request_id": request_row["id"],
+                "negotiation_id": negotiation["id"],
+                "service_id": service["id"],
+                "service_name": service["name"],
+                "company_name": service["company_name"],
+                "city": city,
+                "district": district,
+                "price_type": service["price_type"],
+                "price_amd": service["price_amd"],
+            }, ensure_ascii=False),
+        ),
+    )
+    return j({
+        "ok": True,
+        "request_id": request_row["id"],
+        "negotiation_id": negotiation["id"],
+        "status": negotiation["status"],
+        "interest_deadline": negotiation["interest_deadline"],
+        "service": service,
+        "existing": False,
+    })
+
+
 async def partner_profile(r):
     u = await user(r)
     partner = partners.get(u['telegram_id'])
@@ -171,6 +254,7 @@ def setup_routes(app):
     app.router.add_get("/api/partner/services", partner_services)
     app.router.add_post("/api/partner/services/confirm", partner_service_confirm)
     app.router.add_post("/api/client/search", client_search)
+    app.router.add_post("/api/client/services/{service_id}/select", client_select_service)
     app.router.add_post("/api/admin/ai", admin_ai)
     app.router.add_get("/api/admin/applications", applications)
     app.router.add_get("/api/admin/services", admin_services)
