@@ -36,6 +36,53 @@ async def partner_profile(request):
     uid=await current(request); p=db.one("SELECT * FROM aig_partners WHERE telegram_id=%s",(uid,))
     if not p:return j({"ok":False,"error":"partner_not_found"},404)
     return j({"ok":True,"partner":p,"companies":db.all("SELECT * FROM aig_companies WHERE partner_id=%s AND NOT archived ORDER BY id",(p["id"],))})
+async def partner_ai(request):
+    uid=await current(request)
+    p=db.one("SELECT id FROM aig_partners WHERE telegram_id=%s",(uid,))
+    if not p:return j({"ok":False,"error":"partner_not_found"},404)
+    body=await request.json(); text=str(body.get("text") or "").strip()
+    if not text:return j({"ok":False,"error":"text_required"},400)
+    tools=[{"type":"function","function":{"name":"partner_list_services","description":"List this partner's companies and services. Read only.","parameters":{"type":"object","properties":{}}}},
+           {"type":"function","function":{"name":"partner_list_companies","description":"List this partner's active companies. Read only.","parameters":{"type":"object","properties":{}}}},
+           {"type":"function","function":{"name":"partner_create_service_preview","description":"Prepare a service creation preview. Does not write an active service.","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}},
+           {"type":"function","function":{"name":"partner_get_service","description":"Get one of this partner's services.","parameters":{"type":"object","properties":{"service_id":{"type":"integer"}},"required":["service_id"]}}}]
+    prompt=[{"role":"user","content":"""You are the Armenia AI Guide partner operator.
+Use only the available tools. Reads execute immediately.
+Creating or changing business data requires a preview first and explicit partner confirmation.
+Never invent service IDs, prices, companies, statuses or catalog categories.
+For service creation, extract the service request and call partner_create_service_preview.
+Answer in the partner's language.
+Request: """+text}]
+    meta=await ask(prompt,tools)
+    results=[]
+    for call in meta["tool_calls"]:
+        args=json.loads(call.function.arguments or "{}"); name=call.function.name
+        if name=="partner_list_services":
+            result=db.all("SELECT s.*,c.name company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s ORDER BY s.id DESC",(p["id"],))
+        elif name=="partner_list_companies":
+            result=db.all("SELECT id,name,archived FROM aig_companies WHERE partner_id=%s AND NOT archived ORDER BY id",(p["id"],))
+        elif name=="partner_get_service":
+            result=db.one("SELECT s.*,c.name company_name FROM aig_services s JOIN aig_companies c ON c.id=s.company_id WHERE c.partner_id=%s AND s.id=%s",(p["id"],int(args["service_id"])))
+            if not result: result={"error":"service_not_found"}
+        elif name=="partner_create_service_preview":
+            x,emeta=await extract(str(args["text"]),"service creation")
+            if not x.get("name") or x.get("price_amd") is None or x.get("price_type") not in ("fixed","from"):
+                result={"error":"service_data_incomplete"}
+            else:
+                pending={"kind":"service_create","data":x}
+                db.exec("INSERT INTO aig_ai_sessions(telegram_id,context,pending) VALUES(%s,'PARTNER',%s) ON CONFLICT(telegram_id) DO UPDATE SET pending=EXCLUDED.pending,updated_at=now()",(uid,json.dumps(pending,ensure_ascii=False)))
+                result={"preview":x,"confirm_required":True}
+        else: result={"error":"unsupported_tool"}
+        results.append({"name":name,"result":result})
+    if results:
+        follow=prompt+[{"role":"assistant","content":meta["text"],"tool_calls":meta["tool_calls"]}]
+        for item,call in zip(results,meta["tool_calls"]):
+            follow.append({"role":"tool","tool_call_id":call.id,"content":json.dumps(item["result"],ensure_ascii=False,default=str)})
+        final=await ask(follow,tools)
+    else: final=meta
+    db.exec("INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)",(uid,meta["provider"],meta["model"],"partner","natural_language",meta["input_tokens"]+final["input_tokens"],meta["output_tokens"]+final["output_tokens"]))
+    return j({"ok":True,"answer":final["text"],"tool_results":results,"confirm_required":any(x["result"].get("confirm_required") for x in results if isinstance(x["result"],dict))})
+
 async def partner_services(request):
     uid=await current(request); p=db.one("SELECT id FROM aig_partners WHERE telegram_id=%s",(uid,))
     if not p:return j({"ok":False,"error":"partner_not_found"},404)
@@ -221,5 +268,5 @@ async def admin_query(request):
     db.exec("INSERT INTO aig_ai_costs(telegram_id,provider,model,operation,purpose,input_tokens,output_tokens) VALUES(%s,%s,%s,%s,%s,%s,%s)",(uid,meta["provider"],meta["model"],"admin","natural_language_query",meta["input_tokens"],meta["output_tokens"]))
     return j({"ok":True,"answer":meta["text"],"tool_calls":[{"name":x.function.name,"arguments":x.function.arguments} for x in meta["tool_calls"]]})
 def setup(app):
-    routes=[("GET","/api/session",session),("POST","/api/partner/register",register_partner),("GET","/api/partner/profile",partner_profile),("GET","/api/partner/services",partner_services),("POST","/api/partner/services/preview",service_preview),("POST","/api/partner/services/confirm",service_confirm),("GET","/api/admin/services",admin_services),("GET","/api/admin/potential-partners",admin_potential_partners),("PATCH","/api/admin/potential-partners/{id}",admin_potential_partner),("POST","/api/partner/services/{id}/documents",partner_service_document),("GET","/api/admin/services/{id}/documents",admin_service_documents),("POST","/api/admin/services/{id}/decision",admin_service_decision),("POST","/api/admin/ai",admin_query),("POST","/api/client/search",client_search),("POST","/api/client/requests/{id}/select",select_service),("POST","/api/negotiations/{id}/interest",partner_interest),("GET","/api/negotiations/{id}",negotiation),("POST","/api/negotiations/{id}/messages",send_message),("POST","/api/negotiations/{id}/book",book),("POST","/api/bookings/{id}/confirm",partner_confirm_booking),("POST","/api/payments/webhook",payment_webhook),("GET","/api/bookings/{id}/contact",contact),("POST","/api/bookings/{token}/checkin",checkin),("POST","/api/bookings/{id}/complete",complete),("POST","/api/bookings/{id}/review",review),("POST","/api/bookings/{id}/arbitration",arbitration_open),("POST","/api/admin/arbitrations/{id}/resolve",admin_arbitration),("GET","/api/notifications",notifications)]
+    routes=[("GET","/api/session",session),("POST","/api/partner/register",register_partner),("GET","/api/partner/profile",partner_profile),("GET","/api/partner/services",partner_services),("POST","/api/partner/ai",partner_ai),("POST","/api/partner/services/preview",service_preview),("POST","/api/partner/services/confirm",service_confirm),("GET","/api/admin/services",admin_services),("GET","/api/admin/potential-partners",admin_potential_partners),("PATCH","/api/admin/potential-partners/{id}",admin_potential_partner),("POST","/api/partner/services/{id}/documents",partner_service_document),("GET","/api/admin/services/{id}/documents",admin_service_documents),("POST","/api/admin/services/{id}/decision",admin_service_decision),("POST","/api/admin/ai",admin_query),("POST","/api/client/search",client_search),("POST","/api/client/requests/{id}/select",select_service),("POST","/api/negotiations/{id}/interest",partner_interest),("GET","/api/negotiations/{id}",negotiation),("POST","/api/negotiations/{id}/messages",send_message),("POST","/api/negotiations/{id}/book",book),("POST","/api/bookings/{id}/confirm",partner_confirm_booking),("POST","/api/payments/webhook",payment_webhook),("GET","/api/bookings/{id}/contact",contact),("POST","/api/bookings/{token}/checkin",checkin),("POST","/api/bookings/{id}/complete",complete),("POST","/api/bookings/{id}/review",review),("POST","/api/bookings/{id}/arbitration",arbitration_open),("POST","/api/admin/arbitrations/{id}/resolve",admin_arbitration),("GET","/api/notifications",notifications)]
     for method,path,fn in routes:getattr(app.router,"add_"+method.lower())(path,fn)
