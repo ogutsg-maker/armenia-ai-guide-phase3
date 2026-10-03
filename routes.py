@@ -5,6 +5,7 @@ from aiohttp import web
 import db
 from auth import user
 from ai import extract
+from classifier import classify
 from config import ADMIN_ID,COMMISSION_MODE,COMMISSION_RATE,IDRAM_PAYMENT_URL
 def j(data,status=200): return web.json_response(data,status=status)
 def authu(request): return request["tg_user"]
@@ -57,6 +58,11 @@ async def service_confirm(request):
         row=db.one("SELECT id FROM aig_companies WHERE partner_id=%s AND NOT archived ORDER BY id LIMIT 1",(p["id"],)); cid=row["id"] if row else None
     if cid is None or not db.one("SELECT id FROM aig_companies WHERE id=%s AND partner_id=%s AND NOT archived",(cid,p["id"])):return j({"ok":False,"error":"company_not_owned"},403)
     row=db.exec("INSERT INTO aig_services(company_id,name,price_type,price_amd,hours,at_client,territory,status) VALUES(%s,%s,%s,%s,%s,%s,%s,'CLASSIFICATION_PENDING') RETURNING id",(cid,data["name"],data["price_type"],float(data["price_amd"]),data.get("hours"),bool(data.get("at_client")),data.get("territory")),True)
+    result=classify(data["name"])
+    if result and result["category"]:
+        db.exec("UPDATE aig_services SET catalog_category_id=%s,classification_confidence=%s,classification_margin=%s,status='PENDING_ADMIN',updated_at=now() WHERE id=%s",(result["category"]["id"],result["confidence"],result["margin"],row["id"]))
+    else:
+        db.exec("UPDATE aig_services SET classification_confidence=%s,classification_margin=%s,status='CLASSIFICATION_PENDING',updated_at=now() WHERE id=%s",(result["confidence"] if result else 0,result["margin"] if result else 0,row["id"]))
     db.exec("INSERT INTO aig_service_applications(service_id) VALUES(%s)",(row["id"],)); db.exec("UPDATE aig_ai_sessions SET pending=NULL,updated_at=now() WHERE telegram_id=%s",(uid,))
     notify(ADMIN_ID,"service_application",{"service_id":row["id"]}); return j({"ok":True,"service_id":row["id"],"status":"CLASSIFICATION_PENDING"})
 async def admin_services(request):
@@ -70,6 +76,7 @@ async def admin_service_decision(request):
     if action not in ("approve","reject"):return j({"ok":False,"error":"invalid_action"},400)
     svc=db.one("SELECT s.*,p.telegram_id FROM aig_services s JOIN aig_companies c ON c.id=s.company_id JOIN aig_partners p ON p.id=c.partner_id WHERE s.id=%s",(sid,))
     if not svc:return j({"ok":False,"error":"service_not_found"},404)
+    if action=="approve" and not svc["catalog_category_id"]: return j({"ok":False,"error":"classification_required"},409)
     status="ACTIVE" if action=="approve" else "REJECTED"
     db.exec("UPDATE aig_services SET status=%s,rejection_reason=%s,updated_at=now() WHERE id=%s",(status,body.get("reason") if action=="reject" else None,sid))
     db.exec("UPDATE aig_service_applications SET status=%s,reviewed_at=now(),reviewer=%s WHERE service_id=%s",("APPROVED" if action=="approve" else "REJECTED",uid,sid))
