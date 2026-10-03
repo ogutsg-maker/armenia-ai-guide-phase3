@@ -483,10 +483,10 @@ class AIManager:
     @staticmethod
     def _error_text(language: str) -> str:
         if language == "hy":
-            return "Ներողություն, տեխնիկական սխալ է տեղի ունեցել։ Փորձեք մի փոքր ուշ։"
+            return "Ներողություն, տեխնիկական սխալ է տեղի ունեցել։"
         if language == "ru":
-            return "Извините, произошла техническая ошибка. Попробуйте позже."
-        return "Sorry, a technical error occurred. Please try again later."
+            return "Извините, произошла техническая ошибка."
+        return "Sorry, a technical error occurred."
 
     @staticmethod
     def _approx_tokens(value: Any) -> int:
