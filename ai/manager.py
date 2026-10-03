@@ -107,25 +107,45 @@ def _normalise_service(company_id, item, source, default_location):
 
 
 def _recover_explicit_services(source):
-    """Parse explicit service + price pairs from the partner's original message."""
+    """Deterministically recover service + price pairs from partner text."""
     text = str(source or "").strip()
-    pattern = re.compile(
-        r"(?:^|[,;])\s*(?:создай(?:те)?\s+)?(?:добавь(?:те)?\s+)?"
+    if not text:
+        return []
+
+    # Accept comma/semicolon separated services and the common Russian/Armenian
+    # command prefixes. The final sentence/location is deliberately ignored.
+    pair = re.compile(
+        r"(?:^|[,;])\s*(?:создай(?:те)?\s+|добавь(?:те)?\s+)?"
         r"(?:услугу\s+|услуги\s+)?"
-        r"(.+?)\s+(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)"
-        r"\s*(?:драм(?:ов)?|amd|֏)?(?=\s*(?:[,;.]|$))",
+        r"(.+?)\s+(?:от|սկսած|from)\s*"
+        r"([0-9][0-9\s.,]*)\s*(?:драм(?:ов)?|amd|֏)?",
         re.I,
     )
     found = []
-    for m in pattern.finditer(text):
-        name = m.group(1).strip(" .,-")
-        name = re.sub(r"^(?:создай|создайте|добавь|добавьте)\s+(?:услугу|услуги)\s+", "", name, flags=re.I)
-        name = re.sub(r"^(?:услуга|услуги)\s+", "", name, flags=re.I).strip()
-        if not name:
-            continue
+    for m in pair.finditer(text):
+        name = re.sub(
+            r"^(?:создай(?:те)?|добавь(?:те)?)\s+(?:услугу|услуги)\s+",
+            "",
+            m.group(1).strip(" .,-"),
+            flags=re.I,
+        ).strip()
         price = _number(m.group(2))
-        if price is not None:
+        if name and price is not None:
             found.append({"name": name, "price_type": "from", "price_amd": price})
+
+    # Also handle a single pair without a comma before it.
+    if not found:
+        m = re.search(
+            r"(?:создай(?:те)?\s+|добавь(?:те)?\s+)?(?:услугу\s+|услуги\s+)?"
+            r"(.+?)\s+(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)\s*(?:драм(?:ов)?|amd|֏)?",
+            text,
+            flags=re.I,
+        )
+        if m:
+            name = m.group(1).strip(" .,-")
+            price = _number(m.group(2))
+            if name and price is not None:
+                found.append({"name": name, "price_type": "from", "price_amd": price})
     return found
 
 
