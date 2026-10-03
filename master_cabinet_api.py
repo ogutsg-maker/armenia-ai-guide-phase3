@@ -482,7 +482,7 @@ async def api_ai_document_upload(request: web.Request):
             # have existed at the exact moment the upload endpoint was called.
             # Recover the direction from the latest pending application and
             # materialize the canonical direction/case instead of returning the
-            # misleading "direction_verification_not_requested" error.
+            # misleading "direction_verification_not_found" error.
             if not case:
                 from data_core import get_application_full, ensure_direction_verification_case
 
