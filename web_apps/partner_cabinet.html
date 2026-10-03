@@ -64,10 +64,15 @@ async function uploadDirectionDocument(directionId){
   }catch(e){msg.textContent='Ошибка: '+e.message}
 }
 async function confirmIt(){
+  const buttons=document.querySelectorAll('#out button');
+  buttons.forEach(b=>{if((b.textContent||'').includes('Հաստատել')){b.disabled=true;b.textContent='⏳ Ուղարկվում է…'}});
   try{
     const d=await api('/api/partner/services/confirm',{method:'POST',body:'{}'});
-    document.getElementById('out').innerHTML='<div class="card success">✓ Заявка создана.<br>'+(d.status==='PENDING_ADMIN'?'Отправлена администратору на проверку.':'Ожидает обязательного документа/классификации.')+'</div>';
-    loadServices();
-  }catch(e){document.getElementById('out').innerHTML='<div class="card error">'+esc(e.message)+'</div>'}
+    const status=d.status||d.result?.status||'';
+    const sent=status==='PENDING_ADMIN';
+    document.getElementById('out').innerHTML='<div class="card success"><b>✓ Հայտը հաստատվեց</b><br>'+(sent?'Ուղարկված է ադմինիստրատորին ստուգման համար։':'Կարգավիճակ՝ '+esc(status||'սպասման մեջ')+'.')+'</div><button class="btn secondary" style="margin-top:8px" onclick="loadServices()">🛠 Իմ ծառայությունները</button>';
+  }catch(e){
+    document.getElementById('out').innerHTML='<div class="card error"><b>Չհաջողվեց հաստատել հայտը</b><br>'+esc(e.message)+'</div><button class="btn secondary" style="margin-top:8px" onclick="servicePrompt()">← Վերադառնալ AI օգնականին</button>';
+  }
 }
 loadProfile();</script></html>
