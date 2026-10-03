@@ -103,6 +103,21 @@ def _normalise_service(company_id, item, source, default_location):
     }
 
 
+def _extract_from_text(text, data):
+    lower = str(text).lower()
+    # Deterministic price recovery: never let a malformed AI field erase a price the partner explicitly wrote.
+    prices = re.findall(r"(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)", lower)
+    nums = [_number(x) for x in prices if _number(x) is not None]
+    names = data.get("services") if isinstance(data.get("services"), list) else []
+    if names and len(nums) >= len(names):
+        for i, item in enumerate(names):
+            if not item.get("price_amd"):
+                item["price_amd"] = nums[i]
+            if not item.get("price_type"):
+                item["price_type"] = "from"
+    return data
+
+
 async def partner_service_preview(uid, text):
     state = partner_context(uid)
     if not state["partner"]:
@@ -111,7 +126,7 @@ async def partner_service_preview(uid, text):
         return {"kind": "select_company", "companies": state["companies"]}
 
     result = await turn(uid, "PARTNER", text)
-    data = parse_json(result["text"])
+    data = _extract_from_text(text, parse_json(result["text"]))
     if data.get("action") != "create_service":
         return {"kind": "message", "answer": data.get("answer", "")}
 
@@ -134,6 +149,25 @@ async def partner_service_preview(uid, text):
     partner_phone = str((state.get("partner") or {}).get("phone") or "").strip() or None
     for service in services:
         service["internal_phone"] = service["internal_phone"] or partner_phone
+
+    # If the model collapsed multiple services into one object, recover the two explicit services from the user's text.
+    if len(services) == 1:
+        chunks = re.split(r",\s*(?=(?:ремонт|услуга|установка|замена|чистка|диагностика)\b)", str(text), flags=re.I)
+        if len(chunks) > 1:
+            rebuilt = []
+            for chunk in chunks:
+                m = re.search(r"(.+?)\s+(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)\s*(?:драм|amd|֏)?", chunk, flags=re.I)
+                if m:
+                    rebuilt.append({
+                        "name": m.group(1).strip(" .,-"),
+                        "price_type": "from",
+                        "price_amd": _number(m.group(2)),
+                    })
+            if len(rebuilt) > 1:
+                services = [_normalise_service(state["companies"][0]["id"], x, text, default_location) for x in rebuilt]
+                for service in services:
+                    service["internal_phone"] = partner_phone
+
     if not services or any(not s["name"] or s["price_type"] not in ("fixed", "from") or s["price_amd"] is None for s in services):
         raise ValueError("service_data_incomplete")
 
