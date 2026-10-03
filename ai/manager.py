@@ -106,9 +106,31 @@ def _normalise_service(company_id, item, source, default_location):
     }
 
 
+def _recover_explicit_services(source):
+    """Parse explicit service + price pairs from the partner's original message."""
+    text = str(source or "").strip()
+    pattern = re.compile(
+        r"(?:^|[,;])\s*(?:создай(?:те)?\s+)?(?:добавь(?:те)?\s+)?"
+        r"(?:услугу\s+|услуги\s+)?"
+        r"(.+?)\s+(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)"
+        r"\s*(?:драм(?:ов)?|amd|֏)?(?=\s*(?:[,;.]|$))",
+        re.I,
+    )
+    found = []
+    for m in pattern.finditer(text):
+        name = m.group(1).strip(" .,-")
+        name = re.sub(r"^(?:создай|создайте|добавь|добавьте)\s+(?:услугу|услуги)\s+", "", name, flags=re.I)
+        name = re.sub(r"^(?:услуга|услуги)\s+", "", name, flags=re.I).strip()
+        if not name:
+            continue
+        price = _number(m.group(2))
+        if price is not None:
+            found.append({"name": name, "price_type": "from", "price_amd": price})
+    return found
+
+
 def _extract_from_text(text, data):
     lower = str(text).lower()
-    # Deterministic price recovery: never let a malformed AI field erase a price the partner explicitly wrote.
     prices = re.findall(r"(?:от|սկսած|from)\s*([0-9][0-9\s.,]*)", lower)
     nums = [_number(x) for x in prices if _number(x) is not None]
     names = data.get("services") if isinstance(data.get("services"), list) else []
@@ -128,9 +150,20 @@ async def partner_service_preview(uid, text):
     if len(state["companies"]) != 1:
         return {"kind": "select_company", "companies": state["companies"]}
 
+    explicit_services = _recover_explicit_services(text)
     result = await turn(uid, "PARTNER", text)
     data = _extract_from_text(text, parse_json(result["text"]))
-    if data.get("action") != "create_service":
+    # A clear service+price command is sufficient to enter the service flow.
+    # Groq must not be able to discard a valid partner request by returning
+    # another action or an incomplete JSON shape.
+    if explicit_services:
+        data["action"] = "create_service"
+        data["services"] = explicit_services + (
+            data.get("services")[len(explicit_services):]
+            if isinstance(data.get("services"), list) and len(data.get("services")) > len(explicit_services)
+            else []
+        )
+    elif data.get("action") != "create_service":
         return {"kind": "message", "answer": data.get("answer", "")}
 
     raw_services = data.get("services")
