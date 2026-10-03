@@ -262,6 +262,41 @@ class ToolRegistry:
                 contexts=p,
             ),
             self._spec(
+                "register_business",
+                "Prepare ONE confirmed partner registration: create a new company and submit all explicitly provided services as ONE admin-review application. Use this when the partner describes a business/company name and its services in the same request and there is no current company. Never split this into separate company and service confirmations.",
+                {
+                    "company_name": {"type": "string"},
+                    "description": _nullable("string"),
+                    "phone": _nullable("string"),
+                    "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
+                    "service_location": _location_schema(),
+                    "coverage": _coverage_schema(),
+                    "services": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "price": _nullable("number"),
+                                "price_type": {"type": "string", "enum": ["from", "fixed"]},
+                                "service_mode": _nullable_enum(["at_address", "mobile", "both"]),
+                                "service_location": _location_schema(),
+                                "coverage": _coverage_schema(),
+                                "address_text": _nullable("string"),
+                                "phone": _nullable("string"),
+                                "description": _nullable("string")
+                            },
+                            "required": ["name", "price"],
+                            "additionalProperties": False
+                        }
+                    }
+                },
+                required=("company_name", "services"),
+                tool_type=ToolType.ACTION_CONFIRM,
+                contexts=p,
+            ),
+            self._spec(
                 "add_service",
                 "Prepare adding a service to an owned company. Extract only the service facts explicitly provided by the partner: name, price, fixed/from, optional service mode, optional service location/territory, optional address/phone. Do not invent missing settings and do not ask about a separate dispatch/base location. Confirmation required.",
                 {
@@ -1224,6 +1259,52 @@ class ToolRegistry:
                     f"Изменить услугу «{service.get('name') or ''}» (#{service['id']})?",
                 )
 
+            if name == "register_business":
+                company_name = str(args.get("company_name") or "").strip()
+                if not company_name:
+                    raise ValueError("company_name_required")
+                raw_services = args.get("services") or []
+                if not isinstance(raw_services, list) or not raw_services:
+                    raise ValueError("services_required")
+                prepared = []
+                for raw in raw_services[:30]:
+                    if not isinstance(raw, dict):
+                        raise ValueError("invalid_service_payload")
+                    service_name = str(raw.get("name") or "").strip()
+                    if not service_name:
+                        raise ValueError("service_name_required")
+                    checked = data_core.validate_service_payload(
+                        partner_id=pid, actor_user_id=self.telegram_id,
+                        company_id=None, name=service_name,
+                        price=raw.get("price"), category_id=None,
+                    )
+                    prepared.append({
+                        "name": checked["name"],
+                        "price": checked["price"],
+                        "price_type": raw.get("price_type") or "fixed",
+                        "service_mode": raw.get("service_mode") or args.get("service_mode"),
+                        "service_location": raw.get("service_location") or args.get("service_location"),
+                        "coverage": raw.get("coverage") or args.get("coverage"),
+                        "address_text": str(raw.get("address_text") or "").strip(),
+                        "phone": raw.get("phone") or args.get("phone"),
+                        "description": raw.get("description"),
+                    })
+                prepared = data_core.resolve_catalog_services(prepared, limit=500)
+                return self._prepare_action(
+                    name,
+                    {
+                        "company_name": company_name,
+                        "description": args.get("description"),
+                        "phone": args.get("phone"),
+                        "service_mode": args.get("service_mode"),
+                        "service_location": args.get("service_location"),
+                        "coverage": args.get("coverage"),
+                        "services": prepared,
+                        "submission_token": __import__("secrets").token_urlsafe(24),
+                    },
+                    f'Գրանցել «{company_name}» ընկերությունը և ներկայացնել {len(prepared)} ծառայություն(ներ)ը մեկ հայտով։ Հաստատո՞ւմ եք?',
+                )
+
             if name == "add_company":
                 company_name = str(args.get("name") or "").strip()
                 if not company_name:
@@ -1449,6 +1530,32 @@ class ToolRegistry:
                 name=args.get("name"), price=args.get("price"),
                 category_id=args.get("category_id"),
             )}
+
+        if name == "register_business":
+            company_name = str(args.get("company_name") or "").strip()
+            if not company_name:
+                raise ValueError("company_name_required")
+            company = data_core.create_partner_company(
+                partner_id=pid, actor_user_id=self.telegram_id,
+                name=company_name, description=args.get("description"),
+                phone=args.get("phone"),
+            )
+            company_id = int(company["id"])
+            result = data_core.create_partner_services_proposal(
+                partner_id=pid,
+                actor_user_id=self.telegram_id,
+                company_id=company_id,
+                services=args.get("services") or [],
+                service_mode=args.get("service_mode"),
+                service_location=args.get("service_location"),
+                submission_token=args.get("submission_token"),
+            )
+            return {
+                "ok": True,
+                "company": company,
+                "application": result,
+                "document_required": bool(result.get("document_required")),
+            }
 
         if name == "add_company":
             return {"ok": True, "item": data_core.create_partner_company(
