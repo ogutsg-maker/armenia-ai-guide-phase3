@@ -17,6 +17,13 @@ def prompt(context, text, context_data=None):
             "If the user gives one location for all services, put it in the top-level location too. "
             "Never select catalog IDs; backend classification does that."
         )
+    elif context == "REGISTRATION":
+        rules += (
+            " Return ONLY valid JSON. Extract only information explicitly present in the request. "
+            "Return name, phone, marz, city, village, address, hours, description, and services. "
+            "services is an array of objects with name, price_type=fixed/from, price_amd. "
+            "Do not invent missing values. The backend keeps the draft and asks only for missing fields."
+        )
     else:
         rules += " Return ONLY valid JSON with action and answer."
     return [{"role": "user", "content": rules + "\nContext: " + data + "\nRequest: " + str(text)}]
