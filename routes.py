@@ -312,19 +312,26 @@ async def negotiation_message(r):
         body = await r.json()
     except Exception:
         return j({"ok": False, "error": "invalid_json"}, status=400)
+
     message = str(body.get("message", "")).strip()
     if not message or len(message) > 4000:
         return j({"ok": False, "error": "message_required"}, status=400)
-    n = run("""SELECT n.id,n.status,n.partner_id,r.client_telegram_id
-               FROM aig_negotiations n
-               JOIN aig_client_requests r ON r.id=n.request_id
-               WHERE n.id=%s""",(negotiation_id,))
+
+    n = run(
+        """SELECT n.id,n.status,n.partner_id,r.client_telegram_id
+           FROM aig_negotiations n
+           JOIN aig_client_requests r ON r.id=n.request_id
+           WHERE n.id=%s""",
+        (negotiation_id,),
+    )
     if not n:
         return j({"ok": False, "error": "negotiation_not_found"}, status=404)
+
     requested_role = str(r.query.get("role", "")).strip().lower()
     partner = partners.get(u["telegram_id"])
     can_be_partner = bool(partner and int(n["partner_id"]) == int(partner["id"]))
     can_be_client = int(n["client_telegram_id"]) == int(u["telegram_id"])
+
     if requested_role == "client":
         if not can_be_client:
             return j({"ok": False, "error": "forbidden"}, status=403)
@@ -339,14 +346,76 @@ async def negotiation_message(r):
         role = "partner"
     else:
         return j({"ok": False, "error": "forbidden"}, status=403)
+
     if n["status"] != "active":
         return j({"ok": False, "error": "negotiation_not_active"}, status=409)
-    row = run("""INSERT INTO negotiation_messages
-                 (negotiation_id,sender_role,sender_id,message,data_json)
-                 VALUES(%s,%s,%s,%s,%s)
-                 RETURNING id,sender_role,sender_id,message,data_json,created_at""",
-              (negotiation_id,role,u["telegram_id"],message,json.dumps({},ensure_ascii=False)))
-    return j({"ok": True, "message": row})
+
+    row = run(
+        """INSERT INTO negotiation_messages
+             (negotiation_id,sender_role,sender_id,message,data_json)
+           VALUES(%s,%s,%s,%s,%s)
+           RETURNING id,sender_role,sender_id,message,data_json,created_at""",
+        (negotiation_id, role, u["telegram_id"], message, json.dumps({}, ensure_ascii=False)),
+    )
+
+    # Natural-chat agreement fast path.
+    # We do not turn ordinary messages into forms/cards. We only finalize when
+    # explicit agreement language exists on both sides and a concrete price
+    # has appeared in the conversation.
+    history = run(
+        """SELECT sender_role,message
+           FROM negotiation_messages
+           WHERE negotiation_id=%s
+           ORDER BY id ASC""",
+        (negotiation_id,),
+        True,
+    )
+
+    def _price_from_text(value):
+        text = str(value or "").replace(",", ".")
+        matches = re.findall(r"(?<!\\d)(\\d{3,7})(?:\\.\\d+)?", text)
+        if not matches:
+            return None
+        return float(matches[-1])
+
+    def _has_partner_acceptance(value):
+        t = str(value or "").lower().strip()
+        return bool(re.search(r"(^|[\\s,!.?])(да|yes|այո|согласен|согласна|согласны|сможем|договорились|подходит|ок|ok)([\\s,!.?]|$)", t))
+
+    def _has_client_acceptance(value):
+        t = str(value or "").lower().strip()
+        return bool(re.search(r"(^|[\\s,!.?])(договорились|согласовано|согласен|согласна|беру|подходит|да|yes|այո|ок|ok)([\\s,!.?]|$)", t))
+
+    prices = [_price_from_text(x.get("message")) for x in history]
+    price = next((p for p in reversed(prices) if p is not None), None)
+    partner_agreed = any(x.get("sender_role") == "partner" and _has_partner_acceptance(x.get("message")) for x in history)
+    client_agreed = any(x.get("sender_role") == "client" and _has_client_acceptance(x.get("message")) for x in history)
+
+    if price is not None and (partner_agreed or client_agreed):
+        payload = n.get("agreed_payload") or {}
+        payload.update({
+            "agreed_price": price,
+            "client_agreed": bool(payload.get("client_agreed") or client_agreed),
+            "partner_agreed": bool(payload.get("partner_agreed") or partner_agreed),
+        })
+        if payload["client_agreed"] and payload["partner_agreed"]:
+            exec(
+                """UPDATE aig_negotiations
+                   SET agreed_price=%s,agreed_min=%s,agreed_max=%s,
+                       agreed_payload=%s,agreed_at=now(),
+                       commission_base=%s,status='agreed'
+                   WHERE id=%s""",
+                (price, price, price, json.dumps(payload, ensure_ascii=False), price, negotiation_id),
+            )
+            return j({"ok": True, "message": row, "status": "agreed", "agreed_price": price})
+        exec(
+            """UPDATE aig_negotiations
+               SET agreed_price=%s,agreed_min=%s,agreed_max=%s,agreed_payload=%s
+               WHERE id=%s""",
+            (price, price, price, json.dumps(payload, ensure_ascii=False), negotiation_id),
+        )
+
+    return j({"ok": True, "message": row, "status": "active"})
 
 
 async def client_notifications(r):
