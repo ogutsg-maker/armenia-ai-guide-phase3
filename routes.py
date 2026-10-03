@@ -32,7 +32,7 @@ async def register_partner(request):
         c.execute("UPDATE aig_users SET role='partner',updated_at=now() WHERE telegram_id=%s",(uid,))
         p=c.execute("INSERT INTO aig_partners(telegram_id,phone) VALUES(%s,%s) ON CONFLICT(telegram_id) DO UPDATE SET phone=EXCLUDED.phone RETURNING id",(uid,phone)).fetchone()[0]
         c.execute("INSERT INTO aig_companies(partner_id,name) SELECT %s,%s WHERE NOT EXISTS(SELECT 1 FROM aig_companies WHERE partner_id=%s)",(p,name,p))
-    notify(uid,"partner_registered",{"company":name}); return j({"ok":True,"destination":"/master_cabinet.html"})
+    notify(uid,"partner_registered",{"company":name}); return j({"ok":True,"destination":"/partner_cabinet.html"})
 async def partner_profile(request):
     uid=await current(request); p=db.one("SELECT * FROM aig_partners WHERE telegram_id=%s",(uid,))
     if not p:return j({"ok":False,"error":"partner_not_found"},404)

@@ -27,7 +27,7 @@ async def lifecycle_worker():
 async def start():
     app=web.Application()
     app.router.add_get("/health",health);app.router.add_post("/telegram/webhook",webhook);app.router.add_get("/",root)
-    app.router.add_get("/{name:welcome.html|partner.html|master_cabinet.html|client.html|admin.html}",html);setup(app)
+    app.router.add_get("/{name:welcome.html|partner.html|partner_cabinet.html|client.html|admin.html}",html);setup(app)
     runner=web.AppRunner(app);await runner.setup();port=int(os.getenv("PORT","10000"));await web.TCPSite(runner,"0.0.0.0",port).start()
     try:
         await asyncio.to_thread(db.init)
